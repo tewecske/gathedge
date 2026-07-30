@@ -1,0 +1,13 @@
+{
+  "name": "webapp1",
+  "private": true,
+  "devDependencies": {
+    "concurrently": "^10.0.3",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "predev": "sbt --client 'root/compile'",
+    "dev": "concurrently -n zio,scalajs,vite -c green,magenta,yellow \"sbt --client '~backendZio/reStart'\" \"sbt --client '~frontend/fastLinkJS'\" \"npm --prefix web run dev\"",
+    "dev:tmux": "bash dev-tmux.sh"
+  }
+}

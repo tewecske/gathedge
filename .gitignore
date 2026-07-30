@@ -1,0 +1,11 @@
+target/
+project/target/
+project/project/
+data/
+node_modules/
+web/dist/
+.bsp/
+.metals/
+.bloop/
+*.class
+*.log
