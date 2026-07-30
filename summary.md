@@ -9,9 +9,8 @@ can see another user's data, except administrators managing accounts (not user c
 - Visitors can create an account with an email and a password (minimum 8 characters, enforced
   both in the form and on the server).
 - Registered users log in with email + password.
-- A "quick sign-in" mode exists for non-production environments only: a user can sign in by
-  entering just an email, no password, and an account is created/logged into automatically for
-  that email. This mode is fully disabled in production.
+- An OAuth2-based "quick sign-in" option is available for users with a Google account; this bypasses
+  the password requirement and uses the Google account as the identity provider. 
 - Failed login/signup/quick-sign-in attempts are rate-limited per email: after 5 failures within
   a 15-minute window, further attempts are rejected until the window passes.
 - A logged-in session persists for 7 days and can be ended explicitly via "log out", which
@@ -23,30 +22,43 @@ can see another user's data, except administrators managing accounts (not user c
 
 - **Regular user**: manages only their own data (see Entries and Page2 below), can change the
   visual theme, can log out.
+- **Group admin**: can invite and remove users from the group.
 - **Administrator**: everything a regular user can do, plus full user management (see below).
   Regular users cannot see or access user-management features.
 
 ## Theming
 
-- Users can choose among 5 visual themes (Light, Dark, Cupcake, Synthwave, Corporate) and the
-  chosen theme applies to the whole application immediately.
+- Users can choose from visual themes (Light, Dark) and the
+  chosen theme applies to the whole application immediately and saved in user profile.
 
-## Feature: Entries
+## Feature: TODO list
 
-- A personal page containing three independent, separately-labeled lists ("Note A", "Note B",
-  "Note C").
-- Each list accepts a single free-text value; submitting adds it to that list's history, newest
-  first.
+- A simple TODO list like page with three separate lists: "To Do", "In Progress", and "Done".
+- Submit to TODO adds a new item to the "To Do" list; items can be moved between lists by clicking
+  on them.
 - Submitting an empty/blank value is rejected (no-op).
-- Every entry records which of the three lists it belongs to, its text value, and its creation
+- Every entry records its text value, and its creation
   time. Entries are private to the owning user.
 
-## Feature: Page2 (named list of names/nicknames)
+## Feature: Group Management
 
-- A personal page containing one list of paired values: a "name" and a "nickname".
-- Submitting requires both a name and a nickname; either being empty blocks submission.
-- Newly added items appear at the top of the list, displayed as "Name (Nickname)".
-- Each item records name, nickname, and creation time. Items are private to the owning user.
+- Any user can create a group and become its administrator. Groups are private to their members.
+- There can be multiple administrators in a group; any administrator can invite or remove users.
+- There has to be at least one administrator in a group. The last administrator cannot remove themselves
+  from the group unless they first promote another user to administrator.
+- Group administrators can invite other users to join the group by email. Invited users receive
+  an email with a link to accept the invitation. Invited users must have an account to join the group;
+  if they do not have an account, they are prompted to create one first.
+- Users in the group can be group administrators, read only users or read and write users.
+- Group administrators can remove users from the group. Removing a user revokes their access to
+  the group and its data immediately.
+- Group administrator can delete the group.
+
+## Feature: Page for groups
+- A group page containing one table of paired values: a "source" and a "target".
+- Submitting requires both a source and a target; either being empty blocks submission.
+- Newly added items appear in the table.
+- Each item records group, source, target, and creation user and time. Items are private to the owning group.
 
 ## Feature: User Management (administrators only)
 
@@ -71,3 +83,12 @@ can see another user's data, except administrators managing accounts (not user c
   signed in but lack admin rights.
 - Error states (failed load, failed save, validation errors) are surfaced to the user as
   descriptive inline messages, not silent failures.
+
+## Other Notes
+Security is important. Strongly encrypt passwords, use HTTPS, and follow OWASP/CWE best practices for web application security.
+Add logging and monitoring for security events, such as failed login attempts, suspicious activity.
+Add general logging for application events, such as user actions, errors, and system events.
+Add tests for backend and front-end functionality, including unit tests, integration tests, and end-to-end tests.
+Keep the code simple and easily extendable, with clear separation of concerns and modular design.
+
+
