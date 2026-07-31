@@ -1,12 +1,16 @@
 package webapp1.backend.db
 
 import io.getquill.*
+import io.getquill.context.qzio.ZioJdbcContext
+import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-final class PostgresTodoRepository(dataSource: DataSource) extends TodoRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends TodoRepository {
   import ctx._
 
   private inline def todos = quote(querySchema[TodoItemRow]("todo_items"))
@@ -25,23 +29,36 @@ final class PostgresTodoRepository(dataSource: DataSource) extends TodoRepositor
   def updateStatus(id: Long, userId: Long, status: String): Task[Option[TodoItemRow]] = {
     for {
       affected <- run(
-                    ctx.run(quote(todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status))))
-                  )
-      result <- if (affected > 0) run(ctx.run(quote(todos.filter(_.id == lift(id))))).map(_.headOption) else ZIO.none
+        ctx.run(quote(todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status))))
+      )
+      result <-
+        if (affected > 0)
+          run(ctx.run(quote(todos.filter(_.id == lift(id))))).map(_.headOption)
+        else
+          ZIO.none
     } yield result
   }
 }
 
 object PostgresTodoRepository {
-  val live: ZLayer[DataSource, Nothing, TodoRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresTodoRepository(ds): TodoRepository)
+  val live: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new TodoRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): TodoRepository
+  )
 }
 
-final class PostgresGroupRepository(dataSource: DataSource) extends GroupRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+object SqliteTodoRepository {
+  val live: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new TodoRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): TodoRepository
+  )
+}
+
+final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends GroupRepository {
   import ctx._
 
-  private inline def groupsQ  = quote(querySchema[GroupRow]("groups"))
+  private inline def groupsQ = quote(querySchema[GroupRow]("groups"))
   private inline def membersQ = quote(querySchema[GroupMemberRow]("group_members"))
 
   private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
@@ -71,16 +88,25 @@ final class PostgresGroupRepository(dataSource: DataSource) extends GroupReposit
 }
 
 object PostgresGroupRepository {
-  val live: ZLayer[DataSource, Nothing, GroupRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresGroupRepository(ds): GroupRepository)
+  val live: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupRepository
+  )
 }
 
-final class PostgresGroupMemberRepository(dataSource: DataSource) extends GroupMemberRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+object SqliteGroupRepository {
+  val live: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupRepository
+  )
+}
+
+final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends GroupMemberRepository {
   import ctx._
 
   private inline def members = quote(querySchema[GroupMemberRow]("group_members"))
-  private inline def usersQ  = quote(querySchema[UserRow]("users"))
+  private inline def usersQ = quote(querySchema[UserRow]("users"))
 
   private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
 
@@ -89,7 +115,9 @@ final class PostgresGroupMemberRepository(dataSource: DataSource) extends GroupM
   }
 
   def findRole(groupId: Long, userId: Long): Task[Option[String]] = {
-    run(ctx.run(quote(members.filter(m => m.groupId == lift(groupId) && m.userId == lift(userId)).map(_.role)))).map(_.headOption)
+    run(ctx.run(quote(members.filter(m => m.groupId == lift(groupId) && m.userId == lift(userId)).map(_.role)))).map(
+      _.headOption
+    )
   }
 
   def listForGroup(groupId: Long): Task[List[(GroupMemberRow, String)]] = {
@@ -108,7 +136,9 @@ final class PostgresGroupMemberRepository(dataSource: DataSource) extends GroupM
 
   def updateRole(groupId: Long, userId: Long, role: String): Task[Unit] = {
     run(
-      ctx.run(quote(members.filter(m => m.groupId == lift(groupId) && m.userId == lift(userId)).update(_.role -> lift(role))))
+      ctx.run(
+        quote(members.filter(m => m.groupId == lift(groupId) && m.userId == lift(userId)).update(_.role -> lift(role)))
+      )
     ).unit
   }
 
@@ -118,12 +148,21 @@ final class PostgresGroupMemberRepository(dataSource: DataSource) extends GroupM
 }
 
 object PostgresGroupMemberRepository {
-  val live: ZLayer[DataSource, Nothing, GroupMemberRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresGroupMemberRepository(ds): GroupMemberRepository)
+  val live: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupMemberRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupMemberRepository
+  )
 }
 
-final class PostgresGroupPairRepository(dataSource: DataSource) extends GroupPairRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+object SqliteGroupMemberRepository {
+  val live: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupMemberRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupMemberRepository
+  )
+}
+
+final class GroupPairRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends GroupPairRepository {
   import ctx._
 
   private inline def pairs = quote(querySchema[GroupPairRow]("group_pairs"))
@@ -148,6 +187,13 @@ final class PostgresGroupPairRepository(dataSource: DataSource) extends GroupPai
 }
 
 object PostgresGroupPairRepository {
-  val live: ZLayer[DataSource, Nothing, GroupPairRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresGroupPairRepository(ds): GroupPairRepository)
+  val live: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupPairRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupPairRepository
+  )
+}
+
+object SqliteGroupPairRepository {
+  val live: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupPairRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupPairRepository
+  )
 }

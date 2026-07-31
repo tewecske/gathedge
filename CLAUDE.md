@@ -14,7 +14,7 @@ sbt compile                 # or: sbt root/compile
 npm run dev                 # concurrently: backend reStart, frontend fastLinkJS, vite dev
 npm run dev:tmux            # same, in a tmux window (./dev-tmux.sh)
 ```
-Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:8080` (stripping the `/api` prefix). Postgres must be up first: `docker compose up -d` (copy `.env.example` to `.env` first).
+Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:8080` (prefix kept as-is — backend routes are mounted under `/api`). Postgres must be up first: `docker compose up -d` (copy `.env.example` to `.env` first).
 
 **Tests**
 ```
@@ -55,7 +55,7 @@ Three-module sbt build: `modules/shared` (cross JVM/JS), `modules/backend` (ZIO 
 
 ### Dual-dialect database strategy
 
-Postgres is the only real target (see `docker-compose.yml`); SQLite exists solely so tests don't need Docker. Every repository is a plain interface in `backend/db/*Repository.scala` with two Quill implementations — `Postgres*Repository` and `Sqlite*Repository` — swapped in purely via `ZLayer`. Quill's `quote`/`run` macros bind to a concrete context type, so query code is duplicated between the two implementations rather than shared; keep both in sync when changing a query. Flyway migrations are duplicated per dialect under `backend/src/main/resources/db/migration/{postgresql,sqlite}/`, kept schema-identical (all timestamps are epoch-millis `BIGINT`/`INTEGER`, not native timestamp types, specifically to keep the two dialects portable).
+Postgres is the only real target (see `docker-compose.yml`); SQLite exists solely so tests don't need Docker. Every repository is a plain interface in `backend/db/*Repository.scala`, backed by a single generic implementation (`*RepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]` in `backend/db/{Repositories,RepositoriesM2,RepositoriesM3}.scala`) that takes a `ZioJdbcContext[Dialect, Naming]` constructor param — the quoted-query bodies are written once. `PostgresXRepository`/`SqliteXRepository` objects are thin `ZLayer`s that just supply a `PostgresZioJdbcContext`/`SqliteZioJdbcContext` instance to the same generic class. Trade-off: because the dialect isn't statically known at the `quote` call site, every query compiles as a Quill "Dynamic Query" (rendered to SQL at runtime instead of baked in at compile time via the macro) — functionally fine (verified against real Postgres via `PostgresIntegrationSpec`) but gives up Quill's compile-time SQL generation/caching. Flyway migrations are still duplicated per dialect under `backend/src/main/resources/db/migration/{postgresql,sqlite}/`, kept schema-identical (all timestamps are epoch-millis `BIGINT`/`INTEGER`, not native timestamp types, specifically to keep the two dialects portable) — Flyway has no equivalent dialect-abstraction mechanism.
 
 `Main.scala` always wires the Postgres implementations. Tests wire the SQLite ones via `TestDataSource.sqlite`, a `ZLayer` that spins up a temp-file SQLite DB and runs the SQLite migrations, fresh per test.
 

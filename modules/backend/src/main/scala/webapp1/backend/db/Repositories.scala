@@ -1,12 +1,21 @@
 package webapp1.backend.db
 
 import io.getquill.*
+import io.getquill.context.qzio.ZioJdbcContext
+import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-final class PostgresUserRepository(dataSource: DataSource) extends UserRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+/** Dialect-generic implementation shared by both Postgres and SQLite. Quill's `ctx.run` dispatches SQL rendering off
+  * `ctx.idiom` at runtime, so a single quoted-query body works for any `ZioJdbcContext[Dialect, Naming]` — no need to
+  * hand-duplicate the query bodies per dialect, only the context instance differs (see the two `object`s below each
+  * trait's implementation).
+  */
+final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends UserRepository {
   import ctx._
 
   private inline def users = quote(querySchema[UserRow]("users"))
@@ -65,12 +74,21 @@ final class PostgresUserRepository(dataSource: DataSource) extends UserRepositor
 }
 
 object PostgresUserRepository {
-  val live: ZLayer[DataSource, Nothing, UserRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresUserRepository(ds): UserRepository)
+  val live: ZLayer[DataSource, Nothing, UserRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new UserRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): UserRepository
+  )
 }
 
-final class PostgresSessionRepository(dataSource: DataSource) extends SessionRepository {
-  private val ctx = new PostgresZioJdbcContext(SnakeCase)
+object SqliteUserRepository {
+  val live: ZLayer[DataSource, Nothing, UserRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new UserRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): UserRepository
+  )
+}
+
+final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  ctx: ZioJdbcContext[Dialect, Naming],
+) extends SessionRepository {
   import ctx._
 
   private inline def sessions = quote(querySchema[SessionRow]("sessions"))
@@ -84,13 +102,9 @@ final class PostgresSessionRepository(dataSource: DataSource) extends SessionRep
   }
 
   def findActive(id: String, now: Long): Task[Option[SessionRow]] = {
-    run(
-      ctx.run(
-        quote(
-          sessions.filter(s => s.id == lift(id) && s.expiresAt > lift(now) && s.revokedAt.isEmpty)
-        )
-      )
-    ).map(_.headOption)
+    run(ctx.run(quote(sessions.filter(s => s.id == lift(id) && s.expiresAt > lift(now) && s.revokedAt.isEmpty)))).map(
+      _.headOption
+    )
   }
 
   def revoke(id: String, revokedAt: Long): Task[Unit] = {
@@ -99,6 +113,13 @@ final class PostgresSessionRepository(dataSource: DataSource) extends SessionRep
 }
 
 object PostgresSessionRepository {
-  val live: ZLayer[DataSource, Nothing, SessionRepository] =
-    ZLayer.fromFunction((ds: DataSource) => new PostgresSessionRepository(ds): SessionRepository)
+  val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new SessionRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): SessionRepository
+  )
+}
+
+object SqliteSessionRepository {
+  val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new SessionRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): SessionRepository
+  )
 }
