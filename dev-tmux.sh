@@ -32,19 +32,19 @@ else
   fi
 fi
 
-PANE_ZIO=$(tmux split-window -P -F '#{pane_id}' -h -t "$WIN_ID" -c "$ROOT_DIR")
-tmux send-keys -t "$PANE_ZIO" "sbt --client '~backendZio/reStart'" C-m
+PANE_BACKEND=$(tmux split-window -P -F '#{pane_id}' -h -t "$WIN_ID" -c "$ROOT_DIR")
+tmux send-keys -t "$PANE_BACKEND" "sbt --client '~backend/reStart'" C-m
 
 PANE_SCALAJS=$(tmux split-window -P -F '#{pane_id}' -c "$ROOT_DIR")
 tmux send-keys -t "$PANE_SCALAJS" "sbt --client '~frontend/fastLinkJS'" C-m
 
-PANE_VITE=$(tmux split-window -P -F '#{pane_id}' -v -t "$PANE_ZIO" -c "$ROOT_DIR")
+PANE_VITE=$(tmux split-window -P -F '#{pane_id}' -v -t "$PANE_BACKEND" -c "$ROOT_DIR")
 tmux send-keys -t "$PANE_VITE" "npm --prefix web run dev" C-m
 
 tmux select-layout -t "$WIN_ID" tiled
 
 tmux set-option -t "$WIN_ID" pane-border-status top
-tmux select-pane -t "$PANE_ZIO" -T "zio-http :8080"
+tmux select-pane -t "$PANE_BACKEND" -T "http :8080"
 tmux select-pane -t "$PANE_SCALAJS" -T "scalajs fastLinkJS"
 tmux select-pane -t "$PANE_VITE" -T "vite :5173"
 

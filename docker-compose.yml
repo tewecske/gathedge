@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-webapp1}
+      POSTGRES_USER: ${DB_USER:-webapp1}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-webapp1}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - webapp1_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-webapp1} -d ${DB_NAME:-webapp1}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  webapp1_postgres_data:

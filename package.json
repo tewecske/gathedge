@@ -3,6 +3,7 @@
   "private": true,
   "devDependencies": {
     "concurrently": "^10.0.3",
+    "jsdom": "^30.0.1",
     "typescript": "^5.9.3"
   },
   "scripts": {
