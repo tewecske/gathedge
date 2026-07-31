@@ -8,6 +8,7 @@ import webapp1.frontend.pages.{
   AdminUsersPage,
   ForbiddenPage,
   GroupDetailPage,
+  GroupMembersPage,
   GroupsPage,
   NotFoundPage,
   SignInPage,
@@ -69,6 +70,7 @@ object App {
       case (Page.Home, Some(u))            => TodoPage.render(u)
       case (Page.Groups, Some(u))          => GroupsPage.render(u)
       case (Page.GroupDetail(id), Some(u)) => GroupDetailPage.render(u, id)
+      case (Page.GroupMembers(id), Some(u)) => GroupMembersPage.render(u, id)
       case (Page.AcceptInvite(token), _)   => AcceptInvitePage.render(user, token)
       case (Page.Admin, Some(u)) if u.isAdmin            => AdminUsersPage.render(u)
       case (Page.Admin, Some(_))                          => ForbiddenPage.render()

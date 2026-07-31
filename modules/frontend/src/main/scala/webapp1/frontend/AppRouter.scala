@@ -10,6 +10,7 @@ object Page {
   case object Home extends Page
   case object Groups extends Page
   final case class GroupDetail(id: Long) extends Page
+  final case class GroupMembers(id: Long) extends Page
   final case class AcceptInvite(token: String) extends Page
   case object Admin extends Page
   final case class AdminUserDetail(id: Long) extends Page
@@ -44,6 +45,11 @@ object AppRouter {
     decode = (id: Long) => GroupDetail(id),
     pattern = root / "groups" / segment[Long],
   )
+  private val groupMembersRoute = Route(
+    encode = (p: GroupMembers) => p.id,
+    decode = (id: Long) => GroupMembers(id),
+    pattern = root / "groups" / segment[Long] / "members",
+  )
   private val acceptInviteRoute = Route(
     encode = (p: AcceptInvite) => p.token,
     decode = (token: String) => AcceptInvite(token),
@@ -65,6 +71,7 @@ object AppRouter {
     case Home                => "Home"
     case Groups               => "Groups"
     case GroupDetail(id)      => s"GroupDetail:$id"
+    case GroupMembers(id)     => s"GroupMembers:$id"
     case AcceptInvite(token)  => s"AcceptInvite:$token"
     case Admin                => "Admin"
     case AdminUserDetail(id)  => s"AdminUserDetail:$id"
@@ -73,7 +80,9 @@ object AppRouter {
   }
 
   private def deserialize(tag: String): Page = {
-    if (tag.startsWith("GroupDetail:")) {
+    if (tag.startsWith("GroupMembers:")) {
+      GroupMembers(tag.stripPrefix("GroupMembers:").toLongOption.getOrElse(0L))
+    } else if (tag.startsWith("GroupDetail:")) {
       GroupDetail(tag.stripPrefix("GroupDetail:").toLongOption.getOrElse(0L))
     } else if (tag.startsWith("AcceptInvite:")) {
       AcceptInvite(tag.stripPrefix("AcceptInvite:"))
@@ -99,6 +108,7 @@ object AppRouter {
       homeRoute,
       groupsRoute,
       groupDetailRoute,
+      groupMembersRoute,
       acceptInviteRoute,
       adminRoute,
       adminUserDetailRoute,
