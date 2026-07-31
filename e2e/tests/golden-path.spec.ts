@@ -16,6 +16,7 @@ const password = 'password123';
 test.describe.configure({ mode: 'serial' });
 
 let page: Page;
+let groupName: string;
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
@@ -59,6 +60,13 @@ test('blank todo submission is a no-op', async () => {
   expect(after).toBe(before);
 });
 
+test('todo item survives a page refresh (list is re-fetched, not just held in memory)', async () => {
+  const itemText = `write the report ${unique}`;
+  await page.reload();
+  const inProgressColumn = page.locator('.card').filter({ hasText: 'In Progress' });
+  await expect(inProgressColumn.getByText(itemText)).toBeVisible();
+});
+
 test('theme toggle switches the page theme immediately', async () => {
   const html = page.locator('html');
   const before = await html.getAttribute('data-theme');
@@ -67,7 +75,7 @@ test('theme toggle switches the page theme immediately', async () => {
 });
 
 test('creating a group makes the creator its admin', async () => {
-  const groupName = `E2E Group ${unique}`;
+  groupName = `E2E Group ${unique}`;
   await page.getByRole('link', { name: 'Groups' }).click();
   await expect(page).toHaveURL(/\/groups$/);
   await page.locator('input[placeholder="New group name"]').fill(groupName);
@@ -79,21 +87,44 @@ test('creating a group makes the creator its admin', async () => {
   await expect(page.getByRole('heading', { name: groupName })).toBeVisible();
 });
 
+test('group list survives a page refresh (list is re-fetched, not just held in memory)', async () => {
+  await page.goto('/groups');
+  const row = page.locator('.list-row').filter({ hasText: groupName });
+  await expect(row).toBeVisible();
+  await row.getByRole('link', { name: groupName }).click();
+  await expect(page.getByRole('heading', { name: groupName })).toBeVisible();
+});
+
 test('adding a source/target pair requires both fields and then appears in the table', async () => {
+  // Scoped to the pairs table specifically: the page also has a members table
+  // (which always has at least 1 row, the creator), so an unscoped `table tbody
+  // tr` locator would false-positive on that.
+  const pairsTable = page.locator('table').filter({ has: page.locator('th', { hasText: 'Source' }) });
+
   await page.getByRole('button', { name: 'Add' }).click(); // blank submit: no-op
-  await expect(page.locator('table tbody tr')).toHaveCount(0);
+  await expect(pairsTable.locator('tbody tr')).toHaveCount(0);
 
   await page.locator('input[placeholder="Source"]').fill('source-value');
   await page.locator('input[placeholder="Target"]').fill('target-value');
   await page.getByRole('button', { name: 'Add' }).click();
 
-  await expect(page.locator('table tbody tr', { hasText: 'source-value' })).toBeVisible();
+  await expect(pairsTable.locator('tbody tr', { hasText: 'source-value' })).toBeVisible();
 });
 
 test('inviting a member is accepted by the server (link delivery is out of e2e reach)', async () => {
   await page.locator('input[placeholder="Email to invite"]').fill(`invitee-${unique}@example.com`);
   await page.getByRole('button', { name: 'Invite' }).click();
   await expect(page.getByText(/Invited /)).toBeVisible();
+});
+
+test('group detail (pairs, members, add-pair form) survives a page refresh', async () => {
+  await page.reload();
+  // Add-pair form is only rendered once the group (with myRole) has loaded.
+  await expect(page.locator('input[placeholder="Source"]')).toBeVisible();
+  await expect(page.locator('input[placeholder="Target"]')).toBeVisible();
+  await expect(page.locator('table tbody tr', { hasText: 'source-value' })).toBeVisible();
+  // Members list must include the creator (self) — this is the "empty members" bug.
+  await expect(page.getByText(email)).toBeVisible();
 });
 
 test('log out returns to sign-in', async () => {

@@ -25,7 +25,6 @@ private class AdminUsersPage {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       h1(cls := "text-2xl font-bold mb-4", "User management"),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderCreateForm(),
@@ -35,6 +34,7 @@ private class AdminUsersPage {
         case Left(err)    => errorVar.set(Some(err.message))
       },
       createBus.events.flatMapSwitch(_ => createUser()) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 

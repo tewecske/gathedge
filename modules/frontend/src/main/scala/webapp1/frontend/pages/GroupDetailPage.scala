@@ -35,7 +35,6 @@ private class GroupDetailPage(groupId: Long) {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), "← Back to groups")),
       h1(cls := "text-2xl font-bold mb-4", text <-- groupVar.signal.map(_.map(_.name).getOrElse("Group"))),
       child.maybe <-- errorVar.signal.map(_.map(msg => renderAlert("alert-error", msg))),
@@ -65,6 +64,7 @@ private class GroupDetailPage(groupId: Long) {
       removeMemberBus.events.flatMapSwitch(removeMember) --> Observer[Unit](_ => ()),
       roleChangeBus.events.flatMapSwitch(changeRole) --> Observer[Unit](_ => ()),
       deleteGroupBus.events.flatMapSwitch(_ => deleteGroup()) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 

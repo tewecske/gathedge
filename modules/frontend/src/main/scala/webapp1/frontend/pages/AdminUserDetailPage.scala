@@ -30,7 +30,6 @@ private class AdminUserDetailPage(userId: Long) {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin), "← Back to users")),
       child.maybe <-- errorVar.signal.map(_.map(msg => renderAlert("alert-error", msg))),
       child.maybe <-- infoVar.signal.map(_.map(msg => renderAlert("alert-info", msg))),
@@ -47,6 +46,7 @@ private class AdminUserDetailPage(userId: Long) {
       },
       saveBus.events.flatMapSwitch(_ => save()) --> Observer[Unit](_ => ()),
       deleteBus.events.flatMapSwitch(_ => delete()) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 

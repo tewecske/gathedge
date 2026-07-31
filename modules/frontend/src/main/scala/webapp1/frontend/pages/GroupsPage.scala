@@ -21,7 +21,6 @@ private class GroupsPage {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       h1(cls := "text-2xl font-bold mb-4", "Groups"),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderCreateForm(),
@@ -40,6 +39,7 @@ private class GroupsPage {
         case Left(err)     => errorVar.set(Some(err.message))
       },
       createBus.events.flatMapSwitch(_ => createGroup()) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 

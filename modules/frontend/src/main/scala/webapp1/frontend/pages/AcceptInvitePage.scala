@@ -28,7 +28,6 @@ private class AcceptInvitePage(token: String) {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       cls := "min-h-screen flex items-center justify-center bg-base-200 p-4",
       div(
         cls := "card w-full max-w-md bg-base-100 shadow-xl",
@@ -46,6 +45,7 @@ private class AcceptInvitePage(token: String) {
         case Left(err)   => errorVar.set(Some(err.message))
       },
       acceptBus.events.flatMapSwitch(_ => accept()) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 

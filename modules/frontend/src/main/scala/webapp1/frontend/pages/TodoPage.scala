@@ -22,7 +22,6 @@ private class TodoPage {
 
   def render(): HtmlElement = {
     div(
-      onMountCallback(_ => loadBus.emit(())),
       h1(cls := "text-2xl font-bold mb-4", "TODO"),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderAddForm(),
@@ -38,6 +37,7 @@ private class TodoPage {
       },
       addBus.events.flatMapSwitch(_ => addTodo()) --> Observer[Unit](_ => ()),
       moveBus.events.flatMapSwitch(moveTodo) --> Observer[Unit](_ => ()),
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 
