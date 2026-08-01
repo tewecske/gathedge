@@ -100,15 +100,21 @@ object AppRouter {
     }
   }
 
+  // A corrupt/truncated id in a history entry means the tag isn't a page we can restore —
+  // fall back to NotFound rather than fabricating id 0 and letting the page 404 against the API.
+  private def withId(tag: String, prefix: String)(page: Long => Page): Page = {
+    tag.stripPrefix(prefix).toLongOption.map(page).getOrElse(NotFound)
+  }
+
   private def deserialize(tag: String): Page = {
     if (tag.startsWith("GroupMembers:")) {
-      GroupMembers(tag.stripPrefix("GroupMembers:").toLongOption.getOrElse(0L))
+      withId(tag, "GroupMembers:")(GroupMembers.apply)
     } else if (tag.startsWith("GroupDetail:")) {
-      GroupDetail(tag.stripPrefix("GroupDetail:").toLongOption.getOrElse(0L))
+      withId(tag, "GroupDetail:")(GroupDetail.apply)
     } else if (tag.startsWith("AcceptInvite:")) {
       AcceptInvite(tag.stripPrefix("AcceptInvite:"))
     } else if (tag.startsWith("AdminUserDetail:")) {
-      AdminUserDetail(tag.stripPrefix("AdminUserDetail:").toLongOption.getOrElse(0L))
+      withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else {
       tag match {
         case "SignIn" =>

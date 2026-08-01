@@ -19,13 +19,14 @@ object SignUpPageSpec extends ZIOSpecDefault {
 
         val emailInput = container.querySelector("input[type=email]").asInstanceOf[dom.html.Input]
         val passwordInput = container.querySelector("input[type=password]").asInstanceOf[dom.html.Input]
-        val submitButton = container.querySelector("button").asInstanceOf[dom.html.Button]
+        val signUpForm = container.querySelector("form").asInstanceOf[dom.html.Form]
 
         emailInput.value = "user@example.com"
         emailInput.dispatchEvent(new dom.Event("input"))
         passwordInput.value = "short"
         passwordInput.dispatchEvent(new dom.Event("input"))
-        submitButton.dispatchEvent(new dom.Event("click"))
+        // The page submits via the form element (so Enter works), not via a click handler.
+        signUpForm.dispatchEvent(new dom.Event("submit"))
 
         val alertText = Option(container.querySelector(".alert")).map(_.textContent).getOrElse("")
 

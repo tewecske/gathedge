@@ -6,37 +6,66 @@ import webapp1.frontend.components.AppShell
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.CreateUserRequest
+import webapp1.shared.validation.Validation
 
 object AdminUsersPage {
-  def render(user: User): HtmlElement = AppShell.render(user, Page.Admin, new AdminUsersPage().render())
+  def render(): HtmlElement = AppShell.render(Page.Admin, new AdminUsersPage().render())
 }
 
 private class AdminUsersPage {
   private val usersVar = Var(List.empty[User])
+  private val usersSignal = usersVar.signal
 
   private val emailVar = Var("")
+  private val emailSignal = emailVar.signal
   private val passwordVar = Var("")
+  private val passwordSignal = passwordVar.signal
   private val isAdminVar = Var(false)
+  private val isAdminSignal = isAdminVar.signal
 
   private val errorVar: Var[Option[String]] = Var(None)
+  private val errorSignal = errorVar.signal
+  private val inFlightVar = Var(false)
+  private val inFlightSignal = inFlightVar.signal
 
   private val loadBus = new EventBus[Unit]()
   private val createBus = new EventBus[Unit]()
 
+  // Validation is pure; the effects hang off the resulting stream as observers.
+  private val createStream = createBus.events.filterWith(inFlightSignal.not).map(_ => validateNewUser())
+
   def render(): HtmlElement = {
     div(
       h1(cls := "text-2xl font-bold mb-4", "User management"),
-      child.maybe <-- errorVar.signal.map(_.map(renderError)),
+      child.maybe <-- errorSignal.map(_.map(renderError)),
       renderCreateForm(),
       renderTable(),
       loadBus.events.flatMapSwitch(_ => ApiClient.get[List[User]]("/api/admin/users")) -->
         Observer[Either[ApiError, List[User]]] {
           case Right(users) =>
-            usersVar.set(users)
+            Var.set(usersVar -> users, errorVar -> None)
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
-      createBus.events.flatMapSwitch(_ => createUser()) --> Observer[Unit](_ => ()),
+      createStream -->
+        Observer[Either[String, CreateUserRequest]] {
+          case Left(err) =>
+            errorVar.set(Some(err))
+          case Right(_) =>
+            Var.set(inFlightVar -> true, errorVar -> None)
+        },
+      createStream
+        .collect { case Right(request) =>
+          request
+        }
+        .flatMapSwitch(request => ApiClient.post[CreateUserRequest, User]("/api/admin/users", request)) -->
+        Observer[Either[ApiError, User]] {
+          case Right(user) =>
+            usersVar.update(_ :+ user)
+            Var.set(inFlightVar -> false, emailVar -> "", passwordVar -> "", isAdminVar -> false, errorVar -> None)
+          case Left(err) =>
+            Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+        },
       onMountCallback(_ => loadBus.emit(())),
     )
   }
@@ -47,33 +76,31 @@ private class AdminUsersPage {
       div(
         cls := "card-body",
         h2(cls := "card-title", "Create user"),
-        div(
+        form(
           cls := "flex flex-wrap gap-2 items-center",
+          onSubmit.preventDefault.mapToUnit --> createBus.writer,
           input(
             cls := "input",
             typ := "email",
             placeholder := "Email",
-            value <-- emailVar.signal,
-            onInput.mapToValue --> emailVar.writer,
+            controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
           ),
           input(
             cls := "input",
             typ := "password",
-            placeholder := "Password (min 8 characters)",
-            value <-- passwordVar.signal,
-            onInput.mapToValue --> passwordVar.writer,
+            placeholder := s"Password (min ${Validation.minPasswordLength} characters)",
+            controlled(value <-- passwordSignal, onInput.mapToValue --> passwordVar.writer),
           ),
           label(
             cls := "label gap-2",
             input(
               typ := "checkbox",
               cls := "checkbox",
-              checked <-- isAdminVar.signal,
-              onClick.mapToChecked --> isAdminVar.writer,
+              controlled(checked <-- isAdminSignal, onClick.mapToChecked --> isAdminVar.writer),
             ),
             "Administrator",
           ),
-          button(cls := "btn btn-primary", typ := "button", "Create", onClick.mapToUnit --> createBus.writer),
+          button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Create"),
         ),
       ),
     )
@@ -87,26 +114,30 @@ private class AdminUsersPage {
         thead(tr(th("Email"), th("Admin"), th("Created"))),
         tbody(
           children <--
-            usersVar
-              .signal
-              .splitSeq(_.id) { userSignal =>
-                renderRow(userSignal)
-              }
+            usersSignal.splitSeq(_.id) { userSignal =>
+              renderRow(userSignal.key, userSignal)
+            }
         ),
       ),
     )
   }
 
-  private def renderRow(userSignal: StrictSignal[User]): HtmlElement = {
-    val id = userSignal.now().id
+  private def renderRow(id: Long, userSignal: Signal[User]): HtmlElement = {
     tr(
-      cls := "hover cursor-pointer",
-      onClick.mapToUnit --> Observer[Unit](_ => AppRouter.router.pushState(Page.AdminUserDetail(id))),
-      td(text <-- userSignal.map(_.email)),
+      cls := "hover",
+      // A link rather than a click handler on the row, so the detail page is reachable by keyboard.
+      td(
+        a(
+          cls := "link link-hover",
+          AppRouter.router.navigateTo(Page.AdminUserDetail(id)),
+          text <-- userSignal.map(_.email).distinct,
+        )
+      ),
       td(
         child <--
           userSignal
             .map(_.isAdmin)
+            .distinct
             .map { isAdmin =>
               if (isAdmin)
                 span(cls := "badge badge-primary", "Admin")
@@ -114,24 +145,15 @@ private class AdminUsersPage {
                 span(cls := "badge badge-ghost", "User")
             }
       ),
-      td(text <-- userSignal.map(_.createdAt)),
+      td(text <-- userSignal.map(_.createdAt).distinct),
     )
   }
 
-  private def createUser() = {
-    val email = emailVar.now()
-    val password = passwordVar.now()
-    val isAdmin = isAdminVar.now()
-    ApiClient
-      .post[CreateUserRequest, User]("/api/admin/users", CreateUserRequest(email, password, isAdmin))
-      .map {
-        case Right(user) =>
-          usersVar.update(_ :+ user)
-          Var.set(emailVar -> "", passwordVar -> "", isAdminVar -> false)
-          errorVar.set(None)
-        case Left(err) =>
-          errorVar.set(Some(err.message))
-      }
+  private def validateNewUser(): Either[String, CreateUserRequest] = {
+    for {
+      email <- Validation.validateEmail(emailVar.now())
+      password <- Validation.validatePassword(passwordVar.now())
+    } yield CreateUserRequest(email, password, isAdminVar.now())
   }
 
   private def renderError(message: String): HtmlElement = {

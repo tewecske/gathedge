@@ -8,7 +8,9 @@ import webapp1.shared.domain.{Theme, User}
   * last-known `/api/me` result so pages don't all need to re-fetch it.
   */
 object AppState {
-  val currentUserVar: Var[Option[User]] = Var(None)
+  // Kept private so the only writes go through setUser/clearUser (which also keep the
+  // document theme in sync); everything else reads the signal.
+  private val currentUserVar: Var[Option[User]] = Var(None)
   val currentUserSignal: Signal[Option[User]] = currentUserVar.signal
 
   private def themeName(theme: Theme): String = {
@@ -20,7 +22,8 @@ object AppState {
     }
   }
 
-  /** Applies the theme to the whole document immediately (summary.md) and mirrors it into the current-user state.
+  /** Applies the theme to the whole document immediately (summary.md). Mirroring it into the current-user state is
+    * [[setUser]]'s job, since the server response is what makes it authoritative.
     */
   def applyTheme(theme: Theme): Unit = {
     dom.document.documentElement.setAttribute("data-theme", themeName(theme))

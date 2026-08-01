@@ -3,27 +3,39 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.components.AppShell
-import webapp1.frontend.{AppRouter, Page}
-import webapp1.shared.domain.{TodoItem, TodoStatus, User}
+import webapp1.frontend.Page
+import webapp1.shared.domain.{TodoItem, TodoStatus}
 import webapp1.shared.dto.{CreateTodoRequest, UpdateTodoStatusRequest}
+import webapp1.shared.validation.Validation
 
 object TodoPage {
-  def render(user: User): HtmlElement = AppShell.render(user, Page.Home, new TodoPage().render())
+  def render(): HtmlElement = AppShell.render(Page.Home, new TodoPage().render())
 }
 
 private class TodoPage {
   private val itemsVar = Var(List.empty[TodoItem])
+  private val itemsSignal = itemsVar.signal
   private val textVar = Var("")
+  private val textSignal = textVar.signal
   private val errorVar: Var[Option[String]] = Var(None)
+  private val errorSignal = errorVar.signal
+  private val inFlightVar = Var(false)
+  private val inFlightSignal = inFlightVar.signal
 
   private val loadBus = new EventBus[Unit]()
   private val addBus = new EventBus[Unit]()
   private val moveBus = new EventBus[(Long, TodoStatus)]()
 
+  // Validation is pure; the effects hang off the resulting stream as observers.
+  private val addStream = addBus
+    .events
+    .filterWith(inFlightSignal.not)
+    .map(_ => Validation.validateNonBlank(textVar.now(), "To-do text"))
+
   def render(): HtmlElement = {
     div(
       h1(cls := "text-2xl font-bold mb-4", "TODO"),
-      child.maybe <-- errorVar.signal.map(_.map(renderError)),
+      child.maybe <-- errorSignal.map(_.map(renderError)),
       renderAddForm(),
       div(
         cls := "grid grid-cols-1 md:grid-cols-3 gap-4 mt-4",
@@ -34,26 +46,58 @@ private class TodoPage {
       loadBus.events.flatMapSwitch(_ => ApiClient.get[List[TodoItem]]("/api/todos")) -->
         Observer[Either[ApiError, List[TodoItem]]] {
           case Right(items) =>
-            itemsVar.set(items)
+            Var.set(itemsVar -> items, errorVar -> None)
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
-      addBus.events.flatMapSwitch(_ => addTodo()) --> Observer[Unit](_ => ()),
-      moveBus.events.flatMapSwitch(moveTodo) --> Observer[Unit](_ => ()),
+      addStream -->
+        Observer[Either[String, String]] {
+          case Left(err) =>
+            errorVar.set(Some(err))
+          case Right(_) =>
+            Var.set(inFlightVar -> true, errorVar -> None)
+        },
+      addStream
+        .collect { case Right(text) =>
+          text
+        }
+        .flatMapSwitch(text => ApiClient.post[CreateTodoRequest, TodoItem]("/api/todos", CreateTodoRequest(text))) -->
+        Observer[Either[ApiError, TodoItem]] {
+          case Right(item) =>
+            itemsVar.update(_ :+ item)
+            Var.set(inFlightVar -> false, textVar -> "", errorVar -> None)
+          case Left(err) =>
+            Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+        },
+      moveBus.events.flatMapSwitch(moveTodo) -->
+        Observer[(Long, Either[ApiError, TodoItem])] {
+          case (id, Right(updated)) =>
+            itemsVar.update(
+              _.map(item => {
+                if (item.id == id)
+                  updated
+                else
+                  item
+              })
+            )
+            errorVar.set(None)
+          case (_, Left(err)) =>
+            errorVar.set(Some(err.message))
+        },
       onMountCallback(_ => loadBus.emit(())),
     )
   }
 
   private def renderAddForm(): HtmlElement = {
-    div(
+    form(
       cls := "flex gap-2",
+      onSubmit.preventDefault.mapToUnit --> addBus.writer,
       input(
         cls := "input flex-1",
         placeholder := "New to-do item",
-        value <-- textVar.signal,
-        onInput.mapToValue --> textVar.writer,
+        controlled(value <-- textSignal, onInput.mapToValue --> textVar.writer),
       ),
-      button(cls := "btn btn-primary", typ := "button", "Add", onClick.mapToUnit --> addBus.writer),
+      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Add"),
     )
   }
 
@@ -66,8 +110,7 @@ private class TodoPage {
         ul(
           cls := "list",
           children <--
-            itemsVar
-              .signal
+            itemsSignal
               .map(_.filter(_.status == status))
               .splitSeq(_.id) { itemSignal =>
                 renderItem(itemSignal.key, status, itemSignal)
@@ -80,46 +123,18 @@ private class TodoPage {
   private def renderItem(id: Long, status: TodoStatus, itemSignal: Signal[TodoItem]): HtmlElement = {
     li(
       cls := "list-row cursor-pointer hover:bg-base-200",
-      text <-- itemSignal.map(_.text),
+      text <-- itemSignal.map(_.text).distinct,
       onClick.mapToUnit --> Observer[Unit](_ => moveBus.emit((id, status.next))),
     )
   }
 
-  private def addTodo() = {
-    val text = textVar.now()
-    if (text.trim.isEmpty) {
-      EventStream.fromValue((), emitOnce = true)
-    } else {
-      ApiClient
-        .post[CreateTodoRequest, TodoItem]("/api/todos", CreateTodoRequest(text))
-        .map {
-          case Right(item) =>
-            itemsVar.update(_ :+ item)
-            textVar.set("")
-            errorVar.set(None)
-          case Left(err) =>
-            errorVar.set(Some(err.message))
-        }
-    }
-  }
-
-  private def moveTodo(idAndStatus: (Long, TodoStatus)) = {
+  // The id travels with the response so the observer can patch the right item without
+  // reaching back into a Var mid-stream.
+  private def moveTodo(idAndStatus: (Long, TodoStatus)): EventStream[(Long, Either[ApiError, TodoItem])] = {
     val (id, newStatus) = idAndStatus
     ApiClient
       .put[UpdateTodoStatusRequest, TodoItem](s"/api/todos/$id/status", UpdateTodoStatusRequest(newStatus))
-      .map {
-        case Right(updated) =>
-          itemsVar.update(
-            _.map(item => {
-              if (item.id == id)
-                updated
-              else
-                item
-            })
-          )
-        case Left(err) =>
-          errorVar.set(Some(err.message))
-      }
+      .map(result => (id, result))
   }
 
   private def renderError(message: String): HtmlElement = {

@@ -3,12 +3,9 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
-import webapp1.shared.domain.{Theme, User}
 import zio.test._
 
 object TodoPageSpec extends ZIOSpecDefault {
-
-  private val testUser = User(1L, "user@example.com", isAdmin = false, Theme.Light, "2026-01-01T00:00:00Z")
 
   def spec = {
     suite("TodoPage")(
@@ -17,7 +14,7 @@ object TodoPageSpec extends ZIOSpecDefault {
         dom.document.body.appendChild(container)
         // No backend is running; mounting must not throw even though the initial
         // GET /api/todos will fail (ApiClient.networkSafe turns that into a Left).
-        val rootNode = L.render(container, TodoPage.render(testUser))
+        val rootNode = L.render(container, TodoPage.render())
 
         val text = container.textContent
         val hasAddInput = container.querySelector("input") != null
@@ -27,7 +24,26 @@ object TodoPageSpec extends ZIOSpecDefault {
         dom.document.body.removeChild(container)
 
         assertTrue(hasAddInput, hasAllColumns)
-      }
+      },
+      // Covers the reactive wiring, not just the initial render: submitting blank text is
+      // rejected client-side, so the alert appears synchronously with no network involved.
+      test("submitting a blank item shows a validation error and leaves the button enabled") {
+        val container = dom.document.createElement("div")
+        dom.document.body.appendChild(container)
+        val rootNode = L.render(container, TodoPage.render())
+
+        val addForm = container.querySelector("form").asInstanceOf[dom.html.Form]
+        val addButton = container.querySelector("form button").asInstanceOf[dom.html.Button]
+        addForm.dispatchEvent(new dom.Event("submit"))
+
+        val alertText = Option(container.querySelector(".alert")).map(_.textContent).getOrElse("")
+        val stillEnabled = !addButton.disabled
+
+        rootNode.unmount()
+        dom.document.body.removeChild(container)
+
+        assertTrue(alertText.contains("required"), stillEnabled)
+      },
     )
   }
 }
