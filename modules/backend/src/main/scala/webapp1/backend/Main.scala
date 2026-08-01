@@ -40,7 +40,7 @@ object Main extends ZIOAppDefault {
   private val allRoutes = {
     val combined =
       AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes
-    RouteSupport.handleDefects(combined) @@ Middleware.requestLogging()
+    RouteSupport.handleFailures(combined) @@ Middleware.requestLogging()
   }
 
   private val program = {

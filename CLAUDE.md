@@ -61,7 +61,16 @@ Postgres is the only real target (see `docker-compose.yml`); SQLite exists solel
 
 ### Backend request flow
 
-Route files (`backend/http/*Routes.scala`) follow one pattern throughout: each handler builds a `ZIO[R, Response, Response]` (both channels are `Response`) and ends with `.merge` to collapse it to `URIO[R, Response]` — failures are just error `Response`s constructed via `JsonSupport.errorResponse`, not exceptions. `RouteSupport` holds the three cross-cutting checks every route composes from: `csrfCheck` (state-changing requests require the `X-Requested-With` header — see below), `authenticatedUser`, and `requireAdmin`. `Main.scala` concatenates all route files with `++` into one `Routes` value.
+Route files (`backend/http/*Routes.scala`) follow one pattern throughout: each handler builds a `ZIO[R, Response, Response]` and each file exposes a `Routes[R, Response]` — an error channel of `Response` is what zio-http calls "handled", so failures are just error `Response`s constructed via `JsonSupport.errorResponse`, never exceptions and never merged per handler. `Main.scala` concatenates all route files with `++`, then wraps the result in `RouteSupport.handleFailures`, which passes failure `Response`s through and turns defects (every `.orDie` in the services) into a logged cause plus a generic JSON 500.
+
+The cross-cutting checks are `HandlerAspect`s in `RouteSupport`, applied to whole `Routes` values with `@@` rather than called at the top of each handler:
+
+- `csrf` — requires the `X-Requested-With` header, scoped with `.when` to methods outside GET/HEAD/OPTIONS.
+- `authenticated` / `adminOnly` — `HandlerAspect[AuthService, User]`: they resolve the session cookie once and hand the `User` to the handler through the environment, so a protected handler reads `ZIO.service[User]` and cannot compile unless some aspect supplies it.
+
+Aspects are attached last-runs-first (`routes @@ authenticated @@ csrf` checks CSRF before touching the session). Route files that mix public and protected endpoints (`AuthRoutes`, `InvitationRoutes`) build two `Routes` values and `++` them. **Never attach a context-providing aspect directly to a `handler` that also takes path parameters** — it hands the handler a bare `Request` where it expects the `(param, Request)` tuple, which compiles and then throws `ClassCastException` at request time. Put it on a `Routes` value.
+
+One mapping per service failure enum lives in `backend/http/FailureResponses.scala` (`auth`/`todo`/`group`/`admin`); route files call those rather than defining their own, so the status codes can't drift between two endpoints that raise the same failure.
 
 Session auth is a random opaque token in an `HttpOnly`/`SameSite=Lax` cookie (`SessionAuth`), not JWT. CSRF is mitigated by requiring a custom header on mutating requests (cross-site requests can't set one without a CORS preflight) rather than a token scheme — Google's OAuth callback is the one exception, since it's a top-level browser redirect that can't carry custom headers; it's protected by the `oauth_state` cookie/query-param match instead. Google sign-in additionally requires `email_verified` from the tokeninfo response before matching/creating an account by email.
 

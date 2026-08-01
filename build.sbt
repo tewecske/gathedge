@@ -83,6 +83,7 @@ lazy val backend = project
         "org.mindrot" % "jbcrypt" % jbcryptVersion,
         "dev.zio" %% "zio-test" % zioVersion % Test,
         "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
+        "dev.zio" %% "zio-http-testkit" % zioHttpVersion % Test,
         "org.xerial" % "sqlite-jdbc" % sqliteJdbcVersion % Test,
         "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
       ),

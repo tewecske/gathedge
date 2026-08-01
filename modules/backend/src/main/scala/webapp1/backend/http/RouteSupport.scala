@@ -8,35 +8,58 @@ import zio.http.*
 
 import JsonSupport.*
 
-/** Auth/CSRF helpers shared by every route file (Auth/Todo/Group/...). */
+/** The cross-cutting HTTP concerns, as `HandlerAspect`s rather than calls repeated at the top of every handler.
+  *
+  * An aspect that produces a context (`HandlerAspect[Env, User]`) resolves the value once per request and hands it to
+  * the handler through the environment, so a protected handler just asks for `ZIO.service[User]` and cannot forget to
+  * authenticate: the route does not compile unless some aspect supplies the `User`.
+  */
 object RouteSupport {
 
-  /** Turns defects — every `.orDie` in the services ends up here — into a logged cause plus a generic JSON 500.
+  /** Collapses a servable `Routes[Env, Response]` into `Routes[Env, Nothing]`.
     *
-    * Without it zio-http answers an un-sandboxed defect with
-    * `Response.internalServerError(FiberFailure(cause).getMessage)`, i.e. the entire cause chain and stack trace as the
-    * response body, and logs nothing at all: zio-http only logs unhandled causes from inside `Route#sandbox`, which a
-    * `Routes[Env, Nothing]` never goes through.
+    * Failures are already `Response`s built by the handlers, so they pass through untouched. Defects — every `.orDie`
+    * in the services ends up here — become a logged cause plus a generic JSON 500. Without the defect half, zio-http
+    * answers an un-sandboxed defect with `Response.internalServerError(FiberFailure(cause).getMessage)`, i.e. the whole
+    * cause chain and stack trace as the response body, and its own `sandbox` logging would produce a bare 500 with no
+    * JSON body for a client that only ever parses JSON.
     */
-  def handleDefects[Env](routes: Routes[Env, Nothing]): Routes[Env, Nothing] = {
-    routes.handleErrorRequestCauseZIO { (request: Request, cause: Cause[Nothing]) =>
-      ZIO
-        .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}", cause)
-        .unless(cause.isInterruptedOnly)
-        .as(errorResponse(Status.InternalServerError, "Internal server error"))
+  def handleFailures[Env](routes: Routes[Env, Response]): Routes[Env, Nothing] = {
+    routes.handleErrorRequestCauseZIO { (request: Request, cause: Cause[Response]) =>
+      cause.failureOption match {
+        case Some(response) =>
+          ZIO.succeed(response)
+        case None =>
+          ZIO
+            .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}", cause)
+            .unless(cause.isInterruptedOnly)
+            .as(errorResponse(Status.InternalServerError, "Internal server error"))
+      }
     }
   }
 
-  // JSON API + this required header blocks cross-site form/simple-fetch CSRF.
-  def csrfCheck(request: Request): ZIO[Any, Response, Unit] = {
-    ZIO
-      .unless(SessionAuth.hasValidCsrfHeader(request)) {
-        ZIO.fail(errorResponse(Status.Forbidden, "Missing required header"))
-      }
-      .unit
+  /** Methods that a cross-site page can trigger without a CORS preflight, so requiring a custom header on them would
+    * buy nothing and would break the OAuth callback, which arrives as a top-level browser navigation.
+    */
+  private val safeMethods: Set[Method] = Set(Method.GET, Method.HEAD, Method.OPTIONS)
+
+  /** JSON API + this required header blocks cross-site form/simple-fetch CSRF. Applied to whole route sets and scoped
+    * to state-changing methods, which is what the per-handler `csrfCheck` calls added up to.
+    */
+  val csrf: HandlerAspect[Any, Unit] = {
+    HandlerAspect
+      .interceptIncomingHandler(
+        Handler.fromFunctionZIO[Request] { (request: Request) =>
+          if (SessionAuth.hasValidCsrfHeader(request))
+            ZIO.succeed((request, ()))
+          else
+            ZIO.fail(errorResponse(Status.Forbidden, "Missing required header"))
+        }
+      )
+      .when(request => !safeMethods.contains(request.method))
   }
 
-  def authenticatedUser(request: Request): ZIO[AuthService, Response, User] = {
+  private def currentUser(request: Request): ZIO[AuthService, Response, User] = {
     for {
       authService <- ZIO.service[AuthService]
       maybeUser <-
@@ -50,17 +73,28 @@ object RouteSupport {
     } yield user
   }
 
-  /** Any admin-only page/endpoint denies a signed-in non-admin with a message explaining they're signed in but lack
-    * admin rights (summary.md).
+  /** Resolves the session cookie to a `User` and provides it to the handler, or short-circuits with 401. */
+  val authenticated: HandlerAspect[AuthService, User] = {
+    HandlerAspect.interceptIncomingHandler(
+      Handler.fromFunctionZIO[Request]((request: Request) => currentUser(request).map(user => (request, user)))
+    )
+  }
+
+  /** As [[authenticated]], but any admin-only endpoint denies a signed-in non-admin with a message explaining they're
+    * signed in but lack admin rights (summary.md).
     */
-  def requireAdmin(request: Request): ZIO[AuthService, Response, User] = {
-    authenticatedUser(request).flatMap { user =>
-      if (user.isAdmin)
-        ZIO.succeed(user)
-      else {
-        SecurityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}") *>
-          ZIO.fail(errorResponse(Status.Forbidden, "You are signed in but do not have administrator rights"))
+  val adminOnly: HandlerAspect[AuthService, User] = {
+    HandlerAspect.interceptIncomingHandler(
+      Handler.fromFunctionZIO[Request] { (request: Request) =>
+        currentUser(request).flatMap { user =>
+          if (user.isAdmin)
+            ZIO.succeed((request, user))
+          else {
+            SecurityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}") *>
+              ZIO.fail(errorResponse(Status.Forbidden, "You are signed in but do not have administrator rights"))
+          }
+        }
       }
-    }
+    )
   }
 }

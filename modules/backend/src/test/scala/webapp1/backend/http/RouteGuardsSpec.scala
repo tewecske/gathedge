@@ -9,7 +9,7 @@ import webapp1.backend.db.{
   TodoRepository,
   UserRepository,
 }
-import webapp1.backend.security.{PasswordHasher, SessionAuth}
+import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
   AdminService,
   AdminServiceLive,
@@ -24,6 +24,8 @@ import zio.*
 import zio.http.*
 import zio.test.*
 
+import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
+
 /** The cross-cutting checks in [[RouteSupport]] are the only thing standing between an anonymous request and the data,
   * but they were previously exercised only indirectly through one end-to-end browser test. These drive the real
   * `Routes` values with `runZIO`, no server needed.
@@ -36,19 +38,6 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   private val layer: ZLayer[Any, Throwable, AuthService & AdminService & TodoService] = {
     (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>>
       (AuthServiceLive.live ++ AdminServiceLive.live ++ TodoServiceLive.live)
-  }
-
-  private def withCsrf(request: Request): Request = {
-    request.addHeader(SessionAuth.csrfHeaderName, SessionAuth.csrfHeaderValue)
-  }
-
-  private def withSession(request: Request, sessionId: String): Request = {
-    request.addCookie(Cookie.Request(SessionAuth.cookieName, sessionId))
-  }
-
-  // The service failures here are all "the fixture couldn't be set up", never the thing under test.
-  private def orDieWithFailure[R, E, A](effect: ZIO[R, E, A]): ZIO[R, Nothing, A] = {
-    effect.orDieWith(failure => new RuntimeException(s"test setup failed: $failure"))
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
@@ -70,7 +59,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         for {
           session <- signUp("csrf@example.com")
           request = withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
-          response <- TodoRoutes.routes.runZIO(request)
+          response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.Forbidden)
       },
       test("the same request with the CSRF header goes through") {
@@ -79,34 +68,49 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           request = withCsrf(
             withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
           )
-          response <- TodoRoutes.routes.runZIO(request)
+          response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.Created)
+      },
+      // The CSRF aspect is scoped by method rather than attached route by route, so a read has to stay reachable
+      // without the header — the frontend's initial page loads don't send one.
+      test("a read is not subject to the CSRF header") {
+        for {
+          session <- signUp("csrf-read@example.com")
+          response <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
+        } yield assertTrue(response.status == Status.Ok)
+      },
+      // CSRF is checked before the session is looked up, so a cross-site request can't tell a valid
+      // session cookie from an invalid one by the status code.
+      test("a state-changing request without either the CSRF header or a session is refused, not unauthorized") {
+        for {
+          response <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.fromString("""{"text":"x"}""")))
+        } yield assertTrue(response.status == Status.Forbidden)
       },
       test("a request without a session cookie is unauthorized") {
         for {
-          response <- TodoRoutes.routes.runZIO(Request.get("/api/todos"))
+          response <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("a request carrying an unknown session id is unauthorized") {
         for {
-          response <- TodoRoutes.routes.runZIO(withSession(Request.get("/api/todos"), "not-a-real-session"))
+          response <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), "not-a-real-session"))
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("an admin route denies a signed-in non-admin") {
         for {
           session <- signUp("plain@example.com")
-          response <- AdminRoutes.routes.runZIO(withSession(Request.get("/api/admin/users"), session))
+          response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), session))
         } yield assertTrue(response.status == Status.Forbidden)
       },
       test("an admin route denies an anonymous caller as unauthorized") {
         for {
-          response <- AdminRoutes.routes.runZIO(Request.get("/api/admin/users"))
+          response <- runRoutes(AdminRoutes.routes, Request.get("/api/admin/users"))
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("an admin route admits an administrator") {
         for {
           session <- adminSession("boss@example.com")
-          response <- AdminRoutes.routes.runZIO(withSession(Request.get("/api/admin/users"), session))
+          response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), session))
         } yield assertTrue(response.status == Status.Ok)
       },
       // Over-length input used to reach the database and surface as a 500 with a stack trace in the
@@ -117,16 +121,16 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           session <- signUp("long-text@example.com")
           body = Body.fromString(s"""{"text":"$tooLong"}""")
           request = withCsrf(withSession(Request.post("/api/todos", body), session))
-          response <- TodoRoutes.routes.runZIO(request)
+          response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.BadRequest)
       },
       test("a defect becomes a generic JSON 500 rather than a stack trace in the body") {
         val boom = new RuntimeException("relation \"users\" does not exist")
-        val dyingRoutes = {
-          RouteSupport.handleDefects(Routes(Method.GET / "api" / "boom" -> handler((_: Request) => ZIO.die(boom))))
+        val dyingRoutes: Routes[Any, Response] = {
+          Routes(Method.GET / "api" / "boom" -> handler((_: Request) => ZIO.die(boom)))
         }
         for {
-          response <- dyingRoutes.runZIO(Request.get("/api/boom"))
+          response <- runRoutes(dyingRoutes, Request.get("/api/boom"))
           body <- response.body.asString
         } yield assertTrue(
           response.status == Status.InternalServerError,
@@ -135,6 +139,6 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         )
       },
       // `Routes#runZIO` opens a scope per request, so the suite has to supply one.
-    ).provide(layer, Scope.default)
+    ).provide(layer, Scope.default) @@ TestAspect.timeout(60.seconds)
   }
 }
