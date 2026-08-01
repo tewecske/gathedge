@@ -39,38 +39,38 @@ object Main extends ZIOAppDefault {
   private val allRoutes =
     AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes
 
-  private val program =
+  private val program = {
     for {
-      cfg         <- ZIO.service[AppConfig]
-      dataSource  <- ZIO.service[DataSource]
-      _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
-      _           <- AdminSeeder.seedIfNeeded
+      cfg <- ZIO.service[AppConfig]
+      dataSource <- ZIO.service[DataSource]
+      _ <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
+      _ <- AdminSeeder.seedIfNeeded
       rateLimiter <- ZIO.service[RateLimiter]
-      _           <- rateLimiter.runPruner.forkDaemon
-      _           <- ZIO.logInfo(s"Starting webapp1 backend on port ${cfg.app.serverPort} (env=${cfg.app.env})")
-      _           <- Server.serve(allRoutes)
+      _ <- rateLimiter.runPruner.forkDaemon
+      _ <- ZIO.logInfo(s"Starting webapp1 backend on port ${cfg.app.serverPort} (env=${cfg.app.env})")
+      _ <- Server.serve(allRoutes)
     } yield ()
+  }
 
-  def run =
-    program.provide(
-      AppConfig.live,
-      DataSourceFactory.postgresLive,
-      PostgresUserRepository.live,
-      PostgresSessionRepository.live,
-      PostgresTodoRepository.live,
-      PostgresGroupRepository.live,
-      PostgresGroupMemberRepository.live,
-      PostgresGroupPairRepository.live,
-      PostgresGroupInvitationRepository.live,
-      PasswordHasher.live,
-      InMemoryRateLimiter.live,
-      EmailSender.live,
-      AuthServiceLive.live,
-      GoogleOAuthClient.live,
-      TodoServiceLive.live,
-      GroupServiceLive.live,
-      AdminServiceLive.live,
-      Server.live,
-      ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.port(cfg.app.serverPort))),
-    )
+  def run = program.provide(
+    AppConfig.live,
+    DataSourceFactory.postgresLive,
+    PostgresUserRepository.live,
+    PostgresSessionRepository.live,
+    PostgresTodoRepository.live,
+    PostgresGroupRepository.live,
+    PostgresGroupMemberRepository.live,
+    PostgresGroupPairRepository.live,
+    PostgresGroupInvitationRepository.live,
+    PasswordHasher.live,
+    InMemoryRateLimiter.live,
+    EmailSender.live,
+    AuthServiceLive.live,
+    GoogleOAuthClient.live,
+    TodoServiceLive.live,
+    GroupServiceLive.live,
+    AdminServiceLive.live,
+    Server.live,
+    ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.port(cfg.app.serverPort))),
+  )
 }

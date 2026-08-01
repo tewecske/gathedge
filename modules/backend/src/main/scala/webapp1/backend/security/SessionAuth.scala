@@ -3,9 +3,8 @@ package webapp1.backend.security
 import zio.*
 import zio.http.*
 
-/** Cookie mechanics + CSRF header check. Session lookup against the DB lives in
-  * `AuthService` (it needs the repositories); this object only knows about
-  * HTTP-level concerns.
+/** Cookie mechanics + CSRF header check. Session lookup against the DB lives in `AuthService` (it needs the
+  * repositories); this object only knows about HTTP-level concerns.
   */
 object SessionAuth {
   val cookieName = "session"

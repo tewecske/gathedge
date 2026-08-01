@@ -23,6 +23,7 @@ trait AuthService {
   def login(email: String, password: String): IO[AuthFailure, (User, String)]
   def loginWithGoogle(identity: GoogleIdentity): IO[AuthFailure, (User, String)]
   def logout(sessionId: String): UIO[Unit]
+
   /** None both when there's no session and when it's expired/revoked. */
   def currentUser(sessionId: String): UIO[Option[User]]
   def updateTheme(userId: Long, theme: Theme): Task[User]
@@ -36,7 +37,7 @@ final class AuthServiceLive(
 ) extends AuthService {
 
   private val secureRandom = new SecureRandom()
-  private val securityLog  = org.slf4j.LoggerFactory.getLogger("security")
+  private val securityLog = org.slf4j.LoggerFactory.getLogger("security")
 
   private def logRateLimited(email: String): UIO[Unit] = {
     ZIO.succeed(securityLog.warn(s"Rate limit exceeded for '$email'"))
@@ -60,33 +61,39 @@ final class AuthServiceLive(
 
   private def createSession(userId: Long): UIO[String] = {
     for {
-      id  <- newSessionId()
+      id <- newSessionId()
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _   <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
+      _ <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
     } yield id
   }
 
   private def validateCredentials(email: String, password: String): IO[AuthFailure, Unit] = {
-    val errors = List(
-      Validation.validateEmail(email).left.toOption.map("email" -> _),
-      Validation.validatePassword(password).left.toOption.map("password" -> _),
-    ).flatten.toMap
-    if (errors.nonEmpty) ZIO.fail(AuthFailure.ValidationError(errors)) else ZIO.unit
+    val errors = {
+      List(
+        Validation.validateEmail(email).left.toOption.map("email" -> _),
+        Validation.validatePassword(password).left.toOption.map("password" -> _),
+      ).flatten.toMap
+    }
+    if (errors.nonEmpty)
+      ZIO.fail(AuthFailure.ValidationError(errors))
+    else
+      ZIO.unit
   }
 
   def signup(email: String, password: String): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = email.trim.toLowerCase
     for {
-      _        <- validateCredentials(normalizedEmail, password)
-      blocked  <- rateLimiter.isBlocked(normalizedEmail)
-      _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      _ <- validateCredentials(normalizedEmail, password)
+      blocked <- rateLimiter.isBlocked(normalizedEmail)
+      _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
       existing <- userRepo.findByEmail(normalizedEmail).orDie
-      _ <- ZIO.when(existing.isDefined) {
-             rateLimiter.recordFailure(normalizedEmail) *> ZIO.fail(AuthFailure.EmailAlreadyRegistered)
-           }
-      hash      <- hasher.hash(password).orDie
-      now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row       <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, googleSubject = None, "light", now).orDie
+      _ <-
+        ZIO.when(existing.isDefined) {
+          rateLimiter.recordFailure(normalizedEmail) *> ZIO.fail(AuthFailure.EmailAlreadyRegistered)
+        }
+      hash <- hasher.hash(password).orDie
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, googleSubject = None, "light", now).orDie
       sessionId <- createSession(row.id)
     } yield (toDomain(row), sessionId)
   }
@@ -94,30 +101,36 @@ final class AuthServiceLive(
   def login(email: String, password: String): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = email.trim.toLowerCase
     for {
-      blocked  <- rateLimiter.isBlocked(normalizedEmail)
-      _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      blocked <- rateLimiter.isBlocked(normalizedEmail)
+      _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
       maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
-      row <- maybeRow match {
-               case None =>
-                 rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "no such account") *>
-                   ZIO.fail(AuthFailure.InvalidCredentials)
-               case Some(r) => ZIO.succeed(r)
-             }
-      _ <- row.passwordHash match {
-             case None =>
-               rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(
-                 normalizedEmail,
-                 "no password set (Google-only account)",
-               ) *> ZIO.fail(AuthFailure.InvalidCredentials)
-             case Some(hash) =>
-               hasher.verify(password, hash).orDie.flatMap { ok =>
-                 if (ok) ZIO.unit
-                 else {
-                   rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "wrong password") *>
-                     ZIO.fail(AuthFailure.InvalidCredentials)
-                 }
-               }
-           }
+      row <-
+        maybeRow match {
+          case None =>
+            rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "no such account") *>
+              ZIO.fail(AuthFailure.InvalidCredentials)
+          case Some(r) =>
+            ZIO.succeed(r)
+        }
+      _ <-
+        row.passwordHash match {
+          case None =>
+            rateLimiter.recordFailure(normalizedEmail) *>
+              logFailedAttempt(normalizedEmail, "no password set (Google-only account)") *>
+              ZIO.fail(AuthFailure.InvalidCredentials)
+          case Some(hash) =>
+            hasher
+              .verify(password, hash)
+              .orDie
+              .flatMap { ok =>
+                if (ok)
+                  ZIO.unit
+                else {
+                  rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "wrong password") *>
+                    ZIO.fail(AuthFailure.InvalidCredentials)
+                }
+              }
+        }
       sessionId <- createSession(row.id)
     } yield (toDomain(row), sessionId)
   }
@@ -129,29 +142,37 @@ final class AuthServiceLive(
       // below would let them sign into an existing account they don't own.
       _ <- ZIO.unless(identity.emailVerified)(ZIO.fail(AuthFailure.GoogleAuthFailed("email not verified")))
       maybeBySubject <- userRepo.findByGoogleSubject(identity.subject).orDie
-      row <- maybeBySubject match {
-               case Some(r) => ZIO.succeed(r)
-               case None =>
-                 userRepo.findByEmail(identity.email.trim.toLowerCase).orDie.flatMap {
-                   // Account already exists under this email (password signup). Log them
-                   // in as-is; linking the Google subject to the existing row is a M3
-                   // follow-up once account-settings UI exists to surface that link.
-                   case Some(existing) => ZIO.succeed(existing)
-                   case None =>
-                     Clock.currentTime(TimeUnit.MILLISECONDS).flatMap { now =>
-                       userRepo
-                         .insert(
-                           identity.email.trim.toLowerCase,
-                           None,
-                           isAdmin = false,
-                           Some(identity.subject),
-                           "light",
-                           now,
-                         )
-                         .orDie
-                     }
-                 }
-             }
+      row <-
+        maybeBySubject match {
+          case Some(r) =>
+            ZIO.succeed(r)
+          case None =>
+            userRepo
+              .findByEmail(identity.email.trim.toLowerCase)
+              .orDie
+              .flatMap {
+                // Account already exists under this email (password signup). Log them
+                // in as-is; linking the Google subject to the existing row is a M3
+                // follow-up once account-settings UI exists to surface that link.
+                case Some(existing) =>
+                  ZIO.succeed(existing)
+                case None =>
+                  Clock
+                    .currentTime(TimeUnit.MILLISECONDS)
+                    .flatMap { now =>
+                      userRepo
+                        .insert(
+                          identity.email.trim.toLowerCase,
+                          None,
+                          isAdmin = false,
+                          Some(identity.subject),
+                          "light",
+                          now,
+                        )
+                        .orDie
+                    }
+              }
+        }
       sessionId <- createSession(row.id)
     } yield (toDomain(row), sessionId)
   }
@@ -161,28 +182,32 @@ final class AuthServiceLive(
   }
 
   def currentUser(sessionId: String): UIO[Option[User]] = {
-    (for {
-      now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      maybeSession <- sessionRepo.findActive(sessionId, now)
-      maybeUser <- maybeSession match {
-                     case None    => ZIO.none
-                     case Some(s) => userRepo.findById(s.userId)
-                   }
-    } yield maybeUser.map(toDomain)).orDie
+    (
+      for {
+        now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        maybeSession <- sessionRepo.findActive(sessionId, now)
+        maybeUser <-
+          maybeSession match {
+            case None =>
+              ZIO.none
+            case Some(s) =>
+              userRepo.findById(s.userId)
+          }
+      } yield maybeUser.map(toDomain)
+    ).orDie
   }
 
   def updateTheme(userId: Long, theme: Theme): Task[User] = {
     for {
-      _   <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
+      _ <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
       row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
     } yield toDomain(row)
   }
 }
 
 object AuthServiceLive {
-  val live: URLayer[UserRepository & SessionRepository & PasswordHasher & RateLimiter, AuthService] =
-    ZLayer.fromFunction(
-      (u: UserRepository, s: SessionRepository, h: PasswordHasher, r: RateLimiter) =>
-        new AuthServiceLive(u, s, h, r): AuthService
+  val live: URLayer[UserRepository & SessionRepository & PasswordHasher & RateLimiter, AuthService] = ZLayer
+    .fromFunction((u: UserRepository, s: SessionRepository, h: PasswordHasher, r: RateLimiter) =>
+      new AuthServiceLive(u, s, h, r): AuthService
     )
 }

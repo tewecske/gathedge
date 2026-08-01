@@ -13,10 +13,10 @@ object GroupsPage {
 
 private class GroupsPage {
   private val groupsVar = Var(List.empty[Group])
-  private val nameVar   = Var("")
+  private val nameVar = Var("")
   private val errorVar: Var[Option[String]] = Var(None)
 
-  private val loadBus   = new EventBus[Unit]()
+  private val loadBus = new EventBus[Unit]()
   private val createBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
@@ -30,14 +30,22 @@ private class GroupsPage {
           cls := "card-body",
           ul(
             cls := "list",
-            children <-- groupsVar.signal.splitSeq(_.id) { groupSignal => renderGroupRow(groupSignal.key, groupSignal) },
+            children <--
+              groupsVar
+                .signal
+                .splitSeq(_.id) { groupSignal =>
+                  renderGroupRow(groupSignal.key, groupSignal)
+                },
           ),
         ),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[Group]]("/api/groups")) --> Observer[Either[ApiError, List[Group]]] {
-        case Right(groups) => groupsVar.set(groups)
-        case Left(err)     => errorVar.set(Some(err.message))
-      },
+      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[Group]]("/api/groups")) -->
+        Observer[Either[ApiError, List[Group]]] {
+          case Right(groups) =>
+            groupsVar.set(groups)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
       createBus.events.flatMapSwitch(_ => createGroup()) --> Observer[Unit](_ => ()),
       onMountCallback(_ => loadBus.emit(())),
     )
@@ -73,13 +81,16 @@ private class GroupsPage {
     if (name.trim.isEmpty) {
       EventStream.fromValue((), emitOnce = true)
     } else {
-      ApiClient.post[CreateGroupRequest, Group]("/api/groups", CreateGroupRequest(name)).map {
-        case Right(group) =>
-          groupsVar.update(_ :+ group)
-          nameVar.set("")
-          errorVar.set(None)
-        case Left(err) => errorVar.set(Some(err.message))
-      }
+      ApiClient
+        .post[CreateGroupRequest, Group]("/api/groups", CreateGroupRequest(name))
+        .map {
+          case Right(group) =>
+            groupsVar.update(_ :+ group)
+            nameVar.set("")
+            errorVar.set(None)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        }
     }
   }
 

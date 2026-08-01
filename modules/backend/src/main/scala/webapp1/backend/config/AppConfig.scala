@@ -5,12 +5,16 @@ import zio.config.magnolia.deriveConfig
 import zio.config.typesafe.TypesafeConfigProvider
 
 enum AppEnv derives CanEqual {
-  case Dev, Production
+  case Dev,
+    Production
 }
 
 object AppEnv {
   def parse(s: String): AppEnv = {
-    if (s.trim.equalsIgnoreCase("production")) Production else Dev
+    if (s.trim.equalsIgnoreCase("production"))
+      Production
+    else
+      Dev
   }
 }
 
@@ -37,9 +41,8 @@ object AppConfig {
 
   // application.conf keys are kebab-case; case class fields stay idiomatic camelCase
   // and the provider maps between the two.
-  val live: ZLayer[Any, Config.Error, AppConfig] =
-    ZLayer {
-      val provider = TypesafeConfigProvider.fromResourcePath().kebabCase
-      provider.load(configDesc)
-    }
+  val live: ZLayer[Any, Config.Error, AppConfig] = ZLayer {
+    val provider = TypesafeConfigProvider.fromResourcePath().kebabCase
+    provider.load(configDesc)
+  }
 }

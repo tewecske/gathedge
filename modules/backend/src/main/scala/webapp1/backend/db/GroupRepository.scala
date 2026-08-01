@@ -5,6 +5,7 @@ import zio.*
 trait GroupRepository {
   def insert(name: String, createdAt: Long): Task[GroupRow]
   def findById(id: Long): Task[Option[GroupRow]]
+
   /** Groups the user is a member of, paired with their role in each. */
   def listForUser(userId: Long): Task[List[(GroupRow, String)]]
   def delete(id: Long): Task[Unit]
@@ -13,6 +14,7 @@ trait GroupRepository {
 trait GroupMemberRepository {
   def addMember(groupId: Long, userId: Long, role: String, joinedAt: Long): Task[Unit]
   def findRole(groupId: Long, userId: Long): Task[Option[String]]
+
   /** Members of a group, paired with their email. */
   def listForGroup(groupId: Long): Task[List[(GroupMemberRow, String)]]
   def removeMember(groupId: Long, userId: Long): Task[Unit]

@@ -11,10 +11,10 @@ object SignInPage {
 }
 
 private class SignInPage {
-  private val emailVar    = Var("")
+  private val emailVar = Var("")
   private val passwordVar = Var("")
   private val errorVar: Var[Option[String]] = Var(None)
-  private val submitBus   = new EventBus[Unit]()
+  private val submitBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
     div(
@@ -45,12 +45,7 @@ private class SignInPage {
           ),
           div(
             cls := "card-actions justify-end mt-4",
-            button(
-              cls := "btn btn-primary",
-              typ := "button",
-              "Sign in",
-              onClick.mapToUnit --> submitBus.writer,
-            ),
+            button(cls := "btn btn-primary", typ := "button", "Sign in", onClick.mapToUnit --> submitBus.writer),
           ),
           p(
             cls := "text-sm mt-2",
@@ -59,21 +54,27 @@ private class SignInPage {
           ),
         ),
       ),
-      submitBus.events.flatMapSwitch(_ => login()) --> Observer[Either[String, Unit]] {
-        case Right(_)    => errorVar.set(None)
-        case Left(error) => errorVar.set(Some(error))
-      },
+      submitBus.events.flatMapSwitch(_ => login()) -->
+        Observer[Either[String, Unit]] {
+          case Right(_) =>
+            errorVar.set(None)
+          case Left(error) =>
+            errorVar.set(Some(error))
+        },
     )
   }
 
   private def login() = {
-    ApiClient.post[LoginRequest, AuthResponse]("/api/auth/login", LoginRequest(emailVar.now(), passwordVar.now())).map {
-      case Right(res) =>
-        AppState.setUser(res.user)
-        AppRouter.router.pushState(Page.Home)
-        Right(())
-      case Left(err) => Left(err.message)
-    }
+    ApiClient
+      .post[LoginRequest, AuthResponse]("/api/auth/login", LoginRequest(emailVar.now(), passwordVar.now()))
+      .map {
+        case Right(res) =>
+          AppState.setUser(res.user)
+          AppRouter.router.pushState(Page.Home)
+          Right(())
+        case Left(err) =>
+          Left(err.message)
+      }
   }
 
   private def renderError(message: String): HtmlElement = {

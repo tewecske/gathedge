@@ -12,10 +12,10 @@ object SignUpPage {
 }
 
 private class SignUpPage {
-  private val emailVar    = Var("")
+  private val emailVar = Var("")
   private val passwordVar = Var("")
   private val errorVar: Var[Option[String]] = Var(None)
-  private val submitBus   = new EventBus[Unit]()
+  private val submitBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
     div(
@@ -47,12 +47,7 @@ private class SignUpPage {
           ),
           div(
             cls := "card-actions justify-end mt-4",
-            button(
-              cls := "btn btn-primary",
-              typ := "button",
-              "Sign up",
-              onClick.mapToUnit --> submitBus.writer,
-            ),
+            button(cls := "btn btn-primary", typ := "button", "Sign up", onClick.mapToUnit --> submitBus.writer),
           ),
           p(
             cls := "text-sm mt-2",
@@ -61,27 +56,35 @@ private class SignUpPage {
           ),
         ),
       ),
-      submitBus.events.flatMapSwitch(_ => signup()) --> Observer[Either[String, Unit]] {
-        case Right(_)    => errorVar.set(None)
-        case Left(error) => errorVar.set(Some(error))
-      },
+      submitBus.events.flatMapSwitch(_ => signup()) -->
+        Observer[Either[String, Unit]] {
+          case Right(_) =>
+            errorVar.set(None)
+          case Left(error) =>
+            errorVar.set(Some(error))
+        },
     )
   }
 
   private def signup() = {
-    val email    = emailVar.now()
+    val email = emailVar.now()
     val password = passwordVar.now()
     (Validation.validateEmail(email), Validation.validatePassword(password)) match {
-      case (Left(err), _) => EventStream.fromValue(Left(err), emitOnce = true)
-      case (_, Left(err)) => EventStream.fromValue(Left(err), emitOnce = true)
+      case (Left(err), _) =>
+        EventStream.fromValue(Left(err), emitOnce = true)
+      case (_, Left(err)) =>
+        EventStream.fromValue(Left(err), emitOnce = true)
       case _ =>
-        ApiClient.post[SignupRequest, AuthResponse]("/api/auth/signup", SignupRequest(email, password)).map {
-          case Right(res) =>
-            AppState.setUser(res.user)
-            AppRouter.router.pushState(Page.Home)
-            Right(())
-          case Left(err) => Left(err.message)
-        }
+        ApiClient
+          .post[SignupRequest, AuthResponse]("/api/auth/signup", SignupRequest(email, password))
+          .map {
+            case Right(res) =>
+              AppState.setUser(res.user)
+              AppRouter.router.pushState(Page.Home)
+              Right(())
+            case Left(err) =>
+              Left(err.message)
+          }
     }
   }
 

@@ -9,8 +9,11 @@ import webapp1.shared.domain.{Group, GroupPair, User}
 import webapp1.shared.dto.CreatePairRequest
 
 object GroupDetailPage {
-  def render(user: User, groupId: Long): HtmlElement =
-    AppShell.render(user, Page.GroupDetail(groupId), new GroupDetailPage(groupId).render())
+  def render(user: User, groupId: Long): HtmlElement = AppShell.render(
+    user,
+    Page.GroupDetail(groupId),
+    new GroupDetailPage(groupId).render(),
+  )
 }
 
 private class GroupDetailPage(groupId: Long) {
@@ -22,29 +25,34 @@ private class GroupDetailPage(groupId: Long) {
 
   private val errorVar: Var[Option[String]] = Var(None)
 
-  private val loadBus        = new EventBus[Unit]()
-  private val addPairBus     = new EventBus[Unit]()
+  private val loadBus = new EventBus[Unit]()
+  private val addPairBus = new EventBus[Unit]()
   private val deleteGroupBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
     div(
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), "← Back to groups")),
       h1(cls := "text-2xl font-bold mb-4", text <-- groupVar.signal.map(_.map(_.name).getOrElse("Group"))),
-      child.maybe <-- groupVar.signal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupDetail(groupId), g.myRole))),
+      child.maybe <--
+        groupVar.signal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupDetail(groupId), g.myRole))),
       child.maybe <-- errorVar.signal.map(_.map(msg => renderAlert("alert-error", msg))),
       child.maybe <-- groupVar.signal.map(_.filter(_.myRole.canWrite).map(_ => renderAddPairForm())),
       renderPairsTable(),
       child.maybe <-- groupVar.signal.map(_.filter(_.myRole.isAdmin).map(_ => renderDeleteGroupButton())),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[Group](s"/api/groups/$groupId")) --> Observer[Either[ApiError, Group]] {
-        case Right(g)  => groupVar.set(Some(g))
-        case Left(err) => errorVar.set(Some(err.message))
-      },
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[GroupPair]](s"/api/groups/$groupId/pairs")) --> Observer[
-        Either[ApiError, List[GroupPair]]
-      ] {
-        case Right(items) => pairsVar.set(items)
-        case Left(err)    => errorVar.set(Some(err.message))
-      },
+      loadBus.events.flatMapSwitch(_ => ApiClient.get[Group](s"/api/groups/$groupId")) -->
+        Observer[Either[ApiError, Group]] {
+          case Right(g) =>
+            groupVar.set(Some(g))
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
+      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[GroupPair]](s"/api/groups/$groupId/pairs")) -->
+        Observer[Either[ApiError, List[GroupPair]]] {
+          case Right(items) =>
+            pairsVar.set(items)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
       addPairBus.events.flatMapSwitch(_ => addPair()) --> Observer[Unit](_ => ()),
       deleteGroupBus.events.flatMapSwitch(_ => deleteGroup()) --> Observer[Unit](_ => ()),
       onMountCallback(_ => loadBus.emit(())),
@@ -76,7 +84,14 @@ private class GroupDetailPage(groupId: Long) {
       table(
         cls := "table",
         thead(tr(th("Source"), th("Target"), th("Added by"))),
-        tbody(children <-- pairsVar.signal.splitSeq(_.id) { pairSignal => renderPairRow(pairSignal) }),
+        tbody(
+          children <--
+            pairsVar
+              .signal
+              .splitSeq(_.id) { pairSignal =>
+                renderPairRow(pairSignal)
+              }
+        ),
       ),
     )
   }
@@ -96,9 +111,11 @@ private class GroupDetailPage(groupId: Long) {
         cls := "btn btn-error btn-outline btn-sm",
         typ := "button",
         "Delete group",
-        onClick.mapToUnit --> Observer[Unit] { _ =>
-          if (dom.window.confirm("Delete this group? This cannot be undone.")) deleteGroupBus.emit(())
-        },
+        onClick.mapToUnit -->
+          Observer[Unit] { _ =>
+            if (dom.window.confirm("Delete this group? This cannot be undone."))
+              deleteGroupBus.emit(())
+          },
       ),
     )
   }
@@ -109,22 +126,29 @@ private class GroupDetailPage(groupId: Long) {
     if (source.trim.isEmpty || target.trim.isEmpty) {
       EventStream.fromValue((), emitOnce = true)
     } else {
-      ApiClient.post[CreatePairRequest, GroupPair](s"/api/groups/$groupId/pairs", CreatePairRequest(source, target)).map {
-        case Right(pair) =>
-          pairsVar.update(_ :+ pair)
-          sourceVar.set("")
-          targetVar.set("")
-          errorVar.set(None)
-        case Left(err) => errorVar.set(Some(err.message))
-      }
+      ApiClient
+        .post[CreatePairRequest, GroupPair](s"/api/groups/$groupId/pairs", CreatePairRequest(source, target))
+        .map {
+          case Right(pair) =>
+            pairsVar.update(_ :+ pair)
+            sourceVar.set("")
+            targetVar.set("")
+            errorVar.set(None)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        }
     }
   }
 
   private def deleteGroup() = {
-    ApiClient.delete(s"/api/groups/$groupId").map {
-      case Right(_)  => AppRouter.router.pushState(Page.Groups)
-      case Left(err) => errorVar.set(Some(err.message))
-    }
+    ApiClient
+      .delete(s"/api/groups/$groupId")
+      .map {
+        case Right(_) =>
+          AppRouter.router.pushState(Page.Groups)
+        case Left(err) =>
+          errorVar.set(Some(err.message))
+      }
   }
 
   private def renderAlert(kind: String, message: String): HtmlElement = {

@@ -18,18 +18,26 @@ object Page {
   case object NotFound extends Page
 
   enum AuthGuard {
+
     /** Redirects an unauthenticated visitor to sign-in. */
     case RequireAuth
+
     /** Redirects an already-authenticated visitor to Home (sign-in/sign-up). */
     case RequireAnon
+
     /** Renders regardless of auth state (accept-invite, forbidden, not-found). */
     case Public
   }
 
-  def guardFor(page: Page): AuthGuard = page match {
-    case SignIn | SignUp                        => AuthGuard.RequireAnon
-    case AcceptInvite(_) | Forbidden | NotFound => AuthGuard.Public
-    case _                                       => AuthGuard.RequireAuth
+  def guardFor(page: Page): AuthGuard = {
+    page match {
+      case SignIn | SignUp =>
+        AuthGuard.RequireAnon
+      case AcceptInvite(_) | Forbidden | NotFound =>
+        AuthGuard.Public
+      case _ =>
+        AuthGuard.RequireAuth
+    }
   }
 }
 
@@ -38,7 +46,7 @@ object AppRouter {
 
   private val signInRoute = Route.static(SignIn, root / "sign-in")
   private val signUpRoute = Route.static(SignUp, root / "sign-up")
-  private val homeRoute   = Route.static(Home, root)
+  private val homeRoute = Route.static(Home, root)
   private val groupsRoute = Route.static(Groups, root / "groups")
   private val groupDetailRoute = Route(
     encode = (p: GroupDetail) => p.id,
@@ -65,18 +73,31 @@ object AppRouter {
 
   // All pages are derivable from the URL alone, so serialization (used only for
   // browser-history state) is just a tag — no JSON library needed.
-  private def serialize(page: Page): String = page match {
-    case SignIn              => "SignIn"
-    case SignUp              => "SignUp"
-    case Home                => "Home"
-    case Groups               => "Groups"
-    case GroupDetail(id)      => s"GroupDetail:$id"
-    case GroupMembers(id)     => s"GroupMembers:$id"
-    case AcceptInvite(token)  => s"AcceptInvite:$token"
-    case Admin                => "Admin"
-    case AdminUserDetail(id)  => s"AdminUserDetail:$id"
-    case Forbidden            => "Forbidden"
-    case NotFound             => "NotFound"
+  private def serialize(page: Page): String = {
+    page match {
+      case SignIn =>
+        "SignIn"
+      case SignUp =>
+        "SignUp"
+      case Home =>
+        "Home"
+      case Groups =>
+        "Groups"
+      case GroupDetail(id) =>
+        s"GroupDetail:$id"
+      case GroupMembers(id) =>
+        s"GroupMembers:$id"
+      case AcceptInvite(token) =>
+        s"AcceptInvite:$token"
+      case Admin =>
+        "Admin"
+      case AdminUserDetail(id) =>
+        s"AdminUserDetail:$id"
+      case Forbidden =>
+        "Forbidden"
+      case NotFound =>
+        "NotFound"
+    }
   }
 
   private def deserialize(tag: String): Page = {
@@ -90,33 +111,42 @@ object AppRouter {
       AdminUserDetail(tag.stripPrefix("AdminUserDetail:").toLongOption.getOrElse(0L))
     } else {
       tag match {
-        case "SignIn"    => SignIn
-        case "SignUp"    => SignUp
-        case "Home"      => Home
-        case "Groups"    => Groups
-        case "Admin"     => Admin
-        case "Forbidden" => Forbidden
-        case _           => NotFound
+        case "SignIn" =>
+          SignIn
+        case "SignUp" =>
+          SignUp
+        case "Home" =>
+          Home
+        case "Groups" =>
+          Groups
+        case "Admin" =>
+          Admin
+        case "Forbidden" =>
+          Forbidden
+        case _ =>
+          NotFound
       }
     }
   }
 
-  val router: Router[Page] = new Router[Page](
-    routes = List(
-      signInRoute,
-      signUpRoute,
-      homeRoute,
-      groupsRoute,
-      groupDetailRoute,
-      groupMembersRoute,
-      acceptInviteRoute,
-      adminRoute,
-      adminUserDetailRoute,
-      forbiddenRoute,
-    ),
-    serializePage = serialize,
-    deserializePage = deserialize,
-    getPageTitle = _ => "webapp1",
-    routeFallback = _ => NotFound,
-  )
+  val router: Router[Page] = {
+    new Router[Page](
+      routes = List(
+        signInRoute,
+        signUpRoute,
+        homeRoute,
+        groupsRoute,
+        groupDetailRoute,
+        groupMembersRoute,
+        acceptInviteRoute,
+        adminRoute,
+        adminUserDetailRoute,
+        forbiddenRoute,
+      ),
+      serializePage = serialize,
+      deserializePage = deserialize,
+      getPageTitle = _ => "webapp1",
+      routeFallback = _ => NotFound,
+    )
+  }
 }

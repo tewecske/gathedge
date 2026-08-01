@@ -13,11 +13,11 @@ object TodoPage {
 
 private class TodoPage {
   private val itemsVar = Var(List.empty[TodoItem])
-  private val textVar  = Var("")
+  private val textVar = Var("")
   private val errorVar: Var[Option[String]] = Var(None)
 
   private val loadBus = new EventBus[Unit]()
-  private val addBus  = new EventBus[Unit]()
+  private val addBus = new EventBus[Unit]()
   private val moveBus = new EventBus[(Long, TodoStatus)]()
 
   def render(): HtmlElement = {
@@ -31,10 +31,13 @@ private class TodoPage {
         renderColumn("In Progress", TodoStatus.InProgress),
         renderColumn("Done", TodoStatus.Done),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[TodoItem]]("/api/todos")) --> Observer[Either[ApiError, List[TodoItem]]] {
-        case Right(items) => itemsVar.set(items)
-        case Left(err)    => errorVar.set(Some(err.message))
-      },
+      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[TodoItem]]("/api/todos")) -->
+        Observer[Either[ApiError, List[TodoItem]]] {
+          case Right(items) =>
+            itemsVar.set(items)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
       addBus.events.flatMapSwitch(_ => addTodo()) --> Observer[Unit](_ => ()),
       moveBus.events.flatMapSwitch(moveTodo) --> Observer[Unit](_ => ()),
       onMountCallback(_ => loadBus.emit(())),
@@ -62,9 +65,13 @@ private class TodoPage {
         h2(cls := "card-title", title),
         ul(
           cls := "list",
-          children <-- itemsVar.signal.map(_.filter(_.status == status)).splitSeq(_.id) { itemSignal =>
-            renderItem(itemSignal.key, status, itemSignal)
-          },
+          children <--
+            itemsVar
+              .signal
+              .map(_.filter(_.status == status))
+              .splitSeq(_.id) { itemSignal =>
+                renderItem(itemSignal.key, status, itemSignal)
+              },
         ),
       ),
     )
@@ -83,22 +90,36 @@ private class TodoPage {
     if (text.trim.isEmpty) {
       EventStream.fromValue((), emitOnce = true)
     } else {
-      ApiClient.post[CreateTodoRequest, TodoItem]("/api/todos", CreateTodoRequest(text)).map {
-        case Right(item) =>
-          itemsVar.update(_ :+ item)
-          textVar.set("")
-          errorVar.set(None)
-        case Left(err) => errorVar.set(Some(err.message))
-      }
+      ApiClient
+        .post[CreateTodoRequest, TodoItem]("/api/todos", CreateTodoRequest(text))
+        .map {
+          case Right(item) =>
+            itemsVar.update(_ :+ item)
+            textVar.set("")
+            errorVar.set(None)
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        }
     }
   }
 
   private def moveTodo(idAndStatus: (Long, TodoStatus)) = {
     val (id, newStatus) = idAndStatus
-    ApiClient.put[UpdateTodoStatusRequest, TodoItem](s"/api/todos/$id/status", UpdateTodoStatusRequest(newStatus)).map {
-      case Right(updated) => itemsVar.update(_.map(item => if (item.id == id) updated else item))
-      case Left(err)      => errorVar.set(Some(err.message))
-    }
+    ApiClient
+      .put[UpdateTodoStatusRequest, TodoItem](s"/api/todos/$id/status", UpdateTodoStatusRequest(newStatus))
+      .map {
+        case Right(updated) =>
+          itemsVar.update(
+            _.map(item => {
+              if (item.id == id)
+                updated
+              else
+                item
+            })
+          )
+        case Left(err) =>
+          errorVar.set(Some(err.message))
+      }
   }
 
   private def renderError(message: String): HtmlElement = {

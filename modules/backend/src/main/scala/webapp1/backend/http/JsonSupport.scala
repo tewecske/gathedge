@@ -16,7 +16,9 @@ object JsonSupport {
   }
 
   def readJson[A](request: Request)(using dec: JsonDecoder[A]): IO[Response, A] = {
-    request.body.asString
+    request
+      .body
+      .asString
       .mapError(err => errorResponse(Status.BadRequest, s"Could not read request body: ${err.getMessage}"))
       .flatMap { body =>
         ZIO.fromEither(dec.decodeJson(body)).mapError(err => errorResponse(Status.BadRequest, s"Malformed JSON: $err"))

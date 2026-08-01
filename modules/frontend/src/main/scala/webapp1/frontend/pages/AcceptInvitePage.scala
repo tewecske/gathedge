@@ -13,17 +13,19 @@ object AcceptInvitePage {
   def render(user: Option[User], token: String): HtmlElement = {
     val content = new AcceptInvitePage(token).render()
     user match {
-      case Some(u) => AppShell.render(u, Page.AcceptInvite(token), content)
-      case None    => content
+      case Some(u) =>
+        AppShell.render(u, Page.AcceptInvite(token), content)
+      case None =>
+        content
     }
   }
 }
 
 private class AcceptInvitePage(token: String) {
   private val infoVar: Var[Option[InvitationInfo]] = Var(None)
-  private val errorVar: Var[Option[String]]        = Var(None)
+  private val errorVar: Var[Option[String]] = Var(None)
 
-  private val loadBus   = new EventBus[Unit]()
+  private val loadBus = new EventBus[Unit]()
   private val acceptBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
@@ -38,12 +40,13 @@ private class AcceptInvitePage(token: String) {
           child.maybe <-- infoVar.signal.map(_.map(renderInfo)),
         ),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[InvitationInfo](s"/api/invitations/$token")) --> Observer[
-        Either[ApiError, InvitationInfo]
-      ] {
-        case Right(info) => infoVar.set(Some(info))
-        case Left(err)   => errorVar.set(Some(err.message))
-      },
+      loadBus.events.flatMapSwitch(_ => ApiClient.get[InvitationInfo](s"/api/invitations/$token")) -->
+        Observer[Either[ApiError, InvitationInfo]] {
+          case Right(info) =>
+            infoVar.set(Some(info))
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
       acceptBus.events.flatMapSwitch(_ => accept()) --> Observer[Unit](_ => ()),
       onMountCallback(_ => loadBus.emit(())),
     )
@@ -74,19 +77,25 @@ private class AcceptInvitePage(token: String) {
               onClick.mapToUnit --> acceptBus.writer,
             )
           case Some(u) =>
-            p(cls := "mt-4 text-warning", s"This invitation was sent to ${info.email}, but you're signed in as ${u.email}.")
+            p(
+              cls := "mt-4 text-warning",
+              s"This invitation was sent to ${info.email}, but you're signed in as ${u.email}.",
+            )
         }
       },
     )
   }
 
   private def accept() = {
-    ApiClient.postNoBody[Group](s"/api/invitations/$token/accept").map {
-      case Right(group) =>
-        errorVar.set(None)
-        AppRouter.router.pushState(Page.GroupDetail(group.id))
-      case Left(err) => errorVar.set(Some(err.message))
-    }
+    ApiClient
+      .postNoBody[Group](s"/api/invitations/$token/accept")
+      .map {
+        case Right(group) =>
+          errorVar.set(None)
+          AppRouter.router.pushState(Page.GroupDetail(group.id))
+        case Left(err) =>
+          errorVar.set(Some(err.message))
+      }
   }
 
   private def renderError(message: String): HtmlElement = {

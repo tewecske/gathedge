@@ -9,26 +9,29 @@ import scala.scalajs.js
 
 final case class ApiError(status: Int, message: String, fieldErrors: Map[String, String])
 
-/** Thin `fetch` wrapper, using the shared zio-json DTOs for (de)serialization.
-  * Returns `EventStream`s per the laminar skill's explicit-flattening guidance —
-  * callers `flatMapSwitch` these from a click/submit stream.
+/** Thin `fetch` wrapper, using the shared zio-json DTOs for (de)serialization. Returns `EventStream`s per the laminar
+  * skill's explicit-flattening guidance — callers `flatMapSwitch` these from a click/submit stream.
   */
 object ApiClient {
 
   private def buildInit(method: String, bodyJson: Option[String]): dom.RequestInit = {
-    val init = js.Dynamic.literal(
-      method = method,
-      headers = js.Dictionary("Content-Type" -> "application/json", "X-Requested-With" -> "XMLHttpRequest"),
-      credentials = "include",
-    )
+    val init = js
+      .Dynamic
+      .literal(
+        method = method,
+        headers = js.Dictionary("Content-Type" -> "application/json", "X-Requested-With" -> "XMLHttpRequest"),
+        credentials = "include",
+      )
     bodyJson.foreach(b => init.updateDynamic("body")(b))
     init.asInstanceOf[dom.RequestInit]
   }
 
   private def errorFrom(status: Int, text: String): ApiError = {
     text.fromJson[ErrorResponse] match {
-      case Right(err) => ApiError(status, err.message, err.fieldErrors)
-      case Left(_)     => ApiError(status, s"Request failed with status $status", Map.empty)
+      case Right(err) =>
+        ApiError(status, err.message, err.fieldErrors)
+      case Left(_) =>
+        ApiError(status, s"Request failed with status $status", Map.empty)
     }
   }
 
@@ -37,26 +40,35 @@ object ApiClient {
   // only `.foreach`/`child <--` off the success path stuck (e.g. App's initial
   // session load never completing). Surface it as a normal Left instead.
   private def networkSafe[A](stream: EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
-    stream.recover { case err => Some(Left(ApiError(0, s"Network error: ${err.getMessage}", Map.empty))) }
+    stream.recover { case err =>
+      Some(Left(ApiError(0, s"Network error: ${err.getMessage}", Map.empty)))
+    }
   }
 
   private def parseResponse[Res: JsonDecoder](response: dom.Response): EventStream[Either[ApiError, Res]] = {
-    EventStream.fromJsPromise(response.text()).map { text =>
-      if (response.ok) {
-        text.fromJson[Res].left.map(err => ApiError(response.status, s"Malformed response: $err", Map.empty))
-      } else {
-        Left(errorFrom(response.status, text))
+    EventStream
+      .fromJsPromise(response.text())
+      .map { text =>
+        if (response.ok) {
+          text.fromJson[Res].left.map(err => ApiError(response.status, s"Malformed response: $err", Map.empty))
+        } else {
+          Left(errorFrom(response.status, text))
+        }
       }
-    }
   }
 
-  /** For responses with no meaningful body (e.g. 204 No Content) — doesn't attempt
-    * to JSON-decode a success body, only an error body on failure.
+  /** For responses with no meaningful body (e.g. 204 No Content) — doesn't attempt to JSON-decode a success body, only
+    * an error body on failure.
     */
   private def parseNoContentResponse(response: dom.Response): EventStream[Either[ApiError, Unit]] = {
-    EventStream.fromJsPromise(response.text()).map { text =>
-      if (response.ok) Right(()) else Left(errorFrom(response.status, text))
-    }
+    EventStream
+      .fromJsPromise(response.text())
+      .map { text =>
+        if (response.ok)
+          Right(())
+        else
+          Left(errorFrom(response.status, text))
+      }
   }
 
   private def request(method: String, path: String, bodyJson: Option[String]): EventStream[dom.Response] = {
@@ -71,8 +83,8 @@ object ApiClient {
     networkSafe(request("POST", path, Some(body.toJson)).flatMapSwitch(parseResponse[Res]))
   }
 
-  /** POST with no request body, decoding a JSON response (e.g. accepting an
-    * invitation, which needs no input but returns the joined Group).
+  /** POST with no request body, decoding a JSON response (e.g. accepting an invitation, which needs no input but
+    * returns the joined Group).
     */
   def postNoBody[Res: JsonDecoder](path: String): EventStream[Either[ApiError, Res]] = {
     networkSafe(request("POST", path, None).flatMapSwitch(parseResponse[Res]))

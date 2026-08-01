@@ -4,21 +4,23 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.shared.domain.{Theme, User}
 
-/** Client-side session state. The server is the source of truth (cookie-based
-  * session); this just mirrors the last-known `/api/me` result so pages don't all
-  * need to re-fetch it.
+/** Client-side session state. The server is the source of truth (cookie-based session); this just mirrors the
+  * last-known `/api/me` result so pages don't all need to re-fetch it.
   */
 object AppState {
   val currentUserVar: Var[Option[User]] = Var(None)
   val currentUserSignal: Signal[Option[User]] = currentUserVar.signal
 
-  private def themeName(theme: Theme): String = theme match {
-    case Theme.Light => "light"
-    case Theme.Dark  => "dark"
+  private def themeName(theme: Theme): String = {
+    theme match {
+      case Theme.Light =>
+        "light"
+      case Theme.Dark =>
+        "dark"
+    }
   }
 
-  /** Applies the theme to the whole document immediately (summary.md) and mirrors
-    * it into the current-user state.
+  /** Applies the theme to the whole document immediately (summary.md) and mirrors it into the current-user state.
     */
   def applyTheme(theme: Theme): Unit = {
     dom.document.documentElement.setAttribute("data-theme", themeName(theme))

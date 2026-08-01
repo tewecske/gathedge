@@ -21,11 +21,10 @@ trait GoogleOAuthClient {
   def exchangeAndVerify(code: String): Task[GoogleIdentity]
 }
 
-/** Server-side OAuth2 authorization-code flow. `id_token` is verified via Google's
-  * `tokeninfo` endpoint (checks `aud`/signature/`exp` server-side) rather than local
-  * JWKS verification — one extra network round trip, but avoids pulling in a JWT/JWKS
-  * library for this scope. Can be upgraded to local JWKS verification later without
-  * changing the [[GoogleOAuthClient]] interface.
+/** Server-side OAuth2 authorization-code flow. `id_token` is verified via Google's `tokeninfo` endpoint (checks
+  * `aud`/signature/`exp` server-side) rather than local JWKS verification — one extra network round trip, but avoids
+  * pulling in a JWT/JWKS library for this scope. Can be upgraded to local JWKS verification later without changing the
+  * [[GoogleOAuthClient]] interface.
   */
 final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClient {
   private val httpClient = HttpClient.newHttpClient()
@@ -34,19 +33,23 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
 
   def authorizationUrl(state: String): String = {
     val params = Map(
-      "client_id"     -> config.clientId,
-      "redirect_uri"  -> config.redirectUri,
+      "client_id" -> config.clientId,
+      "redirect_uri" -> config.redirectUri,
       "response_type" -> "code",
-      "scope"         -> "openid email",
-      "state"         -> state,
+      "scope" -> "openid email",
+      "state" -> state,
     )
-    val query = params.map { case (k, v) => s"${enc(k)}=${enc(v)}" }.mkString("&")
+    val query = params
+      .map { case (k, v) =>
+        s"${enc(k)}=${enc(v)}"
+      }
+      .mkString("&")
     s"https://accounts.google.com/o/oauth2/v2/auth?$query"
   }
 
   def exchangeAndVerify(code: String): Task[GoogleIdentity] = {
     for {
-      idToken  <- exchangeCode(code)
+      idToken <- exchangeCode(code)
       identity <- verifyIdToken(idToken)
     } yield identity
   }
@@ -55,12 +58,15 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
     ZIO
       .attemptBlocking {
         val form = Map(
-          "code"          -> code,
-          "client_id"     -> config.clientId,
+          "code" -> code,
+          "client_id" -> config.clientId,
           "client_secret" -> config.clientSecret,
-          "redirect_uri"  -> config.redirectUri,
-          "grant_type"    -> "authorization_code",
-        ).map { case (k, v) => s"${enc(k)}=${enc(v)}" }.mkString("&")
+          "redirect_uri" -> config.redirectUri,
+          "grant_type" -> "authorization_code",
+        ).map { case (k, v) =>
+            s"${enc(k)}=${enc(v)}"
+          }
+          .mkString("&")
         val request = HttpRequest
           .newBuilder()
           .uri(URI.create("https://oauth2.googleapis.com/token"))
@@ -110,6 +116,7 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
 }
 
 object GoogleOAuthClient {
-  val live: URLayer[AppConfig, GoogleOAuthClient] =
-    ZLayer.fromFunction((cfg: AppConfig) => new GoogleOAuthClientLive(cfg.google): GoogleOAuthClient)
+  val live: URLayer[AppConfig, GoogleOAuthClient] = ZLayer.fromFunction((cfg: AppConfig) =>
+    new GoogleOAuthClientLive(cfg.google): GoogleOAuthClient
+  )
 }

@@ -25,23 +25,28 @@ object RouteSupport {
   def authenticatedUser(request: Request): ZIO[AuthService, Response, User] = {
     for {
       authService <- ZIO.service[AuthService]
-      maybeUser <- SessionAuth.sessionIdFrom(request) match {
-                     case None      => ZIO.succeed(None)
-                     case Some(sid) => authService.currentUser(sid)
-                   }
+      maybeUser <-
+        SessionAuth.sessionIdFrom(request) match {
+          case None =>
+            ZIO.succeed(None)
+          case Some(sid) =>
+            authService.currentUser(sid)
+        }
       user <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
     } yield user
   }
 
-  /** Any admin-only page/endpoint denies a signed-in non-admin with a message
-    * explaining they're signed in but lack admin rights (summary.md).
+  /** Any admin-only page/endpoint denies a signed-in non-admin with a message explaining they're signed in but lack
+    * admin rights (summary.md).
     */
   def requireAdmin(request: Request): ZIO[AuthService, Response, User] = {
     authenticatedUser(request).flatMap { user =>
-      if (user.isAdmin) ZIO.succeed(user)
+      if (user.isAdmin)
+        ZIO.succeed(user)
       else {
-        ZIO.succeed(securityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}")) *>
-          ZIO.fail(errorResponse(Status.Forbidden, "You are signed in but do not have administrator rights"))
+        ZIO.succeed(
+          securityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}")
+        ) *> ZIO.fail(errorResponse(Status.Forbidden, "You are signed in but do not have administrator rights"))
       }
     }
   }
