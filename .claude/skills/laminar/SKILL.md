@@ -6,7 +6,7 @@ description: Guides idiomatic Laminar and Airstream patterns for Scala.js reacti
 ## Contents (Priority Order)
 
 1. [Flattening Observables](#flattening-observables) - `flatMapSwitch` vs `flatMapMerge` (critical)
-2. [Signal.changes Gotcha](#signalchanges-gotcha) - creates new stream each call
+2. [Signal.updates Gotcha](#signalupdates-gotcha) - `.changes` is deprecated; creates new stream each call
 3. [Derived Signals](#derived-signals) - `.not`, `.distinct`, lambda shorthand
 4. [Conditional Rendering](#conditional-rendering) - `child <--`, `child.maybe <--`, `splitBoolean`/`splitOption`
 5. [Rendering Lists with split](#rendering-lists-with-split) - efficient list rendering with memoization
@@ -35,19 +35,25 @@ stream.flatMap(x => fetchData(x))
 - `flatMapSwitch` - User input, search queries, navigation (cancel stale requests)
 - `flatMapMerge` - Independent operations that should all complete
 
-## Signal.changes Gotcha
+## Signal.updates Gotcha
 
-`.changes` is a `def`, not a `lazy val`. Each call creates a **new stream instance**.
+**`.changes` is deprecated** since Airstream 18.0.0-M3 (the version this project pins) — it was renamed
+to `.updates`. Under `-Werror` the deprecation warning fails the build, so always write `.updates`.
+
+`.updates` is a `def`, not a `lazy val`. Each call creates a **new stream instance**.
 
 ```scala
+// Bad - deprecated name, fails the build under -Werror
+signal.changes.foreach(f)
+
 // Bad - different stream instances!
-signal.changes.foreach(f1)
-signal.changes.foreach(f2)  // Won't see same events as above
+signal.updates.foreach(f1)
+signal.updates.foreach(f2)  // Won't see same events as above
 
 // Good - capture once
-val changes = signal.changes
-changes.foreach(f1)
-changes.foreach(f2)
+val updates = signal.updates
+updates.foreach(f1)
+updates.foreach(f2)
 ```
 
 ## Derived Signals

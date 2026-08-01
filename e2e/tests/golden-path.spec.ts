@@ -168,7 +168,8 @@ test.describe('administrator flows', () => {
 
   test('editing and deleting a user, with confirmation before delete', async () => {
     const row = page.locator('tr', { hasText: email });
-    await row.click();
+    // The email cell is a real link (keyboard-reachable), not a click handler on the row.
+    await row.getByRole('link', { name: email }).click();
     await expect(page.getByRole('button', { name: 'Delete user' })).toBeVisible();
 
     page.once('dialog', (dialog) => dialog.accept());
