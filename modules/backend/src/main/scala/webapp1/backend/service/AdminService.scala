@@ -1,7 +1,7 @@
 package webapp1.backend.service
 
-import webapp1.backend.db.{UserRepository, UserRow}
-import webapp1.backend.security.PasswordHasher
+import webapp1.backend.db.{SessionRepository, UserRepository, UserRow}
+import webapp1.backend.security.{PasswordHasher, SecurityLog}
 import webapp1.shared.domain.{Theme, User}
 import webapp1.shared.validation.Validation
 import zio.*
@@ -37,9 +37,8 @@ trait AdminService {
 /** Admin actions that change accounts (create/promote-or-demote/delete) are logged to the `security` logger as an audit
   * trail, per summary.md's "logging for application events, such as user actions".
   */
-final class AdminServiceLive(userRepo: UserRepository, hasher: PasswordHasher) extends AdminService {
-
-  private val securityLog = org.slf4j.LoggerFactory.getLogger("security")
+final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepository, hasher: PasswordHasher)
+    extends AdminService {
 
   private def toDomain(row: UserRow): User = {
     User(row.id, row.email, row.isAdmin, Theme.fromString(row.theme).getOrElse(Theme.Light), row.createdAt.toString)
@@ -50,7 +49,7 @@ final class AdminServiceLive(userRepo: UserRepository, hasher: PasswordHasher) e
   }
 
   private def audit(actingAdminId: Long, message: String): UIO[Unit] = {
-    ZIO.succeed(securityLog.info(s"[admin id=$actingAdminId] $message"))
+    SecurityLog.info(s"[admin id=$actingAdminId] $message")
   }
 
   def listUsers: UIO[List[User]] = userRepo.listAll.orDie.map(_.map(toDomain))
@@ -92,23 +91,31 @@ final class AdminServiceLive(userRepo: UserRepository, hasher: PasswordHasher) e
       _ <- ZIO.when(id == actingAdminId && !isAdmin)(ZIO.fail(AdminFailure.SelfDemote))
       byEmail <- userRepo.findByEmail(normalizedEmail).orDie
       _ <- ZIO.when(byEmail.exists(_.id != id))(ZIO.fail(AdminFailure.DuplicateEmail))
-      _ <-
+      newPassword <-
         password match {
           case Some(pw) if pw.nonEmpty =>
             ZIO
               .fromEither(Validation.validatePassword(pw))
               .mapError(err => AdminFailure.ValidationError(Map("password" -> err)))
               .flatMap(_ => hasher.hash(pw).orDie)
-              .flatMap(hash => userRepo.updatePasswordHash(id, hash).orDie)
-              .flatMap(_ => audit(actingAdminId, s"reset password for user '$normalizedEmail' (id=$id)"))
+              .map(Some(_))
           case _ =>
-            ZIO.unit
+            ZIO.none
+        }
+      // Profile and password land together or not at all.
+      _ <- userRepo.updateProfileAndPassword(id, normalizedEmail, isAdmin, newPassword).orDie
+      // A session obtained with the old password must not survive the reset. Sessions live in
+      // another repository, so this cannot join the transaction above; it is idempotent and only
+      // ever revokes more, which is the safe direction to fail in.
+      _ <-
+        ZIO.when(newPassword.isDefined) {
+          Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => sessionRepo.revokeAllForUser(id, now).orDie) *>
+            audit(actingAdminId, s"reset password for user '$normalizedEmail' (id=$id)")
         }
       _ <-
         ZIO.when(before.isAdmin != isAdmin) {
           audit(actingAdminId, s"changed admin status of user '$normalizedEmail' (id=$id) to isAdmin=$isAdmin")
         }
-      _ <- userRepo.updateProfile(id, normalizedEmail, isAdmin).orDie
       updated <- requireUser(id)
     } yield toDomain(updated)
   }
@@ -124,7 +131,7 @@ final class AdminServiceLive(userRepo: UserRepository, hasher: PasswordHasher) e
 }
 
 object AdminServiceLive {
-  val live: URLayer[UserRepository & PasswordHasher, AdminService] = ZLayer.fromFunction(
-    (u: UserRepository, h: PasswordHasher) => new AdminServiceLive(u, h): AdminService
+  val live: URLayer[UserRepository & SessionRepository & PasswordHasher, AdminService] = ZLayer.fromFunction(
+    (u: UserRepository, s: SessionRepository, h: PasswordHasher) => new AdminServiceLive(u, s, h): AdminService
   )
 }

@@ -8,8 +8,21 @@ trait RateLimiter {
   def isBlocked(key: String): UIO[Boolean]
   def recordFailure(key: String): UIO[Unit]
 
+  /** Forgets the failures recorded for a key. Called after a successful authentication so earlier typos don't keep
+    * counting towards a lockout for the rest of the window.
+    */
+  def clear(key: String): UIO[Unit]
+
   /** Background cleanup loop; fork as a daemon fiber once at startup. */
   def runPruner: URIO[Any, Nothing]
+}
+
+/** Key namespaces. Limiting per account only would let one attacker spray a single password across many accounts
+  * untouched, so callers check both dimensions and block if either trips.
+  */
+object RateLimitKey {
+  def email(value: String): String = s"email:${value.trim.toLowerCase}"
+  def ip(value: String): String = s"ip:${value.trim}"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single
@@ -40,6 +53,10 @@ final class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends R
     } yield ()
   }
 
+  def clear(key: String): UIO[Unit] = {
+    state.update(_ - normalize(key))
+  }
+
   /** Drops keys with no attempts left in the window, bounding map growth from one-off email addresses. Runs forever —
     * fork as a daemon fiber at startup.
     */
@@ -60,7 +77,7 @@ object InMemoryRateLimiter {
   val windowMillis: Long = window.toMillis
   val pruneInterval: Duration = 15.minutes
 
-  private def normalize(email: String): String = email.trim.toLowerCase
+  private def normalize(key: String): String = key.trim.toLowerCase
 
   val live: ULayer[RateLimiter] = ZLayer.fromZIO(
     Ref.make(Map.empty[String, Vector[Long]]).map(new InMemoryRateLimiter(_))

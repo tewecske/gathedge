@@ -9,13 +9,12 @@ import javax.sql.DataSource
 
 final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends TodoRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with TodoRepository {
   import ctx._
 
   private inline def todos = quote(querySchema[TodoItemRow]("todo_items"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
 
   def insert(userId: Long, text: String, status: String, createdAt: Long): Task[TodoItemRow] = {
     val row = TodoItemRow(0L, userId, text, status, createdAt)
@@ -27,16 +26,21 @@ final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def updateStatus(id: Long, userId: Long, status: String): Task[Option[TodoItemRow]] = {
-    for {
-      affected <- run(
-        ctx.run(quote(todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status))))
-      )
-      result <-
-        if (affected > 0)
-          run(ctx.run(quote(todos.filter(_.id == lift(id))))).map(_.headOption)
-        else
-          ZIO.none
-    } yield result
+    // Update then read back, in one transaction so the row returned is the one this call wrote
+    // rather than whatever a concurrent request left behind in between.
+    val queries = {
+      for {
+        affected <- ctx.run(
+          quote(todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status)))
+        )
+        result <-
+          if (affected > 0)
+            ctx.run(quote(todos.filter(_.id == lift(id)))).map(_.headOption)
+          else
+            ZIO.none
+      } yield result
+    }
+    transaction(queries)
   }
 }
 
@@ -54,18 +58,32 @@ object SqliteTodoRepository {
 
 final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends GroupRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with GroupRepository {
   import ctx._
 
   private inline def groupsQ = quote(querySchema[GroupRow]("groups"))
   private inline def membersQ = quote(querySchema[GroupMemberRow]("group_members"))
 
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
-
   def insert(name: String, createdAt: Long): Task[GroupRow] = {
     val row = GroupRow(0L, name, createdAt)
     run(ctx.run(quote(groupsQ.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))
+  }
+
+  def insertWithCreator(name: String, creatorId: Long, creatorRole: String, createdAt: Long): Task[GroupRow] = {
+    val row = GroupRow(0L, name, createdAt)
+    // Both writes or neither: a group whose creator's membership row is missing is invisible in
+    // "my groups" and, because every operation on it requires membership, impossible to delete.
+    // `group_members` is written here rather than through GroupMemberRepository on purpose — see
+    // the note on QuillRepository about transactions not composing across repositories.
+    val queries = {
+      for {
+        id <- ctx.run(quote(groupsQ.insertValue(lift(row)).returningGenerated(_.id)))
+        _ <- ctx.run(quote(membersQ.insertValue(lift(GroupMemberRow(id, creatorId, creatorRole, createdAt)))))
+      } yield id
+    }
+    transaction(queries).map(id => row.copy(id = id))
   }
 
   def findById(id: Long): Task[Option[GroupRow]] = {
@@ -101,14 +119,13 @@ object SqliteGroupRepository {
 
 final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends GroupMemberRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with GroupMemberRepository {
   import ctx._
 
   private inline def members = quote(querySchema[GroupMemberRow]("group_members"))
   private inline def usersQ = quote(querySchema[UserRow]("users"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
 
   def addMember(groupId: Long, userId: Long, role: String, joinedAt: Long): Task[Unit] = {
     run(ctx.run(quote(members.insertValue(lift(GroupMemberRow(groupId, userId, role, joinedAt)))))).unit
@@ -161,13 +178,12 @@ object SqliteGroupMemberRepository {
 
 final class GroupPairRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends GroupPairRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with GroupPairRepository {
   import ctx._
 
   private inline def pairs = quote(querySchema[GroupPairRow]("group_pairs"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
 
   def insert(
     groupId: Long,

@@ -14,15 +14,12 @@ import javax.sql.DataSource
   */
 final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends UserRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with UserRepository {
   import ctx._
 
   private inline def users = quote(querySchema[UserRow]("users"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = {
-    q.provideEnvironment(ZEnvironment(dataSource))
-  }
 
   def insert(
     email: String,
@@ -68,6 +65,21 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     run(ctx.run(quote(users.filter(_.id == lift(id)).update(_.passwordHash -> lift(Option(passwordHash)))))).unit
   }
 
+  def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long] = {
+    val profile = ctx.run(
+      quote(users.filter(_.id == lift(id)).update(_.email -> lift(email), _.isAdmin -> lift(isAdmin)))
+    )
+    passwordHash match {
+      case None =>
+        run(profile)
+      case Some(hash) =>
+        val password = ctx.run(quote(users.filter(_.id == lift(id)).update(_.passwordHash -> lift(Option(hash)))))
+        // One unit of work: an admin edit must not be able to land the new password while leaving
+        // the email/role change behind, or the other way round.
+        transaction(password *> profile)
+    }
+  }
+
   def deleteById(id: Long): Task[Long] = {
     run(ctx.run(quote(users.filter(_.id == lift(id)).delete)))
   }
@@ -87,15 +99,12 @@ object SqliteUserRepository {
 
 final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends SessionRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with SessionRepository {
   import ctx._
 
   private inline def sessions = quote(querySchema[SessionRow]("sessions"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = {
-    q.provideEnvironment(ZEnvironment(dataSource))
-  }
 
   def insert(session: SessionRow): Task[Unit] = {
     run(ctx.run(quote(sessions.insertValue(lift(session))))).unit
@@ -109,6 +118,22 @@ final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
 
   def revoke(id: String, revokedAt: Long): Task[Unit] = {
     run(ctx.run(quote(sessions.filter(_.id == lift(id)).update(_.revokedAt -> lift(Option(revokedAt)))))).unit
+  }
+
+  def revokeAllForUser(userId: Long, revokedAt: Long): Task[Unit] = {
+    val q = quote {
+      sessions
+        .filter(s => s.userId == lift(userId) && s.revokedAt.isEmpty)
+        .update(_.revokedAt -> lift(Option(revokedAt)))
+    }
+    run(ctx.run(q)).unit
+  }
+
+  def deleteExpired(before: Long): Task[Long] = {
+    val q = quote {
+      sessions.filter(s => s.expiresAt < lift(before) || s.revokedAt.exists(_ < lift(before))).delete
+    }
+    run(ctx.run(q))
   }
 }
 

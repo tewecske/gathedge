@@ -4,6 +4,11 @@ import zio.*
 
 trait GroupRepository {
   def insert(name: String, createdAt: Long): Task[GroupRow]
+
+  /** Creates the group and its creator's membership row atomically. A group with no members can be neither seen nor
+    * deleted, so the two writes must not be able to come apart.
+    */
+  def insertWithCreator(name: String, creatorId: Long, creatorRole: String, createdAt: Long): Task[GroupRow]
   def findById(id: Long): Task[Option[GroupRow]]
 
   /** Groups the user is a member of, paired with their role in each. */

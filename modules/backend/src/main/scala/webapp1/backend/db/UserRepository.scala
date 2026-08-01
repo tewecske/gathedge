@@ -24,5 +24,10 @@ trait UserRepository {
   /** Updates email/admin flag only if the row exists. Returns rows affected. */
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long]
   def updatePasswordHash(id: Long, passwordHash: String): Task[Unit]
+
+  /** Both updates as one unit of work — `passwordHash` of `None` leaves the password alone. Returns rows affected by
+    * the profile update.
+    */
+  def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long]
   def deleteById(id: Long): Task[Long]
 }

@@ -1,15 +1,20 @@
 package webapp1.backend.service
 
 import webapp1.backend.TestDataSource
-import webapp1.backend.db.SqliteUserRepository
+import webapp1.backend.db.{SessionRepository, SqliteSessionRepository, SqliteUserRepository, UserRepository}
 import webapp1.backend.security.PasswordHasher
 import zio._
 import zio.test._
 
 object AdminServiceSpec extends ZIOSpecDefault {
 
-  private val layer: ZLayer[Any, Throwable, AdminService] =
-    ((TestDataSource.sqlite >>> SqliteUserRepository.live) ++ PasswordHasher.live) >>> AdminServiceLive.live
+  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository] =
+    TestDataSource.sqlite >>> (SqliteUserRepository.live ++ SqliteSessionRepository.live)
+
+  // AuthService shares the same DataSource so a session issued by a login can be checked against
+  // the effect an admin password reset has on it.
+  private val layer: ZLayer[Any, Throwable, AdminService & AuthService] =
+    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> (AdminServiceLive.live ++ AuthServiceLive.live)
 
   def spec = suite("AdminService (SQLite)")(
     test("creates a user and lists it") {
@@ -67,6 +72,25 @@ object AdminServiceSpec extends ZIOSpecDefault {
         user <- service.createUser(0L, "keep-pw@example.com", "originalpw", isAdmin = false)
         updated <- service.updateUser(admin.id, user.id, "keep-pw@example.com", isAdmin = false, password = Some(""))
       } yield assertTrue(updated.email == "keep-pw@example.com")
+    },
+    test("resetting a user's password revokes their existing sessions") {
+      for {
+        adminService <- ZIO.service[AdminService]
+        authService <- ZIO.service[AuthService]
+        admin <- adminService.createUser(0L, "admin5@example.com", "password123", isAdmin = true)
+        user <- adminService.createUser(0L, "reset-pw@example.com", "originalpw", isAdmin = false)
+        loginResult <- authService.login("reset-pw@example.com", "originalpw")
+        sessionId = loginResult._2
+        before <- authService.currentUser(sessionId)
+        _ <- adminService.updateUser(
+          admin.id,
+          user.id,
+          "reset-pw@example.com",
+          isAdmin = false,
+          password = Some("replacedpw"),
+        )
+        after <- authService.currentUser(sessionId)
+      } yield assertTrue(before.isDefined, after.isEmpty)
     },
     test("deleting a user removes them from the list") {
       for {

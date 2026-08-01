@@ -9,13 +9,12 @@ import javax.sql.DataSource
 
 final class GroupInvitationRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
-  ctx: ZioJdbcContext[Dialect, Naming],
-) extends GroupInvitationRepository {
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with GroupInvitationRepository {
   import ctx._
 
   private inline def invitations = quote(querySchema[GroupInvitationRow]("group_invitations"))
-
-  private def run[T](q: zio.ZIO[DataSource, Throwable, T]): Task[T] = q.provideEnvironment(ZEnvironment(dataSource))
 
   def insert(row: GroupInvitationRow): Task[GroupInvitationRow] = {
     run(ctx.run(quote(invitations.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))

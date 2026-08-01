@@ -57,6 +57,35 @@ object AuthServiceSpec extends ZIOSpecDefault {
         result == Left(AuthFailure.ValidationError(Map("password" -> "Password must be at least 8 characters")))
       )
     },
+    test("repeated wrong passwords trip the rate limiter") {
+      for {
+        authService <- ZIO.service[AuthService]
+        _ <- authService.signup("locked@example.com", "password123")
+        _ <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            authService.login("locked@example.com", "nope12345").either
+          }
+        result <- authService.login("locked@example.com", "password123").either
+      } yield assertTrue(result == Left(AuthFailure.RateLimited))
+    },
+    test("a successful login forgets earlier failures") {
+      val almostLockedOut = InMemoryRateLimiter.maxAttempts - 1
+      for {
+        authService <- ZIO.service[AuthService]
+        _ <- authService.signup("forgiven@example.com", "password123")
+        _ <-
+          ZIO.foreachDiscard(1 to almostLockedOut) { _ =>
+            authService.login("forgiven@example.com", "nope12345").either
+          }
+        _ <- authService.login("forgiven@example.com", "password123")
+        // Without the reset these would land on top of the earlier failures and trip the limiter.
+        _ <-
+          ZIO.foreachDiscard(1 to almostLockedOut) { _ =>
+            authService.login("forgiven@example.com", "nope12345").either
+          }
+        result <- authService.login("forgiven@example.com", "nope12345").either
+      } yield assertTrue(result == Left(AuthFailure.InvalidCredentials))
+    },
     test("Google sign-in is rejected when the email isn't verified") {
       for {
         authService <- ZIO.service[AuthService]

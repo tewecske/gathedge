@@ -22,18 +22,22 @@ object AdminSeeder {
             exists <- userRepo.existsAdmin
             _ <-
               ZIO.unless(exists) {
+                // Same normalization AuthService.login applies before looking an account up —
+                // without it a BOOTSTRAP_ADMIN_EMAIL containing capitals seeds an account that
+                // can never be logged into.
+                val email = config.bootstrapAdmin.email.trim.toLowerCase
                 for {
                   hash <- hasher.hash(config.bootstrapAdmin.password)
                   now <- Clock.currentTime(TimeUnit.MILLISECONDS)
                   _ <- userRepo.insert(
-                    config.bootstrapAdmin.email,
+                    email,
                     Some(hash),
                     isAdmin = true,
                     googleSubject = None,
                     theme = "light",
                     createdAt = now,
                   )
-                  _ <- ZIO.logInfo(s"Bootstrap admin account created: ${config.bootstrapAdmin.email}")
+                  _ <- ZIO.logInfo(s"Bootstrap admin account created: $email")
                 } yield ()
               }
           } yield ()

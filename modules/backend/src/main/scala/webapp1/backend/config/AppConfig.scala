@@ -34,10 +34,35 @@ final case class AppConfig(
   def appEnv: AppEnv = AppEnv.parse(app.env)
   def isProduction: Boolean = appEnv == AppEnv.Production
   def isGoogleOAuthConfigured: Boolean = google.clientId.nonEmpty && google.clientSecret.nonEmpty
+
+  /** Settings that are fine for local development but unsafe in production. `Main` refuses to start while this is
+    * non-empty, so a missing `${?ENV_VAR}` override can't silently downgrade a production deployment to development
+    * defaults (session cookies without `Secure` being the worst of them).
+    */
+  def productionIssues: List[String] = {
+    if (!isProduction) {
+      Nil
+    } else {
+      List(
+        Option.when(!session.cookieSecure)(
+          "session.cookie-secure is false, so session cookies would be sent over plain HTTP (set SESSION_COOKIE_SECURE=true)"
+        ),
+        Option.when(!app.publicBaseUrl.startsWith("https://"))(
+          s"app.public-base-url is '${app.publicBaseUrl}', which is not https (set PUBLIC_BASE_URL)"
+        ),
+        Option.when(db.password == AppConfig.developmentDbPassword)(
+          "db.password is still the development default (set DB_PASSWORD)"
+        ),
+      ).flatten
+    }
+  }
 }
 
 object AppConfig {
   private val configDesc = deriveConfig[AppConfig]
+
+  /** Must match the `db.password` default in application.conf. */
+  val developmentDbPassword = "webapp1"
 
   // application.conf keys are kebab-case; case class fields stay idiomatic camelCase
   // and the provider maps between the two.

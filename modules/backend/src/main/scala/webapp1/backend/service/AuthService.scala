@@ -1,7 +1,7 @@
 package webapp1.backend.service
 
 import webapp1.backend.db.{SessionRepository, SessionRow, UserRepository, UserRow}
-import webapp1.backend.security.{PasswordHasher, SessionAuth}
+import webapp1.backend.security.{PasswordHasher, SecurityLog, SessionAuth}
 import webapp1.shared.domain.{Theme, User}
 import webapp1.shared.validation.Validation
 import zio.*
@@ -19,8 +19,10 @@ enum AuthFailure {
 }
 
 trait AuthService {
-  def signup(email: String, password: String): IO[AuthFailure, (User, String)]
-  def login(email: String, password: String): IO[AuthFailure, (User, String)]
+
+  /** `clientIp`, when known, is rate-limited alongside the email address. */
+  def signup(email: String, password: String, clientIp: Option[String] = None): IO[AuthFailure, (User, String)]
+  def login(email: String, password: String, clientIp: Option[String] = None): IO[AuthFailure, (User, String)]
   def loginWithGoogle(identity: GoogleIdentity): IO[AuthFailure, (User, String)]
   def logout(sessionId: String): UIO[Unit]
 
@@ -34,17 +36,21 @@ final class AuthServiceLive(
   sessionRepo: SessionRepository,
   hasher: PasswordHasher,
   rateLimiter: RateLimiter,
+  /** Hash of a fixed throwaway string, verified against on the login paths that have no real hash to check, so that "no
+    * such account" costs the same as "wrong password". Skipping the bcrypt work there made response time a reliable
+    * oracle for which email addresses have accounts.
+    */
+  timingEqualizerHash: String,
 ) extends AuthService {
 
   private val secureRandom = new SecureRandom()
-  private val securityLog = org.slf4j.LoggerFactory.getLogger("security")
 
   private def logRateLimited(email: String): UIO[Unit] = {
-    ZIO.succeed(securityLog.warn(s"Rate limit exceeded for '$email'"))
+    SecurityLog.warn(s"Rate limit exceeded for '$email'")
   }
 
   private def logFailedAttempt(email: String, reason: String): UIO[Unit] = {
-    ZIO.succeed(securityLog.warn(s"Failed auth attempt for '$email': $reason"))
+    SecurityLog.warn(s"Failed auth attempt for '$email': $reason")
   }
 
   private def newSessionId(): UIO[String] = {
@@ -80,34 +86,58 @@ final class AuthServiceLive(
       ZIO.unit
   }
 
-  def signup(email: String, password: String): IO[AuthFailure, (User, String)] = {
+  private def rateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
+    RateLimitKey.email(normalizedEmail) :: clientIp.map(RateLimitKey.ip).toList
+  }
+
+  private def anyKeyBlocked(keys: List[String]): UIO[Boolean] = {
+    ZIO.exists(keys)(rateLimiter.isBlocked)
+  }
+
+  private def recordFailure(keys: List[String]): UIO[Unit] = {
+    ZIO.foreachDiscard(keys)(rateLimiter.recordFailure)
+  }
+
+  private def clearFailures(keys: List[String]): UIO[Unit] = {
+    ZIO.foreachDiscard(keys)(rateLimiter.clear)
+  }
+
+  /** Burns the same bcrypt work a real verification would, so failing early can't be timed. */
+  private def equalizeTiming: UIO[Unit] = {
+    hasher.verify("", timingEqualizerHash).orDie.unit
+  }
+
+  def signup(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = email.trim.toLowerCase
+    val keys = rateLimitKeys(normalizedEmail, clientIp)
     for {
       _ <- validateCredentials(normalizedEmail, password)
-      blocked <- rateLimiter.isBlocked(normalizedEmail)
+      blocked <- anyKeyBlocked(keys)
       _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
       existing <- userRepo.findByEmail(normalizedEmail).orDie
       _ <-
         ZIO.when(existing.isDefined) {
-          rateLimiter.recordFailure(normalizedEmail) *> ZIO.fail(AuthFailure.EmailAlreadyRegistered)
+          recordFailure(keys) *> ZIO.fail(AuthFailure.EmailAlreadyRegistered)
         }
       hash <- hasher.hash(password).orDie
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, googleSubject = None, "light", now).orDie
       sessionId <- createSession(row.id)
+      _ <- clearFailures(keys)
     } yield (toDomain(row), sessionId)
   }
 
-  def login(email: String, password: String): IO[AuthFailure, (User, String)] = {
+  def login(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = email.trim.toLowerCase
+    val keys = rateLimitKeys(normalizedEmail, clientIp)
     for {
-      blocked <- rateLimiter.isBlocked(normalizedEmail)
+      blocked <- anyKeyBlocked(keys)
       _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
       maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
       row <-
         maybeRow match {
           case None =>
-            rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "no such account") *>
+            equalizeTiming *> recordFailure(keys) *> logFailedAttempt(normalizedEmail, "no such account") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(r) =>
             ZIO.succeed(r)
@@ -115,7 +145,7 @@ final class AuthServiceLive(
       _ <-
         row.passwordHash match {
           case None =>
-            rateLimiter.recordFailure(normalizedEmail) *>
+            equalizeTiming *> recordFailure(keys) *>
               logFailedAttempt(normalizedEmail, "no password set (Google-only account)") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(hash) =>
@@ -126,12 +156,13 @@ final class AuthServiceLive(
                 if (ok)
                   ZIO.unit
                 else {
-                  rateLimiter.recordFailure(normalizedEmail) *> logFailedAttempt(normalizedEmail, "wrong password") *>
+                  recordFailure(keys) *> logFailedAttempt(normalizedEmail, "wrong password") *>
                     ZIO.fail(AuthFailure.InvalidCredentials)
                 }
               }
         }
       sessionId <- createSession(row.id)
+      _ <- clearFailures(keys)
     } yield (toDomain(row), sessionId)
   }
 
@@ -206,8 +237,19 @@ final class AuthServiceLive(
 }
 
 object AuthServiceLive {
-  val live: URLayer[UserRepository & SessionRepository & PasswordHasher & RateLimiter, AuthService] = ZLayer
-    .fromFunction((u: UserRepository, s: SessionRepository, h: PasswordHasher, r: RateLimiter) =>
-      new AuthServiceLive(u, s, h, r): AuthService
-    )
+
+  /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
+    * [[PasswordHasher]] is configured with.
+    */
+  private val timingEqualizerSource = "account-enumeration-guard"
+
+  val live: URLayer[UserRepository & SessionRepository & PasswordHasher & RateLimiter, AuthService] = ZLayer {
+    for {
+      userRepo <- ZIO.service[UserRepository]
+      sessionRepo <- ZIO.service[SessionRepository]
+      hasher <- ZIO.service[PasswordHasher]
+      rateLimiter <- ZIO.service[RateLimiter]
+      timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
+    } yield new AuthServiceLive(userRepo, sessionRepo, hasher, rateLimiter, timingEqualizerHash): AuthService
+  }
 }

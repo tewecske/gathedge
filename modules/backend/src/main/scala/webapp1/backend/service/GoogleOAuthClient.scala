@@ -27,7 +27,13 @@ trait GoogleOAuthClient {
   * [[GoogleOAuthClient]] interface.
   */
 final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClient {
-  private val httpClient = HttpClient.newHttpClient()
+
+  // Without these, an unresponsive Google endpoint holds a blocking-pool thread for as long as the
+  // OS keeps the socket open, since `attemptBlocking` can't interrupt a synchronous `send`.
+  private val connectTimeout = java.time.Duration.ofSeconds(5)
+  private val requestTimeout = java.time.Duration.ofSeconds(10)
+
+  private val httpClient = HttpClient.newBuilder().connectTimeout(connectTimeout).build()
 
   private def enc(s: String): String = URLEncoder.encode(s, StandardCharsets.UTF_8)
 
@@ -71,6 +77,7 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
           .newBuilder()
           .uri(URI.create("https://oauth2.googleapis.com/token"))
           .header("Content-Type", "application/x-www-form-urlencoded")
+          .timeout(requestTimeout)
           .POST(HttpRequest.BodyPublishers.ofString(form))
           .build()
         httpClient.send(request, HttpResponse.BodyHandlers.ofString())
@@ -92,6 +99,7 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
         val request = HttpRequest
           .newBuilder()
           .uri(URI.create(s"https://oauth2.googleapis.com/tokeninfo?id_token=${enc(idToken)}"))
+          .timeout(requestTimeout)
           .GET()
           .build()
         httpClient.send(request, HttpResponse.BodyHandlers.ofString())

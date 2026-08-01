@@ -74,8 +74,11 @@ final class GroupServiceLive(
     GroupPair(row.id, row.source, row.target, row.createdByEmail, row.createdAt.toString)
   }
 
+  /** Callers have already established that the group exists (membership was checked against it), so a missing row here
+    * is a broken invariant, not a user error.
+    */
   private def findGroupOrDie(groupId: Long): UIO[GroupRow] = {
-    groupRepo.findById(groupId).orDie.map(_.getOrElse(throw new IllegalStateException(s"group $groupId vanished")))
+    groupRepo.findById(groupId).orDie.someOrElseZIO(ZIO.dieMessage(s"group $groupId vanished"))
   }
 
   private def newToken(): String = {
@@ -85,15 +88,15 @@ final class GroupServiceLive(
   }
 
   def createGroup(userId: Long, name: String): IO[GroupFailure, Group] = {
-    Validation.validateNonBlank(name, "Name") match {
+    Validation.validateNonBlank(name, "Name", Validation.maxNameLength) match {
       case Left(err) =>
         ZIO.fail(GroupFailure.ValidationError(Map("name" -> err)))
       case Right(validName) =>
+        val adminRole = GroupRole.toDbString(GroupRole.Admin)
         for {
           now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-          group <- groupRepo.insert(validName, now).orDie
-          _ <- memberRepo.addMember(group.id, userId, GroupRole.toDbString(GroupRole.Admin), now).orDie
-        } yield toDomain(group, GroupRole.toDbString(GroupRole.Admin))
+          group <- groupRepo.insertWithCreator(validName, userId, adminRole, now).orDie
+        } yield toDomain(group, adminRole)
     }
   }
 

@@ -16,7 +16,14 @@ import webapp1.backend.db.{
   PostgresUserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{AuthServiceLive, EmailSender, GroupServiceLive, InMemoryRateLimiter, TodoServiceLive}
+import webapp1.backend.service.{
+  AdminServiceLive,
+  AuthServiceLive,
+  EmailSender,
+  GroupServiceLive,
+  InMemoryRateLimiter,
+  TodoServiceLive,
+}
 import webapp1.shared.domain.TodoStatus
 import zio._
 import zio.test._
@@ -64,7 +71,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
 
   private val layer = {
     repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ EmailSender.live ++ AppConfig.live >>>
-      (AuthServiceLive.live ++ TodoServiceLive.live ++ GroupServiceLive.live)
+      (AuthServiceLive.live ++ TodoServiceLive.live ++ GroupServiceLive.live ++ AdminServiceLive.live)
   }
 
   def spec = {
@@ -81,13 +88,40 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           group <- groupService.createGroup(user.id, "PG Group")
           pair <- groupService.addPair(user.id, user.email, group.id, "src", "tgt")
           pairs <- groupService.listPairs(user.id, group.id)
+          // Proves the creator's membership row committed with the group: without it the group
+          // would be invisible here and unreachable through every other group endpoint.
+          myGroups <- groupService.myGroups(user.id)
         } yield assertTrue(
           moved.status == TodoStatus.Done,
           group.name == "PG Group",
           pair.source == "src",
           pairs.map(_.id) == List(pair.id),
+          myGroups.map(_.id) == List(group.id),
         )
-      }
-    ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS")
+      },
+      test("an admin profile-and-password edit commits as one unit and drops the user's sessions") {
+        for {
+          adminService <- ZIO.service[webapp1.backend.service.AdminService]
+          authService <- ZIO.service[webapp1.backend.service.AuthService]
+          admin <- adminService.createUser(0L, "pgadmin@example.com", "password123", isAdmin = true)
+          target <- adminService.createUser(admin.id, "pgtarget@example.com", "password123", isAdmin = false)
+          session <- authService.login("pgtarget@example.com", "password123").map(_._2)
+          updated <- adminService.updateUser(
+            admin.id,
+            target.id,
+            "pgrenamed@example.com",
+            isAdmin = true,
+            password = Some("replacedpw"),
+          )
+          afterReset <- authService.currentUser(session)
+          withNewPassword <- authService.login("pgrenamed@example.com", "replacedpw")
+        } yield assertTrue(
+          updated.email == "pgrenamed@example.com",
+          updated.isAdmin,
+          afterReset.isEmpty,
+          withNewPassword._1.id == target.id,
+        )
+      },
+    ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
   }
 }
