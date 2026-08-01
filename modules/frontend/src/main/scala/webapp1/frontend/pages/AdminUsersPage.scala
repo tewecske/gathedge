@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.AppShell
+import webapp1.frontend.components.{AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.CreateUserRequest
@@ -12,17 +12,51 @@ object AdminUsersPage {
   def render(): HtmlElement = AppShell.render(Page.Admin, new AdminUsersPage().render())
 }
 
+/** All of the create-user form's state, including its validity. Field errors are derived rather than stored, so they
+  * cannot go stale; `showErrors` keeps them hidden until the first submit attempt.
+  */
+private case class CreateUserForm(
+  email: String = "",
+  password: String = "",
+  isAdmin: Boolean = false,
+  showErrors: Boolean = false,
+) {
+  def emailError: Option[String] = Validation.validateEmail(email).left.toOption
+
+  def passwordError: Option[String] = Validation.validatePassword(password).left.toOption
+
+  def displayError(error: CreateUserForm => Option[String]): Option[String] = {
+    if (showErrors)
+      error(this)
+    else
+      None
+  }
+
+  /** `Some` exactly when the form is valid, so it doubles as the validity check. */
+  def toRequest: Option[CreateUserRequest] = {
+    for {
+      validEmail <- Validation.validateEmail(email).toOption
+      validPassword <- Validation.validatePassword(password).toOption
+    } yield CreateUserRequest(validEmail, validPassword, isAdmin)
+  }
+}
+
 private class AdminUsersPage {
   private val usersVar = Var(List.empty[User])
   private val usersSignal = usersVar.signal
 
-  private val emailVar = Var("")
-  private val emailSignal = emailVar.signal
-  private val passwordVar = Var("")
-  private val passwordSignal = passwordVar.signal
-  private val isAdminVar = Var(false)
-  private val isAdminSignal = isAdminVar.signal
+  private val formVar = Var(CreateUserForm())
+  private val formSignal = formVar.signal
 
+  // Writable lenses into the one form Var, so inputs stay two-way bound without a Var per field.
+  private val emailVar = formVar.zoom(_.email)((form, email) => form.copy(email = email))
+  private val passwordVar = formVar.zoom(_.password)((form, password) => form.copy(password = password))
+  private val isAdminVar = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
+
+  private val emailErrorSignal = formSignal.map(_.displayError(_.emailError))
+  private val passwordErrorSignal = formSignal.map(_.displayError(_.passwordError))
+
+  // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal = errorVar.signal
   private val inFlightVar = Var(false)
@@ -32,7 +66,7 @@ private class AdminUsersPage {
   private val createBus = new EventBus[Unit]()
 
   // Validation is pure; the effects hang off the resulting stream as observers.
-  private val createStream = createBus.events.filterWith(inFlightSignal.not).map(_ => validateNewUser())
+  private val createStream = createBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
 
   def render(): HtmlElement = {
     div(
@@ -48,21 +82,21 @@ private class AdminUsersPage {
             errorVar.set(Some(err.message))
         },
       createStream -->
-        Observer[Either[String, CreateUserRequest]] {
-          case Left(err) =>
-            errorVar.set(Some(err))
-          case Right(_) =>
+        Observer[Option[CreateUserRequest]] {
+          case None =>
+            formVar.update(_.copy(showErrors = true))
+          case Some(_) =>
             Var.set(inFlightVar -> true, errorVar -> None)
         },
       createStream
-        .collect { case Right(request) =>
+        .collect { case Some(request) =>
           request
         }
         .flatMapSwitch(request => ApiClient.post[CreateUserRequest, User]("/api/admin/users", request)) -->
         Observer[Either[ApiError, User]] {
           case Right(user) =>
             usersVar.update(_ :+ user)
-            Var.set(inFlightVar -> false, emailVar -> "", passwordVar -> "", isAdminVar -> false, errorVar -> None)
+            Var.set(inFlightVar -> false, formVar -> CreateUserForm(), errorVar -> None)
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
@@ -77,26 +111,34 @@ private class AdminUsersPage {
         cls := "card-body",
         h2(cls := "card-title", "Create user"),
         form(
-          cls := "flex flex-wrap gap-2 items-center",
+          cls := "flex flex-wrap gap-2 items-start",
+          // Browser validation would pre-empt our own messages, and they differ from the server's rules.
+          noValidate := true,
           onSubmit.preventDefault.mapToUnit --> createBus.writer,
-          input(
-            cls := "input",
-            typ := "email",
-            placeholder := "Email",
-            controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
+          FormField.render(emailErrorSignal)(
+            input(
+              cls := "input",
+              cls("input-error") <-- emailErrorSignal.map(_.nonEmpty),
+              typ := "email",
+              placeholder := "Email",
+              controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
+            )
           ),
-          input(
-            cls := "input",
-            typ := "password",
-            placeholder := s"Password (min ${Validation.minPasswordLength} characters)",
-            controlled(value <-- passwordSignal, onInput.mapToValue --> passwordVar.writer),
+          FormField.render(passwordErrorSignal)(
+            input(
+              cls := "input",
+              cls("input-error") <-- passwordErrorSignal.map(_.nonEmpty),
+              typ := "password",
+              placeholder := s"Password (min ${Validation.minPasswordLength} characters)",
+              controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
+            )
           ),
           label(
-            cls := "label gap-2",
+            cls := "label gap-2 h-12",
             input(
               typ := "checkbox",
               cls := "checkbox",
-              controlled(checked <-- isAdminSignal, onClick.mapToChecked --> isAdminVar.writer),
+              controlled(checked <-- isAdminVar.signal, onClick.mapToChecked --> isAdminVar.writer),
             ),
             "Administrator",
           ),
@@ -147,13 +189,6 @@ private class AdminUsersPage {
       ),
       td(text <-- userSignal.map(_.createdAt).distinct),
     )
-  }
-
-  private def validateNewUser(): Either[String, CreateUserRequest] = {
-    for {
-      email <- Validation.validateEmail(emailVar.now())
-      password <- Validation.validatePassword(passwordVar.now())
-    } yield CreateUserRequest(email, password, isAdminVar.now())
   }
 
   private def renderError(message: String): HtmlElement = {

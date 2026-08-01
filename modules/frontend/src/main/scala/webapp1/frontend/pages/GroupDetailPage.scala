@@ -3,7 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, GroupSubmenu}
+import webapp1.frontend.components.{AppShell, FormField, GroupSubmenu}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupPair}
 import webapp1.shared.dto.CreatePairRequest
@@ -16,17 +16,43 @@ object GroupDetailPage {
   )
 }
 
+/** State of the add-pair form. Field errors are derived rather than stored, and `showErrors` keeps them hidden until
+  * the first submit attempt.
+  */
+private case class AddPairForm(source: String = "", target: String = "", showErrors: Boolean = false) {
+  def sourceError: Option[String] = Validation.validateNonBlank(source, "Source").left.toOption
+
+  def targetError: Option[String] = Validation.validateNonBlank(target, "Target").left.toOption
+
+  def displayError(error: AddPairForm => Option[String]): Option[String] = {
+    if (showErrors)
+      error(this)
+    else
+      None
+  }
+
+  /** `Some` exactly when the form is valid, so it doubles as the validity check. */
+  def toRequest: Option[CreatePairRequest] = {
+    for {
+      validSource <- Validation.validateNonBlank(source, "Source").toOption
+      validTarget <- Validation.validateNonBlank(target, "Target").toOption
+    } yield CreatePairRequest(validSource, validTarget)
+  }
+}
+
 private class GroupDetailPage(groupId: Long) {
   private val groupVar = Var(Option.empty[Group])
   private val groupSignal = groupVar.signal
   private val pairsVar = Var(List.empty[GroupPair])
   private val pairsSignal = pairsVar.signal
 
-  private val sourceVar = Var("")
-  private val sourceSignal = sourceVar.signal
-  private val targetVar = Var("")
-  private val targetSignal = targetVar.signal
+  private val formVar = Var(AddPairForm())
+  private val sourceVar = formVar.zoom(_.source)((form, source) => form.copy(source = source))
+  private val targetVar = formVar.zoom(_.target)((form, target) => form.copy(target = target))
+  private val sourceErrorSignal = formVar.signal.map(_.displayError(_.sourceError))
+  private val targetErrorSignal = formVar.signal.map(_.displayError(_.targetError))
 
+  // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal = errorVar.signal
   private val inFlightVar = Var(false)
@@ -38,7 +64,7 @@ private class GroupDetailPage(groupId: Long) {
 
   private val loadStream = loadBus.events
   // Validation is pure; the effects hang off the resulting stream as observers.
-  private val addPairStream = addPairBus.events.filterWith(inFlightSignal.not).map(_ => validatePair())
+  private val addPairStream = addPairBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
   private val deleteStream = deleteGroupBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
@@ -68,14 +94,14 @@ private class GroupDetailPage(groupId: Long) {
             errorVar.set(Some(err.message))
         },
       addPairStream -->
-        Observer[Either[String, CreatePairRequest]] {
-          case Left(err) =>
-            errorVar.set(Some(err))
-          case Right(_) =>
+        Observer[Option[CreatePairRequest]] {
+          case None =>
+            formVar.update(_.copy(showErrors = true))
+          case Some(_) =>
             Var.set(inFlightVar -> true, errorVar -> None)
         },
       addPairStream
-        .collect { case Right(request) =>
+        .collect { case Some(request) =>
           request
         }
         .flatMapSwitch(request =>
@@ -84,7 +110,7 @@ private class GroupDetailPage(groupId: Long) {
         Observer[Either[ApiError, GroupPair]] {
           case Right(pair) =>
             pairsVar.update(_ :+ pair)
-            Var.set(inFlightVar -> false, sourceVar -> "", targetVar -> "", errorVar -> None)
+            Var.set(inFlightVar -> false, formVar -> AddPairForm(), errorVar -> None)
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
@@ -103,17 +129,25 @@ private class GroupDetailPage(groupId: Long) {
 
   private def renderAddPairForm(): HtmlElement = {
     form(
-      cls := "flex gap-2 mb-4",
+      cls := "flex gap-2 mb-4 items-start",
       onSubmit.preventDefault.mapToUnit --> addPairBus.writer,
-      input(
-        cls := "input flex-1",
-        placeholder := "Source",
-        controlled(value <-- sourceSignal, onInput.mapToValue --> sourceVar.writer),
+      FormField.render(sourceErrorSignal)(
+        cls := "flex-1",
+        input(
+          cls := "input w-full",
+          cls("input-error") <-- sourceErrorSignal.map(_.nonEmpty),
+          placeholder := "Source",
+          controlled(value <-- sourceVar.signal, onInput.mapToValue --> sourceVar.writer),
+        ),
       ),
-      input(
-        cls := "input flex-1",
-        placeholder := "Target",
-        controlled(value <-- targetSignal, onInput.mapToValue --> targetVar.writer),
+      FormField.render(targetErrorSignal)(
+        cls := "flex-1",
+        input(
+          cls := "input w-full",
+          cls("input-error") <-- targetErrorSignal.map(_.nonEmpty),
+          placeholder := "Target",
+          controlled(value <-- targetVar.signal, onInput.mapToValue --> targetVar.writer),
+        ),
       ),
       button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Add"),
     )
@@ -158,13 +192,6 @@ private class GroupDetailPage(groupId: Long) {
           },
       ),
     )
-  }
-
-  private def validatePair(): Either[String, CreatePairRequest] = {
-    for {
-      source <- Validation.validateNonBlank(sourceVar.now(), "Source")
-      target <- Validation.validateNonBlank(targetVar.now(), "Target")
-    } yield CreatePairRequest(source, target)
   }
 
   private def renderAlert(kind: String, message: String): HtmlElement = {

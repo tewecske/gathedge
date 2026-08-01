@@ -22,7 +22,21 @@ object GroupsPageSpec extends ZIOSpecDefault {
         dom.document.body.removeChild(container)
 
         assertTrue(hasHeading, hasInput, hasButton)
-      }
+      },
+      test("submitting a blank name shows a field error, but only after the submit") {
+        val container = dom.document.createElement("div")
+        dom.document.body.appendChild(container)
+        val rootNode = L.render(container, GroupsPage.render())
+
+        val beforeSubmit = Option(container.querySelector(".text-error")).map(_.textContent)
+        container.querySelector("form").asInstanceOf[dom.html.Form].dispatchEvent(new dom.Event("submit"))
+        val afterSubmit = Option(container.querySelector(".text-error")).map(_.textContent)
+
+        rootNode.unmount()
+        dom.document.body.removeChild(container)
+
+        assertTrue(beforeSubmit.isEmpty, afterSubmit.exists(_.contains("Group name is required")))
+      },
     )
   }
 }

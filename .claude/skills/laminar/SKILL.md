@@ -17,6 +17,7 @@ description: Guides idiomatic Laminar and Airstream patterns for Scala.js reacti
 9. [Error Handling](#error-handling) - `recover`, `recoverToTry`
 10. [Var Signal Extraction](#var-signal-extraction-project-convention) - extract `var.signal` to named val
 11. [Observer Subscriptions](#observer-subscriptions-project-convention) - explicit `Observer(...)`
+12. [Form State](#form-state-project-convention) - one form Var + `zoom` lenses, derived errors, `showErrors`
 
 ## Flattening Observables
 
@@ -143,6 +144,11 @@ child <-- isVisible.splitBoolean(whenTrue = _ => button("Click"), whenFalse = _ 
 ## Rendering Lists with split
 
 Use `split` for efficient list rendering. The `project` function is **called only once per key** - subsequent updates to that item emit on the provided signal.
+
+**In this project write `splitSeq`**, not `split`: the pinned Laminar deprecates `split`, and
+`splitSeq` passes a single `StrictSignal` with public `.now()`/`.key` instead of the
+`(key, initial, signal)` triple shown below. See the existing `pages/*.scala` usages. The semantics
+below (keying, memoization, gotchas) are unchanged.
 
 ```scala
 case class Todo(id: String, text: String, done: Boolean)
@@ -462,4 +468,129 @@ filterSignal --> Observer[Filter](filter => fetchData(filter))  // type optional
 
 // Bad - bare function overload, less explicit
 filterSignal --> (filter => fetchData(filter))
+```
+
+## Form State (Project Convention)
+
+Modelled on the Laminar author's own `FormStateView` demo
+(`raquo/laminar-full-stack-demo`, `client/src/main/scala/com/raquo/app/form/FormStateView.scala`).
+Applied in `pages/AdminUsersPage.scala`, `AdminUserDetailPage.scala`, `GroupsPage.scala`,
+`GroupDetailPage.scala` — follow those when adding a form.
+
+### One form Var, fields as `zoom` lenses
+
+Keep the whole form in one `Var[SomeForm]` and derive a writable `Var` per field, instead of one
+`Var` per field. The DTO, the validity check and the reset all then have a single source.
+
+```scala
+// Good - one state value, lenses for the controls
+private val formVar = Var(CreateUserForm())
+private val emailVar = formVar.zoom(_.email)((form, email) => form.copy(email = email))
+private val isAdminVar = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
+
+// Bad - parallel Vars that must be read, reset and validated one by one
+private val emailVar = Var("")
+private val isAdminVar = Var(false)
+```
+
+**API naming** (pinned Airstream 18.x): `zoom` is the lazy, owner-less one. `zoomLazy` is its
+deprecated old name and fails the build under `-Werror`; the owner-taking variant is now
+`zoomStrict`. Older docs and the demo above still say `zoomLazy`.
+
+### Derive errors, never store them
+
+Field errors are `def`s on the form case class, computed from the shared `Validation` object, so
+they cannot go stale. `showErrors` — flipped on the first submit attempt — gates their display.
+
+```scala
+private case class CreateUserForm(
+  email: String = "",
+  password: String = "",
+  isAdmin: Boolean = false,
+  showErrors: Boolean = false,
+) {
+  def emailError: Option[String] = Validation.validateEmail(email).left.toOption
+
+  def passwordError: Option[String] = Validation.validatePassword(password).left.toOption
+
+  def displayError(error: CreateUserForm => Option[String]): Option[String] = {
+    if (showErrors)
+      error(this)
+    else
+      None
+  }
+
+  /** `Some` exactly when the form is valid, so it doubles as the validity check. */
+  def toRequest: Option[CreateUserRequest] = {
+    for {
+      validEmail <- Validation.validateEmail(email).toOption
+      validPassword <- Validation.validatePassword(password).toOption
+    } yield CreateUserRequest(validEmail, validPassword, isAdmin)
+  }
+}
+```
+
+A field that is optional-but-validated-when-filled (e.g. "leave blank to keep current password")
+gets one private `Either[String, Option[String]]` helper on the case class, shared by its error
+`def` and `toRequest`, so the two can't disagree.
+
+### Submit: map to `Option[Dto]`, effects in the Observer
+
+The stream stays pure — it only describes the request. `None` means invalid.
+
+```scala
+private val createStream = createBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
+
+// in render():
+createStream -->
+  Observer[Option[CreateUserRequest]] {
+    case None =>
+      formVar.update(_.copy(showErrors = true))
+    case Some(_) =>
+      Var.set(inFlightVar -> true, errorVar -> None)
+  },
+createStream
+  .collect { case Some(request) =>
+    request
+  }
+  .flatMapSwitch(request => ApiClient.post[CreateUserRequest, User]("/api/admin/users", request)) --> ...
+```
+
+Reset by replacing the whole state — `Var.set(inFlightVar -> false, formVar -> CreateUserForm())` —
+not field by field.
+
+`errorVar` is then for **server** failures only; field-level problems render next to their input.
+
+### Rendering a field
+
+Use `components/FormField.scala`: `FormField.render(errorSignal)(mods*)` wraps the caller's controls
+and appends that field's message. Extra layout classes go in as mods — Laminar's `cls` accumulates
+rather than replacing.
+
+```scala
+FormField.render(emailErrorSignal)(
+  cls := "flex-1",
+  input(
+    cls := "input w-full",
+    cls("input-error") <-- emailErrorSignal.map(_.nonEmpty),
+    typ := "email",
+    controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
+  ),
+)
+```
+
+Put `noValidate := true` on any `form` doing its own validation: the browser's `type=email` bubble
+otherwise blocks submit before our messages can render, and its rules differ from the server's.
+
+### Don't rebuild the form on unrelated updates
+
+With the state in a Var, the element only needs to exist or not — gate it on that, `distinct`, so a
+save that refreshes the loaded entity doesn't recreate the form and drop the user's focus.
+
+```scala
+// Good - rebuilds only when the entity appears/disappears
+child.maybe <-- userSignal.map(_.isDefined).distinct.map(Option.when(_)(renderForm()))
+
+// Bad - new form element on every save
+child.maybe <-- userSignal.map(_.map(_ => renderForm()))
 ```
