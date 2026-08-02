@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failingWith, failure}
+import ApiEndpoint.failure
 import ApiSchemas.given
 
 /** Administrator user management.
@@ -24,13 +24,13 @@ object AdminEndpoints {
   val listUsers = {
     Endpoint(Method.GET / "api" / "admin" / "users")
       .out[List[User]]
-      .failingWith(failure.unauthorized, failure.forbidden, failure.internalError)
+      .outErrors(failure.unauthorized, failure.forbidden, failure.internalError)
   }
 
   val getUser = {
     Endpoint(Method.GET / "api" / "admin" / "users" / userId)
       .out[User]
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,
@@ -44,7 +44,7 @@ object AdminEndpoints {
     Endpoint(Method.POST / "api" / "admin" / "users")
       .in[CreateUserRequest]
       .out[User](Status.Created)
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,
@@ -58,7 +58,7 @@ object AdminEndpoints {
     Endpoint(Method.PUT / "api" / "admin" / "users" / userId)
       .in[UpdateUserRequest]
       .out[User]
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,
@@ -79,7 +79,7 @@ object AdminEndpoints {
   val deleteUser = {
     Endpoint(Method.DELETE / "api" / "admin" / "users" / userId)
       .outCodec(HttpCodec.status(Status.NoContent))
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,

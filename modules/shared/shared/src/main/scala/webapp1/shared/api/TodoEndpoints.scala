@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.PathCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failingWith, failure}
+import ApiEndpoint.failure
 import ApiSchemas.given
 
 /** The signed-in user's own todo items. Every one of these requires a session, supplied by the `authenticated` aspect
@@ -19,21 +19,21 @@ object TodoEndpoints {
 
   /** `TodoService.listTodos` is a `UIO`, so nothing but the aspects and a defect can fail this. */
   val listTodos = {
-    Endpoint(Method.GET / "api" / "todos").out[List[TodoItem]].failingWith(failure.unauthorized, failure.internalError)
+    Endpoint(Method.GET / "api" / "todos").out[List[TodoItem]].outErrors(failure.unauthorized, failure.internalError)
   }
 
   val createTodo = {
     Endpoint(Method.POST / "api" / "todos")
       .in[CreateTodoRequest]
       .out[TodoItem](Status.Created)
-      .failingWith(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }
 
   val updateTodoStatus = {
     Endpoint(Method.PUT / "api" / "todos" / todoId / "status")
       .in[UpdateTodoStatusRequest]
       .out[TodoItem]
-      .failingWith(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(listTodos, createTodo, updateTodoStatus)

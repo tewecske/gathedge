@@ -5,7 +5,7 @@ import zio.http.Method
 import zio.http.codec.PathCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failingWith, failure}
+import ApiEndpoint.failure
 import ApiSchemas.given
 
 /** Viewing and accepting a group invitation.
@@ -25,14 +25,14 @@ object InvitationEndpoints {
   val getInvitation = {
     Endpoint(Method.GET / "api" / "invitations" / token)
       .out[InvitationInfo]
-      .failingWith(failure.badRequest, failure.forbidden, failure.notFound, failure.conflict, failure.internalError)
+      .outErrors(failure.badRequest, failure.forbidden, failure.notFound, failure.conflict, failure.internalError)
   }
 
   /** Takes no body: the token in the path is the whole request, and the joined group comes back. */
   val acceptInvitation = {
     Endpoint(Method.POST / "api" / "invitations" / token / "accept")
       .out[Group]
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,

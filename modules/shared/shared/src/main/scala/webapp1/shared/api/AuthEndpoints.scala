@@ -5,7 +5,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.HttpCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failingWith, failure, sessionCookie}
+import ApiEndpoint.{failure, sessionCookie}
 import ApiSchemas.given
 
 /** Sign-up, sign-in, sign-out and the signed-in user's own record.
@@ -23,7 +23,7 @@ object AuthEndpoints {
       .in[SignupRequest]
       .out[AuthResponse](Status.Created)
       .outHeader(sessionCookie)
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,
@@ -38,7 +38,7 @@ object AuthEndpoints {
       .in[LoginRequest]
       .out[AuthResponse]
       .outHeader(sessionCookie)
-      .failingWith(
+      .outErrors(
         failure.badRequest,
         failure.unauthorized,
         failure.forbidden,
@@ -61,14 +61,14 @@ object AuthEndpoints {
     Endpoint(Method.POST / "api" / "auth" / "logout")
       .outCodec(HttpCodec.status(Status.NoContent))
       .outHeader(sessionCookie)
-      .failingWith(failure.forbidden, failure.internalError)
+      .outErrors(failure.forbidden, failure.internalError)
   }
 
   /** Reads back the `User` the `authenticated` aspect already resolved, so that aspect's 401 is the only failure a
     * caller can act on. A GET is outside the CSRF check's method scope, hence no 403.
     */
   val me = {
-    Endpoint(Method.GET / "api" / "me").out[AuthResponse].failingWith(failure.unauthorized, failure.internalError)
+    Endpoint(Method.GET / "api" / "me").out[AuthResponse].outErrors(failure.unauthorized, failure.internalError)
   }
 
   /** `AuthService.updateTheme` is `.orDie`'d in the handler — a failure there is a bug or a dead database, not
@@ -78,7 +78,7 @@ object AuthEndpoints {
     Endpoint(Method.PUT / "api" / "me" / "theme")
       .in[UpdateThemeRequest]
       .out[AuthResponse]
-      .failingWith(failure.unauthorized, failure.forbidden, failure.internalError)
+      .outErrors(failure.unauthorized, failure.forbidden, failure.internalError)
   }
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection to generate the OpenAPI document
