@@ -1,7 +1,7 @@
 package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
-import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.api.{AdminApiClient, ApiError}
 import webapp1.frontend.components.{AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
@@ -74,7 +74,7 @@ private class AdminUsersPage {
       child.maybe <-- errorSignal.map(_.map(renderError)),
       renderCreateForm(),
       renderTable(),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[User]]("/api/admin/users")) -->
+      loadBus.events.flatMapSwitch(_ => AdminApiClient.listUsers) -->
         Observer[Either[ApiError, List[User]]] {
           case Right(users) =>
             Var.set(usersVar -> users, errorVar -> None)
@@ -92,7 +92,7 @@ private class AdminUsersPage {
         .collect { case Some(request) =>
           request
         }
-        .flatMapSwitch(request => ApiClient.post[CreateUserRequest, User]("/api/admin/users", request)) -->
+        .flatMapSwitch(request => AdminApiClient.createUser(request)) -->
         Observer[Either[ApiError, User]] {
           case Right(user) =>
             usersVar.update(_ :+ user)

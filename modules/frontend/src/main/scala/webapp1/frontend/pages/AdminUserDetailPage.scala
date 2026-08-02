@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
-import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.api.{AdminApiClient, ApiError}
 import webapp1.frontend.components.{AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
@@ -95,7 +95,7 @@ private class AdminUserDetailPage(userId: Long) {
       // Only the presence of a user decides whether the form exists; its contents live in `formVar`.
       // Without `distinct` every save would rebuild the form element and drop the user's focus.
       child.maybe <-- userSignal.map(_.isDefined).distinct.map(Option.when(_)(renderForm())),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[User](s"/api/admin/users/$userId")) -->
+      loadBus.events.flatMapSwitch(_ => AdminApiClient.getUser(userId)) -->
         Observer[Either[ApiError, User]] {
           case Right(u) =>
             Var.set(
@@ -121,7 +121,7 @@ private class AdminUserDetailPage(userId: Long) {
         .collect { case Some(request) =>
           request
         }
-        .flatMapSwitch(request => ApiClient.put[UpdateUserRequest, User](s"/api/admin/users/$userId", request)) -->
+        .flatMapSwitch(request => AdminApiClient.updateUser(userId, request)) -->
         Observer[Either[ApiError, User]] {
           case Right(u) =>
             // Keep whatever is in the email/admin controls: the response confirms it, and the
@@ -141,7 +141,7 @@ private class AdminUserDetailPage(userId: Long) {
       infoSignal.updates.filter(_.isDefined).flatMapSwitch(_ => EventStream.delay(4000)) -->
         Observer[Unit](_ => infoVar.set(None)),
       deleteStream --> Observer[Unit](_ => inFlightVar.set(true)),
-      deleteStream.flatMapSwitch(_ => ApiClient.delete(s"/api/admin/users/$userId")) -->
+      deleteStream.flatMapSwitch(_ => AdminApiClient.deleteUser(userId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_) =>
             inFlightVar.set(false)

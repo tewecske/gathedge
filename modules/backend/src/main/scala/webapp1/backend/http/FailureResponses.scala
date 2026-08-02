@@ -1,11 +1,13 @@
 package webapp1.backend.http
 
-import webapp1.backend.service.{AdminFailure, AuthFailure, GroupFailure, TodoFailure}
+import webapp1.backend.service.{AuthFailure, GroupFailure, TodoFailure}
 import zio.http.*
 
 import JsonSupport.*
 
-/** One `Failure -> Response` mapping per service failure enum.
+/** One `Failure -> Response` mapping per service failure enum, for the route files built with the imperative DSL.
+  * `AdminFailure` is absent on purpose: those endpoints are described declaratively, so their status codes live in
+  * `shared`'s `AdminEndpoints` and `AdminRoutes` only maps the failure to an `AdminApiError` shape.
   *
   * These used to be `private` helpers duplicated inside the individual route files, which let `InvitationRoutes` grow a
   * second, divergent mapping over `GroupFailure`: it matched only `InvitationInvalid` and `NotFound` and swept the
@@ -70,18 +72,4 @@ object FailureResponses {
     }
   }
 
-  def admin(failure: AdminFailure): Response = {
-    failure match {
-      case AdminFailure.ValidationError(fieldErrors) =>
-        errorResponse(Status.BadRequest, "Validation failed", fieldErrors)
-      case AdminFailure.DuplicateEmail =>
-        emailAlreadyRegistered
-      case AdminFailure.NotFound =>
-        errorResponse(Status.NotFound, "User not found")
-      case AdminFailure.SelfDemote =>
-        errorResponse(Status.BadRequest, "You cannot remove your own administrator privileges")
-      case AdminFailure.SelfDelete =>
-        errorResponse(Status.BadRequest, "You cannot delete your own account")
-    }
-  }
 }

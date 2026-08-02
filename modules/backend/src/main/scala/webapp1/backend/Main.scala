@@ -13,7 +13,15 @@ import webapp1.backend.db.{
   PostgresTodoRepository,
   PostgresUserRepository,
 }
-import webapp1.backend.http.{AdminRoutes, AuthRoutes, GroupRoutes, InvitationRoutes, RouteSupport, TodoRoutes}
+import webapp1.backend.http.{
+  AdminRoutes,
+  AuthRoutes,
+  DocsRoutes,
+  GroupRoutes,
+  InvitationRoutes,
+  RouteSupport,
+  TodoRoutes,
+}
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
   AdminSeeder,
@@ -29,17 +37,22 @@ import webapp1.backend.service.{
 }
 import zio.*
 import zio.http.*
+import zio.http.netty.NettyConfig
 import zio.logging.backend.SLF4J
 
 import javax.sql.DataSource
 
 object Main extends ZIOAppDefault {
 
-  override val bootstrap: ZLayer[Any, Any, Unit] = Runtime.removeDefaultLoggers >>> SLF4J.slf4j
+  override val bootstrap: ZLayer[Any, Any, Unit] = {
+    (Runtime.removeDefaultLoggers >>> SLF4J.slf4j) ++ AppConfig.configProvider
+  }
 
   private val allRoutes = {
-    val combined =
-      AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes
+    val combined = {
+      AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes ++
+        DocsRoutes.routes
+    }
     RouteSupport.handleFailures(combined) @@ Middleware.requestLogging()
   }
 
@@ -59,7 +72,7 @@ object Main extends ZIOAppDefault {
       rateLimiter <- ZIO.service[RateLimiter]
       _ <- rateLimiter.runPruner.forkDaemon
       _ <- SessionReaper.run.forkDaemon
-      _ <- ZIO.logInfo(s"Starting webapp1 backend on port ${cfg.app.serverPort} (env=${cfg.app.env})")
+      _ <- ZIO.logInfo(s"Starting webapp1 backend on ${cfg.app.serverHost}:${cfg.app.serverPort} (env=${cfg.app.env})")
       _ <- Server.serve(allRoutes)
     } yield ()
   }
@@ -82,7 +95,8 @@ object Main extends ZIOAppDefault {
     TodoServiceLive.live,
     GroupServiceLive.live,
     AdminServiceLive.live,
-    Server.live,
-    ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.port(cfg.app.serverPort))),
+    Server.customized,
+    ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.binding(cfg.app.serverHost, cfg.app.serverPort))),
+    ZLayer(ZIO.serviceWith[AppConfig](cfg => NettyConfig.default.maxThreads(cfg.netty.maxThreads))),
   )
 }

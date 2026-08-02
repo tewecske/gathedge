@@ -5,6 +5,8 @@ val scala3Version = "3.8.4"
 val zioVersion = "2.1.26"
 val zioHttpVersion = "3.11.3"
 val zioJsonVersion = "0.9.1"
+// Matches what zio-http 3.11.3 pulls in; only the derivation module has to be requested explicitly.
+val zioSchemaVersion = "1.8.5"
 val zioConfigVersion = "4.0.8"
 val zioLoggingVersion = "2.5.3"
 val laminarVersion = "17.2.1"
@@ -52,6 +54,11 @@ lazy val shared = crossProject(JSPlatform, JVMPlatform)
     libraryDependencies ++=
       Seq(
         "dev.zio" %%% "zio-json" % zioJsonVersion,
+        // Endpoint API spike (admin user management): the endpoint descriptions live here so the
+        // backend implementation and any client are checked against one definition. zio-http
+        // publishes a Scala.js artifact, so this still cross-compiles.
+        "dev.zio" %%% "zio-http" % zioHttpVersion,
+        "dev.zio" %%% "zio-schema-derivation" % zioSchemaVersion,
         "dev.zio" %%% "zio-test" % zioVersion % Test,
         "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
       ),
