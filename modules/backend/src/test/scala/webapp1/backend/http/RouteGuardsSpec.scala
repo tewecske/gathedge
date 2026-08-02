@@ -138,6 +138,18 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           !body.contains("relation"),
         )
       },
+      // zio-http's own not-found response is `Response.error(NotFound, path)`: no JSON, and the requested path
+      // echoed back into the body. Every other error this API can answer with is an `ErrorResponse` object.
+      test("a path that matches no route is a JSON 404 that does not echo the path") {
+        for {
+          response <- runRoutes(TodoRoutes.routes, Request.get("/api/no-such-thing"))
+          body <- response.body.asString
+        } yield assertTrue(
+          response.status == Status.NotFound,
+          body == """{"message":"Not found","fieldErrors":{}}""",
+          !body.contains("no-such-thing"),
+        )
+      },
       // `Routes#runZIO` opens a scope per request, so the suite has to supply one.
     ).provide(layer, Scope.default) @@ TestAspect.timeout(60.seconds)
   }

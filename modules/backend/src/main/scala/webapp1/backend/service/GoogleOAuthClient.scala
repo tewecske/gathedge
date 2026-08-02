@@ -2,10 +2,10 @@ package webapp1.backend.service
 
 import webapp1.backend.config.{AppConfig, GoogleSection}
 import zio.*
+import zio.http.{Body, Client, Form, FormField, QueryParams, Request, Response, Status, URL}
 import zio.json.*
 
-import java.net.{URI, URLEncoder}
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 final case class GoogleIdentity(subject: String, email: String, emailVerified: Boolean)
@@ -25,17 +25,35 @@ trait GoogleOAuthClient {
   * `aud`/signature/`exp` server-side) rather than local JWKS verification — one extra network round trip, but avoids
   * pulling in a JWT/JWKS library for this scope. Can be upgraded to local JWKS verification later without changing the
   * [[GoogleOAuthClient]] interface.
+  *
+  * The two calls go out over zio-http's own `Client` — the same library the server is built on — rather than a second
+  * HTTP stack. That is not just tidiness: `java.net.http`'s synchronous `send` had to run inside `attemptBlocking`,
+  * which cannot be interrupted, so a Google endpoint that accepted the connection and then went quiet held a
+  * blocking-pool thread until the OS gave up on the socket. A `Client` request is an ordinary interruptible effect, so
+  * the timeout below actually releases everything it was holding, and a caller that gives up (the browser closing the
+  * OAuth tab) cancels the request with it.
   */
-final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClient {
+final class GoogleOAuthClientLive(config: GoogleSection, client: Client) extends GoogleOAuthClient {
 
-  // Without these, an unresponsive Google endpoint holds a blocking-pool thread for as long as the
-  // OS keeps the socket open, since `attemptBlocking` can't interrupt a synchronous `send`.
-  private val connectTimeout = java.time.Duration.ofSeconds(5)
-  private val requestTimeout = java.time.Duration.ofSeconds(10)
-
-  private val httpClient = HttpClient.newBuilder().connectTimeout(connectTimeout).build()
+  private val requestTimeout = 10.seconds
 
   private def enc(s: String): String = URLEncoder.encode(s, StandardCharsets.UTF_8)
+
+  private def urlOf(raw: String, query: QueryParams = QueryParams.empty): Task[URL] = {
+    ZIO
+      .fromEither(URL.decode(raw))
+      .mapBoth(
+        err => new RuntimeException(s"Invalid Google endpoint URL '$raw': ${err.getMessage}"),
+        _.addQueryParams(query),
+      )
+  }
+
+  /** One round trip, bounded in wall-clock time rather than by socket-level timeouts. `batched` reads the whole
+    * response body before returning, so nothing is left to consume after the effect completes.
+    */
+  private def send(request: Request, what: String): Task[Response] = {
+    client.batched(request).timeoutFail(new RuntimeException(s"Google $what timed out"))(requestTimeout)
+  }
 
   def authorizationUrl(state: String): String = {
     val params = Map(
@@ -61,70 +79,53 @@ final class GoogleOAuthClientLive(config: GoogleSection) extends GoogleOAuthClie
   }
 
   private def exchangeCode(code: String): Task[String] = {
-    ZIO
-      .attemptBlocking {
-        val form = Map(
-          "code" -> code,
-          "client_id" -> config.clientId,
-          "client_secret" -> config.clientSecret,
-          "redirect_uri" -> config.redirectUri,
-          "grant_type" -> "authorization_code",
-        ).map { case (k, v) =>
-            s"${enc(k)}=${enc(v)}"
-          }
-          .mkString("&")
-        val request = HttpRequest
-          .newBuilder()
-          .uri(URI.create("https://oauth2.googleapis.com/token"))
-          .header("Content-Type", "application/x-www-form-urlencoded")
-          .timeout(requestTimeout)
-          .POST(HttpRequest.BodyPublishers.ofString(form))
-          .build()
-        httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-      }
-      .flatMap { response =>
-        if (response.statusCode() != 200) {
-          ZIO.fail(new RuntimeException(s"Google token exchange failed with status ${response.statusCode()}"))
-        } else {
-          ZIO
-            .fromEither(response.body().fromJson[GoogleTokenResponse])
-            .mapBoth(err => new RuntimeException(s"Malformed Google token response: $err"), _.id_token)
-        }
-      }
+    val form = Form(
+      FormField.simpleField("code", code),
+      FormField.simpleField("client_id", config.clientId),
+      FormField.simpleField("client_secret", config.clientSecret),
+      FormField.simpleField("redirect_uri", config.redirectUri),
+      FormField.simpleField("grant_type", "authorization_code"),
+    )
+    for {
+      url <- urlOf("https://oauth2.googleapis.com/token")
+      // `fromURLEncodedForm` sets `Content-Type: application/x-www-form-urlencoded` itself, which the token
+      // endpoint requires and which the hand-built body had to declare separately.
+      response <- send(Request.post(url, Body.fromURLEncodedForm(form)), "token exchange")
+      _ <-
+        ZIO
+          .unless(response.status == Status.Ok)(
+            ZIO.fail(new RuntimeException(s"Google token exchange failed with status ${response.status.code}"))
+          )
+          .unit
+      body <- response.body.asString
+      idToken <- ZIO
+        .fromEither(body.fromJson[GoogleTokenResponse])
+        .mapBoth(err => new RuntimeException(s"Malformed Google token response: $err"), _.id_token)
+    } yield idToken
   }
 
   private def verifyIdToken(idToken: String): Task[GoogleIdentity] = {
-    ZIO
-      .attemptBlocking {
-        val request = HttpRequest
-          .newBuilder()
-          .uri(URI.create(s"https://oauth2.googleapis.com/tokeninfo?id_token=${enc(idToken)}"))
-          .timeout(requestTimeout)
-          .GET()
-          .build()
-        httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-      }
-      .flatMap { response =>
-        if (response.statusCode() != 200) {
-          ZIO.fail(new RuntimeException("Google id_token verification failed"))
-        } else {
-          ZIO
-            .fromEither(response.body().fromJson[GoogleTokenInfo])
-            .mapError(err => new RuntimeException(s"Malformed Google tokeninfo response: $err"))
-        }
-      }
-      .flatMap { info =>
-        if (info.aud != config.clientId) {
-          ZIO.fail(new RuntimeException("Google id_token audience mismatch"))
-        } else {
-          ZIO.succeed(GoogleIdentity(info.sub, info.email, info.email_verified == "true"))
-        }
-      }
+    for {
+      url <- urlOf("https://oauth2.googleapis.com/tokeninfo", QueryParams("id_token" -> idToken))
+      response <- send(Request.get(url), "id_token verification")
+      _ <-
+        ZIO
+          .unless(response.status == Status.Ok)(ZIO.fail(new RuntimeException("Google id_token verification failed")))
+          .unit
+      body <- response.body.asString
+      info <- ZIO
+        .fromEither(body.fromJson[GoogleTokenInfo])
+        .mapError(err => new RuntimeException(s"Malformed Google tokeninfo response: $err"))
+      _ <-
+        ZIO
+          .unless(info.aud == config.clientId)(ZIO.fail(new RuntimeException("Google id_token audience mismatch")))
+          .unit
+    } yield GoogleIdentity(info.sub, info.email, info.email_verified == "true")
   }
 }
 
 object GoogleOAuthClient {
-  val live: URLayer[AppConfig, GoogleOAuthClient] = ZLayer.fromFunction((cfg: AppConfig) =>
-    new GoogleOAuthClientLive(cfg.google): GoogleOAuthClient
+  val live: URLayer[AppConfig & Client, GoogleOAuthClient] = ZLayer.fromFunction((cfg: AppConfig, client: Client) =>
+    new GoogleOAuthClientLive(cfg.google, client): GoogleOAuthClient
   )
 }

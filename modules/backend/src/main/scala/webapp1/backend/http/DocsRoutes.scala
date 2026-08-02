@@ -1,8 +1,11 @@
 package webapp1.backend.http
 
+import webapp1.backend.security.SessionAuth
 import webapp1.shared.api.{AdminEndpoints, AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
 import zio.http.*
+import zio.http.codec.Doc
 import zio.http.codec.PathCodec.path
+import zio.http.endpoint.Endpoint
 import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
 
 /** Swagger UI over the described endpoints.
@@ -19,16 +22,93 @@ import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
   */
 object DocsRoutes {
 
+  private val allEndpoints = {
+    AuthEndpoints.all ++ TodoEndpoints.all ++ GroupEndpoints.all ++ InvitationEndpoints.all ++ AdminEndpoints.all
+  }
+
+  /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the
+    * `authenticated` or `adminOnly` aspect. Everything else needs the session cookie.
+    *
+    * This is the one fact about the API that the descriptions in `shared` deliberately do not state — authentication is
+    * a `HandlerAspect` on whole `Routes` values, which nothing can read back — so the document cannot derive it and it
+    * is listed here instead, in the module that owns the aspects. `OpenApiSpec` pins both sides of the split.
+    */
+  private val publicEndpoints: List[Endpoint[?, ?, ?, ?, ?]] = {
+    List(AuthEndpoints.signup, AuthEndpoints.login, AuthEndpoints.logout, InvitationEndpoints.getInvitation)
+  }
+
+  private val sessionSchemeName = "sessionCookie"
+
+  /** The session is an opaque token in an `HttpOnly` cookie, so this is an `apiKey` scheme located in a cookie — not
+    * `http`/`bearer`. Swagger UI cannot fill it in (that is the point of `HttpOnly`); a browser that has signed in
+    * through `/api/auth/login` sends it on its own.
+    */
+  private val sessionScheme: OpenAPI.SecurityScheme = {
+    OpenAPI
+      .SecurityScheme
+      .ApiKey(
+        description = Some(Doc.p("Opaque session token set by /api/auth/signup and /api/auth/login.")),
+        name = SessionAuth.cookieName,
+        in = OpenAPI.SecurityScheme.ApiKey.In.Cookie,
+      )
+  }
+
+  private val requiresSession = {
+    List(OpenAPI.SecurityScheme.SecurityRequirement(Map(sessionSchemeName -> List.empty[String])))
+  }
+
+  /** Marks every operation that is not in [[publicEndpoints]] as requiring the session cookie.
+    *
+    * Which operation is which is decided by generating a second document from the public endpoints alone and using its
+    * paths and methods as the exemption list, rather than by matching path strings by hand — the two documents render a
+    * path the same way (`/api/groups/{id}`) because the same generator produced both.
+    */
+  private def requireSession(document: OpenAPI): OpenAPI = {
+    val publicDocument = OpenAPIGen.fromEndpoints(title = "public", version = "0.1.0", endpoints = publicEndpoints)
+
+    def mark(operation: Option[OpenAPI.Operation], isPublic: Option[OpenAPI.Operation]): Option[OpenAPI.Operation] = {
+      operation.map(op => {
+        if (isPublic.isDefined)
+          op
+        else
+          op.copy(security = requiresSession)
+      })
+    }
+
+    val paths = document
+      .paths
+      .map { case (path, item) =>
+        val open = publicDocument.paths.getOrElse(path, OpenAPI.PathItem.empty)
+        val marked = item.copy(
+          get = mark(item.get, open.get),
+          put = mark(item.put, open.put),
+          post = mark(item.post, open.post),
+          delete = mark(item.delete, open.delete),
+          options = mark(item.options, open.options),
+          head = mark(item.head, open.head),
+          patch = mark(item.patch, open.patch),
+          trace = mark(item.trace, open.trace),
+        )
+        (path, marked)
+      }
+
+    val components = document.components.getOrElse(OpenAPI.Components())
+    val withScheme = {
+      OpenAPI
+        .Key
+        .fromString(sessionSchemeName)
+        .map { key =>
+          components.copy(securitySchemes = components.securitySchemes + (key -> OpenAPI.ReferenceOr.Or(sessionScheme)))
+        }
+    }
+    document.copy(paths = paths, components = withScheme.orElse(document.components))
+  }
+
   /** The title also names the JSON document — it is served at `<basePath>/<url-encoded title>.json` — so keep it free
     * of spaces.
     */
   val openApi: OpenAPI = {
-    OpenAPIGen.fromEndpoints(
-      title = "webapp1-api",
-      version = "0.1.0",
-      endpoints =
-        AuthEndpoints.all ++ TodoEndpoints.all ++ GroupEndpoints.all ++ InvitationEndpoints.all ++ AdminEndpoints.all,
-    )
+    requireSession(OpenAPIGen.fromEndpoints(title = "webapp1-api", version = "0.1.0", endpoints = allEndpoints))
   }
 
   val basePath = "api" / "docs" / "openapi"

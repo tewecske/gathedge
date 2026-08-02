@@ -92,6 +92,8 @@ object Main extends ZIOAppDefault {
     EmailSender.live,
     AuthServiceLive.live,
     GoogleOAuthClient.live,
+    // The outbound half of zio-http: Google's token and tokeninfo endpoints are the only calls this server makes.
+    Client.default,
     TodoServiceLive.live,
     GroupServiceLive.live,
     AdminServiceLive.live,

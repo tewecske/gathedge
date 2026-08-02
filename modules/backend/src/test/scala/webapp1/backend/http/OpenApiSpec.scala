@@ -2,6 +2,7 @@ package webapp1.backend.http
 
 import zio.*
 import zio.http.*
+import zio.http.endpoint.openapi.OpenAPI
 import zio.test.*
 
 /** The reason to describe endpoints declaratively rather than build them by hand: the description is machine-readable,
@@ -20,6 +21,31 @@ object OpenApiSpec extends ZIOSpecDefault {
   }
 
   private val paths = openApi.paths.keySet.map(_.name)
+
+  /** Every operation in the document as `("METHOD", "/path")`, paired with whether it declares the session requirement.
+    * `PathItem` keeps one `Option[Operation]` field per method, so there is no way to fold over them.
+    */
+  private val operations: Set[(String, String, Boolean)] = {
+    openApi
+      .paths
+      .toSet
+      .flatMap { (entry: (OpenAPI.Path, OpenAPI.PathItem)) =>
+        val (path, item) = entry
+        val byMethod = List(
+          "GET" -> item.get,
+          "PUT" -> item.put,
+          "POST" -> item.post,
+          "DELETE" -> item.delete,
+          "OPTIONS" -> item.options,
+          "HEAD" -> item.head,
+          "PATCH" -> item.patch,
+          "TRACE" -> item.trace,
+        )
+        byMethod.collect { case (method, Some(operation)) =>
+          (method, path.name, operation.security.nonEmpty)
+        }
+      }
+  }
 
   def spec = {
     suite("OpenAPI")(
@@ -75,6 +101,46 @@ object OpenApiSpec extends ZIOSpecDefault {
           json.contains("\"409\""),
           json.contains("\"429\""),
           json.contains("\"500\""),
+        )
+      },
+      // The session is a `HandlerAspect` on whole `Routes` values, so no description in `shared` states it and the
+      // generator cannot infer it; `DocsRoutes` supplies the split. These pin both halves of it, so adding a public
+      // endpoint without listing it (or a protected one and listing it by mistake) fails here rather than silently
+      // documenting the wrong thing.
+      test("the session cookie is declared as a security scheme") {
+        val schemes = openApi.components.toList.flatMap(_.securitySchemes.keys.map(_.name))
+        val json = openApi.toJson
+        assertTrue(
+          schemes == List("sessionCookie"),
+          json.contains("\"apiKey\""),
+          json.contains("\"in\":\"cookie\""),
+          json.contains("\"name\":\"session\""),
+        )
+      },
+      test("exactly the endpoints reachable without a session are exempt from it") {
+        val open = operations.collect { case (method, path, false) =>
+          (method, path)
+        }
+        assertTrue(
+          open ==
+            Set(
+              ("POST", "/api/auth/signup"),
+              ("POST", "/api/auth/login"),
+              ("POST", "/api/auth/logout"),
+              ("GET", "/api/invitations/{token}"),
+            )
+        )
+      },
+      test("every other operation requires the session cookie") {
+        val guarded = operations.collect { case (method, path, true) =>
+          (method, path)
+        }
+        assertTrue(
+          guarded.size == operations.size - 4,
+          guarded.contains(("GET", "/api/me")),
+          guarded.contains(("POST", "/api/todos")),
+          guarded.contains(("POST", "/api/invitations/{token}/accept")),
+          guarded.contains(("DELETE", "/api/admin/users/{id}")),
         )
       },
       test("the Swagger UI is served, and the document under the title's name") {

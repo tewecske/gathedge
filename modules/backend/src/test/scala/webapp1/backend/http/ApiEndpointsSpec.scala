@@ -64,7 +64,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
 
   private val layer = {
     AppConfig.live ++
-      (AppConfig.live >>> GoogleOAuthClient.live) ++ (
+      ((AppConfig.live ++ Client.default) >>> GoogleOAuthClient.live) ++ (
         (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> (AuthServiceLive.live ++ AdminServiceLive.live)
       ) ++
       (repos >>> TodoServiceLive.live) ++

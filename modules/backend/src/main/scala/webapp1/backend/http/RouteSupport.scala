@@ -25,17 +25,27 @@ object RouteSupport {
     * JSON body for a client that only ever parses JSON.
     */
   def handleFailures[Env](routes: Routes[Env, Response]): Routes[Env, Nothing] = {
-    routes.handleErrorRequestCauseZIO { (request: Request, cause: Cause[Response]) =>
-      cause.failureOption match {
-        case Some(response) =>
-          ZIO.succeed(response)
-        case None =>
-          ZIO
-            .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}", cause)
-            .unless(cause.isInterruptedOnly)
-            .as(errorResponse(Status.InternalServerError, "Internal server error"))
+    val handled = {
+      routes.handleErrorRequestCauseZIO { (request: Request, cause: Cause[Response]) =>
+        cause.failureOption match {
+          case Some(response) =>
+            ZIO.succeed(response)
+          case None =>
+            ZIO
+              .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}", cause)
+              .unless(cause.isInterruptedOnly)
+              .as(errorResponse(Status.InternalServerError, "Internal server error"))
+        }
       }
     }
+    // A request that matches no route never reaches a handler, so the wrapper above cannot see it: zio-http answers it
+    // from `Routes.notFound`, whose default is `Response.error(NotFound, path)` — an HTML-escaped echo of the requested
+    // path, with no JSON body and no content type. That is the one response a client of this API could receive that
+    // isn't the `ErrorResponse` shape everything else answers with, so it is replaced here rather than left to the
+    // default. `notFound` is a mutable field on `Routes`; `handled` is a fresh value built one line above, and the
+    // combinators that follow (`@@ requestLogging` in `Main`) carry the replacement along.
+    handled.notFound = Handler.fromFunction[Request](_ => errorResponse(Status.NotFound, "Not found"))
+    handled
   }
 
   /** Methods that a cross-site page can trigger without a CORS preflight, so requiring a custom header on them would

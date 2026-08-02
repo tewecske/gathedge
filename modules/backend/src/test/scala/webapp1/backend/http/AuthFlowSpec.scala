@@ -25,7 +25,7 @@ object AuthFlowSpec extends ZIOSpecDefault {
     val repos = TestDataSource.sqlite >>> (SqliteUserRepository.live ++ SqliteSessionRepository.live)
     AppConfig.live ++
       ((repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live) ++
-      (AppConfig.live >>> GoogleOAuthClient.live)
+      ((AppConfig.live ++ Client.default) >>> GoogleOAuthClient.live)
   }
 
   private def sessionCookie(response: Response): Option[String] = {
