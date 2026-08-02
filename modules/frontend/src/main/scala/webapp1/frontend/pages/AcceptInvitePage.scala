@@ -49,7 +49,7 @@ private class AcceptInvitePage(token: String) {
             ),
         ),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[InvitationInfo](s"/api/invitations/$token")) -->
+      loadBus.events.flatMapSwitch(_ => ApiClient.getInvitation(token)) -->
         Observer[Either[ApiError, InvitationInfo]] {
           case Right(invitation) =>
             Var.set(invitationVar -> Some(invitation), errorVar -> None)
@@ -57,7 +57,7 @@ private class AcceptInvitePage(token: String) {
             errorVar.set(Some(err.message))
         },
       acceptStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None)),
-      acceptStream.flatMapSwitch(_ => ApiClient.postNoBody[Group](s"/api/invitations/$token/accept")) -->
+      acceptStream.flatMapSwitch(_ => ApiClient.acceptInvitation(token)) -->
         Observer[Either[ApiError, Group]] {
           case Right(group) =>
             inFlightVar.set(false)

@@ -79,14 +79,14 @@ private class GroupDetailPage(groupId: Long) {
       // The group and its pairs load in parallel and share one error slot, so clear it when a
       // fresh load starts — otherwise a stale failure outlives the request that produced it.
       loadStream --> Observer[Unit](_ => errorVar.set(None)),
-      loadStream.flatMapSwitch(_ => ApiClient.get[Group](s"/api/groups/$groupId")) -->
+      loadStream.flatMapSwitch(_ => ApiClient.getGroup(groupId)) -->
         Observer[Either[ApiError, Group]] {
           case Right(g) =>
             groupVar.set(Some(g))
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
-      loadStream.flatMapSwitch(_ => ApiClient.get[List[GroupPair]](s"/api/groups/$groupId/pairs")) -->
+      loadStream.flatMapSwitch(_ => ApiClient.listPairs(groupId)) -->
         Observer[Either[ApiError, List[GroupPair]]] {
           case Right(items) =>
             pairsVar.set(items)
@@ -104,9 +104,7 @@ private class GroupDetailPage(groupId: Long) {
         .collect { case Some(request) =>
           request
         }
-        .flatMapSwitch(request =>
-          ApiClient.post[CreatePairRequest, GroupPair](s"/api/groups/$groupId/pairs", request)
-        ) -->
+        .flatMapSwitch(request => ApiClient.addPair(groupId, request)) -->
         Observer[Either[ApiError, GroupPair]] {
           case Right(pair) =>
             pairsVar.update(_ :+ pair)
@@ -115,7 +113,7 @@ private class GroupDetailPage(groupId: Long) {
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       deleteStream --> Observer[Unit](_ => inFlightVar.set(true)),
-      deleteStream.flatMapSwitch(_ => ApiClient.delete(s"/api/groups/$groupId")) -->
+      deleteStream.flatMapSwitch(_ => ApiClient.deleteGroup(groupId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_) =>
             inFlightVar.set(false)

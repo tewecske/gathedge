@@ -5,7 +5,7 @@ import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.components.AppShell
 import webapp1.frontend.Page
 import webapp1.shared.domain.{TodoItem, TodoStatus}
-import webapp1.shared.dto.{CreateTodoRequest, UpdateTodoStatusRequest}
+import webapp1.shared.dto.UpdateTodoStatusRequest
 import webapp1.shared.validation.Validation
 
 object TodoPage {
@@ -43,7 +43,7 @@ private class TodoPage {
         renderColumn("In Progress", TodoStatus.InProgress),
         renderColumn("Done", TodoStatus.Done),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[TodoItem]]("/api/todos")) -->
+      loadBus.events.flatMapSwitch(_ => ApiClient.listTodos) -->
         Observer[Either[ApiError, List[TodoItem]]] {
           case Right(items) =>
             Var.set(itemsVar -> items, errorVar -> None)
@@ -61,7 +61,7 @@ private class TodoPage {
         .collect { case Right(text) =>
           text
         }
-        .flatMapSwitch(text => ApiClient.post[CreateTodoRequest, TodoItem]("/api/todos", CreateTodoRequest(text))) -->
+        .flatMapSwitch(text => ApiClient.createTodo(text)) -->
         Observer[Either[ApiError, TodoItem]] {
           case Right(item) =>
             itemsVar.update(_ :+ item)
@@ -132,9 +132,7 @@ private class TodoPage {
   // reaching back into a Var mid-stream.
   private def moveTodo(idAndStatus: (Long, TodoStatus)): EventStream[(Long, Either[ApiError, TodoItem])] = {
     val (id, newStatus) = idAndStatus
-    ApiClient
-      .put[UpdateTodoStatusRequest, TodoItem](s"/api/todos/$id/status", UpdateTodoStatusRequest(newStatus))
-      .map(result => (id, result))
+    ApiClient.updateTodoStatus(id, UpdateTodoStatusRequest(newStatus)).map(result => (id, result))
   }
 
   private def renderError(message: String): HtmlElement = {

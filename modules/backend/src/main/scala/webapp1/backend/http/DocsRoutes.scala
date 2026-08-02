@@ -1,18 +1,21 @@
 package webapp1.backend.http
 
-import webapp1.shared.api.AdminEndpoints
+import webapp1.shared.api.{AdminEndpoints, AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
 import zio.http.*
 import zio.http.codec.PathCodec.path
 import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
 
-/** Swagger UI over the declaratively described endpoints.
+/** Swagger UI over the described endpoints.
   *
-  * The document is derived from the same `AdminEndpoints` values `AdminRoutes` is implemented against, so it cannot
+  * The document is derived from the same values in `shared` that the route files are implemented against, so it cannot
   * drift from the server: a path, body or status that changes there changes here, with nothing to keep in sync by hand.
-  * Only the admin resource appears — the other route files are built with the imperative DSL and describe nothing.
+  *
+  * Every endpoint appears except the two Google OAuth redirects, which are browser navigations rather than a body
+  * protocol and stay on the imperative DSL (see `AuthRoutes`).
   *
   * Mounted under `/api` so the Vite dev proxy forwards it like any other backend route. The routes are public: they
-  * expose the shape of the admin API, not its data, and every endpoint they document still requires an admin session.
+  * expose the shape of the API, not its data, and every endpoint they document still requires whatever session the
+  * aspects demand.
   */
 object DocsRoutes {
 
@@ -21,13 +24,10 @@ object DocsRoutes {
     */
   val openApi: OpenAPI = {
     OpenAPIGen.fromEndpoints(
-      title = "webapp1-admin-api",
+      title = "webapp1-api",
       version = "0.1.0",
-      AdminEndpoints.listUsers,
-      AdminEndpoints.getUser,
-      AdminEndpoints.createUser,
-      AdminEndpoints.updateUser,
-      AdminEndpoints.deleteUser,
+      endpoints =
+        AuthEndpoints.all ++ TodoEndpoints.all ++ GroupEndpoints.all ++ InvitationEndpoints.all ++ AdminEndpoints.all,
     )
   }
 

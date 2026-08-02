@@ -78,7 +78,7 @@ private class SignInPage {
   }
 
   private def login(): EventStream[Either[ApiError, AuthResponse]] = {
-    ApiClient.post[LoginRequest, AuthResponse]("/api/auth/login", LoginRequest(emailVar.now(), passwordVar.now()))
+    ApiClient.login(LoginRequest(emailVar.now(), passwordVar.now()))
   }
 
   private def renderError(message: String): HtmlElement = {

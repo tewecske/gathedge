@@ -68,14 +68,14 @@ private class GroupMembersPage(groupId: Long) {
       // The group and its members load in parallel and share one error slot, so clear it when a
       // fresh load starts — otherwise a stale failure outlives the request that produced it.
       loadStream --> Observer[Unit](_ => errorVar.set(None)),
-      loadStream.flatMapSwitch(_ => ApiClient.get[Group](s"/api/groups/$groupId")) -->
+      loadStream.flatMapSwitch(_ => ApiClient.getGroup(groupId)) -->
         Observer[Either[ApiError, Group]] {
           case Right(g) =>
             groupVar.set(Some(g))
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
-      loadStream.flatMapSwitch(_ => ApiClient.get[List[GroupMember]](s"/api/groups/$groupId/members")) -->
+      loadStream.flatMapSwitch(_ => ApiClient.listMembers(groupId)) -->
         Observer[Either[ApiError, List[GroupMember]]] {
           case Right(items) =>
             membersVar.set(items)
@@ -93,9 +93,7 @@ private class GroupMembersPage(groupId: Long) {
         .collect { case Right(request) =>
           request
         }
-        .flatMapSwitch(request =>
-          ApiClient.postBodyNoContent(s"/api/groups/$groupId/invitations", request).map(result => (request, result))
-        ) -->
+        .flatMapSwitch(request => ApiClient.inviteMember(groupId, request).map(result => (request, result))) -->
         Observer[(InviteMemberRequest, Either[ApiError, Unit])] {
           case (request, Right(_)) =>
             Var.set(
@@ -228,14 +226,12 @@ private class GroupMembersPage(groupId: Long) {
   // The key travels with the response so the observer can patch the right row without
   // reaching back into a Var mid-stream.
   private def removeMember(userId: Long): EventStream[(Long, Either[ApiError, Unit])] = {
-    ApiClient.delete(s"/api/groups/$groupId/members/$userId").map(result => (userId, result))
+    ApiClient.removeMember(groupId, userId).map(result => (userId, result))
   }
 
   private def changeRole(userIdAndRole: (Long, GroupRole)): EventStream[((Long, GroupRole), Either[ApiError, Unit])] = {
     val (userId, role) = userIdAndRole
-    ApiClient
-      .putBodyNoContent(s"/api/groups/$groupId/members/$userId", UpdateRoleRequest(role))
-      .map(result => (userIdAndRole, result))
+    ApiClient.updateMemberRole(groupId, userId, UpdateRoleRequest(role)).map(result => (userIdAndRole, result))
   }
 
   private def renderAlert(kind: String, message: String): HtmlElement = {

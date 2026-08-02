@@ -48,7 +48,7 @@ object App {
     div(
       onMountCallback { ctx =>
         ApiClient
-          .get[AuthResponse]("/api/me")
+          .me
           .foreach {
             case Right(res) =>
               AppState.setUser(res.user)

@@ -69,7 +69,7 @@ private class GroupsPage {
           ),
         ),
       ),
-      loadBus.events.flatMapSwitch(_ => ApiClient.get[List[Group]]("/api/groups")) -->
+      loadBus.events.flatMapSwitch(_ => ApiClient.listGroups) -->
         Observer[Either[ApiError, List[Group]]] {
           case Right(groups) =>
             Var.set(groupsVar -> groups, errorVar -> None)
@@ -87,7 +87,7 @@ private class GroupsPage {
         .collect { case Some(request) =>
           request
         }
-        .flatMapSwitch(request => ApiClient.post[CreateGroupRequest, Group]("/api/groups", request)) -->
+        .flatMapSwitch(request => ApiClient.createGroup(request)) -->
         Observer[Either[ApiError, Group]] {
           case Right(group) =>
             groupsVar.update(_ :+ group)

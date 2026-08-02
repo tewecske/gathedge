@@ -59,6 +59,36 @@ object RouteSupport {
       .when(request => !safeMethods.contains(request.method))
   }
 
+  /** The parts of the raw `Request` that the described endpoints need but deliberately do not describe.
+    *
+    * A handler implemented against an `Endpoint` receives its declared inputs and nothing else — there is no `Request`
+    * to reach into. For these two that is the right outcome and not a limitation to work around: neither belongs in a
+    * description, because neither can be supplied by a client. The peer address is not a header at all, and the session
+    * cookie is a forbidden request header that a browser sets itself and page script cannot. Declaring either as an
+    * input would produce a client that has to fabricate a value it does not have.
+    *
+    * So they arrive the same way the authenticated `User` does: resolved once by an aspect and handed to the handler
+    * through the environment.
+    */
+  final case class RequestContext(clientIp: Option[String], sessionId: Option[String])
+
+  /** Supplies [[RequestContext]]. Never fails — both fields are optional, and "no session" is a legitimate state for
+    * the endpoints that ask for this (signing up, signing in, and signing out with an already-dead cookie).
+    *
+    * `clientIp` is the socket peer, deliberately not `X-Forwarded-For`: that header is attacker-controlled unless a
+    * trusted-proxy list is configured, and letting it pick the rate-limit key would hand out a fresh budget per
+    * request. Behind a reverse proxy this collapses to the proxy's address, leaving the per-email limit to do the work.
+    */
+  val requestContext: HandlerAspect[Any, RequestContext] = {
+    HandlerAspect.interceptIncomingHandler(
+      Handler.fromFunctionZIO[Request] { (request: Request) =>
+        ZIO.succeed(
+          (request, RequestContext(request.remoteAddress.map(_.getHostAddress), SessionAuth.sessionIdFrom(request)))
+        )
+      }
+    )
+  }
+
   private def currentUser(request: Request): ZIO[AuthService, Response, User] = {
     for {
       authService <- ZIO.service[AuthService]

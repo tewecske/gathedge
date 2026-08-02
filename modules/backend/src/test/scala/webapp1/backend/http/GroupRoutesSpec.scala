@@ -34,7 +34,7 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
 
 /** `GroupRoutes` had no route-level coverage at all: every `GroupFailure -> Response` mapping was only ever asserted
   * through the browser. These pin the status codes the frontend branches on, so a change to the shared mapping in
-  * [[FailureResponses]] can't silently flatten a 403 into a 400.
+  * [[ApiFailures]] — or to the statuses `GroupEndpoints` binds them to — can't silently flatten a 403 into a 400.
   */
 object GroupRoutesSpec extends ZIOSpecDefault {
 

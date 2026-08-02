@@ -77,7 +77,7 @@ private class SignUpPage {
         .collect { case Right(request) =>
           request
         }
-        .flatMapSwitch(request => ApiClient.post[SignupRequest, AuthResponse]("/api/auth/signup", request)) -->
+        .flatMapSwitch(request => ApiClient.signup(request)) -->
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>
             inFlightVar.set(false)

@@ -1,116 +1,122 @@
 package webapp1.frontend.api
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
-import webapp1.shared.dto.ErrorResponse
-import zio.json._
+import webapp1.shared.api.{AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
+import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, Theme, TodoItem}
+import webapp1.shared.dto.{
+  AuthResponse,
+  CreateGroupRequest,
+  CreatePairRequest,
+  CreateTodoRequest,
+  InviteMemberRequest,
+  LoginRequest,
+  SignupRequest,
+  UpdateRoleRequest,
+  UpdateThemeRequest,
+  UpdateTodoStatusRequest,
+}
 
-import scala.scalajs.js
+import EndpointClient.{executor, run}
 
-final case class ApiError(status: Int, message: String, fieldErrors: Map[String, String])
-
-/** Thin `fetch` wrapper, using the shared zio-json DTOs for (de)serialization. Returns `EventStream`s per the laminar
-  * skill's explicit-flattening guidance — callers `flatMapSwitch` these from a click/submit stream.
+/** Every non-admin API call the pages make, generated from the endpoint descriptions in `shared` rather than written by
+  * hand — see [[EndpointClient]]. There are no path strings or method names in this file; the admin resource is the
+  * same, through [[AdminApiClient]].
+  *
+  * The signature is uniformly `EventStream[Either[ApiError, A]]`: callers `flatMapSwitch` these from a click or submit
+  * stream and branch on the `Either`.
   */
 object ApiClient {
 
-  private def buildInit(method: String, bodyJson: Option[String]): dom.RequestInit = {
-    val init = js
-      .Dynamic
-      .literal(
-        method = method,
-        headers = js.Dictionary("Content-Type" -> "application/json", "X-Requested-With" -> "XMLHttpRequest"),
-        credentials = "include",
-      )
-    bodyJson.foreach(b => init.updateDynamic("body")(b))
-    init.asInstanceOf[dom.RequestInit]
-  }
+  // --- Sessions -----------------------------------------------------------------------------------------------
 
-  private def errorFrom(status: Int, text: String): ApiError = {
-    text.fromJson[ErrorResponse] match {
-      case Right(err) =>
-        ApiError(status, err.message, err.fieldErrors)
-      case Left(_) =>
-        ApiError(status, s"Request failed with status $status", Map.empty)
-    }
-  }
-
-  // A rejected fetch promise (offline, DNS failure, connection refused, CORS) would
-  // otherwise propagate as a stream error instead of a value, leaving callers that
-  // only `.foreach`/`child <--` off the success path stuck (e.g. App's initial
-  // session load never completing). Surface it as a normal Left instead.
-  private def networkSafe[A](stream: EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
-    stream.recover { case err =>
-      Some(Left(ApiError(0, s"Network error: ${err.getMessage}", Map.empty)))
-    }
-  }
-
-  private def parseResponse[Res: JsonDecoder](response: dom.Response): EventStream[Either[ApiError, Res]] = {
-    EventStream
-      .fromJsPromise(response.text())
-      .map { text =>
-        if (response.ok) {
-          text.fromJson[Res].left.map(err => ApiError(response.status, s"Malformed response: $err", Map.empty))
-        } else {
-          Left(errorFrom(response.status, text))
-        }
-      }
-  }
-
-  /** For responses with no meaningful body (e.g. 204 No Content) — doesn't attempt to JSON-decode a success body, only
-    * an error body on failure.
+  /** The session cookie the server sets comes back as the second half of the response, and is always dropped here: a
+    * browser applies `Set-Cookie` itself and then hides it from `fetch`, so this is `None` in the page no matter what
+    * the server sent (`ApiEndpoint.sessionCookie` explains why it is described as optional at all). The cookie is in
+    * the jar regardless — that is what the next call authenticates with.
     */
-  private def parseNoContentResponse(response: dom.Response): EventStream[Either[ApiError, Unit]] = {
-    EventStream
-      .fromJsPromise(response.text())
-      .map { text =>
-        if (response.ok)
-          Right(())
-        else
-          Left(errorFrom(response.status, text))
-      }
+  def signup(request: SignupRequest): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.signup(request))).map(_.map(_._1))
   }
 
-  private def request(method: String, path: String, bodyJson: Option[String]): EventStream[dom.Response] = {
-    EventStream.fromJsPromise(dom.fetch(path, buildInit(method, bodyJson)))
+  def login(request: LoginRequest): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.login(request))).map(_.map(_._1))
   }
 
-  def get[Res: JsonDecoder](path: String): EventStream[Either[ApiError, Res]] = {
-    networkSafe(request("GET", path, None).flatMapSwitch(parseResponse[Res]))
+  def logout: EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.logout(()))).map(_.map(_ => ()))
   }
 
-  def post[Req: JsonEncoder, Res: JsonDecoder](path: String, body: Req): EventStream[Either[ApiError, Res]] = {
-    networkSafe(request("POST", path, Some(body.toJson)).flatMapSwitch(parseResponse[Res]))
+  def me: EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.me(())))
   }
 
-  /** POST with no request body, decoding a JSON response (e.g. accepting an invitation, which needs no input but
-    * returns the joined Group).
-    */
-  def postNoBody[Res: JsonDecoder](path: String): EventStream[Either[ApiError, Res]] = {
-    networkSafe(request("POST", path, None).flatMapSwitch(parseResponse[Res]))
+  def updateTheme(theme: Theme): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.updateTheme(UpdateThemeRequest(theme))))
   }
 
-  def put[Req: JsonEncoder, Res: JsonDecoder](path: String, body: Req): EventStream[Either[ApiError, Res]] = {
-    networkSafe(request("PUT", path, Some(body.toJson)).flatMapSwitch(parseResponse[Res]))
+  // --- Todos --------------------------------------------------------------------------------------------------
+
+  def listTodos: EventStream[Either[ApiError, List[TodoItem]]] = {
+    run(executor(TodoEndpoints.listTodos(())))
   }
 
-  /** POST with no meaningful response body (e.g. 204 No Content), no request body. */
-  def postNoContent(path: String): EventStream[Either[ApiError, Unit]] = {
-    networkSafe(request("POST", path, None).flatMapSwitch(parseNoContentResponse))
+  def createTodo(text: String): EventStream[Either[ApiError, TodoItem]] = {
+    run(executor(TodoEndpoints.createTodo(CreateTodoRequest(text))))
   }
 
-  /** POST with a request body but no meaningful response body. */
-  def postBodyNoContent[Req: JsonEncoder](path: String, body: Req): EventStream[Either[ApiError, Unit]] = {
-    networkSafe(request("POST", path, Some(body.toJson)).flatMapSwitch(parseNoContentResponse))
+  def updateTodoStatus(id: Long, request: UpdateTodoStatusRequest): EventStream[Either[ApiError, TodoItem]] = {
+    run(executor(TodoEndpoints.updateTodoStatus(id, request)))
   }
 
-  /** PUT with a request body but no meaningful response body. */
-  def putBodyNoContent[Req: JsonEncoder](path: String, body: Req): EventStream[Either[ApiError, Unit]] = {
-    networkSafe(request("PUT", path, Some(body.toJson)).flatMapSwitch(parseNoContentResponse))
+  // --- Groups -------------------------------------------------------------------------------------------------
+
+  def createGroup(request: CreateGroupRequest): EventStream[Either[ApiError, Group]] = {
+    run(executor(GroupEndpoints.createGroup(request)))
   }
 
-  /** DELETE with no request body and no meaningful response body. */
-  def delete(path: String): EventStream[Either[ApiError, Unit]] = {
-    networkSafe(request("DELETE", path, None).flatMapSwitch(parseNoContentResponse))
+  def listGroups: EventStream[Either[ApiError, List[Group]]] = {
+    run(executor(GroupEndpoints.listGroups(())))
+  }
+
+  def getGroup(groupId: Long): EventStream[Either[ApiError, Group]] = {
+    run(executor(GroupEndpoints.getGroup(groupId)))
+  }
+
+  def deleteGroup(groupId: Long): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GroupEndpoints.deleteGroup(groupId)))
+  }
+
+  def listPairs(groupId: Long): EventStream[Either[ApiError, List[GroupPair]]] = {
+    run(executor(GroupEndpoints.listPairs(groupId)))
+  }
+
+  def addPair(groupId: Long, request: CreatePairRequest): EventStream[Either[ApiError, GroupPair]] = {
+    run(executor(GroupEndpoints.addPair(groupId, request)))
+  }
+
+  def listMembers(groupId: Long): EventStream[Either[ApiError, List[GroupMember]]] = {
+    run(executor(GroupEndpoints.listMembers(groupId)))
+  }
+
+  def removeMember(groupId: Long, userId: Long): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GroupEndpoints.removeMember(groupId, userId)))
+  }
+
+  def updateMemberRole(groupId: Long, userId: Long, request: UpdateRoleRequest): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GroupEndpoints.updateMemberRole(groupId, userId, request)))
+  }
+
+  def inviteMember(groupId: Long, request: InviteMemberRequest): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GroupEndpoints.inviteMember(groupId, request)))
+  }
+
+  // --- Invitations --------------------------------------------------------------------------------------------
+
+  def getInvitation(token: String): EventStream[Either[ApiError, InvitationInfo]] = {
+    run(executor(InvitationEndpoints.getInvitation(token)))
+  }
+
+  def acceptInvitation(token: String): EventStream[Either[ApiError, Group]] = {
+    run(executor(InvitationEndpoints.acceptInvitation(token)))
   }
 }

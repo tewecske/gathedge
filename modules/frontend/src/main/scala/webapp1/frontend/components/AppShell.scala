@@ -5,7 +5,7 @@ import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.Theme
-import webapp1.shared.dto.{AuthResponse, UpdateThemeRequest}
+import webapp1.shared.dto.AuthResponse
 
 /** Themed authenticated shell: navbar (nav links + theme toggle + logout) wrapping page-specific content. Every
   * authenticated page renders through this so nav/theme/logout stay consistent.
@@ -33,19 +33,14 @@ private class AppShell(active: Page, content: HtmlElement) {
       div(cls := "p-8", content),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
-      themeToggleBus
-        .events
-        .sample(themeSignal)
-        .flatMapSwitch(current =>
-          ApiClient.put[UpdateThemeRequest, AuthResponse]("/api/me/theme", UpdateThemeRequest(nextTheme(current)))
-        ) -->
+      themeToggleBus.events.sample(themeSignal).flatMapSwitch(current => ApiClient.updateTheme(nextTheme(current))) -->
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>
             AppState.setUser(res.user)
           case Left(_) =>
             () // theme toggle failure is low-stakes; silently keep prior theme
         },
-      logoutBus.events.flatMapSwitch(_ => ApiClient.postNoContent("/api/auth/logout")) -->
+      logoutBus.events.flatMapSwitch(_ => ApiClient.logout) -->
         Observer[Either[ApiError, Unit]] { _ =>
           // Whether or not the server acknowledged, drop the client-side session.
           AppState.clearUser()
