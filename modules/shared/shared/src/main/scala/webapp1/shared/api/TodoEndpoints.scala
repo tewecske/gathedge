@@ -6,26 +6,34 @@ import zio.http.{Method, Status}
 import zio.http.codec.PathCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.withErrors
+import ApiEndpoint.{failingWith, failure}
 import ApiSchemas.given
 
 /** The signed-in user's own todo items. Every one of these requires a session, supplied by the `authenticated` aspect
-  * on the `Routes` value rather than described here.
+  * on the `Routes` value rather than described here — which is why they all declare 401 even though no handler raises
+  * it. The two mutating ones additionally declare 403, which `csrf` answers for a method outside GET/HEAD/OPTIONS.
   */
 object TodoEndpoints {
 
   private val todoId = PathCodec.long("id")
 
+  /** `TodoService.listTodos` is a `UIO`, so nothing but the aspects and a defect can fail this. */
   val listTodos = {
-    withErrors(Endpoint(Method.GET / "api" / "todos").out[List[TodoItem]])
+    Endpoint(Method.GET / "api" / "todos").out[List[TodoItem]].failingWith(failure.unauthorized, failure.internalError)
   }
 
   val createTodo = {
-    withErrors(Endpoint(Method.POST / "api" / "todos").in[CreateTodoRequest].out[TodoItem](Status.Created))
+    Endpoint(Method.POST / "api" / "todos")
+      .in[CreateTodoRequest]
+      .out[TodoItem](Status.Created)
+      .failingWith(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }
 
   val updateTodoStatus = {
-    withErrors(Endpoint(Method.PUT / "api" / "todos" / todoId / "status").in[UpdateTodoStatusRequest].out[TodoItem])
+    Endpoint(Method.PUT / "api" / "todos" / todoId / "status")
+      .in[UpdateTodoStatusRequest]
+      .out[TodoItem]
+      .failingWith(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(listTodos, createTodo, updateTodoStatus)

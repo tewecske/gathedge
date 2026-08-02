@@ -13,19 +13,26 @@ import webapp1.shared.api.ApiFailure
   * failure answered 403/409/400-with-field-errors under `/api/groups` but a bare 400 under `/api/invitations`. Keeping
   * one mapping per enum makes that class of drift impossible, and the compiler's exhaustivity check covers every
   * endpoint that can raise the failure.
+  *
+  * Each return type is the union of the cases that mapping can actually produce, not `ApiFailure`. That is what ties
+  * these to the endpoint descriptions: a handler's `mapError(ApiFailures.todo)` only compiles if every status in this
+  * union is one the endpoint declares, so adding a case here that an endpoint does not describe is a compile error at
+  * the route rather than a failure to encode the response at request time.
   */
 object ApiFailures {
 
   // Shared between the self-service signup path and admin user creation: same condition, same wire shape.
-  private val emailAlreadyRegistered: ApiFailure = {
-    ApiFailure.Conflict("Email already registered", Map("email" -> "Email already registered"))
+  private val emailAlreadyRegistered: ApiFailure.Conflict = {
+    ApiFailure.Conflict("Email already registered")
   }
 
-  private val invitationInvalid: ApiFailure = {
+  private val invitationInvalid: ApiFailure.BadRequest = {
     ApiFailure.BadRequest("This invitation is invalid, expired, or already used")
   }
 
-  def auth(failure: AuthFailure): ApiFailure = {
+  def auth(
+    failure: AuthFailure
+  ): ApiFailure.BadRequest | ApiFailure.Unauthorized | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
     failure match {
       case AuthFailure.InvalidCredentials =>
         ApiFailure.Unauthorized("Invalid email or password")
@@ -40,7 +47,7 @@ object ApiFailures {
     }
   }
 
-  def todo(failure: TodoFailure): ApiFailure = {
+  def todo(failure: TodoFailure): ApiFailure.BadRequest | ApiFailure.NotFound = {
     failure match {
       case TodoFailure.ValidationError(message) =>
         ApiFailure.BadRequest(message, Map("text" -> message))
@@ -49,7 +56,9 @@ object ApiFailures {
     }
   }
 
-  def group(failure: GroupFailure): ApiFailure = {
+  def group(
+    failure: GroupFailure
+  ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case GroupFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
@@ -68,7 +77,7 @@ object ApiFailures {
     }
   }
 
-  def admin(failure: AdminFailure): ApiFailure = {
+  def admin(failure: AdminFailure): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case AdminFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)

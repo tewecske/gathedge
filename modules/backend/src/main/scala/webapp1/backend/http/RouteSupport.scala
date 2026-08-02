@@ -40,10 +40,19 @@ object RouteSupport {
     }
     // A request that matches no route never reaches a handler, so the wrapper above cannot see it: zio-http answers it
     // from `Routes.notFound`, whose default is `Response.error(NotFound, path)` — an HTML-escaped echo of the requested
-    // path, with no JSON body and no content type. That is the one response a client of this API could receive that
-    // isn't the `ErrorResponse` shape everything else answers with, so it is replaced here rather than left to the
-    // default. `notFound` is a mutable field on `Routes`; `handled` is a fresh value built one line above, and the
-    // combinators that follow (`@@ requestLogging` in `Main`) carry the replacement along.
+    // path, with no JSON body and no content type.
+    //
+    // This 404 is not the one endpoints describe. `ApiFailure.NotFound` means a resource the request named does not
+    // exist; this one means the path is not part of the API at all, so there is no operation to document it on and no
+    // generated client decodes it as a value — the client's URLs come from the descriptions, so it can only arrive
+    // here across a version skew between a deployed frontend and an older backend. That narrow case is still worth
+    // answering in the same shape as everything else, and echoing the requested path back is worth not doing, which is
+    // why the default is replaced rather than left alone.
+    //
+    // `notFound` is a mutable field on `Routes` typed `Handler[Any, Nothing, Request, Response]`, so assigning it
+    // cannot affect this method's `Routes[Env, Nothing]` result — that comes from `handleErrorRequestCauseZIO` above.
+    // `handled` is a fresh value built one line up, and the combinators that follow (`@@ requestLogging` in `Main`)
+    // carry the replacement along.
     handled.notFound = Handler.fromFunction[Request](_ => errorResponse(Status.NotFound, "Not found"))
     handled
   }

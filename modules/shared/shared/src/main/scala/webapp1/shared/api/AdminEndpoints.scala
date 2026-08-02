@@ -6,32 +6,66 @@ import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.withErrors
+import ApiEndpoint.{failingWith, failure}
 import ApiSchemas.given
 
 /** Administrator user management.
   *
   * The admin check is an aspect on the `Routes` value, not part of any description here, so these look like every other
-  * resource; what makes them admin-only lives in `AdminRoutes`.
+  * resource; what makes them admin-only lives in `AdminRoutes`. It is the reason every endpoint below declares both 401
+  * and 403 including the GETs: `adminOnly` answers 401 with no session and 403 with a non-administrator one, so unlike
+  * elsewhere the 403 is not the CSRF aspect and does not follow the method.
   */
 object AdminEndpoints {
 
   private val userId = PathCodec.long("id")
 
+  /** `AdminService.listUsers` is a `UIO`, so only the aspect and a defect can fail this. */
   val listUsers = {
-    withErrors(Endpoint(Method.GET / "api" / "admin" / "users").out[List[User]])
+    Endpoint(Method.GET / "api" / "admin" / "users")
+      .out[List[User]]
+      .failingWith(failure.unauthorized, failure.forbidden, failure.internalError)
   }
 
   val getUser = {
-    withErrors(Endpoint(Method.GET / "api" / "admin" / "users" / userId).out[User])
+    Endpoint(Method.GET / "api" / "admin" / "users" / userId)
+      .out[User]
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val createUser = {
-    withErrors(Endpoint(Method.POST / "api" / "admin" / "users").in[CreateUserRequest].out[User](Status.Created))
+    Endpoint(Method.POST / "api" / "admin" / "users")
+      .in[CreateUserRequest]
+      .out[User](Status.Created)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val updateUser = {
-    withErrors(Endpoint(Method.PUT / "api" / "admin" / "users" / userId).in[UpdateUserRequest].out[User])
+    Endpoint(Method.PUT / "api" / "admin" / "users" / userId)
+      .in[UpdateUserRequest]
+      .out[User]
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   /** The success response is described as a bare status, not as `.out[Unit](Status.NoContent)`.
@@ -43,9 +77,16 @@ object AdminEndpoints {
     * decode and sidesteps it. Every other 204 in this package is described the same way for the same reason.
     */
   val deleteUser = {
-    withErrors(
-      Endpoint(Method.DELETE / "api" / "admin" / "users" / userId).outCodec(HttpCodec.status(Status.NoContent))
-    )
+    Endpoint(Method.DELETE / "api" / "admin" / "users" / userId)
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(listUsers, getUser, createUser, updateUser, deleteUser)

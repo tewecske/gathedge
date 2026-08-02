@@ -37,31 +37,39 @@ object EndpointClient {
     }
   }
 
+  /** Flattens the typed failure back to a status number, which is what pages branch on.
+    *
+    * Only `BadRequest` carries `fieldErrors`; for the rest the map is empty because the failure is about the request as
+    * a whole rather than about one of its inputs.
+    */
   private def toApiError(failure: ApiFailure): ApiError = {
     failure match {
       case ApiFailure.BadRequest(message, fieldErrors) =>
         ApiError(400, message, fieldErrors)
-      case ApiFailure.Unauthorized(message, fieldErrors) =>
-        ApiError(401, message, fieldErrors)
-      case ApiFailure.Forbidden(message, fieldErrors) =>
-        ApiError(403, message, fieldErrors)
-      case ApiFailure.NotFound(message, fieldErrors) =>
-        ApiError(404, message, fieldErrors)
-      case ApiFailure.Conflict(message, fieldErrors) =>
-        ApiError(409, message, fieldErrors)
-      case ApiFailure.TooManyRequests(message, fieldErrors) =>
-        ApiError(429, message, fieldErrors)
-      case ApiFailure.InternalError(message, fieldErrors) =>
-        ApiError(500, message, fieldErrors)
+      case ApiFailure.Unauthorized(message) =>
+        ApiError(401, message, Map.empty)
+      case ApiFailure.Forbidden(message) =>
+        ApiError(403, message, Map.empty)
+      case ApiFailure.NotFound(message) =>
+        ApiError(404, message, Map.empty)
+      case ApiFailure.Conflict(message) =>
+        ApiError(409, message, Map.empty)
+      case ApiFailure.TooManyRequests(message) =>
+        ApiError(429, message, Map.empty)
+      case ApiFailure.InternalError(message) =>
+        ApiError(500, message, Map.empty)
     }
   }
 
-  /** The one bridge from ZIO to Airstream. `ApiFailure` is the declared error channel, so it arrives typed and
-    * exhaustively matchable; anything no description mentions (a defect, a dead socket, a status nobody declared) lands
-    * in the cause and is flattened into the same `ApiError` shape, so a caller never has to handle two kinds of
-    * failure. Callers get an `EventStream[Either[ApiError, A]]` per the laminar skill's explicit-flattening convention
-    * — a failure is a value on the success path, never a stream error, so an `onMountCallback`-driven load cannot hang
-    * on a rejected promise.
+  /** The one bridge from ZIO to Airstream. Every endpoint's error channel is a union of `ApiFailure` cases, so a
+    * failure arrives typed and exhaustively matchable; anything the endpoint did not declare (a defect, a dead socket,
+    * an undeclared status) lands in the cause and is flattened into the same `ApiError` shape, so a caller never has to
+    * handle two kinds of failure. Callers get an `EventStream[Either[ApiError, A]]` per the laminar skill's
+    * explicit-flattening convention — a failure is a value on the success path, never a stream error, so an
+    * `onMountCallback`-driven load cannot hang on a rejected promise.
+    *
+    * The parameter is widened to `ApiFailure` rather than each endpoint's own union: `ZIO`'s error channel is
+    * covariant, so every call site conforms without naming its union here.
     */
   def run[A](effect: ZIO[Scope, ApiFailure, A]): EventStream[Either[ApiError, A]] = {
     val future = Unsafe.unsafe { implicit unsafe =>

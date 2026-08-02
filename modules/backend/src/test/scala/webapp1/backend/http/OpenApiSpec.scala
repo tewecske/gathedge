@@ -47,6 +47,27 @@ object OpenApiSpec extends ZIOSpecDefault {
       }
   }
 
+  /** Every operation as `("METHOD", "/path") -> the status codes it documents`. */
+  private val statuses: Map[(String, String), Set[Int]] = {
+    openApi
+      .paths
+      .toList
+      .flatMap { entry =>
+        val (path, item) = entry
+        val byMethod = List("GET" -> item.get, "PUT" -> item.put, "POST" -> item.post, "DELETE" -> item.delete)
+        byMethod.collect { case (method, Some(operation)) =>
+          val codes = operation
+            .responses
+            .keySet
+            .collect { case OpenAPI.StatusOrDefault.StatusValue(status) =>
+              status.code
+            }
+          ((method, path.name), codes)
+        }
+      }
+      .toMap
+  }
+
   def spec = {
     suite("OpenAPI")(
       test("every described resource appears, with its path parameters") {
@@ -89,19 +110,56 @@ object OpenApiSpec extends ZIOSpecDefault {
           json.contains("CreateUserRequest"),
         )
       },
-      // A client generated from this document can only decode the statuses it names, and the aspects, the rate limiter
-      // and `handleFailures` can answer with statuses no handler ever raises.
-      test("every failure status is documented, including the ones only the aspects produce") {
-        val json = openApi.toJson
+      // Each operation documents exactly the statuses it can answer with — its own handler's failures plus whatever
+      // the aspects wrapped around its `Routes` value can produce instead of running it. Pinning the whole table is
+      // the point of describing failures per endpoint rather than uniformly: it is the only place the two halves of
+      // that judgement (a mapping in `ApiFailures`, an aspect in `RouteSupport`) are checked against the descriptions.
+      //
+      // Reading the table: 500 is everywhere, because `handleFailures` turns a defect on any route into one. 401 is on
+      // everything behind `authenticated`/`adminOnly`, so only `GET /api/invitations/{token}` and the three anonymous
+      // auth routes lack it. 403 follows `csrf` — hence its absence from the GETs — except under `adminOnly`, which
+      // answers 403 for a non-administrator regardless of method, and on the group endpoints, where `GroupService`
+      // raises it for membership and role. 429 exists only where the rate limiter does. And 404 is a resource the
+      // request named and could not be found: a request whose path matches no route at all is answered by
+      // `RouteSupport`'s `notFound` replacement, never reaches an endpoint, and so is documented on none of them.
+      test("every operation documents exactly the statuses it can answer with") {
         assertTrue(
-          json.contains("\"400\""),
-          json.contains("\"401\""),
-          json.contains("\"403\""),
-          json.contains("\"404\""),
-          json.contains("\"409\""),
-          json.contains("\"429\""),
-          json.contains("\"500\""),
+          statuses ==
+            Map(
+              ("POST", "/api/auth/signup") -> Set(201, 400, 401, 403, 409, 429, 500),
+              ("POST", "/api/auth/login") -> Set(200, 400, 401, 403, 409, 429, 500),
+              ("POST", "/api/auth/logout") -> Set(204, 403, 500),
+              ("GET", "/api/me") -> Set(200, 401, 500),
+              ("PUT", "/api/me/theme") -> Set(200, 401, 403, 500),
+              ("GET", "/api/todos") -> Set(200, 401, 500),
+              ("POST", "/api/todos") -> Set(201, 400, 401, 403, 404, 500),
+              ("PUT", "/api/todos/{id}/status") -> Set(200, 400, 401, 403, 404, 500),
+              ("GET", "/api/groups") -> Set(200, 401, 500),
+              ("POST", "/api/groups") -> Set(201, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/groups/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("DELETE", "/api/groups/{id}") -> Set(204, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/groups/{id}/pairs") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("POST", "/api/groups/{id}/pairs") -> Set(201, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/groups/{id}/members") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("DELETE", "/api/groups/{id}/members/{userId}") -> Set(204, 400, 401, 403, 404, 409, 500),
+              ("PUT", "/api/groups/{id}/members/{userId}") -> Set(204, 400, 401, 403, 404, 409, 500),
+              ("POST", "/api/groups/{id}/invitations") -> Set(204, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/invitations/{token}") -> Set(200, 400, 403, 404, 409, 500),
+              ("POST", "/api/invitations/{token}/accept") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/admin/users") -> Set(200, 401, 403, 500),
+              ("POST", "/api/admin/users") -> Set(201, 400, 401, 403, 404, 409, 500),
+              ("GET", "/api/admin/users/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("PUT", "/api/admin/users/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
+              ("DELETE", "/api/admin/users/{id}") -> Set(204, 400, 401, 403, 404, 409, 500),
+            )
         )
+      },
+      // The uniform set this replaced put all seven failure statuses on all 25 operations. Nothing enforces the
+      // arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a number going back up.
+      test("no operation documents a status only some other endpoint can answer with") {
+        val successCodes = Set(200, 201, 204)
+        val declared = statuses.values.map(_.diff(successCodes).size).sum
+        assertTrue(declared == 125, declared < 25 * 7)
       },
       // The session is a `HandlerAspect` on whole `Routes` values, so no description in `shared` states it and the
       // generator cannot infer it; `DocsRoutes` supplies the split. These pin both halves of it, so adding a public

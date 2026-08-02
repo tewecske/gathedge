@@ -264,7 +264,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw.fromJson[User].map(_.isAdmin) == Right(false),
           )
         },
-        test("a duplicate email is a 409 whose body decodes as the usual ErrorResponse, field errors included") {
+        // A 409 carries no `fieldErrors`: only `ApiFailure.BadRequest` has that field, so the encoded body is just
+        // `{"message":...}`. It still decodes as `ErrorResponse`, whose `fieldErrors` defaults to empty — which is
+        // what keeps the two codec stacks interchangeable for a client that only knows the DTO.
+        test("a duplicate email is a 409 whose body still decodes as the usual ErrorResponse") {
           for {
             admin <- adminSession("dup@example.com")
             request = Request.post(
@@ -275,8 +278,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw <- body(response)
           } yield assertTrue(
             response.status == Status.Conflict,
-            raw.fromJson[ErrorResponse] ==
-              Right(ErrorResponse("Email already registered", Map("email" -> "Email already registered"))),
+            !raw.contains("fieldErrors"),
+            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Email already registered", Map.empty)),
           )
         },
         test("a short password is a 400 carrying the service's per-field messages") {

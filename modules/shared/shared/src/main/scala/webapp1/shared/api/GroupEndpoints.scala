@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.withErrors
+import ApiEndpoint.{failingWith, failure}
 import ApiSchemas.given
 
 /** Groups, their word pairs, their members and the invitations that create members.
@@ -14,6 +14,12 @@ import ApiSchemas.given
   * Membership and role are enforced by `GroupService`, not by an aspect, so these endpoints answer 403 (not a member /
   * read-only / admin-only) as ordinary failures. The four endpoints that change membership answer a bare 204: the
   * frontend reloads the affected list rather than patching it from a response body.
+  *
+  * All but [[listGroups]] declare the same six statuses, because every one of them calls a `GroupService` method typed
+  * `IO[GroupFailure, ?]` and `ApiFailures.group` maps that enum onto 400/403/404/409. Which *cases* an individual
+  * method can actually raise is narrower than that — `getGroup` cannot produce a 409, `createGroup` cannot produce a
+  * 404 — but the service signatures do not say so, so the descriptions cannot either. Narrowing them is a change to
+  * `GroupService`, not to this file.
   */
 object GroupEndpoints {
 
@@ -26,49 +32,129 @@ object GroupEndpoints {
   private val noContent = HttpCodec.status(Status.NoContent)
 
   val createGroup = {
-    withErrors(Endpoint(Method.POST / "api" / "groups").in[CreateGroupRequest].out[Group](Status.Created))
+    Endpoint(Method.POST / "api" / "groups")
+      .in[CreateGroupRequest]
+      .out[Group](Status.Created)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
+  /** `GroupService.myGroups` is a `UIO`, so nothing but the `authenticated` aspect and a defect can fail this. */
   val listGroups = {
-    withErrors(Endpoint(Method.GET / "api" / "groups").out[List[Group]])
+    Endpoint(Method.GET / "api" / "groups").out[List[Group]].failingWith(failure.unauthorized, failure.internalError)
   }
 
   val getGroup = {
-    withErrors(Endpoint(Method.GET / "api" / "groups" / groupId).out[Group])
+    Endpoint(Method.GET / "api" / "groups" / groupId)
+      .out[Group]
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val deleteGroup = {
-    withErrors(Endpoint(Method.DELETE / "api" / "groups" / groupId).outCodec(noContent))
+    Endpoint(Method.DELETE / "api" / "groups" / groupId)
+      .outCodec(noContent)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val listPairs = {
-    withErrors(Endpoint(Method.GET / "api" / "groups" / groupId / "pairs").out[List[GroupPair]])
+    Endpoint(Method.GET / "api" / "groups" / groupId / "pairs")
+      .out[List[GroupPair]]
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val addPair = {
-    withErrors(
-      Endpoint(Method.POST / "api" / "groups" / groupId / "pairs").in[CreatePairRequest].out[GroupPair](Status.Created)
-    )
+    Endpoint(Method.POST / "api" / "groups" / groupId / "pairs")
+      .in[CreatePairRequest]
+      .out[GroupPair](Status.Created)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val listMembers = {
-    withErrors(Endpoint(Method.GET / "api" / "groups" / groupId / "members").out[List[GroupMember]])
+    Endpoint(Method.GET / "api" / "groups" / groupId / "members")
+      .out[List[GroupMember]]
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val removeMember = {
-    withErrors(Endpoint(Method.DELETE / "api" / "groups" / groupId / "members" / memberId).outCodec(noContent))
+    Endpoint(Method.DELETE / "api" / "groups" / groupId / "members" / memberId)
+      .outCodec(noContent)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val updateMemberRole = {
-    withErrors(
-      Endpoint(Method.PUT / "api" / "groups" / groupId / "members" / memberId).in[UpdateRoleRequest].outCodec(noContent)
-    )
+    Endpoint(Method.PUT / "api" / "groups" / groupId / "members" / memberId)
+      .in[UpdateRoleRequest]
+      .outCodec(noContent)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val inviteMember = {
-    withErrors(
-      Endpoint(Method.POST / "api" / "groups" / groupId / "invitations").in[InviteMemberRequest].outCodec(noContent)
-    )
+    Endpoint(Method.POST / "api" / "groups" / groupId / "invitations")
+      .in[InviteMemberRequest]
+      .outCodec(noContent)
+      .failingWith(
+        failure.badRequest,
+        failure.unauthorized,
+        failure.forbidden,
+        failure.notFound,
+        failure.conflict,
+        failure.internalError,
+      )
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
