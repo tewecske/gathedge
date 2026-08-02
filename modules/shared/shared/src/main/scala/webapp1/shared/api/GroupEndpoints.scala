@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.failure
+import ApiEndpoint.{failure, withCodecError}
 import ApiSchemas.given
 
 /** Groups, their word pairs, their members and the invitations that create members.
@@ -34,6 +34,7 @@ object GroupEndpoints {
   val createGroup = {
     Endpoint(Method.POST / "api" / "groups")
       .in[CreateGroupRequest]
+      .withCodecError
       .out[Group](Status.Created)
       .outErrors(
         failure.badRequest,
@@ -92,6 +93,7 @@ object GroupEndpoints {
   val addPair = {
     Endpoint(Method.POST / "api" / "groups" / groupId / "pairs")
       .in[CreatePairRequest]
+      .withCodecError
       .out[GroupPair](Status.Created)
       .outErrors(
         failure.badRequest,
@@ -132,6 +134,7 @@ object GroupEndpoints {
   val updateMemberRole = {
     Endpoint(Method.PUT / "api" / "groups" / groupId / "members" / memberId)
       .in[UpdateRoleRequest]
+      .withCodecError
       .outCodec(noContent)
       .outErrors(
         failure.badRequest,
@@ -146,6 +149,7 @@ object GroupEndpoints {
   val inviteMember = {
     Endpoint(Method.POST / "api" / "groups" / groupId / "invitations")
       .in[InviteMemberRequest]
+      .withCodecError
       .outCodec(noContent)
       .outErrors(
         failure.badRequest,

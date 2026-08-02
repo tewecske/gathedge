@@ -121,7 +121,9 @@ object OpenApiSpec extends ZIOSpecDefault {
       // answers 403 for a non-administrator regardless of method, and on the group endpoints, where `GroupService`
       // raises it for membership and role. 429 exists only where the rate limiter does. And 404 is a resource the
       // request named and could not be found: a request whose path matches no route at all is answered by
-      // `RouteSupport`'s `notFound` replacement, never reaches an endpoint, and so is documented on none of them.
+      // `RouteSupport`'s `notFound` replacement, never reaches an endpoint, and so is documented on none of them. 400 is
+      // a handler's validation failure everywhere except `PUT /api/me/theme`, whose service call is `.orDie`'d: there it
+      // is only reachable through `ApiEndpoint.codecError`, and declared so the client decodes it instead of dying.
       test("every operation documents exactly the statuses it can answer with") {
         assertTrue(
           statuses ==
@@ -130,7 +132,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/login") -> Set(200, 400, 401, 403, 409, 429, 500),
               ("POST", "/api/auth/logout") -> Set(204, 403, 500),
               ("GET", "/api/me") -> Set(200, 401, 500),
-              ("PUT", "/api/me/theme") -> Set(200, 401, 403, 500),
+              ("PUT", "/api/me/theme") -> Set(200, 400, 401, 403, 500),
               ("GET", "/api/todos") -> Set(200, 401, 500),
               ("POST", "/api/todos") -> Set(201, 400, 401, 403, 404, 500),
               ("PUT", "/api/todos/{id}/status") -> Set(200, 400, 401, 403, 404, 500),
@@ -159,7 +161,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       test("no operation documents a status only some other endpoint can answer with") {
         val successCodes = Set(200, 201, 204)
         val declared = statuses.values.map(_.diff(successCodes).size).sum
-        assertTrue(declared == 125, declared < 25 * 7)
+        assertTrue(declared == 126, declared < 25 * 7)
       },
       // The session is a `HandlerAspect` on whole `Routes` values, so no description in `shared` states it and the
       // generator cannot infer it; `DocsRoutes` supplies the split. These pin both halves of it, so adding a public

@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.failure
+import ApiEndpoint.{failure, withCodecError}
 import ApiSchemas.given
 
 /** Administrator user management.
@@ -43,6 +43,7 @@ object AdminEndpoints {
   val createUser = {
     Endpoint(Method.POST / "api" / "admin" / "users")
       .in[CreateUserRequest]
+      .withCodecError
       .out[User](Status.Created)
       .outErrors(
         failure.badRequest,
@@ -57,6 +58,7 @@ object AdminEndpoints {
   val updateUser = {
     Endpoint(Method.PUT / "api" / "admin" / "users" / userId)
       .in[UpdateUserRequest]
+      .withCodecError
       .out[User]
       .outErrors(
         failure.badRequest,

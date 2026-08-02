@@ -4,7 +4,7 @@ import scala.reflect.ClassTag
 
 import zio.ZNothing
 import zio.http.{Header, Status}
-import zio.http.codec.{HeaderCodec, HttpCodec, HttpCodecType}
+import zio.http.codec.{HeaderCodec, HttpCodec, HttpCodecError, HttpCodecType}
 import zio.http.endpoint.{AuthType, Endpoint}
 
 /** The pieces every endpoint description in this package is built from.
@@ -50,6 +50,49 @@ object ApiEndpoint {
     val internalError: ErrorCodec[ApiFailure.InternalError] = {
       HttpCodec.error[ApiFailure.InternalError](Status.InternalServerError)
     }
+  }
+
+  /** The body an endpoint answers with when its *own codecs* reject the request, before any handler runs.
+    *
+    * `Endpoint` carries two error codecs. `outErrors` builds the one for what the handler raises; `codecError` is the
+    * other, for what fails before the handler is ever called — a body that does not parse, a wrong `Content-Type`, a
+    * header or query codec that does not decode. `Endpoint.implementHandler` catches that `HttpCodecError` itself and
+    * encodes it on the spot, so it reaches neither `ApiFailures` nor `RouteSupport.handleFailures` nor `JsonSupport`,
+    * and its status is fixed at 400 by the library.
+    *
+    * Left alone it answers `HttpContentCodec.responseErrorCodec` — a private `{"name", "message"}` shape that is not
+    * `dto.ErrorResponse`, offered as `text/html` ahead of `application/json`. Routing it through [[failure.badRequest]]
+    * makes a rejected request answer exactly what a rejected *handler* answers, which is the only thing a caller built
+    * from these descriptions can decode.
+    *
+    * The message is fixed rather than taken from the error: `HttpCodecError.getMessage` carries zio-schema decode paths
+    * and header names, which are internals of the description rather than something a caller can act on. Nothing logs
+    * the discarded detail — `transformOrFail` is a pure function and zio-http offers no effectful hook at that point.
+    *
+    * The decode direction is only used by a *client*, for a status matching neither the output nor the declared errors,
+    * and it feeds `ZIO.die`; `CustomError` is the one case that round-trips, which is all that branch needs.
+    */
+  private val codecError: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] = {
+    failure
+      .badRequest
+      .transformOrFail[HttpCodecError](bad => Right(HttpCodecError.CustomError("BadRequest", bad.message)))(_ =>
+        Right(ApiFailure.BadRequest("Malformed request"))
+      )
+  }
+
+  /** Installs [[codecError]] on an endpoint, **replacing** the library default rather than falling back to it.
+    *
+    * `Endpoint.outCodecError` would combine the two as `codec | self.codecError`, and content negotiation then hands a
+    * caller sending `Accept: text/html` back to the default, because that one has an HTML branch and this one does not
+    * — the exact case worth closing. Replacing the field outright leaves one shape for every caller: with no HTML
+    * branch to find, `HttpContentCodec.chooseFirstOrDefault` falls back to this codec's own default media type, which
+    * is `application/json`.
+    *
+    * Applied per endpoint rather than by wrapping `Endpoint.apply`, so an endpoint that later gains an input, a query
+    * parameter or a header codec has to apply it too. That is the drift this shape accepts.
+    */
+  extension [P, I, E, O, A <: AuthType](endpoint: Endpoint[P, I, E, O, A]) {
+    def withCodecError: Endpoint[P, I, E, O, A] = endpoint.copy(codecError = codecError)
   }
 
   /** The `Set-Cookie` header the three session endpoints answer with, declared *optional* even though the server always

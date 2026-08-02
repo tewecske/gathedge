@@ -6,7 +6,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.PathCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.failure
+import ApiEndpoint.{failure, withCodecError}
 import ApiSchemas.given
 
 /** The signed-in user's own todo items. Every one of these requires a session, supplied by the `authenticated` aspect
@@ -25,6 +25,7 @@ object TodoEndpoints {
   val createTodo = {
     Endpoint(Method.POST / "api" / "todos")
       .in[CreateTodoRequest]
+      .withCodecError
       .out[TodoItem](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }
@@ -32,6 +33,7 @@ object TodoEndpoints {
   val updateTodoStatus = {
     Endpoint(Method.PUT / "api" / "todos" / todoId / "status")
       .in[UpdateTodoStatusRequest]
+      .withCodecError
       .out[TodoItem]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.internalError)
   }

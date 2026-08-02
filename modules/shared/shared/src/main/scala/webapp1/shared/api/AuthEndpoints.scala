@@ -5,7 +5,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.HttpCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failure, sessionCookie}
+import ApiEndpoint.{failure, sessionCookie, withCodecError}
 import ApiSchemas.given
 
 /** Sign-up, sign-in, sign-out and the signed-in user's own record.
@@ -21,6 +21,7 @@ object AuthEndpoints {
   val signup = {
     Endpoint(Method.POST / "api" / "auth" / "signup")
       .in[SignupRequest]
+      .withCodecError
       .out[AuthResponse](Status.Created)
       .outHeader(sessionCookie)
       .outErrors(
@@ -36,6 +37,7 @@ object AuthEndpoints {
   val login = {
     Endpoint(Method.POST / "api" / "auth" / "login")
       .in[LoginRequest]
+      .withCodecError
       .out[AuthResponse]
       .outHeader(sessionCookie)
       .outErrors(
@@ -72,13 +74,17 @@ object AuthEndpoints {
   }
 
   /** `AuthService.updateTheme` is `.orDie`'d in the handler — a failure there is a bug or a dead database, not
-    * something the caller can act on — so the declared failures are the two aspects and the generic 500.
+    * something the caller can act on — so the declared failures are the two aspects, the generic 500, and a 400 that no
+    * handler raises: it is reachable only by the request codec rejecting the body, which `ApiEndpoint.withCodecError`
+    * answers. Declaring it is what makes that a value the client can act on rather than a defect, since a status a
+    * description omits is not decodable at all.
     */
   val updateTheme = {
     Endpoint(Method.PUT / "api" / "me" / "theme")
       .in[UpdateThemeRequest]
+      .withCodecError
       .out[AuthResponse]
-      .outErrors(failure.unauthorized, failure.forbidden, failure.internalError)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.internalError)
   }
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection to generate the OpenAPI document

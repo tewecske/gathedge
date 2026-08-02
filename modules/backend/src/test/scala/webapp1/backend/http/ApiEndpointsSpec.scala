@@ -397,14 +397,45 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             internalCodec.decode(chunk) == Right(ApiFailure.InternalError("Internal server error")),
           )
         },
-        test("a malformed request body is a 400, not a 500") {
+        // A body the request codec rejects is the one failure that reaches neither `ApiFailures` nor `handleFailures`:
+        // `Endpoint.implementHandler` catches the `HttpCodecError` itself and encodes it through the endpoint's
+        // *second* error codec, `codecError`. The status was never wrong; the body was, because the library default
+        // writes a private `{"name", "message"}` shape that no client built from these descriptions decodes.
+        // `ApiEndpoint.codecError` routes it through `ApiFailure.BadRequest` instead.
+        test("a body the request codec rejects is a 400 in the usual ErrorResponse shape") {
+          val badRequestCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.BadRequest]
           for {
             session <- signUp("malformed@example.com")
             response <- runRoutes(
               TodoRoutes.routes,
               withCsrf(withSession(Request.post("/api/todos", Body.fromString("{ not json")), session)),
             )
-          } yield assertTrue(response.status == Status.BadRequest)
+            raw <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Malformed request", Map.empty)),
+            badRequestCodec.decode(Chunk.fromArray(raw.getBytes)) == Right(ApiFailure.BadRequest("Malformed request")),
+            // The discarded `HttpCodecError` names the schema path it failed on. None of it reaches the caller.
+            !raw.contains("MalformedBody"),
+          )
+        },
+        // Two things at once. The default codec offers `text/html` *ahead of* `application/json`, so a caller sending a
+        // browser `Accept` used to get an HTML page rather than any JSON at all. And `PUT /api/me/theme` is the one
+        // endpoint whose 400 exists only for this: its service call is `.orDie`'d, so no handler can raise one, and
+        // without the declaration the client would fail the response as a defect instead of decoding it.
+        test("a rejected body stays JSON for a caller that asks for HTML") {
+          for {
+            session <- signUp("codec-html@example.com")
+            request = withCsrf(
+              withSession(Request.put("/api/me/theme", Body.fromString("""{"thme":"dark"}""")), session)
+            )
+            response <- runRoutes(AuthRoutes.routes, request.addHeader(Header.Accept.name, "text/html"))
+            raw <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            response.header(Header.ContentType).map(_.mediaType) == Some(MediaType.application.json),
+            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Malformed request", Map.empty)),
+          )
         },
       ),
     ).provide(layer, Scope.default) @@ TestAspect.timeout(60.seconds)
