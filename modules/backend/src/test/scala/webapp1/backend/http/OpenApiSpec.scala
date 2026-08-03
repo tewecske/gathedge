@@ -2,6 +2,7 @@ package webapp1.backend.http
 
 import zio.*
 import zio.http.*
+import zio.http.Status.*
 import zio.http.endpoint.openapi.OpenAPI
 import zio.test.*
 
@@ -47,8 +48,8 @@ object OpenApiSpec extends ZIOSpecDefault {
       }
   }
 
-  /** Every operation as `("METHOD", "/path") -> the status codes it documents`. */
-  private val statuses: Map[(String, String), Set[Int]] = {
+  /** Every operation as `("METHOD", "/path") -> the statuses it documents`. */
+  private val statuses: Map[(String, String), Set[Status]] = {
     openApi
       .paths
       .toList
@@ -56,13 +57,13 @@ object OpenApiSpec extends ZIOSpecDefault {
         val (path, item) = entry
         val byMethod = List("GET" -> item.get, "PUT" -> item.put, "POST" -> item.post, "DELETE" -> item.delete)
         byMethod.collect { case (method, Some(operation)) =>
-          val codes = operation
+          val declared = operation
             .responses
             .keySet
             .collect { case OpenAPI.StatusOrDefault.StatusValue(status) =>
-              status.code
+              status
             }
-          ((method, path.name), codes)
+          ((method, path.name), declared)
         }
       }
       .toMap
@@ -102,8 +103,8 @@ object OpenApiSpec extends ZIOSpecDefault {
       test("request and response bodies are named, and the success statuses are there") {
         val json = openApi.toJson
         assertTrue(
-          json.contains("\"201\""),
-          json.contains("\"204\""),
+          json.contains(s"\"${Created.code}\""),
+          json.contains(s"\"${NoContent.code}\""),
           json.contains("SignupRequest"),
           json.contains("CreateTodoRequest"),
           json.contains("InviteMemberRequest"),
@@ -128,39 +129,58 @@ object OpenApiSpec extends ZIOSpecDefault {
         assertTrue(
           statuses ==
             Map(
-              ("POST", "/api/auth/signup") -> Set(201, 400, 401, 403, 409, 429, 500),
-              ("POST", "/api/auth/login") -> Set(200, 400, 401, 403, 409, 429, 500),
-              ("POST", "/api/auth/logout") -> Set(204, 403, 500),
-              ("GET", "/api/me") -> Set(200, 401, 500),
-              ("PUT", "/api/me/theme") -> Set(200, 400, 401, 403, 500),
-              ("GET", "/api/todos") -> Set(200, 401, 500),
-              ("POST", "/api/todos") -> Set(201, 400, 401, 403, 404, 500),
-              ("PUT", "/api/todos/{id}/status") -> Set(200, 400, 401, 403, 404, 500),
-              ("GET", "/api/groups") -> Set(200, 401, 500),
-              ("POST", "/api/groups") -> Set(201, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/groups/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("DELETE", "/api/groups/{id}") -> Set(204, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/groups/{id}/pairs") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("POST", "/api/groups/{id}/pairs") -> Set(201, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/groups/{id}/members") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("DELETE", "/api/groups/{id}/members/{userId}") -> Set(204, 400, 401, 403, 404, 409, 500),
-              ("PUT", "/api/groups/{id}/members/{userId}") -> Set(204, 400, 401, 403, 404, 409, 500),
-              ("POST", "/api/groups/{id}/invitations") -> Set(204, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/invitations/{token}") -> Set(200, 400, 403, 404, 409, 500),
-              ("POST", "/api/invitations/{token}/accept") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/admin/users") -> Set(200, 401, 403, 500),
-              ("POST", "/api/admin/users") -> Set(201, 400, 401, 403, 404, 409, 500),
-              ("GET", "/api/admin/users/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("PUT", "/api/admin/users/{id}") -> Set(200, 400, 401, 403, 404, 409, 500),
-              ("DELETE", "/api/admin/users/{id}") -> Set(204, 400, 401, 403, 404, 409, 500),
+              ("POST", "/api/auth/signup") ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests, InternalServerError),
+              ("POST", "/api/auth/login") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests, InternalServerError),
+              ("POST", "/api/auth/logout") -> Set(NoContent, Forbidden, InternalServerError),
+              ("GET", "/api/me") -> Set(Ok, Unauthorized, InternalServerError),
+              ("PUT", "/api/me/theme") -> Set(Ok, BadRequest, Unauthorized, Forbidden, InternalServerError),
+              ("GET", "/api/todos") -> Set(Ok, Unauthorized, InternalServerError),
+              ("POST", "/api/todos") ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, InternalServerError),
+              ("PUT", "/api/todos/{id}/status") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, InternalServerError),
+              ("GET", "/api/groups") -> Set(Ok, Unauthorized, InternalServerError),
+              ("POST", "/api/groups") ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/groups/{id}") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("DELETE", "/api/groups/{id}") ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/groups/{id}/pairs") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("POST", "/api/groups/{id}/pairs") ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/groups/{id}/members") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("DELETE", "/api/groups/{id}/members/{userId}") ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("PUT", "/api/groups/{id}/members/{userId}") ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("POST", "/api/groups/{id}/invitations") ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/invitations/{token}") ->
+                Set(Ok, BadRequest, Forbidden, NotFound, Conflict, InternalServerError),
+              ("POST", "/api/invitations/{token}/accept") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/admin/users") -> Set(Ok, Unauthorized, Forbidden, InternalServerError),
+              ("POST", "/api/admin/users") ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("GET", "/api/admin/users/{id}") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("PUT", "/api/admin/users/{id}") ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("DELETE", "/api/admin/users/{id}") ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
             )
         )
       },
       // The uniform set this replaced put all seven failure statuses on all 25 operations. Nothing enforces the
       // arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a number going back up.
       test("no operation documents a status only some other endpoint can answer with") {
-        val successCodes = Set(200, 201, 204)
-        val declared = statuses.values.map(_.diff(successCodes).size).sum
+        val successes: Set[Status] = Set(Ok, Created, NoContent)
+        val declared = statuses.values.map(_.diff(successes).size).sum
         assertTrue(declared == 126, declared < 25 * 7)
       },
       // The session is a `HandlerAspect` on whole `Routes` values, so no description in `shared` states it and the
