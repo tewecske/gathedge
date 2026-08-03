@@ -52,6 +52,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           ZIO.attempt {
             val config = new HikariConfig()
             config.setJdbcUrl(container.jdbcUrl)
+            // Same reason as TestDataSource.sqlite: bypass DriverManager, whose registry is stale after
+            // an sbt recompile hands the test run a new classloader.
+            config.setDriverClassName("org.postgresql.Driver")
             config.setUsername(container.username)
             config.setPassword(container.password)
             new HikariDataSource(config)
