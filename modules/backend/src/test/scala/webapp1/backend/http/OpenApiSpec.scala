@@ -111,77 +111,83 @@ object OpenApiSpec extends ZIOSpecDefault {
           json.contains("CreateUserRequest"),
         )
       },
-      // Each operation documents exactly the statuses it can answer with — its own handler's failures plus whatever
-      // the aspects wrapped around its `Routes` value can produce instead of running it. Pinning the whole table is
-      // the point of describing failures per endpoint rather than uniformly: it is the only place the two halves of
-      // that judgement (a mapping in `ApiFailures`, an aspect in `RouteSupport`) are checked against the descriptions.
+      // Each operation documents exactly the statuses a well-behaved caller can receive from it: its own handler's
+      // failures, plus the session aspect's 401. Pinning the whole table is the point of describing failures per
+      // endpoint rather than uniformly: it is the only place the two halves of that judgement (a mapping in
+      // `ApiFailures`, an aspect in `RouteSupport`) are checked against the descriptions.
       //
-      // Reading the table: 500 is everywhere, because `handleFailures` turns a defect on any route into one. 401 is on
-      // everything behind `authenticated`/`adminOnly`, so only `GET /api/invitations/{token}` and the three anonymous
-      // auth routes lack it. 403 follows `csrf` — hence its absence from the GETs — except under `adminOnly`, which
-      // answers 403 for a non-administrator regardless of method, and on the group endpoints, where `GroupService`
-      // raises it for membership and role. 429 exists only where the rate limiter does. And 404 is a resource the
-      // request named and could not be found: a request whose path matches no route at all is answered by
-      // `RouteSupport`'s `notFound` replacement, never reaches an endpoint, and so is documented on none of them. 400 is
-      // a handler's validation failure everywhere except `PUT /api/me/theme`, whose service call is `.orDie`'d: there it
-      // is only reachable through `ApiEndpoint.codecError`, and declared so the client decodes it instead of dying.
+      // Reading the table: 401 is on everything behind `authenticated`/`adminOnly`, so only `GET
+      // /api/invitations/{token}` and the three anonymous auth routes lack it. 400 is a handler's validation failure
+      // everywhere except `PUT /api/me/theme`, whose service call is `.orDie`'d: there it is only reachable through
+      // `ApiEndpoint.codecError`, and declared so the client decodes it instead of dying. 404 is a resource the request
+      // named and could not be found — a request whose path matches no route at all is answered by `RouteSupport`'s
+      // `notFound` replacement, never reaches an endpoint, and so is documented on none of them. 403 appears only on
+      // the group and invitation operations, where `GroupService` raises it for membership and role; the CSRF and
+      // `adminOnly` aspects answer 403 too but describe it nowhere. 429 is only where the rate limiter is. And 500 is
+      // on nothing at all. The last three are `ApiEndpoint.failure`'s rule: a status a well-behaved caller cannot
+      // provoke is not part of the contract this document states.
       test("every operation documents exactly the statuses it can answer with") {
         assertTrue(
           statuses ==
             Map(
-              ("POST", "/api/auth/signup") ->
-                Set(Created, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests, InternalServerError),
-              ("POST", "/api/auth/login") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests, InternalServerError),
-              ("POST", "/api/auth/logout") -> Set(NoContent, Forbidden, InternalServerError),
-              ("GET", "/api/me") -> Set(Ok, Unauthorized, InternalServerError),
-              ("PUT", "/api/me/theme") -> Set(Ok, BadRequest, Unauthorized, Forbidden, InternalServerError),
-              ("GET", "/api/todos") -> Set(Ok, Unauthorized, InternalServerError),
-              ("POST", "/api/todos") ->
-                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, InternalServerError),
-              ("PUT", "/api/todos/{id}/status") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, InternalServerError),
-              ("GET", "/api/groups") -> Set(Ok, Unauthorized, InternalServerError),
-              ("POST", "/api/groups") ->
-                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/groups/{id}") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("DELETE", "/api/groups/{id}") ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/groups/{id}/pairs") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+              ("POST", "/api/auth/signup") -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
+              ("POST", "/api/auth/login") -> Set(Ok, BadRequest, Unauthorized, Conflict, TooManyRequests),
+              ("POST", "/api/auth/logout") -> Set(NoContent),
+              ("GET", "/api/me") -> Set(Ok, Unauthorized),
+              ("PUT", "/api/me/theme") -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/todos") -> Set(Ok, Unauthorized),
+              ("POST", "/api/todos") -> Set(Created, BadRequest, Unauthorized, NotFound),
+              ("PUT", "/api/todos/{id}/status") -> Set(Ok, BadRequest, Unauthorized, NotFound),
+              ("GET", "/api/groups") -> Set(Ok, Unauthorized),
+              ("POST", "/api/groups") -> Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/groups/{id}") -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("DELETE", "/api/groups/{id}") -> Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/groups/{id}/pairs") -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("POST", "/api/groups/{id}/pairs") ->
-                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/groups/{id}/members") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/groups/{id}/members") -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("DELETE", "/api/groups/{id}/members/{userId}") ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("PUT", "/api/groups/{id}/members/{userId}") ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("POST", "/api/groups/{id}/invitations") ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/invitations/{token}") ->
-                Set(Ok, BadRequest, Forbidden, NotFound, Conflict, InternalServerError),
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/invitations/{token}") -> Set(Ok, BadRequest, Forbidden, NotFound, Conflict),
               ("POST", "/api/invitations/{token}/accept") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/admin/users") -> Set(Ok, Unauthorized, Forbidden, InternalServerError),
-              ("POST", "/api/admin/users") ->
-                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("GET", "/api/admin/users/{id}") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("PUT", "/api/admin/users/{id}") ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
-              ("DELETE", "/api/admin/users/{id}") ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, InternalServerError),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/admin/users") -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/users") -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users/{id}") -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("PUT", "/api/admin/users/{id}") -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}") -> Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
             )
         )
       },
-      // The uniform set this replaced put all seven failure statuses on all 25 operations. Nothing enforces the
-      // arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a number going back up.
+      // The uniform set this started from put all seven failure statuses on all 25 operations; describing each
+      // endpoint's own failures took that to 126, and dropping the three a well-behaved caller cannot provoke takes it
+      // to 90. Nothing enforces the arithmetic; it is here so a change that quietly re-widens the descriptions shows up
+      // as a number going back up. The three assertions under it are the rule itself, stated where it can be checked.
       test("no operation documents a status only some other endpoint can answer with") {
         val successes: Set[Status] = Set(Ok, Created, NoContent)
         val declared = statuses.values.map(_.diff(successes).size).sum
-        assertTrue(declared == 126, declared < 25 * 7)
+        // `keySet.filter`, not `collect` over the map: a `collect` yielding the key pair rebuilds a *Map* keyed by
+        // method, which keeps one operation per verb and silently drops the rest.
+        val describes = { (status: Status) =>
+          {
+            statuses.keySet.filter(operation => statuses(operation).contains(status))
+          }
+        }
+        assertTrue(
+          declared == 90,
+          declared < 25 * 7,
+          // `GroupService`'s own answer, on the two resources it backs — never the CSRF or `adminOnly` aspect's.
+          describes(Forbidden).forall { case (_, path) =>
+            path.startsWith("/api/groups") || path.contains("invitation")
+          },
+          // The rate limiter wraps signup and login and nothing else.
+          describes(TooManyRequests) == Set(("POST", "/api/auth/signup"), ("POST", "/api/auth/login")),
+          describes(InternalServerError).isEmpty,
+        )
       },
       // The session is a `HandlerAspect` on whole `Routes` values, so no description in `shared` states it and the
       // generator cannot infer it; `DocsRoutes` supplies the split. These pin both halves of it, so adding a public

@@ -19,27 +19,20 @@ object InvitationEndpoints {
 
   private val token = PathCodec.string("token")
 
-  /** Public, and a GET, so neither the session aspect's 401 nor the CSRF aspect's 403 applies. The 403/404/409 come
-    * from `ApiFailures.group`, which maps the whole `GroupFailure` enum — see the note on [[GroupEndpoints]].
+  /** Public, so the session aspect's 401 does not apply. The 403/404/409 come from `ApiFailures.group`, which maps the
+    * whole `GroupFailure` enum — see the note on [[GroupEndpoints]].
     */
   val getInvitation = {
     Endpoint(Method.GET / "api" / "invitations" / token)
       .out[InvitationInfo]
-      .outErrors(failure.badRequest, failure.forbidden, failure.notFound, failure.conflict, failure.internalError)
+      .outErrors(failure.badRequest, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Takes no body: the token in the path is the whole request, and the joined group comes back. */
   val acceptInvitation = {
     Endpoint(Method.POST / "api" / "invitations" / token / "accept")
       .out[Group]
-      .outErrors(
-        failure.badRequest,
-        failure.unauthorized,
-        failure.forbidden,
-        failure.notFound,
-        failure.conflict,
-        failure.internalError,
-      )
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(getInvitation, acceptInvitation)

@@ -5,7 +5,7 @@ import zio.http.{Method, Status}
 import zio.http.codec.HttpCodec
 import zio.http.endpoint.Endpoint
 
-import ApiEndpoint.{failure, sessionCookie, withCodecError}
+import ApiEndpoint.{failure, outFailure, sessionCookie, withCodecError}
 import ApiSchemas.given
 
 /** Sign-up, sign-in, sign-out and the signed-in user's own record.
@@ -24,14 +24,7 @@ object AuthEndpoints {
       .withCodecError
       .out[AuthResponse](Status.Created)
       .outHeader(sessionCookie)
-      .outErrors(
-        failure.badRequest,
-        failure.unauthorized,
-        failure.forbidden,
-        failure.conflict,
-        failure.tooManyRequests,
-        failure.internalError,
-      )
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict, failure.tooManyRequests)
   }
 
   val login = {
@@ -40,14 +33,7 @@ object AuthEndpoints {
       .withCodecError
       .out[AuthResponse]
       .outHeader(sessionCookie)
-      .outErrors(
-        failure.badRequest,
-        failure.unauthorized,
-        failure.forbidden,
-        failure.conflict,
-        failure.tooManyRequests,
-        failure.internalError,
-      )
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict, failure.tooManyRequests)
   }
 
   /** Answers 204 whether or not there was a session to end, and always sends the already-expired cookie back.
@@ -56,25 +42,25 @@ object AuthEndpoints {
     * [[AdminEndpoints.deleteUser]]: `out[Unit]` installs a body codec that needs `Content-Length: 0` to recognise an
     * empty body, which a 204 must not send.
     *
-    * Logging out without a session is a no-op rather than a failure, so the handler cannot fail: 403 is the CSRF aspect
-    * and 500 is a defect.
+    * Logging out without a session is a no-op rather than a failure, so the handler cannot fail — and the two statuses
+    * that could still come back (the CSRF aspect's 403, a defect's 500) are not described here, for the reason recorded
+    * on [[ApiEndpoint.failure]]. This is consequently the one endpoint in the API that declares no failure at all.
     */
   val logout = {
     Endpoint(Method.POST / "api" / "auth" / "logout")
       .outCodec(HttpCodec.status(Status.NoContent))
       .outHeader(sessionCookie)
-      .outErrors(failure.forbidden, failure.internalError)
   }
 
   /** Reads back the `User` the `authenticated` aspect already resolved, so that aspect's 401 is the only failure a
-    * caller can act on. A GET is outside the CSRF check's method scope, hence no 403.
+    * caller can act on.
     */
   val me = {
-    Endpoint(Method.GET / "api" / "me").out[AuthResponse].outErrors(failure.unauthorized, failure.internalError)
+    Endpoint(Method.GET / "api" / "me").out[AuthResponse].outFailure(failure.unauthorized)
   }
 
   /** `AuthService.updateTheme` is `.orDie`'d in the handler — a failure there is a bug or a dead database, not
-    * something the caller can act on — so the declared failures are the two aspects, the generic 500, and a 400 that no
+    * something the caller can act on — so the declared failures are the `authenticated` aspect's 401 and a 400 that no
     * handler raises: it is reachable only by the request codec rejecting the body, which `ApiEndpoint.withCodecError`
     * answers. Declaring it is what makes that a value the client can act on rather than a defect, since a status a
     * description omits is not decodable at all.
@@ -84,7 +70,7 @@ object AuthEndpoints {
       .in[UpdateThemeRequest]
       .withCodecError
       .out[AuthResponse]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.internalError)
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection to generate the OpenAPI document

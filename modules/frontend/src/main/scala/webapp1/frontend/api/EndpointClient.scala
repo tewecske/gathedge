@@ -41,6 +41,10 @@ object EndpointClient {
     *
     * Only `BadRequest` carries `fieldErrors`; for the rest the map is empty because the failure is about the request as
     * a whole rather than about one of its inputs.
+    *
+    * Every case is matched because `ApiFailure` is sealed, not because every case arrives: no endpoint declares 500 and
+    * only the group and invitation ones declare 403, so those two responses reach [[run]] as an undeclared status
+    * instead — see `ApiEndpoint.failure` for why they are left out of the descriptions.
     */
   private def toApiError(failure: ApiFailure): ApiError = {
     failure match {

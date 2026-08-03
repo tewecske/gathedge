@@ -4,14 +4,14 @@ import scala.reflect.ClassTag
 
 import zio.ZNothing
 import zio.http.{Header, Status}
-import zio.http.codec.{HeaderCodec, HttpCodec, HttpCodecError, HttpCodecType}
+import zio.http.codec.{Alternator, HeaderCodec, HttpCodec, HttpCodecError, HttpCodecType}
 import zio.http.endpoint.{AuthType, Endpoint}
 
 /** The pieces every endpoint description in this package is built from.
   *
   * Sessions, the CSRF header and the admin check are deliberately *not* described by any endpoint: they are
-  * `HandlerAspect`s applied to whole `Routes` values in the backend, identical for every resource. What they can
-  * *answer* with is described, though — see [[failure]] and [[failingWith]].
+  * `HandlerAspect`s applied to whole `Routes` values in the backend, identical for every resource. Of what they can
+  * *answer* with, only the session's 401 is described — see [[failure]] for which statuses are left out and why.
   */
 object ApiEndpoint {
 
@@ -19,20 +19,31 @@ object ApiEndpoint {
 
   /** The status-to-body codecs an endpoint picks its declared failures from.
     *
-    * Each endpoint names only the ones it can actually answer with. Two rules decide the list:
+    * An endpoint declares a failure when it is an *answer to a well-formed request* — something a caller acting in good
+    * faith can receive and act on. That is: whatever its own handler can raise, i.e. the cases the matching
+    * `ApiFailures` mapper produces (nothing at all for a handler whose service call cannot fail), plus [[unauthorized]]
+    * wherever `authenticated`/`adminOnly` guards it, because a session expiring under a page that was legitimately open
+    * is the ordinary course of events.
     *
-    *   - whatever its own handler can raise, i.e. the cases the matching `ApiFailures` mapper produces (nothing at all
-    *     for a handler whose service call cannot fail);
-    *   - plus whatever the aspects wrapped around its `Routes` value can answer *instead of* running the handler —
-    *     [[unauthorized]] under `authenticated`/`adminOnly`, [[forbidden]] under `adminOnly` or under `csrf` for a
-    *     method outside GET/HEAD/OPTIONS, and [[internalError]] everywhere, since `RouteSupport.handleFailures` turns a
-    *     defect on any route into a 500.
+    * Three statuses are deliberately **left undescribed**, even though the server can still send them:
     *
-    * The second group is why a description cannot simply list what its handler raises: those responses never pass
-    * through the endpoint's codecs on the way out, but a client built from the description still has to decode them. A
-    * status the description omits is not decodable at all — the endpoint client fails such a response as a *defect*
-    * carrying "Expected status code ... but found ...", so an expired session would surface as an unrenderable crash
-    * instead of a 401 the caller can act on.
+    *   - **403 from an aspect** — `csrf` rejecting a mutating request with no `X-Requested-With`, or `adminOnly`
+    *     rejecting a non-administrator. The generated client always sends the header and no page routes a
+    *     non-administrator to an admin call, so reaching either means a client that is not the one these descriptions
+    *     generated. (403 *is* described on the group and invitation endpoints — there it comes from `GroupService`, not
+    *     from an aspect, and "you are not a member of this group" is an answer, not a rejection.)
+    *   - **429** — the rate limiter, which only signup and login pass through. Still described on those two, because
+    *     `ApiFailures.auth` maps `AuthFailure.RateLimited` onto it and the sign-in form renders the message; there is
+    *     nowhere else in the API it can occur.
+    *   - **500** — `RouteSupport.handleFailures` turning a defect on any route into one. A bug or a dead database is
+    *     not part of the API's contract, and describing it on all 25 operations said nothing an operation-specific
+    *     document should say.
+    *
+    * The cost of omitting a status is real and is the reason 401 is *not* in that list: a status a description omits is
+    * not decodable at all. The endpoint client fails such a response as a *defect* carrying "Expected status code ...
+    * but found ...", which `EndpointClient.run` flattens into `ApiError(0, "Request failed: ...")` — a generic error
+    * with no status for a page to branch on. That is the right shape for a CSRF rejection or a 500, and the wrong one
+    * for an expired session, which every authenticated page has to recognise.
     */
   object failure {
     val badRequest: ErrorCodec[ApiFailure.BadRequest] = HttpCodec.error[ApiFailure.BadRequest](Status.BadRequest)
@@ -45,10 +56,6 @@ object ApiEndpoint {
 
     val tooManyRequests: ErrorCodec[ApiFailure.TooManyRequests] = {
       HttpCodec.error[ApiFailure.TooManyRequests](Status.TooManyRequests)
-    }
-
-    val internalError: ErrorCodec[ApiFailure.InternalError] = {
-      HttpCodec.error[ApiFailure.InternalError](Status.InternalServerError)
     }
   }
 
@@ -93,6 +100,17 @@ object ApiEndpoint {
     */
   extension [P, I, E, O, A <: AuthType](endpoint: Endpoint[P, I, E, O, A]) {
     def withCodecError: Endpoint[P, I, E, O, A] = endpoint.copy(codecError = codecError)
+
+    /** Declares a single failure, which `outErrors` cannot: its smallest `apply` overload takes two codecs.
+      *
+      * Now that an endpoint only describes what a well-behaved caller can receive (see [[failure]]), several are down
+      * to one — the session's 401 — and the alternative is `Endpoint.outError[ApiFailure.Unauthorized](
+      * Status.Unauthorized)`, which builds an equivalent codec while naming the status a second time outside
+      * [[failure]]. This installs [[failure]]'s own codec instead, the same way `outError` and `outErrors` both do.
+      */
+    def outFailure[E2](codec: ErrorCodec[E2])(implicit alt: Alternator[E2, E]): Endpoint[P, I, alt.Out, O, A] = {
+      endpoint.copy(error = codec | endpoint.error)
+    }
   }
 
   /** The `Set-Cookie` header the three session endpoints answer with, declared *optional* even though the server always

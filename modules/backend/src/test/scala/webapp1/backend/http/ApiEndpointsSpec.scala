@@ -366,10 +366,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             noCsrf <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
           } yield assertTrue(unauthenticated.status == Status.Unauthorized, noCsrf.status == Status.Forbidden)
         },
-        // ...but every description has to *declare* those statuses, because a client generated from one decodes only
-        // what it names: an undeclared status fails as a defect ("Expected status code ... but found Unauthorized")
-        // instead of a value the caller can branch on. These bodies come from `RouteSupport`/`JsonSupport`, not from
-        // any endpoint codec, so this is where the two stacks are checked against each other.
+        // A description has to *declare* a status for a client generated from it to decode one: an undeclared status
+        // fails as a defect ("Expected status code ... but found Unauthorized") instead of a value the caller can
+        // branch on. That is why 401 is declared everywhere behind the session aspect and the CSRF aspect's 403 is
+        // declared nowhere — an expired session is ordinary, a missing `X-Requested-With` is a client this API did not
+        // generate. Both bodies come from `RouteSupport`/`JsonSupport` rather than from any endpoint codec, so this is
+        // where the two stacks are checked against each other; the 403's shape is pinned because it is still the shape
+        // on the wire, whether or not a description names it.
         test("the aspect-built bodies decode with the endpoints' own zio-schema codecs") {
           val unauthorizedCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Unauthorized]
           val forbiddenCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Forbidden]
@@ -383,8 +386,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             forbiddenCodec.decode(noCsrfBody) == Right(ApiFailure.Forbidden("Missing required header")),
           )
         },
-        // ...and the same for the generic 500 `handleFailures` produces around a defect.
-        test("the generic 500 body decodes with the endpoints' InternalError codec") {
+        // ...and the same for the generic 500 `handleFailures` produces around a defect — also undeclared, since a
+        // dead database is not part of the API's contract, but still `ApiFailure`-shaped on the wire.
+        test("the generic 500 body decodes with the InternalError codec") {
           val internalCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.InternalError]
           val dyingRoutes: Routes[Any, Response] = {
             Routes(Method.GET / "api" / "boom" -> handler((_: Request) => ZIO.die(new RuntimeException("boom"))))
