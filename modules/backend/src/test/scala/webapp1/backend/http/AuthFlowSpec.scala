@@ -2,9 +2,9 @@ package webapp1.backend.http
 
 import webapp1.backend.TestDataSource
 import webapp1.backend.config.AppConfig
-import webapp1.backend.db.{SqliteSessionRepository, SqliteUserRepository}
+import webapp1.backend.db.{SqliteOAuthIdentityRepository, SqliteSessionRepository, SqliteUserRepository}
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
-import webapp1.backend.service.{AuthService, AuthServiceLive, GoogleOAuthClient, InMemoryRateLimiter}
+import webapp1.backend.service.{AuthService, AuthServiceLive, InMemoryRateLimiter, OAuthClients}
 import webapp1.shared.dto.{AuthResponse, ErrorResponse, LoginRequest, SignupRequest}
 import zio.*
 import zio.http.*
@@ -21,11 +21,14 @@ import zio.test.*
   */
 object AuthFlowSpec extends ZIOSpecDefault {
 
-  private val services: ZLayer[Any, Throwable, AuthService & GoogleOAuthClient & AppConfig] = {
-    val repos = TestDataSource.sqlite >>> (SqliteUserRepository.live ++ SqliteSessionRepository.live)
+  private val services: ZLayer[Any, Throwable, AuthService & OAuthClients & AppConfig] = {
+    val repos = {
+      TestDataSource.sqlite >>>
+        (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+    }
     AppConfig.live ++
       ((repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live) ++
-      ((AppConfig.live ++ Client.default) >>> GoogleOAuthClient.live)
+      ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
   }
 
   private def sessionCookie(response: Response): Option[String] = {

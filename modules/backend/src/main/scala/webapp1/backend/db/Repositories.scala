@@ -25,11 +25,10 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     email: String,
     passwordHash: Option[String],
     isAdmin: Boolean,
-    googleSubject: Option[String],
     theme: String,
     createdAt: Long,
   ): Task[UserRow] = {
-    val row = UserRow(0L, email, passwordHash, isAdmin, theme, googleSubject, createdAt)
+    val row = UserRow(0L, email, passwordHash, isAdmin, theme, createdAt)
     run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))
   }
 
@@ -39,10 +38,6 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def findById(id: Long): Task[Option[UserRow]] = {
     run(ctx.run(quote(users.filter(_.id == lift(id))))).map(_.headOption)
-  }
-
-  def findByGoogleSubject(googleSubject: String): Task[Option[UserRow]] = {
-    run(ctx.run(quote(users.filter(_.googleSubject == lift(Option(googleSubject)))))).map(_.headOption)
   }
 
   def updateTheme(userId: Long, theme: String): Task[Unit] = {

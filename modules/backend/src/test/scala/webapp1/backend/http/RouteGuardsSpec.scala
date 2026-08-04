@@ -2,7 +2,9 @@ package webapp1.backend.http
 
 import webapp1.backend.TestDataSource
 import webapp1.backend.db.{
+  OAuthIdentityRepository,
   SessionRepository,
+  SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteTodoRepository,
   SqliteUserRepository,
@@ -32,8 +34,13 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
   */
 object RouteGuardsSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository & TodoRepository] =
-    TestDataSource.sqlite >>> (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live)
+  private val repoLayers
+    : ZLayer[Any, Throwable, UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository] = {
+    TestDataSource.sqlite >>> (
+      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
+        SqliteOAuthIdentityRepository.live
+    )
+  }
 
   private val layer: ZLayer[Any, Throwable, AuthService & AdminService & TodoService] = {
     (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>>

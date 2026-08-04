@@ -13,8 +13,8 @@ import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
   * The document is derived from the same values in `shared` that the route files are implemented against, so it cannot
   * drift from the server: a path, body or status that changes there changes here, with nothing to keep in sync by hand.
   *
-  * Every endpoint appears except the two Google OAuth redirects, which are browser navigations rather than a body
-  * protocol and stay on the imperative DSL (see `AuthRoutes`).
+  * Every endpoint appears except the two OAuth redirects, which are browser navigations rather than a body protocol and
+  * stay on the imperative DSL (see `AuthRoutes`).
   *
   * Mounted under `/api` so the Vite dev proxy forwards it like any other backend route. The routes are public: they
   * expose the shape of the API, not its data, and every endpoint they document still requires whatever session the
@@ -34,7 +34,13 @@ object DocsRoutes {
     * is listed here instead, in the module that owns the aspects. `OpenApiSpec` pins both sides of the split.
     */
   private val publicEndpoints: List[Endpoint[?, ?, ?, ?, ?]] = {
-    List(AuthEndpoints.signup, AuthEndpoints.login, AuthEndpoints.logout, InvitationEndpoints.getInvitation)
+    List(
+      AuthEndpoints.signup,
+      AuthEndpoints.login,
+      AuthEndpoints.logout,
+      AuthEndpoints.providers,
+      InvitationEndpoints.getInvitation,
+    )
   }
 
   private val sessionSchemeName = "sessionCookie"

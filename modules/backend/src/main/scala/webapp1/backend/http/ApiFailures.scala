@@ -2,6 +2,7 @@ package webapp1.backend.http
 
 import webapp1.backend.service.{AdminFailure, AuthFailure, GroupFailure, TodoFailure}
 import webapp1.shared.api.ApiFailure
+import webapp1.shared.domain.OAuthProvider.display
 
 /** One `Failure -> ApiFailure` mapping per service failure enum.
   *
@@ -42,8 +43,17 @@ object ApiFailures {
         ApiFailure.BadRequest("Validation failed", fieldErrors)
       case AuthFailure.RateLimited =>
         ApiFailure.TooManyRequests("Too many attempts. Try again later.")
-      case AuthFailure.GoogleAuthFailed(reason) =>
-        ApiFailure.BadRequest(s"Google sign-in failed: $reason")
+      case AuthFailure.OAuthFailed(reason) =>
+        ApiFailure.BadRequest(s"Sign-in failed: $reason")
+      case AuthFailure.OAuthAccountExists(provider) =>
+        ApiFailure.Conflict(
+          s"An account with this email already exists. Sign in with your password, " +
+            s"then link ${provider.display} from Settings."
+        )
+      case AuthFailure.OAuthAlreadyLinked =>
+        ApiFailure.Conflict("That account is already linked")
+      case AuthFailure.LastCredential =>
+        ApiFailure.Conflict("Set a password first — this is the only way left to sign in to this account")
     }
   }
 

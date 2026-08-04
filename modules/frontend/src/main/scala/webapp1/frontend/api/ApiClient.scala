@@ -2,14 +2,17 @@ package webapp1.frontend.api
 
 import com.raquo.laminar.api.L._
 import webapp1.shared.api.{AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
-import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, Theme, TodoItem}
+import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, OAuthProvider, Theme, TodoItem}
 import webapp1.shared.dto.{
   AuthResponse,
   CreateGroupRequest,
   CreatePairRequest,
   CreateTodoRequest,
+  IdentitiesResponse,
   InviteMemberRequest,
   LoginRequest,
+  ProvidersResponse,
+  SetPasswordRequest,
   SignupRequest,
   UpdateRoleRequest,
   UpdateThemeRequest,
@@ -17,6 +20,7 @@ import webapp1.shared.dto.{
 }
 
 import EndpointClient.{executor, run}
+import OAuthProvider.wire
 
 /** Every non-admin API call the pages make, generated from the endpoint descriptions in `shared` rather than written by
   * hand — see [[EndpointClient]]. There are no path strings or method names in this file; the admin resource is the
@@ -52,6 +56,44 @@ object ApiClient {
 
   def updateTheme(theme: Theme): EventStream[Either[ApiError, AuthResponse]] = {
     run(executor(AuthEndpoints.updateTheme(UpdateThemeRequest(theme))))
+  }
+
+  // --- Account settings ---------------------------------------------------------------------------------------
+
+  /** Public, and read by the sign-in and sign-up forms before any session exists — which is why it is separate from
+    * [[identities]] rather than a field on it.
+    */
+  def providers: EventStream[Either[ApiError, ProvidersResponse]] = {
+    run(executor(AuthEndpoints.providers(())))
+  }
+
+  def identities: EventStream[Either[ApiError, IdentitiesResponse]] = {
+    run(executor(AuthEndpoints.identities(())))
+  }
+
+  def unlinkIdentity(provider: OAuthProvider): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.unlinkIdentity(provider.wire)))
+  }
+
+  def setPassword(request: SetPasswordRequest): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.setPassword(request)))
+  }
+
+  /** Where the browser must be *navigated* to start a social sign-in — deliberately a URL rather than a call.
+    *
+    * Everything else in this file is a `fetch` through the endpoint executor. These two cannot be: the flow is a chain
+    * of top-level redirects through the provider and back, so it has to be the document that navigates, not an XHR.
+    * That also puts them outside the generated client entirely, which is why this is the one place in the frontend that
+    * spells out an API path.
+    */
+  def oauthStartUrl(provider: OAuthProvider, link: Boolean = false): String = {
+    val suffix = {
+      if (link)
+        "?link=1"
+      else
+        ""
+    }
+    s"/api/auth/${provider.wire}/start$suffix"
   }
 
   // --- Todos --------------------------------------------------------------------------------------------------

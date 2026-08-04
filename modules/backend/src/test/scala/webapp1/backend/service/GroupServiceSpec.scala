@@ -120,8 +120,8 @@ object GroupServiceSpec extends ZIOSpecDefault {
         service <- ZIO.service[GroupService]
         userRepo <- ZIO.service[UserRepository]
         now0 <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        admin1 <- userRepo.insert("admin1@twoadmins.example.com", None, isAdmin = false, None, "light", now0)
-        admin2 <- userRepo.insert("admin2@twoadmins.example.com", None, isAdmin = false, None, "light", now0)
+        admin1 <- userRepo.insert("admin1@twoadmins.example.com", None, isAdmin = false, "light", now0)
+        admin2 <- userRepo.insert("admin2@twoadmins.example.com", None, isAdmin = false, "light", now0)
         group <- service.createGroup(admin1.id, "Two Admins Co")
         invitationRepo <- ZIO.service[GroupInvitationRepository]
         now <- Clock.currentTime(TimeUnit.MILLISECONDS)

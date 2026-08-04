@@ -12,6 +12,7 @@ object Page {
   final case class GroupDetail(id: Long) extends Page
   final case class GroupMembers(id: Long) extends Page
   final case class AcceptInvite(token: String) extends Page
+  case object Settings extends Page
   case object Admin extends Page
   final case class AdminUserDetail(id: Long) extends Page
   case object Forbidden extends Page
@@ -48,6 +49,7 @@ object AppRouter {
   private val signUpRoute = Route.static(SignUp, root / "sign-up")
   private val homeRoute = Route.static(Home, root)
   private val groupsRoute = Route.static(Groups, root / "groups")
+  private val settingsRoute = Route.static(Settings, root / "settings")
   private val groupDetailRoute = Route(
     encode = (p: GroupDetail) => p.id,
     decode = (id: Long) => GroupDetail(id),
@@ -83,6 +85,8 @@ object AppRouter {
         "Home"
       case Groups =>
         "Groups"
+      case Settings =>
+        "Settings"
       case GroupDetail(id) =>
         s"GroupDetail:$id"
       case GroupMembers(id) =>
@@ -125,6 +129,8 @@ object AppRouter {
           Home
         case "Groups" =>
           Groups
+        case "Settings" =>
+          Settings
         case "Admin" =>
           Admin
         case "Forbidden" =>
@@ -142,6 +148,7 @@ object AppRouter {
         signUpRoute,
         homeRoute,
         groupsRoute,
+        settingsRoute,
         groupDetailRoute,
         groupMembersRoute,
         acceptInviteRoute,

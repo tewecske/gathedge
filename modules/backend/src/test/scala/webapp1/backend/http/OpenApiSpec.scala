@@ -78,8 +78,12 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/signup",
               "/api/auth/login",
               "/api/auth/logout",
+              "/api/auth/providers",
               "/api/me",
               "/api/me/theme",
+              "/api/me/identities",
+              "/api/me/identities/{provider}",
+              "/api/me/password",
               "/api/todos",
               "/api/todos/{id}/status",
               "/api/groups",
@@ -95,10 +99,15 @@ object OpenApiSpec extends ZIOSpecDefault {
             )
         )
       },
-      // The two Google routes are the deliberate omission: they are browser redirects rather than a body protocol and
-      // stay on the imperative DSL, so they describe nothing to generate from.
-      test("the Google OAuth redirects are the only routes missing") {
-        assertTrue(!paths.exists(_.contains("google")))
+      // The two OAuth redirect routes are the deliberate omission: they are browser redirects rather than a body
+      // protocol and stay on the imperative DSL, so they describe nothing to generate from. `/api/auth/providers` is
+      // an ordinary described endpoint and does appear — it answers a JSON body, it just happens to be about them.
+      test("the OAuth redirect routes are the only ones missing") {
+        assertTrue(
+          !paths.exists(_.endsWith("/start")),
+          !paths.exists(_.endsWith("/callback")),
+          paths.contains("/api/auth/providers"),
+        )
       },
       test("request and response bodies are named, and the success statuses are there") {
         val json = openApi.toJson
@@ -133,8 +142,15 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/signup") -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
               ("POST", "/api/auth/login") -> Set(Ok, BadRequest, Unauthorized, Conflict, TooManyRequests),
               ("POST", "/api/auth/logout") -> Set(NoContent),
+              // Public, no input, no aspect: the one operation in the API that documents no failure status at all.
+              ("GET", "/api/auth/providers") -> Set(Ok),
               ("GET", "/api/me") -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme") -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/me/identities") -> Set(Ok, Unauthorized),
+              // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
+              // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
+              ("DELETE", "/api/me/identities/{provider}") -> Set(NoContent, BadRequest, Unauthorized, Conflict),
+              ("PUT", "/api/me/password") -> Set(NoContent, BadRequest, Unauthorized),
               ("GET", "/api/todos") -> Set(Ok, Unauthorized),
               ("POST", "/api/todos") -> Set(Created, BadRequest, Unauthorized, NotFound),
               ("PUT", "/api/todos/{id}/status") -> Set(Ok, BadRequest, Unauthorized, NotFound),
@@ -163,10 +179,12 @@ object OpenApiSpec extends ZIOSpecDefault {
             )
         )
       },
-      // The uniform set this started from put all seven failure statuses on all 25 operations; describing each
-      // endpoint's own failures took that to 126, and dropping the three a well-behaved caller cannot provoke takes it
-      // to 90. Nothing enforces the arithmetic; it is here so a change that quietly re-widens the descriptions shows up
-      // as a number going back up. The three assertions under it are the rule itself, stated where it can be checked.
+      // The uniform set this started from put all seven failure statuses on every operation; describing each
+      // endpoint's own failures took that to 126 across the 25 operations there were then, and dropping the three a
+      // well-behaved caller cannot provoke took it to 90. The four account-settings operations add six more: the
+      // providers list declares none, `GET /api/me/identities` one, `PUT /api/me/password` two, and the unlink three.
+      // Nothing enforces the arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a
+      // number going back up. The three assertions under it are the rule itself, stated where it can be checked.
       test("no operation documents a status only some other endpoint can answer with") {
         val successes: Set[Status] = Set(Ok, Created, NoContent)
         val declared = statuses.values.map(_.diff(successes).size).sum
@@ -178,8 +196,8 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 90,
-          declared < 25 * 7,
+          declared == 96,
+          declared < statuses.size * 7,
           // `GroupService`'s own answer, on the two resources it backs — never the CSRF or `adminOnly` aspect's.
           describes(Forbidden).forall { case (_, path) =>
             path.startsWith("/api/groups") || path.contains("invitation")
@@ -213,6 +231,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/signup"),
               ("POST", "/api/auth/login"),
               ("POST", "/api/auth/logout"),
+              ("GET", "/api/auth/providers"),
               ("GET", "/api/invitations/{token}"),
             )
         )
@@ -222,8 +241,10 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 4,
+          guarded.size == operations.size - 5,
           guarded.contains(("GET", "/api/me")),
+          guarded.contains(("GET", "/api/me/identities")),
+          guarded.contains(("PUT", "/api/me/password")),
           guarded.contains(("POST", "/api/todos")),
           guarded.contains(("POST", "/api/invitations/{token}/accept")),
           guarded.contains(("DELETE", "/api/admin/users/{id}")),

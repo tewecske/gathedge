@@ -11,6 +11,7 @@ import webapp1.backend.db.{
   PostgresGroupMemberRepository,
   PostgresGroupPairRepository,
   PostgresGroupRepository,
+  PostgresOAuthIdentityRepository,
   PostgresSessionRepository,
   PostgresTodoRepository,
   PostgresUserRepository,
@@ -68,7 +69,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     containerDataSource >>> (
       PostgresUserRepository.live ++ PostgresSessionRepository.live ++ PostgresTodoRepository.live ++
         PostgresGroupRepository.live ++ PostgresGroupMemberRepository.live ++ PostgresGroupPairRepository.live ++
-        PostgresGroupInvitationRepository.live
+        PostgresGroupInvitationRepository.live ++ PostgresOAuthIdentityRepository.live
     )
   }
 

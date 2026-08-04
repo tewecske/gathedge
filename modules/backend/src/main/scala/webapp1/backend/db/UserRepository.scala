@@ -10,13 +10,11 @@ trait UserRepository {
     email: String,
     passwordHash: Option[String],
     isAdmin: Boolean,
-    googleSubject: Option[String],
     theme: String,
     createdAt: Long,
   ): Task[UserRow]
   def findByEmail(email: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
-  def findByGoogleSubject(googleSubject: String): Task[Option[UserRow]]
   def updateTheme(userId: Long, theme: String): Task[Unit]
   def existsAdmin: Task[Boolean]
   def listAll: Task[List[UserRow]]

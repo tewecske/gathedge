@@ -80,6 +80,7 @@ private class AppShell(active: Page, content: HtmlElement) {
         span(cls := "text-lg font-semibold px-2", "webapp1"),
         navLink(Page.Home, "Todo"),
         navLink(Page.Groups, "Groups"),
+        navLink(Page.Settings, "Settings"),
         child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin, "Admin"))),
       ),
       div(

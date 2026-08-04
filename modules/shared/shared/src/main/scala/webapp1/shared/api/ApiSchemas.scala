@@ -6,6 +6,7 @@ import webapp1.shared.domain.{
   GroupPair,
   GroupRole,
   InvitationInfo,
+  OAuthProvider,
   Theme,
   TodoItem,
   TodoStatus,
@@ -17,8 +18,12 @@ import webapp1.shared.dto.{
   CreatePairRequest,
   CreateTodoRequest,
   CreateUserRequest,
+  IdentitiesResponse,
   InviteMemberRequest,
+  LinkedIdentity,
   LoginRequest,
+  ProvidersResponse,
+  SetPasswordRequest,
   SignupRequest,
   UpdateRoleRequest,
   UpdateThemeRequest,
@@ -44,6 +49,7 @@ object ApiSchemas {
   given Schema[Theme] = DeriveSchema.gen[Theme]
   given Schema[TodoStatus] = DeriveSchema.gen[TodoStatus]
   given Schema[GroupRole] = DeriveSchema.gen[GroupRole]
+  given Schema[OAuthProvider] = DeriveSchema.gen[OAuthProvider]
 
   given Schema[User] = DeriveSchema.gen[User]
   given Schema[TodoItem] = DeriveSchema.gen[TodoItem]
@@ -56,6 +62,10 @@ object ApiSchemas {
   given Schema[SignupRequest] = DeriveSchema.gen[SignupRequest]
   given Schema[LoginRequest] = DeriveSchema.gen[LoginRequest]
   given Schema[UpdateThemeRequest] = DeriveSchema.gen[UpdateThemeRequest]
+  given Schema[LinkedIdentity] = DeriveSchema.gen[LinkedIdentity]
+  given Schema[IdentitiesResponse] = DeriveSchema.gen[IdentitiesResponse]
+  given Schema[SetPasswordRequest] = DeriveSchema.gen[SetPasswordRequest]
+  given Schema[ProvidersResponse] = DeriveSchema.gen[ProvidersResponse]
 
   given Schema[CreateTodoRequest] = DeriveSchema.gen[CreateTodoRequest]
   given Schema[UpdateTodoStatusRequest] = DeriveSchema.gen[UpdateTodoStatusRequest]

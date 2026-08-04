@@ -2,9 +2,11 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.components.{OAuthButtons, OAuthMessages}
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
-import webapp1.shared.dto.{AuthResponse, LoginRequest}
+import webapp1.shared.domain.OAuthProvider
+import webapp1.shared.dto.{AuthResponse, LoginRequest, ProvidersResponse}
 
 object SignInPage {
   def render(): HtmlElement = new SignInPage().render()
@@ -15,10 +17,21 @@ private class SignInPage {
   private val emailSignal = emailVar.signal
   private val passwordVar = Var("")
   private val passwordSignal = passwordVar.signal
-  private val errorVar: Var[Option[String]] = Var(None)
+
+  /** Seeded from `?error=` so a failed OAuth round trip explains itself: the callback redirects here on failure, and
+    * without this the user lands back on a blank form with no idea why.
+    */
+  private val errorVar: Var[Option[String]] = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
   private val errorSignal = errorVar.signal
   private val inFlightVar = Var(false)
   private val inFlightSignal = inFlightVar.signal
+  private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
+  private val providersSignal = providersVar.signal
+  private val hasProvidersSignal = providersSignal.map(_.nonEmpty).distinct
+
+  private lazy val socialBlock: HtmlElement = {
+    div(div(cls := "divider text-xs", "or"), OAuthButtons.render(providersSignal))
+  }
 
   private val submitBus = new EventBus[Unit]()
 
@@ -57,6 +70,9 @@ private class SignInPage {
             cls := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Sign in"),
           ),
+          // Hidden entirely when no provider is configured, rather than leaving a stray divider
+          // above nothing. Built once and shown or hidden, not rebuilt per signal change.
+          child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           p(
             cls := "text-sm mt-2",
             "No account? ",
@@ -64,6 +80,14 @@ private class SignInPage {
           ),
         ),
       ),
+      ApiClient.providers -->
+        Observer[Either[ApiError, ProvidersResponse]] {
+          case Right(res) =>
+            providersVar.set(res.providers)
+          case Left(_) =>
+            // The password form still works; offering no social buttons is the right degraded state.
+            providersVar.set(Nil)
+        },
       submitStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None)),
       submitStream.flatMapSwitch(_ => login()) -->
         Observer[Either[ApiError, AuthResponse]] {

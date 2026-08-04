@@ -41,3 +41,43 @@ object SqliteGroupInvitationRepository {
     new GroupInvitationRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupInvitationRepository
   )
 }
+
+final class OAuthIdentityRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with OAuthIdentityRepository {
+  import ctx._
+
+  private inline def identities = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
+
+  def findByProviderAndSubject(provider: String, subject: String): Task[Option[OAuthIdentityRow]] = {
+    run(ctx.run(quote(identities.filter(i => i.provider == lift(provider) && i.subject == lift(subject))))).map(
+      _.headOption
+    )
+  }
+
+  def listForUser(userId: Long): Task[List[OAuthIdentityRow]] = {
+    run(ctx.run(quote(identities.filter(_.userId == lift(userId)).sortBy(_.createdAt))))
+  }
+
+  def insert(row: OAuthIdentityRow): Task[OAuthIdentityRow] = {
+    run(ctx.run(quote(identities.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))
+  }
+
+  def deleteByUserAndProvider(userId: Long, provider: String): Task[Long] = {
+    run(ctx.run(quote(identities.filter(i => i.userId == lift(userId) && i.provider == lift(provider)).delete)))
+  }
+}
+
+object PostgresOAuthIdentityRepository {
+  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new OAuthIdentityRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): OAuthIdentityRepository
+  )
+}
+
+object SqliteOAuthIdentityRepository {
+  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new OAuthIdentityRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): OAuthIdentityRepository
+  )
+}

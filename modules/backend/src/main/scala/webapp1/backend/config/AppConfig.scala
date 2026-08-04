@@ -1,5 +1,6 @@
 package webapp1.backend.config
 
+import webapp1.shared.domain.OAuthProvider
 import zio.*
 import zio.config.magnolia.deriveConfig
 import zio.config.typesafe.TypesafeConfigProvider
@@ -24,6 +25,14 @@ final case class SessionSection(cookieSecure: Boolean)
 final case class BootstrapAdminSection(email: String, password: String)
 final case class GoogleSection(clientId: String, clientSecret: String, redirectUri: String)
 
+/** `tenant` selects which Microsoft accounts may sign in: `common` (work/school *and* personal), `organizations`,
+  * `consumers`, or a tenant GUID. It is part of both the authorize and token URLs, and of the `iss` value the id_token
+  * must carry.
+  */
+final case class MicrosoftSection(clientId: String, clientSecret: String, redirectUri: String, tenant: String)
+
+final case class OAuthSection(google: GoogleSection, microsoft: MicrosoftSection)
+
 /** `maxThreads` is handed straight to Netty's event loop group, where 0 means "decide for me" (2× available
   * processors), so that is the default here too.
   */
@@ -34,12 +43,25 @@ final case class AppConfig(
   db: DbSection,
   session: SessionSection,
   bootstrapAdmin: BootstrapAdminSection,
-  google: GoogleSection,
+  oauth: OAuthSection,
   netty: NettySection,
 ) {
   def appEnv: AppEnv = AppEnv.parse(app.env)
   def isProduction: Boolean = appEnv == AppEnv.Production
-  def isGoogleOAuthConfigured: Boolean = google.clientId.nonEmpty && google.clientSecret.nonEmpty
+
+  /** A provider with no client id/secret is simply switched off: its routes answer 404 and the frontend omits its
+    * button. That is what lets the stack boot with no social sign-in configured at all.
+    */
+  def isOAuthConfigured(provider: OAuthProvider): Boolean = {
+    provider match {
+      case OAuthProvider.Google =>
+        oauth.google.clientId.nonEmpty && oauth.google.clientSecret.nonEmpty
+      case OAuthProvider.Microsoft =>
+        oauth.microsoft.clientId.nonEmpty && oauth.microsoft.clientSecret.nonEmpty
+    }
+  }
+
+  def configuredOAuthProviders: List[OAuthProvider] = OAuthProvider.all.filter(isOAuthConfigured)
 
   /** Settings that are fine for local development but unsafe in production. `Main` refuses to start while this is
     * non-empty, so a missing `${?ENV_VAR}` override can't silently downgrade a production deployment to development

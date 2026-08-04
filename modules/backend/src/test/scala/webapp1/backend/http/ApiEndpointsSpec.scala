@@ -7,6 +7,7 @@ import webapp1.backend.db.{
   SqliteGroupMemberRepository,
   SqliteGroupPairRepository,
   SqliteGroupRepository,
+  SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteTodoRepository,
   SqliteUserRepository,
@@ -18,10 +19,10 @@ import webapp1.backend.service.{
   AuthService,
   AuthServiceLive,
   EmailSender,
-  GoogleOAuthClient,
   GroupService,
   GroupServiceLive,
   InMemoryRateLimiter,
+  OAuthClients,
   TodoService,
   TodoServiceLive,
 }
@@ -58,13 +59,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
         SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live
+        SqliteGroupInvitationRepository.live ++ SqliteOAuthIdentityRepository.live
     )
   }
 
   private val layer = {
     AppConfig.live ++
-      ((AppConfig.live ++ Client.default) >>> GoogleOAuthClient.live) ++ (
+      ((AppConfig.live ++ Client.default) >>> OAuthClients.live) ++ (
         (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> (AuthServiceLive.live ++ AdminServiceLive.live)
       ) ++
       (repos >>> TodoServiceLive.live) ++

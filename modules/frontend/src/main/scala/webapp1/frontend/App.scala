@@ -11,6 +11,7 @@ import webapp1.frontend.pages.{
   GroupMembersPage,
   GroupsPage,
   NotFoundPage,
+  SettingsPage,
   SignInPage,
   SignUpPage,
   TodoPage,
@@ -109,6 +110,8 @@ object App {
         TodoPage.render()
       case Page.Groups =>
         GroupsPage.render()
+      case Page.Settings =>
+        SettingsPage.render()
       case Page.GroupDetail(id) =>
         GroupDetailPage.render(id)
       case Page.GroupMembers(id) =>

@@ -1,15 +1,24 @@
 package webapp1.backend.service
 
 import webapp1.backend.TestDataSource
-import webapp1.backend.db.{SessionRepository, SqliteSessionRepository, SqliteUserRepository, UserRepository}
+import webapp1.backend.db.{
+  OAuthIdentityRepository,
+  SessionRepository,
+  SqliteOAuthIdentityRepository,
+  SqliteSessionRepository,
+  SqliteUserRepository,
+  UserRepository,
+}
 import webapp1.backend.security.PasswordHasher
 import zio._
 import zio.test._
 
 object AdminServiceSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository] =
-    TestDataSource.sqlite >>> (SqliteUserRepository.live ++ SqliteSessionRepository.live)
+  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository & OAuthIdentityRepository] = {
+    TestDataSource.sqlite >>>
+      (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+  }
 
   // AuthService shares the same DataSource so a session issued by a login can be checked against
   // the effect an admin password reset has on it.

@@ -70,7 +70,7 @@ final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepos
       _ <- ZIO.when(existing.isDefined)(ZIO.fail(AdminFailure.DuplicateEmail))
       hash <- hasher.hash(password).orDie
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, None, "light", now).orDie
+      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, "light", now).orDie
       _ <- audit(actingAdminId, s"created user '$normalizedEmail' (id=${row.id}, isAdmin=$isAdmin)")
     } yield toDomain(row)
   }

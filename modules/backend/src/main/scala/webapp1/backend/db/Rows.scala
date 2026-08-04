@@ -6,7 +6,20 @@ final case class UserRow(
   passwordHash: Option[String],
   isAdmin: Boolean,
   theme: String,
-  googleSubject: Option[String],
+  createdAt: Long,
+)
+
+/** One external identity linked to a user. `provider` holds [[webapp1.backend.service.OAuthProvider]]'s wire name and
+  * `subject` the provider's own stable identifier for the user; the pair is unique. `email` is whatever the provider
+  * reported at link time, kept for display only — it is never used to match an account, see
+  * `AuthService.loginWithOAuth`.
+  */
+final case class OAuthIdentityRow(
+  id: Long,
+  userId: Long,
+  provider: String,
+  subject: String,
+  email: Option[String],
   createdAt: Long,
 )
 

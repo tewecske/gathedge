@@ -9,6 +9,7 @@ import webapp1.backend.db.{
   SqliteGroupMemberRepository,
   SqliteGroupPairRepository,
   SqliteGroupRepository,
+  SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteUserRepository,
 }
@@ -40,7 +41,8 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
   private val repoLayer = {
     TestDataSource.sqlite >>> (
       SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live ++ SqliteUserRepository.live ++ SqliteSessionRepository.live
+        SqliteGroupInvitationRepository.live ++ SqliteUserRepository.live ++ SqliteSessionRepository.live ++
+        SqliteOAuthIdentityRepository.live
     )
   }
 

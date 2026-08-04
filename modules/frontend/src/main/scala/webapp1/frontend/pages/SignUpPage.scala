@@ -2,9 +2,11 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.components.OAuthButtons
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
-import webapp1.shared.dto.{AuthResponse, SignupRequest}
+import webapp1.shared.domain.OAuthProvider
+import webapp1.shared.dto.{AuthResponse, ProvidersResponse, SignupRequest}
 import webapp1.shared.validation.Validation
 
 object SignUpPage {
@@ -20,6 +22,16 @@ private class SignUpPage {
   private val errorSignal = errorVar.signal
   private val inFlightVar = Var(false)
   private val inFlightSignal = inFlightVar.signal
+  private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
+  private val providersSignal = providersVar.signal
+  private val hasProvidersSignal = providersSignal.map(_.nonEmpty).distinct
+
+  /** The same buttons as the sign-in form, and deliberately not labelled differently: the provider flow creates the
+    * account when there is none and signs in when there is, so "sign up with" and "sign in with" are one button.
+    */
+  private lazy val socialBlock: HtmlElement = {
+    div(div(cls := "divider text-xs", "or"), OAuthButtons.render(providersSignal))
+  }
 
   private val submitBus = new EventBus[Unit]()
 
@@ -59,6 +71,7 @@ private class SignUpPage {
             cls := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Sign up"),
           ),
+          child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           p(
             cls := "text-sm mt-2",
             "Already have an account? ",
@@ -66,6 +79,13 @@ private class SignUpPage {
           ),
         ),
       ),
+      ApiClient.providers -->
+        Observer[Either[ApiError, ProvidersResponse]] {
+          case Right(res) =>
+            providersVar.set(res.providers)
+          case Left(_) =>
+            providersVar.set(Nil)
+        },
       validatedStream -->
         Observer[Either[String, SignupRequest]] {
           case Left(err) =>
