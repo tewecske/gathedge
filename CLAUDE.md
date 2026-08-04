@@ -14,7 +14,7 @@ sbt compile                 # or: sbt root/compile
 npm run dev                 # concurrently: backend reStart, frontend fastLinkJS, vite dev
 npm run dev:tmux            # same, in a tmux window (./dev-tmux.sh)
 ```
-Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:8080` (prefix kept as-is — backend routes are mounted under `/api`). Postgres must be up first: `docker compose up -d` (copy `.env.example` to `.env` first).
+Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:8080` (prefix kept as-is — backend routes are mounted under `/api`). Postgres must be up first: `docker compose up -d postgres` (copy `.env.example` to `.env` first). Naming the service matters now — a bare `docker compose up -d` builds and runs the whole deployment stack (see **Deployment**).
 
 **Tests**
 ```
@@ -27,7 +27,7 @@ npm --prefix web run typecheck                                    # frontend TS 
 ```
 Backend/shared specs run against a fresh, migrated SQLite DB per layer instantiation (see `TestDataSource.sqlite`) — no external services needed. The one exception:
 ```
-docker compose up -d
+docker compose up -d postgres
 RUN_POSTGRES_TESTS=1 sbt backend/test    # PostgresIntegrationSpec, gated behind this env var
 ```
 `PostgresIntegrationSpec` is the only place the Postgres dialect actually executes (testcontainers); everything else is Postgres-dialect-checked at compile time by Quill but runtime-tested on SQLite.
@@ -42,6 +42,19 @@ npm --prefix e2e test
 ```
 sbt scalafmtAll
 ```
+
+**Deployment** (`Dockerfile`, `docker-compose.yml`, `docker/`)
+```
+cp .env.example .env         # COMPOSE_PROFILES=db in it bundles Postgres
+docker compose up -d --build # http://localhost:${HTTP_PORT:-8080}
+```
+Two images out of one multi-stage `Dockerfile`: `--target backend` (sbt-native-packager `backend/stage` on a JRE base) and `--target web` (nginx serving `web/dist`). **nginx, not the backend, serves the SPA** — the backend mounts only `/api`, so nginx also proxies `/api` through, keeping the SPA same-origin with the API; that is what the `X-Requested-With` CSRF check relies on in the absence of CORS. It is the only published port; the backend container is internal.
+
+The frontend build stage needs a JDK *and* Node, because `vite build` shells out to `sbt frontend/fullLinkJSOutput` via `@scala-js/vite-plugin-scalajs`, and Tailwind scans `modules/frontend/src`. The whole repo is the build context.
+
+Bundled vs. external Postgres is the `db` compose profile: with it (the `.env.example` default) `docker compose up` starts `postgres`; drop it and set `DB_URL` to reach a database you already run. The backend has no `depends_on: postgres` on purpose — a dependency on a profile-disabled service breaks `up` — so `restart: unless-stopped` plus its fail-fast Flyway startup covers the boot race.
+
+Containers log to stdout via `docker/logback.xml` (`-Dlogback.configurationFile`), since the in-repo `logback.xml` writes to a relative `logs/` path. `APP_ENV` defaults to `dev` so the stack runs over plain HTTP out of the box; `APP_ENV=production` additionally requires `SESSION_COOKIE_SECURE=true`, an `https://` `PUBLIC_BASE_URL`, and a non-default `DB_PASSWORD`, or `AppConfig.productionIssues` refuses the boot — i.e. it assumes a TLS terminator in front of the `web` container.
 
 ## Architecture
 

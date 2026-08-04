@@ -1,0 +1,29 @@
+# Build output — the image compiles from source, and a host `target/` would both bloat
+# the context and let stale artifacts leak into the build.
+target/
+project/target/
+project/project/
+modules/*/target/
+modules/shared/.js/target/
+modules/shared/.jvm/target/
+
+# Installed by the image itself.
+node_modules/
+web/node_modules/
+e2e/node_modules/
+web/dist/
+
+# Not part of any image.
+e2e/
+logs/
+data/
+.git/
+.github/
+.metals/
+.bloop/
+.bsp/
+.idea/
+.vscode/
+
+# Secrets: compose passes these in as environment variables at run time.
+.env

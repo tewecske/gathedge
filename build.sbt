@@ -69,6 +69,8 @@ lazy val sharedJS = shared.js
 
 lazy val backend = project
   .in(file("modules/backend"))
+  // `backend/stage` writes target/universal/stage/{bin,lib}; the Docker image copies that dir verbatim.
+  .enablePlugins(JavaAppPackaging)
   .dependsOn(sharedJVM)
   .settings(commonSettings)
   .settings(

@@ -1,5 +1,47 @@
 services:
+  # The only published port. Serves the built SPA and proxies /api to the backend, which keeps
+  # the frontend same-origin with the API (see docker/nginx.conf).
+  web:
+    build:
+      context: .
+      target: web
+    image: webapp1-web
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: .
+      target: backend
+    image: webapp1-backend
+    restart: unless-stopped
+    # Deliberately no depends_on: postgres — that service sits behind the `db` profile, and a
+    # dependency on a disabled service breaks `up`. The backend fails fast when the database is
+    # unreachable (Flyway runs before the server binds) and the restart policy retries until it is.
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/webapp1}
+      DB_USER: ${DB_USER:-webapp1}
+      DB_PASSWORD: ${DB_PASSWORD:-webapp1}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-changeme123}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/auth/google/callback}
+      NETTY_MAX_THREADS: ${NETTY_MAX_THREADS:-0}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75}
+
+  # Bundled database, enabled by the `db` profile (COMPOSE_PROFILES=db in .env, which .env.example
+  # ships). Drop that profile and point DB_URL at an existing server to use Postgres you already run.
   postgres:
+    profiles: ["db"]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
