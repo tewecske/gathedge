@@ -27,8 +27,9 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     isAdmin: Boolean,
     theme: String,
     createdAt: Long,
+    emailVerifiedAt: Option[Long],
   ): Task[UserRow] = {
-    val row = UserRow(0L, email, passwordHash, isAdmin, theme, createdAt)
+    val row = UserRow(0L, email, passwordHash, isAdmin, theme, createdAt, emailVerifiedAt)
     run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))
   }
 
@@ -42,6 +43,10 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def updateTheme(userId: Long, theme: String): Task[Unit] = {
     run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.theme -> lift(theme))))).unit
+  }
+
+  def markEmailVerified(userId: Long, verifiedAt: Long): Task[Unit] = {
+    run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.emailVerifiedAt -> lift(Option(verifiedAt)))))).unit
   }
 
   def existsAdmin: Task[Boolean] = {

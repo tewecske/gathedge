@@ -1,8 +1,9 @@
 package webapp1.backend.http
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  SqliteEmailVerificationTokenRepository,
   SqliteGroupInvitationRepository,
   SqliteGroupMemberRepository,
   SqliteGroupPairRepository,
@@ -34,8 +35,11 @@ import webapp1.shared.dto.{
   CreateUserRequest,
   ErrorResponse,
   LoginRequest,
+  ResendVerificationRequest,
   SignupRequest,
+  SignupResponse,
   UpdateUserRequest,
+  VerifyEmailRequest,
 }
 import zio.*
 import zio.http.*
@@ -59,21 +63,23 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
         SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live ++ SqliteOAuthIdentityRepository.live
+        SqliteGroupInvitationRepository.live ++ SqliteOAuthIdentityRepository.live ++
+        SqliteEmailVerificationTokenRepository.live
     )
   }
 
   private val layer = {
     AppConfig.live ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live) ++ (
-        (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> (AuthServiceLive.live ++ AdminServiceLive.live)
+        (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+          (AuthServiceLive.live ++ AdminServiceLive.live)
       ) ++
       (repos >>> TodoServiceLive.live) ++
-      ((repos ++ EmailSender.live ++ AppConfig.live) >>> GroupServiceLive.live)
+      ((repos ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
-    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2))
+    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2.get))
   }
 
   /** Returns the acting administrator and their session id. `createUser` takes an acting-admin id for its audit log; 0
@@ -106,7 +112,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       suite("auth")(
         // The success value is a pair — the body and the `Set-Cookie` header — because the cookie is part of the
         // endpoint description. It still has to reach the client as a real header, not as a field in the JSON.
-        test("signup answers 201 with an AuthResponse body and a session cookie in the header") {
+        test("signup answers 201 with a SignupResponse body and a session cookie in the header") {
           val request = withCsrf(
             Request.post("/api/auth/signup", Body.fromString(SignupRequest("new@example.com", "password123").toJson))
           )
@@ -115,7 +121,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
-            raw.fromJson[AuthResponse].map(_.user.email) == Right("new@example.com"),
+            raw.fromJson[SignupResponse].map(_.user.email) == Right("new@example.com"),
+            // False only where verification is mandatory; the test config leaves the gate off.
+            raw.fromJson[SignupResponse].map(_.signedIn) == Right(true),
             !raw.contains("Set-Cookie"),
             sessionCookie(response).exists(_.content.nonEmpty),
             sessionCookie(response).exists(_.isHttpOnly),
@@ -176,6 +184,30 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             response.status == Status.Ok,
             raw.contains("\"theme\":\"Light\""),
             raw.fromJson[AuthResponse].map(_.user.theme) == Right(Theme.Light),
+          )
+        },
+        // Both verification routes are public and answer an empty 204, which is the shape a browser client has the
+        // most trouble with — `outCodec(status(NoContent))` rather than `out[Unit]`, per `AdminEndpoints.deleteUser`.
+        test("resending a verification link is an empty 204 for any address, with no session") {
+          val request = withCsrf(
+            Request.post(
+              "/api/auth/verification/resend",
+              Body.fromString(ResendVerificationRequest("stranger@example.com").toJson),
+            )
+          )
+          for {
+            response <- runRoutes(AuthRoutes.routes, request)
+            raw <- body(response)
+          } yield assertTrue(response.status == Status.NoContent, raw.isEmpty)
+        },
+        test("an unknown verification token is a 400 in the usual ErrorResponse shape") {
+          val request = withCsrf(Request.post("/api/auth/verify", Body.fromString(VerifyEmailRequest("nope").toJson)))
+          for {
+            response <- runRoutes(AuthRoutes.routes, request)
+            raw <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("verification link")),
           )
         },
       ),

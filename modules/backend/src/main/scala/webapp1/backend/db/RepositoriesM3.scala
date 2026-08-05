@@ -42,6 +42,51 @@ object SqliteGroupInvitationRepository {
   )
 }
 
+final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
+  dataSource: DataSource,
+  quillContext: ZioJdbcContext[Dialect, Naming],
+) extends QuillRepository(dataSource, quillContext)
+    with EmailVerificationTokenRepository {
+  import ctx._
+
+  private inline def tokens = quote(querySchema[EmailVerificationTokenRow]("email_verification_tokens"))
+
+  def insert(row: EmailVerificationTokenRow): Task[EmailVerificationTokenRow] = {
+    run(ctx.run(quote(tokens.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))
+  }
+
+  def findByToken(token: String): Task[Option[EmailVerificationTokenRow]] = {
+    run(ctx.run(quote(tokens.filter(_.token == lift(token))))).map(_.headOption)
+  }
+
+  def markConsumed(token: String, consumedAt: Long): Task[Unit] = {
+    run(ctx.run(quote(tokens.filter(_.token == lift(token)).update(_.consumedAt -> lift(Option(consumedAt)))))).unit
+  }
+
+  def deleteForUser(userId: Long): Task[Long] = {
+    run(ctx.run(quote(tokens.filter(_.userId == lift(userId)).delete)))
+  }
+
+  def deleteExpired(before: Long): Task[Long] = {
+    run(ctx.run(quote(tokens.filter(_.expiresAt < lift(before)).delete)))
+  }
+}
+
+object PostgresEmailVerificationTokenRepository {
+  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
+    new EmailVerificationTokenRepositoryLive(
+      ds,
+      new PostgresZioJdbcContext(SnakeCase),
+    ): EmailVerificationTokenRepository
+  })
+}
+
+object SqliteEmailVerificationTokenRepository {
+  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new EmailVerificationTokenRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): EmailVerificationTokenRepository
+  )
+}
+
 final class OAuthIdentityRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
   quillContext: ZioJdbcContext[Dialect, Naming],

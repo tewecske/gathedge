@@ -39,6 +39,8 @@ object DocsRoutes {
       AuthEndpoints.login,
       AuthEndpoints.logout,
       AuthEndpoints.providers,
+      AuthEndpoints.verifyEmail,
+      AuthEndpoints.resendVerification,
       InvitationEndpoints.getInvitation,
     )
   }

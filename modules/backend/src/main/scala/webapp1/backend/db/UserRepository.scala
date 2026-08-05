@@ -12,10 +12,14 @@ trait UserRepository {
     isAdmin: Boolean,
     theme: String,
     createdAt: Long,
+    emailVerifiedAt: Option[Long],
   ): Task[UserRow]
   def findByEmail(email: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
   def updateTheme(userId: Long, theme: String): Task[Unit]
+
+  /** Idempotent: re-verifying an already-verified account just rewrites the timestamp. */
+  def markEmailVerified(userId: Long, verifiedAt: Long): Task[Unit]
   def existsAdmin: Task[Boolean]
   def listAll: Task[List[UserRow]]
 

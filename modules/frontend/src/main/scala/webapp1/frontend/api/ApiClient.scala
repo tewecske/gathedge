@@ -12,11 +12,14 @@ import webapp1.shared.dto.{
   InviteMemberRequest,
   LoginRequest,
   ProvidersResponse,
+  ResendVerificationRequest,
   SetPasswordRequest,
   SignupRequest,
+  SignupResponse,
   UpdateRoleRequest,
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
+  VerifyEmailRequest,
 }
 
 import EndpointClient.{executor, run}
@@ -38,8 +41,18 @@ object ApiClient {
     * the server sent (`ApiEndpoint.sessionCookie` explains why it is described as optional at all). The cookie is in
     * the jar regardless — that is what the next call authenticates with.
     */
-  def signup(request: SignupRequest): EventStream[Either[ApiError, AuthResponse]] = {
+  def signup(request: SignupRequest): EventStream[Either[ApiError, SignupResponse]] = {
     run(executor(AuthEndpoints.signup(request))).map(_.map(_._1))
+  }
+
+  /** Redeems the token out of a verification link. Public — the account it verifies typically cannot sign in yet. */
+  def verifyEmail(token: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.verifyEmail(VerifyEmailRequest(token)))).map(_.map(_ => ()))
+  }
+
+  /** Answers the same whether or not the address has an account, so a page can only ever report "sent". */
+  def resendVerification(email: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.resendVerification(ResendVerificationRequest(email)))).map(_.map(_ => ()))
   }
 
   def login(request: LoginRequest): EventStream[Either[ApiError, AuthResponse]] = {

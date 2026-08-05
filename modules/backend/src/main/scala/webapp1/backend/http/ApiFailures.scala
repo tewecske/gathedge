@@ -31,6 +31,11 @@ object ApiFailures {
     ApiFailure.BadRequest("This invitation is invalid, expired, or already used")
   }
 
+  // One message for unknown, expired and already-redeemed alike, so a caller cannot tell them apart.
+  private val verificationTokenInvalid: ApiFailure.BadRequest = {
+    ApiFailure.BadRequest("This verification link is invalid, expired, or already used")
+  }
+
   def auth(
     failure: AuthFailure
   ): ApiFailure.BadRequest | ApiFailure.Unauthorized | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
@@ -54,6 +59,56 @@ object ApiFailures {
         ApiFailure.Conflict("That account is already linked")
       case AuthFailure.LastCredential =>
         ApiFailure.Conflict("Set a password first — this is the only way left to sign in to this account")
+      case AuthFailure.EmailNotVerified =>
+        // Unreachable through this mapping: only `login` can raise it, and `login` uses
+        // `authLogin` below to answer 403 instead. Mapped anyway because the match is exhaustive,
+        // and to 401 because that is the only status every endpoint on this mapping declares.
+        ApiFailure.Unauthorized("Invalid email or password")
+      case AuthFailure.InvalidVerificationToken =>
+        verificationTokenInvalid
+    }
+  }
+
+  /** [[auth]] plus the one failure that answers 403, kept separate so the 403 lands on `POST /api/auth/login` alone.
+    *
+    * Widening `auth`'s union instead would force every endpoint that maps through it — signup, unlink, set-password —
+    * to describe a 403 none of them can raise, and 403 is otherwise deliberately undescribed across the API.
+    */
+  def authLogin(failure: AuthFailure): ApiFailure.BadRequest | ApiFailure.Unauthorized | ApiFailure.Forbidden |
+    ApiFailure.Conflict | ApiFailure.TooManyRequests = {
+    failure match {
+      case AuthFailure.EmailNotVerified =>
+        ApiFailure.Forbidden("Verify your email address before signing in")
+      case other =>
+        auth(other)
+    }
+  }
+
+  /** Redeeming a verification link: the only failure [[webapp1.backend.service.AuthService.verifyEmail]] raises is
+    * `InvalidVerificationToken`, and 400 is the only status that endpoint describes. The catch-all is a bug in the
+    * service rather than a request the caller got wrong — answering it as a 400 keeps it inside the description, where
+    * a wider union would instead fail at encode time.
+    */
+  def verifyEmail(failure: AuthFailure): ApiFailure.BadRequest = {
+    failure match {
+      case AuthFailure.ValidationError(fieldErrors) =>
+        ApiFailure.BadRequest("Validation failed", fieldErrors)
+      case _ =>
+        verificationTokenInvalid
+    }
+  }
+
+  /** Asking for a fresh verification link. Succeeds for unknown and already-verified addresses alike, so the rate
+    * limiter's 429 is the only failure a caller can actually see; see [[verifyEmail]] on the catch-all.
+    */
+  def resendVerification(failure: AuthFailure): ApiFailure.BadRequest | ApiFailure.TooManyRequests = {
+    failure match {
+      case AuthFailure.RateLimited =>
+        ApiFailure.TooManyRequests("Too many attempts. Try again later.")
+      case AuthFailure.ValidationError(fieldErrors) =>
+        ApiFailure.BadRequest("Validation failed", fieldErrors)
+      case _ =>
+        ApiFailure.BadRequest("Could not send a verification link")
     }
   }
 

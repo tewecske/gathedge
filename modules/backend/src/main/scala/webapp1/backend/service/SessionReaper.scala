@@ -1,29 +1,32 @@
 package webapp1.backend.service
 
-import webapp1.backend.db.SessionRepository
+import webapp1.backend.db.{EmailVerificationTokenRepository, SessionRepository}
 import zio.*
 
 import java.util.concurrent.TimeUnit
 
-/** Deletes session rows that can no longer authenticate anyone. Sessions are only ever marked expired or revoked, never
-  * removed, so without this the table grows for the lifetime of the deployment. Fork as a daemon fiber once at startup,
-  * next to [[RateLimiter.runPruner]].
+/** Deletes the two kinds of row that outlive their own usefulness: sessions, which are only ever marked expired or
+  * revoked rather than removed, and spent or expired email verification tokens. Without this both tables grow for the
+  * lifetime of the deployment. Fork as a daemon fiber once at startup, next to [[RateLimiter.runPruner]].
   */
 object SessionReaper {
 
   val interval: Duration = 1.hour
 
-  def run: URIO[SessionRepository, Nothing] = {
+  def run: URIO[SessionRepository & EmailVerificationTokenRepository, Nothing] = {
     val once = {
       for {
-        repo <- ZIO.service[SessionRepository]
+        sessionRepo <- ZIO.service[SessionRepository]
+        tokenRepo <- ZIO.service[EmailVerificationTokenRepository]
         now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        deleted <- repo.deleteExpired(now)
-        _ <- ZIO.when(deleted > 0)(ZIO.logInfo(s"Purged $deleted expired session(s)"))
+        sessions <- sessionRepo.deleteExpired(now)
+        _ <- ZIO.when(sessions > 0)(ZIO.logInfo(s"Purged $sessions expired session(s)"))
+        tokens <- tokenRepo.deleteExpired(now)
+        _ <- ZIO.when(tokens > 0)(ZIO.logInfo(s"Purged $tokens expired verification token(s)"))
       } yield ()
     }
     // A failed sweep must not kill the fiber: log it and try again next interval.
-    (once.catchAllCause(cause => ZIO.logErrorCause("Could not purge expired sessions", cause)) *> ZIO.sleep(interval))
+    (once.catchAllCause(cause => ZIO.logErrorCause("Could not purge expired rows", cause)) *> ZIO.sleep(interval))
       .forever
   }
 }

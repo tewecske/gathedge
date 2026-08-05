@@ -23,6 +23,11 @@ trait RateLimiter {
 object RateLimitKey {
   def email(value: String): String = s"email:${value.trim.toLowerCase}"
   def ip(value: String): String = s"ip:${value.trim}"
+
+  /** Separate from [[email]] so asking for another verification link cannot burn an account's login budget, nor the
+    * other way round.
+    */
+  def verification(value: String): String = s"verify:${value.trim.toLowerCase}"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single

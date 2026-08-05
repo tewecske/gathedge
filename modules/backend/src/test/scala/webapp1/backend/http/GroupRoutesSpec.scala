@@ -1,10 +1,11 @@
 package webapp1.backend.http
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   GroupInvitationRepository,
   GroupInvitationRow,
+  SqliteEmailVerificationTokenRepository,
   SqliteGroupInvitationRepository,
   SqliteGroupMemberRepository,
   SqliteGroupPairRepository,
@@ -43,14 +44,16 @@ object GroupRoutesSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
         SqliteGroupInvitationRepository.live ++ SqliteUserRepository.live ++ SqliteSessionRepository.live ++
-        SqliteOAuthIdentityRepository.live
+        SqliteOAuthIdentityRepository.live ++ SqliteEmailVerificationTokenRepository.live
     )
   }
 
   private val layer: ZLayer[Any, Throwable, AuthService & GroupService & GroupInvitationRepository] = {
-    repoLayer ++
-      ((repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live) ++
-      ((repoLayer ++ EmailSender.live ++ AppConfig.live) >>> GroupServiceLive.live)
+    repoLayer ++ (
+      (repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthServiceLive.live
+    ) ++
+      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
   }
 
   /** Signs a user up and returns both halves the routes need: the user id the services key on, and the session id that
@@ -59,7 +62,9 @@ object GroupRoutesSpec extends ZIOSpecDefault {
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
     ZIO.serviceWithZIO[AuthService] { service =>
       orDieWithFailure(service.signup(email, "password123")).map { case (user, sessionId) =>
-        (user.id, sessionId)
+        // `sessionId` is None only when the deployment requires a verified address; these
+        // specs run on the default config, where signup still opens a session.
+        (user.id, sessionId.get)
       }
     }
   }

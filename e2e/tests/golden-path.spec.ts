@@ -8,6 +8,11 @@ import { test, expect, type Page } from '@playwright/test';
 // automation script can observe. This suite verifies the invite *request* succeeds
 // (UI feedback), not clicking the emailed link — the full invite -> accept round
 // trip is covered by GroupServiceSpec (backend, SQLite) instead.
+//
+// Email verification is the same story, twice over: the link is only ever logged, and
+// REQUIRE_EMAIL_VERIFICATION defaults to false, so signup below still lands on the todo
+// board. Turning it on would send this suite to /check-inbox with no way to continue —
+// the verify -> login round trip is in AuthServiceSpec, which can read the sent mail.
 
 const unique = Date.now();
 const email = `e2e-${unique}@example.com`;
@@ -128,6 +133,8 @@ test('group detail (pairs, members, add-pair form) survives a page refresh', asy
 });
 
 test('log out returns to sign-in', async () => {
+  // Log out lives in the avatar dropdown (a popover), so the menu has to be opened first.
+  await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Log out' }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
 });
@@ -148,7 +155,11 @@ test.describe('administrator flows', () => {
   test.describe.configure({ mode: 'serial' });
 
   test('the bootstrap admin can sign in and manage users', async () => {
-    await page.getByRole('button', { name: 'Log out' }).click().catch(() => {});
+    await page
+      .getByRole('button', { name: 'Account menu' })
+      .click()
+      .then(() => page.getByRole('button', { name: 'Log out' }).click())
+      .catch(() => {});
     await page.goto('/sign-in');
     await page.locator('input[type=email]').fill(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com');
     await page.locator('input[type=password]').fill(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123');

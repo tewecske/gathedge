@@ -1,9 +1,11 @@
 package webapp1.backend.service
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestDataSource}
 import webapp1.backend.db.{
+  EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
+  SqliteEmailVerificationTokenRepository,
   SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteUserRepository,
@@ -20,20 +22,37 @@ import zio.test._
   */
 object AuthServiceSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository & OAuthIdentityRepository] = {
-    TestDataSource.sqlite >>>
-      (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+  private val repoLayers: ZLayer[
+    Any,
+    Throwable,
+    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
+  ] = {
+    TestDataSource.sqlite >>> (
+      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live ++
+        SqliteEmailVerificationTokenRepository.live
+    )
   }
 
-  private val authServiceLayer: ZLayer[Any, Throwable, AuthService] =
-    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live
+  /** Every test but the verification suite runs on the shipped config, where the login gate is off. The recording
+    * mailer is what makes the emailed link readable — there is no other way to get at a token, by design.
+    */
+  private def authServiceLayer(requireEmailVerification: Boolean): ZLayer[Any, Throwable, AuthService & SentEmails] = {
+    val support = {
+      PasswordHasher.live ++ InMemoryRateLimiter.live ++ RecordingEmailSender.live ++
+        TestAuthLayers.configWith(requireEmailVerification)
+    }
+    val built = repoLayers ++ support
+    built >>> (AuthServiceLive.live ++ ZLayer.service[SentEmails])
+  }
 
-  def spec = suite("AuthService (SQLite)")(
+  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite)
+
+  private val coreSuite = suite("core")(
     test("signup, currentUser via session, login, logout invalidates the session") {
       for {
         authService <- ZIO.service[AuthService]
         signupResult <- authService.signup("user@example.com", "password123")
-        meAfterSignup <- authService.currentUser(signupResult._2)
+        meAfterSignup <- authService.currentUser(signupResult._2.get)
         loginResult <- authService.login("user@example.com", "password123")
         _ <- authService.logout(loginResult._2)
         meAfterLogout <- authService.currentUser(loginResult._2)
@@ -193,7 +212,141 @@ object AuthServiceSpec extends ZIOSpecDefault {
         )
       }
     },
-  ).provide(authServiceLayer)
+  ).provide(authServiceLayer(requireEmailVerification = false))
+
+  /** The gate itself. Everything here runs with `require-email-verification` on except the two tests that pin what
+    * changes when it is off — which is the whole point of the flag: the tokens are issued either way.
+    */
+  private val verificationSuite = {
+    suite("email verification")(
+      suite("with the login gate on")(
+        test("signup issues no session, and the emailed link is what opens one") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            signedUp <- authService.signup("verify-me@example.com", "password123")
+            blocked <- authService.login("verify-me@example.com", "password123").either
+            token <- recorded.lastVerificationToken
+            sent <- recorded.all
+            _ <- authService.verifyEmail(token.get)
+            loggedIn <- authService.login("verify-me@example.com", "password123")
+          } yield assertTrue(
+            signedUp._2.isEmpty,
+            !signedUp._1.emailVerified,
+            blocked == Left(AuthFailure.EmailNotVerified),
+            sent.map(_.to) == Vector("verify-me@example.com"),
+            loggedIn._1.emailVerified,
+          )
+        },
+        test("a token is single-use") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            _ <- authService.signup("once@example.com", "password123")
+            token <- recorded.lastVerificationToken
+            _ <- authService.verifyEmail(token.get)
+            again <- authService.verifyEmail(token.get).either
+          } yield assertTrue(again == Left(AuthFailure.InvalidVerificationToken))
+        },
+        test("an unknown token is refused the same way a spent one is") {
+          for {
+            authService <- ZIO.service[AuthService]
+            result <- authService.verifyEmail("not-a-real-token").either
+          } yield assertTrue(result == Left(AuthFailure.InvalidVerificationToken))
+        },
+        test("an expired token is refused") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            _ <- authService.signup("stale@example.com", "password123")
+            token <- recorded.lastVerificationToken
+            _ <- TestClock.adjust(AuthServiceLive.verificationValidity.plus(1.minute))
+            result <- authService.verifyEmail(token.get).either
+          } yield assertTrue(result == Left(AuthFailure.InvalidVerificationToken))
+        },
+        test("resending replaces the outstanding token, and the wrong password is still refused as such") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            _ <- authService.signup("resend@example.com", "password123")
+            first <- recorded.lastVerificationToken
+            _ <- authService.resendVerification("resend@example.com")
+            second <- recorded.lastVerificationToken
+            stale <- authService.verifyEmail(first.get).either
+            _ <- authService.verifyEmail(second.get)
+            // The gate is behind the password check, so an unverified account and a wrong password
+            // are indistinguishable to anyone who does not know the password.
+            wrongPassword <- authService.login("resend@example.com", "nope12345").either
+          } yield assertTrue(
+            first != second,
+            stale == Left(AuthFailure.InvalidVerificationToken),
+            wrongPassword == Left(AuthFailure.InvalidCredentials),
+          )
+        },
+        test("resending for an unknown address succeeds silently and sends nothing") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            result <- authService.resendVerification("nobody@example.com").either
+            sent <- recorded.all
+          } yield assertTrue(result == Right(()), sent.isEmpty)
+        },
+        test("a provider that asserts a verified email creates an already-verified account") {
+          for {
+            authService <- ZIO.service[AuthService]
+            created <- authService.loginWithOAuth(identity(OAuthProvider.Google, "g-v1", "oauth@example.com"))
+          } yield assertTrue(created._1.emailVerified)
+        },
+        test("a provider that asserts nothing creates an unverified one") {
+          for {
+            authService <- ZIO.service[AuthService]
+            created <- authService.loginWithOAuth(
+              OAuthIdentity(OAuthProvider.Microsoft, "m-v1", "unclaimed@example.com", emailVerified = false)
+            )
+          } yield assertTrue(!created._1.emailVerified)
+        },
+        test("linking a provider that vouches for the same address verifies the account") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            signedUp <- authService.signup("linked-verify@example.com", "password123")
+            _ <- authService.linkOAuth(
+              signedUp._1.id,
+              identity(OAuthProvider.Google, "g-v2", "linked-verify@example.com"),
+            )
+            loggedIn <- authService.login("linked-verify@example.com", "password123")
+            _ <- recorded.all
+          } yield assertTrue(loggedIn._1.emailVerified)
+        },
+      ).provide(authServiceLayer(requireEmailVerification = true)),
+      suite("with the login gate off")(
+        test("signup still opens a session and still sends a link") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            signedUp <- authService.signup("lenient@example.com", "password123")
+            loggedIn <- authService.login("lenient@example.com", "password123")
+            token <- recorded.lastVerificationToken
+          } yield assertTrue(
+            signedUp._2.isDefined,
+            !signedUp._1.emailVerified,
+            !loggedIn._1.emailVerified,
+            token.isDefined,
+          )
+        },
+        test("the link still verifies the account") {
+          for {
+            authService <- ZIO.service[AuthService]
+            recorded <- ZIO.service[SentEmails]
+            _ <- authService.signup("lenient-verify@example.com", "password123")
+            token <- recorded.lastVerificationToken
+            _ <- authService.verifyEmail(token.get)
+            loggedIn <- authService.login("lenient-verify@example.com", "password123")
+          } yield assertTrue(loggedIn._1.emailVerified)
+        },
+      ).provide(authServiceLayer(requireEmailVerification = false)),
+    )
+  }
 
   private def identity(provider: OAuthProvider, subject: String, email: String): OAuthIdentity = {
     OAuthIdentity(provider, subject, email, emailVerified = true)

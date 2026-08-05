@@ -6,6 +6,7 @@ import webapp1.frontend.pages.{
   AcceptInvitePage,
   AdminUserDetailPage,
   AdminUsersPage,
+  CheckInboxPage,
   ForbiddenPage,
   GroupDetailPage,
   GroupMembersPage,
@@ -15,6 +16,7 @@ import webapp1.frontend.pages.{
   SignInPage,
   SignUpPage,
   TodoPage,
+  VerifyEmailPage,
 }
 import webapp1.frontend.state.AppState
 import webapp1.shared.dto.AuthResponse
@@ -118,6 +120,10 @@ object App {
         GroupMembersPage.render(id)
       case Page.AcceptInvite(token) =>
         AcceptInvitePage.render(gate.signedIn, token)
+      case Page.VerifyEmail(token) =>
+        VerifyEmailPage.render(token)
+      case Page.CheckInbox =>
+        CheckInboxPage.render()
       case Page.Admin if gate.isAdmin =>
         AdminUsersPage.render()
       case Page.Admin =>

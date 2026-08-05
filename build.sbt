@@ -13,6 +13,7 @@ val laminarVersion = "17.2.1"
 val waypointVersion = "10.0.0-M7"
 val sqliteJdbcVersion = "3.53.2.0"
 val jbcryptVersion = "0.4"
+val angusMailVersion = "2.0.3"
 val logbackVersion = "1.5.38"
 val quillVersion = "4.8.6"
 val postgresqlVersion = "42.7.13"
@@ -29,6 +30,44 @@ ThisBuild / version := "0.1.0-SNAPSHOT"
 // version (normal "latest wins" resolution) instead of treating the eviction as a
 // hard build error.
 ThisBuild / evictionErrorLevel := Level.Warn
+
+/** Reads `.env` into a `Map` for the forked dev JVM.
+  *
+  * `.env` is `docker compose`'s file and nothing else ever read it: `sbt` has no notion of it, so a `GOOGLE_CLIENT_ID`
+  * filled in there reached the container but never `~backend/reStart`, and every `${?ENV_VAR}` override in
+  * `application.conf` silently kept its default. Most of them default to something workable in dev, which is why this
+  * went unnoticed — the OAuth ones default to `""`, and an unconfigured provider is one `/api/auth/providers` does not
+  * offer, so the sign-in buttons simply did not render.
+  *
+  * Values are taken literally: no `export` prefix, no quote-stripping beyond one matched pair, no `${VAR}`
+  * interpolation. `docker compose` is stricter than that; anything fancy enough to diverge belongs in the shell
+  * environment, which still wins (see `reStart / envVars` below).
+  *
+  * Being a setting, it is read when the build loads — edit `.env` and `reload`, since a re-`reStart` alone will not
+  * pick it up.
+  */
+def dotEnv(baseDir: File): Map[String, String] = {
+  val file = baseDir / ".env"
+  if (!file.exists) {
+    Map.empty[String, String]
+  } else {
+    IO.readLines(file)
+      .map(_.trim)
+      .filter(line => line.nonEmpty && !line.startsWith("#") && line.contains("="))
+      .map { line =>
+        val (key, rest) = line.span(_ != '=')
+        val value = rest.drop(1).trim
+        val unquoted = {
+          if (value.length >= 2 && (value.startsWith("\"") && value.endsWith("\"")))
+            value.substring(1, value.length - 1)
+          else
+            value
+        }
+        (key.trim, unquoted)
+      }
+      .toMap
+  }
+}
 
 lazy val commonSettings = Seq(
   scalacOptions ++=
@@ -90,6 +129,8 @@ lazy val backend = project
         "org.flywaydb" % "flyway-core" % flywayVersion,
         "org.flywaydb" % "flyway-database-postgresql" % flywayVersion,
         "org.mindrot" % "jbcrypt" % jbcryptVersion,
+        // Jakarta Mail implementation, used by SmtpEmailSender. Pulls jakarta.mail-api with it.
+        "org.eclipse.angus" % "angus-mail" % angusMailVersion,
         "dev.zio" %% "zio-test" % zioVersion % Test,
         "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
         "dev.zio" %% "zio-http-testkit" % zioHttpVersion % Test,
@@ -99,6 +140,9 @@ lazy val backend = project
     Compile / mainClass := Some("webapp1.backend.Main"),
     Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
     reStart / baseDirectory := (ThisBuild / baseDirectory).value,
+    // A real environment variable wins over the file, so `GOOGLE_CLIENT_ID=… sbt "~backend/reStart"`
+    // still overrides one set in `.env` — the same precedence `docker compose` gives it.
+    reStart / envVars := dotEnv((ThisBuild / baseDirectory).value) ++ sys.env,
   )
 
 lazy val frontend = project

@@ -3,10 +3,12 @@ package webapp1.backend
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import org.testcontainers.utility.DockerImageName
+import webapp1.backend.TestAuthLayers
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   DbDialect,
   FlywayMigrator,
+  PostgresEmailVerificationTokenRepository,
   PostgresGroupInvitationRepository,
   PostgresGroupMemberRepository,
   PostgresGroupPairRepository,
@@ -69,12 +71,13 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     containerDataSource >>> (
       PostgresUserRepository.live ++ PostgresSessionRepository.live ++ PostgresTodoRepository.live ++
         PostgresGroupRepository.live ++ PostgresGroupMemberRepository.live ++ PostgresGroupPairRepository.live ++
-        PostgresGroupInvitationRepository.live ++ PostgresOAuthIdentityRepository.live
+        PostgresGroupInvitationRepository.live ++ PostgresOAuthIdentityRepository.live ++
+        PostgresEmailVerificationTokenRepository.live
     )
   }
 
   private val layer = {
-    repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ EmailSender.live ++ AppConfig.live >>>
+    repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig >>>
       (AuthServiceLive.live ++ TodoServiceLive.live ++ GroupServiceLive.live ++ AdminServiceLive.live)
   }
 

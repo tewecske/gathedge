@@ -29,7 +29,16 @@ object AdminSeeder {
                 for {
                   hash <- hasher.hash(config.bootstrapAdmin.password)
                   now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-                  _ <- userRepo.insert(email, Some(hash), isAdmin = true, theme = "light", createdAt = now)
+                  // Verified on creation: nobody is going to read a link sent to a placeholder
+                  // address, and a bootstrap admin that cannot sign in defeats its own purpose.
+                  _ <- userRepo.insert(
+                    email,
+                    Some(hash),
+                    isAdmin = true,
+                    theme = "light",
+                    createdAt = now,
+                    emailVerifiedAt = Some(now),
+                  )
                   _ <- ZIO.logInfo(s"Bootstrap admin account created: $email")
                 } yield ()
               }

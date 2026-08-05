@@ -12,6 +12,12 @@ object Page {
   final case class GroupDetail(id: Long) extends Page
   final case class GroupMembers(id: Long) extends Page
   final case class AcceptInvite(token: String) extends Page
+
+  /** Where a verification link lands. Public: the account it verifies usually cannot sign in yet. */
+  final case class VerifyEmail(token: String) extends Page
+
+  /** Shown after a signup that did not sign the user in, and wherever a fresh link needs asking for. */
+  case object CheckInbox extends Page
   case object Settings extends Page
   case object Admin extends Page
   final case class AdminUserDetail(id: Long) extends Page
@@ -34,7 +40,7 @@ object Page {
     page match {
       case SignIn | SignUp =>
         AuthGuard.RequireAnon
-      case AcceptInvite(_) | Forbidden | NotFound =>
+      case AcceptInvite(_) | VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
         AuthGuard.Public
       case _ =>
         AuthGuard.RequireAuth
@@ -65,6 +71,12 @@ object AppRouter {
     decode = (token: String) => AcceptInvite(token),
     pattern = root / "invitations" / segment[String],
   )
+  private val verifyEmailRoute = Route(
+    encode = (p: VerifyEmail) => p.token,
+    decode = (token: String) => VerifyEmail(token),
+    pattern = root / "verify-email" / segment[String],
+  )
+  private val checkInboxRoute = Route.static(CheckInbox, root / "check-inbox")
   private val adminRoute = Route.static(Admin, root / "admin" / "users")
   private val adminUserDetailRoute = Route(
     encode = (p: AdminUserDetail) => p.id,
@@ -93,6 +105,10 @@ object AppRouter {
         s"GroupMembers:$id"
       case AcceptInvite(token) =>
         s"AcceptInvite:$token"
+      case VerifyEmail(token) =>
+        s"VerifyEmail:$token"
+      case CheckInbox =>
+        "CheckInbox"
       case Admin =>
         "Admin"
       case AdminUserDetail(id) =>
@@ -117,6 +133,8 @@ object AppRouter {
       withId(tag, "GroupDetail:")(GroupDetail.apply)
     } else if (tag.startsWith("AcceptInvite:")) {
       AcceptInvite(tag.stripPrefix("AcceptInvite:"))
+    } else if (tag.startsWith("VerifyEmail:")) {
+      VerifyEmail(tag.stripPrefix("VerifyEmail:"))
     } else if (tag.startsWith("AdminUserDetail:")) {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else {
@@ -131,6 +149,8 @@ object AppRouter {
           Groups
         case "Settings" =>
           Settings
+        case "CheckInbox" =>
+          CheckInbox
         case "Admin" =>
           Admin
         case "Forbidden" =>
@@ -152,6 +172,8 @@ object AppRouter {
         groupDetailRoute,
         groupMembersRoute,
         acceptInviteRoute,
+        verifyEmailRoute,
+        checkInboxRoute,
         adminRoute,
         adminUserDetailRoute,
         forbiddenRoute,

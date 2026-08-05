@@ -35,6 +35,15 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/auth/google/callback}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@localhost}
+      # Empty host = mail is logged to the container's stdout instead of sent. Under
+      # APP_ENV=production the backend refuses to boot with that plus verification required.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_START_TLS: ${SMTP_START_TLS:-true}
       NETTY_MAX_THREADS: ${NETTY_MAX_THREADS:-0}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75}
 

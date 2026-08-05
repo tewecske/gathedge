@@ -7,4 +7,3 @@ addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.7")
 
 // JSEnv implementation (not an AutoPlugin) for running Scala.js tests against a DOM.
 libraryDependencies += "org.scala-js" %% "scalajs-env-jsdom-nodejs" % "1.1.1"
-

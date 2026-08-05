@@ -10,9 +10,12 @@ import webapp1.shared.dto.{
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
+  ResendVerificationRequest,
   SetPasswordRequest,
   SignupRequest,
+  SignupResponse,
   UpdateThemeRequest,
+  VerifyEmailRequest,
 }
 import zio.*
 import zio.http.*
@@ -23,10 +26,10 @@ import RouteSupport.RequestContext
 
 /** Sessions, account settings, and the social sign-in redirects.
   *
-  * The eight JSON endpoints are implemented against `shared`'s `AuthEndpoints`, so the paths, the status codes and the
-  * bodies are not written here. The `Set-Cookie` header *is* part of those descriptions — see
-  * `ApiEndpoint.sessionCookie` for why it is described as optional — which is what lets a handler return a plain value
-  * and still set the session cookie.
+  * The JSON endpoints are implemented against `shared`'s `AuthEndpoints`, so the paths, the status codes and the bodies
+  * are not written here. The `Set-Cookie` header *is* part of those descriptions — see `ApiEndpoint.sessionCookie` for
+  * why it is described as optional — which is what lets a handler return a plain value and still set the session
+  * cookie.
   *
   * The two OAuth routes stay on the imperative DSL. Both are reached by top-level browser navigation, so success is a
   * 302 into the SPA and so is every failure: the reason travels as a short opaque code in the query string, because a
@@ -55,7 +58,9 @@ object AuthRoutes {
             authService <- ZIO.service[AuthService]
             cfg <- ZIO.service[AppConfig]
             result <- authService.signup(body.email, body.password, context.clientIp).mapError(ApiFailures.auth)
-          } yield (AuthResponse(result._1), sessionCookie(result._2, cfg))
+            // No session id means verification is mandatory here: the account exists but stays
+            // signed out until the emailed link is followed, so there is no cookie to set.
+          } yield (SignupResponse(result._1, signedIn = result._2.isDefined), result._2.flatMap(sessionCookie(_, cfg)))
         }
       )
   }
@@ -69,8 +74,32 @@ object AuthRoutes {
             context <- ZIO.service[RequestContext]
             authService <- ZIO.service[AuthService]
             cfg <- ZIO.service[AppConfig]
-            result <- authService.login(body.email, body.password, context.clientIp).mapError(ApiFailures.auth)
+            result <- authService.login(body.email, body.password, context.clientIp).mapError(ApiFailures.authLogin)
           } yield (AuthResponse(result._1), sessionCookie(result._2, cfg))
+        }
+      )
+  }
+
+  private val verifyEmailRoute = {
+    AuthEndpoints
+      .verifyEmail
+      .implementHandler(
+        handler { (body: VerifyEmailRequest) =>
+          ZIO.serviceWithZIO[AuthService](_.verifyEmail(body.token)).mapError(ApiFailures.verifyEmail)
+        }
+      )
+  }
+
+  private val resendVerificationRoute = {
+    AuthEndpoints
+      .resendVerification
+      .implementHandler(
+        handler { (body: ResendVerificationRequest) =>
+          for {
+            context <- ZIO.service[RequestContext]
+            authService <- ZIO.service[AuthService]
+            _ <- authService.resendVerification(body.email, context.clientIp).mapError(ApiFailures.resendVerification)
+          } yield ()
         }
       )
   }
@@ -363,7 +392,8 @@ object AuthRoutes {
     * `requestContext` aspect exactly the former, with the CSRF check spanning everything.
     */
   private val anonymousRoutes = {
-    Routes(signupRoute, loginRoute, logoutRoute) @@ RouteSupport.requestContext
+    Routes(signupRoute, loginRoute, logoutRoute, verifyEmailRoute, resendVerificationRoute) @@
+      RouteSupport.requestContext
   }
 
   /** Reachable without a session and needing none of the context the other anonymous routes do — the sign-in form reads

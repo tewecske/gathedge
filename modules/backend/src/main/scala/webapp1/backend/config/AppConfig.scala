@@ -19,7 +19,16 @@ object AppEnv {
   }
 }
 
-final case class AppSection(env: String, serverHost: String, serverPort: Int, publicBaseUrl: String)
+/** `requireEmailVerification` is the login gate only. Verification tokens are issued, emailed and redeemable whether or
+  * not it is set — switching it on is what makes an unverified account unable to sign in with a password.
+  */
+final case class AppSection(
+  env: String,
+  serverHost: String,
+  serverPort: Int,
+  publicBaseUrl: String,
+  requireEmailVerification: Boolean,
+)
 final case class DbSection(url: String, user: String, password: String)
 final case class SessionSection(cookieSecure: Boolean)
 final case class BootstrapAdminSection(email: String, password: String)
@@ -33,6 +42,13 @@ final case class MicrosoftSection(clientId: String, clientSecret: String, redire
 
 final case class OAuthSection(google: GoogleSection, microsoft: MicrosoftSection)
 
+/** An empty `host` switches SMTP off the same way an empty client id switches a provider off: [[EmailSender.live]] then
+  * falls back to the logging implementation, which is what makes the whole stack boot with no mail server at all.
+  */
+final case class SmtpSection(host: String, port: Int, username: String, password: String, startTls: Boolean)
+
+final case class MailSection(from: String, smtp: SmtpSection)
+
 /** `maxThreads` is handed straight to Netty's event loop group, where 0 means "decide for me" (2× available
   * processors), so that is the default here too.
   */
@@ -44,6 +60,7 @@ final case class AppConfig(
   session: SessionSection,
   bootstrapAdmin: BootstrapAdminSection,
   oauth: OAuthSection,
+  mail: MailSection,
   netty: NettySection,
 ) {
   def appEnv: AppEnv = AppEnv.parse(app.env)
@@ -63,6 +80,11 @@ final case class AppConfig(
 
   def configuredOAuthProviders: List[OAuthProvider] = OAuthProvider.all.filter(isOAuthConfigured)
 
+  /** No SMTP host means mail is logged rather than sent — fine in development, where the verification link is read off
+    * stdout, and refused in production by [[productionIssues]] once verification is mandatory.
+    */
+  def isMailConfigured: Boolean = mail.smtp.host.nonEmpty
+
   /** Settings that are fine for local development but unsafe in production. `Main` refuses to start while this is
     * non-empty, so a missing `${?ENV_VAR}` override can't silently downgrade a production deployment to development
     * defaults (session cookies without `Secure` being the worst of them).
@@ -80,6 +102,13 @@ final case class AppConfig(
         ),
         Option.when(db.password == AppConfig.developmentDbPassword)(
           "db.password is still the development default (set DB_PASSWORD)"
+        ),
+        // Mandatory verification with no way to send the link locks every new account out
+        // permanently — in dev the same combination is allowed, since LoggingEmailSender puts the
+        // link on stdout where a developer can follow it.
+        Option.when(app.requireEmailVerification && !isMailConfigured)(
+          "app.require-email-verification is on but no SMTP host is configured, so nobody could ever " +
+            "receive a verification link (set SMTP_HOST, or clear REQUIRE_EMAIL_VERIFICATION)"
         ),
       ).flatten
     }

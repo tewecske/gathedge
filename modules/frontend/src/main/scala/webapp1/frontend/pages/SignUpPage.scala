@@ -6,7 +6,7 @@ import webapp1.frontend.components.OAuthButtons
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.OAuthProvider
-import webapp1.shared.dto.{AuthResponse, ProvidersResponse, SignupRequest}
+import webapp1.shared.dto.{ProvidersResponse, SignupRequest, SignupResponse}
 import webapp1.shared.validation.Validation
 
 object SignUpPage {
@@ -98,7 +98,13 @@ private class SignUpPage {
           request
         }
         .flatMapSwitch(request => ApiClient.signup(request)) -->
-        Observer[Either[ApiError, AuthResponse]] {
+        Observer[Either[ApiError, SignupResponse]] {
+          // `signedIn` is false when the deployment requires a verified address: the account
+          // exists but has no session, so there is nothing to put in AppState and nowhere to go
+          // but the "check your inbox" page.
+          case Right(res) if !res.signedIn =>
+            inFlightVar.set(false)
+            AppRouter.router.pushState(Page.CheckInbox)
           case Right(res) =>
             inFlightVar.set(false)
             AppState.setUser(res.user)

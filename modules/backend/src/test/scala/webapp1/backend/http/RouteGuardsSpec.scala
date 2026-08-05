@@ -1,9 +1,11 @@
 package webapp1.backend.http
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.db.{
+  EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
+  SqliteEmailVerificationTokenRepository,
   SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteTodoRepository,
@@ -34,21 +36,24 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
   */
 object RouteGuardsSpec extends ZIOSpecDefault {
 
-  private val repoLayers
-    : ZLayer[Any, Throwable, UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository] = {
+  private val repoLayers: ZLayer[
+    Any,
+    Throwable,
+    UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
+  ] = {
     TestDataSource.sqlite >>> (
       SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
-        SqliteOAuthIdentityRepository.live
+        SqliteOAuthIdentityRepository.live ++ SqliteEmailVerificationTokenRepository.live
     )
   }
 
   private val layer: ZLayer[Any, Throwable, AuthService & AdminService & TodoService] = {
-    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>>
+    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
       (AuthServiceLive.live ++ AdminServiceLive.live ++ TodoServiceLive.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
-    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2))
+    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2.get))
   }
 
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, String] = {

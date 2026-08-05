@@ -2,7 +2,9 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{OAuthButtons, OAuthMessages}
+import webapp1.frontend.Page
+import webapp1.frontend.components.{AppShell, OAuthButtons, OAuthMessages}
+import webapp1.frontend.state.AppState
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{IdentitiesResponse, LinkedIdentity, SetPasswordRequest}
 import webapp1.shared.validation.Validation
@@ -10,7 +12,7 @@ import webapp1.shared.validation.Validation
 import OAuthProvider.display
 
 object SettingsPage {
-  def render(): HtmlElement = new SettingsPage().render()
+  def render(): HtmlElement = AppShell.render(Page.Settings, new SettingsPage().render())
 }
 
 /** Account settings: which social accounts are linked, and the password.
@@ -48,6 +50,21 @@ private class SettingsPage {
   private val reloadBus = new EventBus[Unit]()
   private val unlinkBus = new EventBus[OAuthProvider]()
   private val passwordSubmitBus = new EventBus[Unit]()
+  private val resendBus = new EventBus[Unit]()
+
+  /** The email card is driven off the session state rather than a fetch of its own: `/api/me` already carries
+    * `emailVerified`, and this page is only reachable with a session.
+    */
+  private val emailStatusSignal = {
+    AppState.currentUserSignal.map(_.map(user => (user.email, user.emailVerified)))
+  }
+
+  /** Also what the resend stream samples, so a click that outraces a session refresh cannot post an address that has
+    * meanwhile been verified.
+    */
+  private val unverifiedEmailSignal = {
+    AppState.currentUserSignal.map(_.filterNot(_.emailVerified).map(_.email))
+  }
 
   private val passwordStream = passwordSubmitBus.events.filterWith(inFlightSignal.not)
 
@@ -57,6 +74,7 @@ private class SettingsPage {
       h1(cls := "text-2xl font-bold", "Account settings"),
       child.maybe <-- noticeVar.signal.map(_.map(renderNotice)),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
+      renderEmail(),
       renderIdentities(),
       renderPasswordForm(),
       // One load on mount, and one after every successful mutation, so the lockout guard's view of
@@ -92,6 +110,63 @@ private class SettingsPage {
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
+      resendBus
+        .events
+        .sample(unverifiedEmailSignal)
+        .collect { case Some(email) =>
+          email
+        }
+        .flatMapSwitch(ApiClient.resendVerification) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_) =>
+            Var.set(errorVar -> None, noticeVar -> Some("Verification link sent — check your inbox."))
+          case Left(err) =>
+            Var.set(errorVar -> Some(err.message), noticeVar -> None)
+        },
+    )
+  }
+
+  /** The unverified half is shown whether or not the deployment enforces verification: an unproven address is worth
+    * fixing either way, and this page cannot see the server's `app.require-email-verification`.
+    */
+  private def renderEmail(): HtmlElement = {
+    div(
+      cls := "card bg-base-100 shadow",
+      div(
+        cls := "card-body",
+        h2(cls := "card-title text-lg", "Email address"),
+        child.maybe <--
+          emailStatusSignal.map(
+            _.map { case (email, verified) =>
+              renderEmailStatus(email, verified)
+            }
+          ),
+        child.maybe <--
+          emailStatusSignal.map(
+            _.collect { case (_, false) =>
+              renderResend()
+            }
+          ),
+      ),
+    )
+  }
+
+  private def renderEmailStatus(email: String, verified: Boolean): HtmlElement = {
+    div(
+      cls := "flex items-center justify-between gap-4",
+      span(email),
+      if (verified)
+        span(cls := "badge badge-success", "Verified")
+      else
+        span(cls := "badge badge-warning", "Not verified"),
+    )
+  }
+
+  private def renderResend(): HtmlElement = {
+    div(
+      cls := "flex items-center justify-between gap-4 mt-2",
+      p(cls := "text-sm opacity-70", "Click the link we emailed you, or send yourself a new one."),
+      button(cls := "btn btn-sm", typ := "button", onClick.mapToUnit --> resendBus.writer, "Resend verification email"),
     )
   }
 
@@ -162,13 +237,16 @@ private class SettingsPage {
         h2(cls := "card-title text-lg", child.text <-- hasPasswordSignal.map(passwordFormTitle)),
         fieldSet(
           cls := "fieldset",
+          // `label`, not `legend`: a fieldset promotes its *first* legend child to the caption over the
+          // top border no matter where it sits, which pulled "New password" above the current-password
+          // field. Same class, so it renders identically.
           // An account created through a social sign-in has no password to prove, so the field
           // that would ask for it is not rendered at all.
           child.maybe <--
             hasPasswordSignal.map(
               Option.when(_)(
                 div(
-                  legend(cls := "fieldset-legend", "Current password"),
+                  label(cls := "fieldset-legend", "Current password"),
                   input(
                     cls := "input w-full",
                     typ := "password",
@@ -177,7 +255,7 @@ private class SettingsPage {
                 )
               )
             ),
-          legend(cls := "fieldset-legend", "New password"),
+          label(cls := "fieldset-legend", "New password"),
           input(
             cls := "input w-full",
             typ := "password",

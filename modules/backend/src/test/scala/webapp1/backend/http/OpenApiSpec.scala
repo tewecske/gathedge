@@ -79,6 +79,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/login",
               "/api/auth/logout",
               "/api/auth/providers",
+              "/api/auth/verify",
+              "/api/auth/verification/resend",
               "/api/me",
               "/api/me/theme",
               "/api/me/identities",
@@ -140,10 +142,16 @@ object OpenApiSpec extends ZIOSpecDefault {
           statuses ==
             Map(
               ("POST", "/api/auth/signup") -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
-              ("POST", "/api/auth/login") -> Set(Ok, BadRequest, Unauthorized, Conflict, TooManyRequests),
+              // The 403 is `AuthFailure.EmailNotVerified` — the service's own answer, not an aspect's, which is why
+              // this is the one path outside groups/invitations that documents one.
+              ("POST", "/api/auth/login") -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests),
               ("POST", "/api/auth/logout") -> Set(NoContent),
               // Public, no input, no aspect: the one operation in the API that documents no failure status at all.
               ("GET", "/api/auth/providers") -> Set(Ok),
+              // One 400 for an unknown, spent or expired token alike; nothing else is reachable.
+              ("POST", "/api/auth/verify") -> Set(NoContent, BadRequest),
+              // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
+              ("POST", "/api/auth/verification/resend") -> Set(NoContent, BadRequest, TooManyRequests),
               ("GET", "/api/me") -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme") -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/me/identities") -> Set(Ok, Unauthorized),
@@ -196,14 +204,18 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 96,
+          declared == 100,
           declared < statuses.size * 7,
-          // `GroupService`'s own answer, on the two resources it backs — never the CSRF or `adminOnly` aspect's.
-          describes(Forbidden).forall { case (_, path) =>
-            path.startsWith("/api/groups") || path.contains("invitation")
+          // A service's own answer, never the CSRF or `adminOnly` aspect's: `GroupService` on the two resources it
+          // backs, plus `AuthService`'s unverified-email refusal on login.
+          describes(Forbidden).forall { case (method, path) =>
+            path.startsWith("/api/groups") || path.contains("invitation") ||
+            (method, path) ==
+              ("POST", "/api/auth/login")
           },
-          // The rate limiter wraps signup and login and nothing else.
-          describes(TooManyRequests) == Set(("POST", "/api/auth/signup"), ("POST", "/api/auth/login")),
+          // The rate limiter wraps signup, login and the verification resend, and nothing else.
+          describes(TooManyRequests) ==
+            Set(("POST", "/api/auth/signup"), ("POST", "/api/auth/login"), ("POST", "/api/auth/verification/resend")),
           describes(InternalServerError).isEmpty,
         )
       },
@@ -232,6 +244,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/login"),
               ("POST", "/api/auth/logout"),
               ("GET", "/api/auth/providers"),
+              // Both are reached by an account that cannot sign in yet, so neither can be behind the session.
+              ("POST", "/api/auth/verify"),
+              ("POST", "/api/auth/verification/resend"),
               ("GET", "/api/invitations/{token}"),
             )
         )
@@ -241,7 +256,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 5,
+          guarded.size == operations.size - 7,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

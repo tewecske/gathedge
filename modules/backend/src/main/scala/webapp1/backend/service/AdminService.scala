@@ -41,7 +41,14 @@ final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepos
     extends AdminService {
 
   private def toDomain(row: UserRow): User = {
-    User(row.id, row.email, row.isAdmin, Theme.fromString(row.theme).getOrElse(Theme.Light), row.createdAt.toString)
+    User(
+      row.id,
+      row.email,
+      row.isAdmin,
+      Theme.fromString(row.theme).getOrElse(Theme.Light),
+      row.createdAt.toString,
+      row.emailVerifiedAt.isDefined,
+    )
   }
 
   private def requireUser(id: Long): IO[AdminFailure, UserRow] = {
@@ -70,7 +77,9 @@ final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepos
       _ <- ZIO.when(existing.isDefined)(ZIO.fail(AdminFailure.DuplicateEmail))
       hash <- hasher.hash(password).orDie
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, "light", now).orDie
+      // An administrator creating an account vouches for the address, so it starts verified — the
+      // person never sees a signup form to trigger a verification mail from.
+      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, "light", now, emailVerifiedAt = Some(now)).orDie
       _ <- audit(actingAdminId, s"created user '$normalizedEmail' (id=${row.id}, isAdmin=$isAdmin)")
     } yield toDomain(row)
   }

@@ -1,11 +1,16 @@
 package webapp1.backend.http
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
-import webapp1.backend.db.{SqliteOAuthIdentityRepository, SqliteSessionRepository, SqliteUserRepository}
+import webapp1.backend.db.{
+  SqliteEmailVerificationTokenRepository,
+  SqliteOAuthIdentityRepository,
+  SqliteSessionRepository,
+  SqliteUserRepository,
+}
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{AuthService, AuthServiceLive, InMemoryRateLimiter, OAuthClients}
-import webapp1.shared.dto.{AuthResponse, ErrorResponse, LoginRequest, SignupRequest}
+import webapp1.shared.dto.{AuthResponse, ErrorResponse, LoginRequest, SignupRequest, SignupResponse}
 import zio.*
 import zio.http.*
 import zio.http.netty.NettyConfig
@@ -23,11 +28,15 @@ object AuthFlowSpec extends ZIOSpecDefault {
 
   private val services: ZLayer[Any, Throwable, AuthService & OAuthClients & AppConfig] = {
     val repos = {
-      TestDataSource.sqlite >>>
-        (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+      TestDataSource.sqlite >>> (
+        SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live ++
+          SqliteEmailVerificationTokenRepository.live
+      )
     }
-    AppConfig.live ++
-      ((repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live) ++
+    AppConfig.live ++ (
+      (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthServiceLive.live
+    ) ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
   }
 
@@ -86,7 +95,9 @@ object AuthFlowSpec extends ZIOSpecDefault {
         } yield assertTrue(
           signup.status == Status.Created,
           cookie.exists(_.nonEmpty),
-          signupBody.fromJson[AuthResponse].map(_.user.email) == Right("wire@example.com"),
+          signupBody.fromJson[SignupResponse].map(_.user.email) == Right("wire@example.com"),
+          // Verification is off in the test config, so signup still hands back a session.
+          signupBody.fromJson[SignupResponse].map(_.signedIn) == Right(true),
           me.status == Status.Ok,
           meBody.fromJson[AuthResponse].map(_.user.email) == Right("wire@example.com"),
           logout.status == Status.NoContent,

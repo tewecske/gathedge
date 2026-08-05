@@ -1,6 +1,6 @@
 package webapp1.backend.service
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   GroupInvitationRepository,
@@ -30,7 +30,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
   // repoLayer is referenced twice below; ZIO memoizes same-instance layers within
   // one composition, so both branches share a single underlying (SQLite) DB.
   private val layer: ZLayer[Any, Throwable, GroupService & GroupInvitationRepository & UserRepository] =
-    repoLayer ++ ((repoLayer ++ EmailSender.live ++ AppConfig.live) >>> GroupServiceLive.live)
+    repoLayer ++ ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
 
   def spec = suite("GroupService (SQLite)")(
     test("creating a group makes the creator an admin member") {
@@ -120,8 +120,8 @@ object GroupServiceSpec extends ZIOSpecDefault {
         service <- ZIO.service[GroupService]
         userRepo <- ZIO.service[UserRepository]
         now0 <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        admin1 <- userRepo.insert("admin1@twoadmins.example.com", None, isAdmin = false, "light", now0)
-        admin2 <- userRepo.insert("admin2@twoadmins.example.com", None, isAdmin = false, "light", now0)
+        admin1 <- userRepo.insert("admin1@twoadmins.example.com", None, isAdmin = false, "light", now0, Some(now0))
+        admin2 <- userRepo.insert("admin2@twoadmins.example.com", None, isAdmin = false, "light", now0, Some(now0))
         group <- service.createGroup(admin1.id, "Two Admins Co")
         invitationRepo <- ZIO.service[GroupInvitationRepository]
         now <- Clock.currentTime(TimeUnit.MILLISECONDS)

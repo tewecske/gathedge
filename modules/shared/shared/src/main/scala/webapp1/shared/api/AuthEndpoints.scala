@@ -5,9 +5,12 @@ import webapp1.shared.dto.{
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
+  ResendVerificationRequest,
   SetPasswordRequest,
   SignupRequest,
+  SignupResponse,
   UpdateThemeRequest,
+  VerifyEmailRequest,
 }
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -21,27 +24,63 @@ import ApiSchemas.given
   * The two Google OAuth routes are *not* here. They are top-level browser navigations whose success and failure are
   * both redirects rather than bodies, so they stay on the imperative DSL in `AuthRoutes` — see the note there.
   *
-  * These are the only endpoints in the API that declare 429: the rate limiter lives in `AuthService` and only signup
-  * and login go through it.
+  * These are the only endpoints in the API that declare 429: the rate limiter lives in `AuthService` and signup, login
+  * and the verification resend are all that go through it.
+  *
+  * [[login]] is also the only path outside `/api/groups` and `/api/invitations` that declares 403, and for the same
+  * reason those do: the *service* raises it rather than an aspect. `AuthFailure.EmailNotVerified` is an answer to a
+  * well-formed request with the right password, and the sign-in form renders it as an offer to resend the link.
   */
 object AuthEndpoints {
 
+  /** Answers `SignupResponse` rather than `AuthResponse` because a successful signup does not always sign anybody in:
+    * with `app.require-email-verification` on, the account exists but has no session until the emailed link is
+    * followed, and `signedIn` is the only way the browser can tell (a missing `Set-Cookie` is invisible to `fetch`).
+    */
   val signup = {
     Endpoint(Method.POST / "api" / "auth" / "signup")
       .in[SignupRequest]
       .withCodecError
-      .out[AuthResponse](Status.Created)
+      .out[SignupResponse](Status.Created)
       .outHeader(sessionCookie)
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict, failure.tooManyRequests)
   }
 
+  /** 403 is `AuthFailure.EmailNotVerified`: the password was right, but the address has never been proven and this
+    * deployment requires that. Distinct from the 401 a wrong password gets, so the form can offer a resend rather than
+    * telling the user to check their typing.
+    */
   val login = {
     Endpoint(Method.POST / "api" / "auth" / "login")
       .in[LoginRequest]
       .withCodecError
       .out[AuthResponse]
       .outHeader(sessionCookie)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict, failure.tooManyRequests)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.conflict, failure.tooManyRequests)
+  }
+
+  /** Redeems the token out of a verification link. Public: the whole point is that the account it verifies usually
+    * cannot sign in yet. 400 covers a token that is unknown, already used, or expired — one answer for all three, so
+    * the token space cannot be probed.
+    */
+  val verifyEmail = {
+    Endpoint(Method.POST / "api" / "auth" / "verify")
+      .in[VerifyEmailRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outFailure(failure.badRequest)
+  }
+
+  /** Sends a fresh verification link. Answers 204 for an unknown address and an already-verified one alike — saying
+    * which is which would make this an account-enumeration oracle — so the only failure a caller ever sees is the rate
+    * limiter's 429.
+    */
+  val resendVerification = {
+    Endpoint(Method.POST / "api" / "auth" / "verification" / "resend")
+      .in[ResendVerificationRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outErrors(failure.badRequest, failure.tooManyRequests)
   }
 
   /** Answers 204 whether or not there was a session to end, and always sends the already-expired cookie back.
@@ -133,6 +172,18 @@ object AuthEndpoints {
     * from. Nothing else should reach for it — the implementations and the client name the endpoints individually.
     */
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
-    List(signup, login, logout, me, updateTheme, providers, identities, unlinkIdentity, setPassword)
+    List(
+      signup,
+      login,
+      logout,
+      me,
+      updateTheme,
+      providers,
+      identities,
+      unlinkIdentity,
+      setPassword,
+      verifyEmail,
+      resendVerification,
+    )
   }
 }

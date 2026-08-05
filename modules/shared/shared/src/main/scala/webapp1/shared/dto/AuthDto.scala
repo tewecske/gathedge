@@ -9,6 +9,22 @@ final case class UpdateThemeRequest(theme: Theme) derives JsonCodec
 
 final case class AuthResponse(user: User) derives JsonCodec
 
+/** Signup's own response, because signup is the one place where succeeding does not always mean being signed in.
+  *
+  * With `app.require-email-verification` on, the account is created but gets no session until the emailed link is
+  * followed. The browser cannot tell that from the response headers — `Set-Cookie` is a forbidden response header, so a
+  * missing one is invisible to `fetch` — hence `signedIn` as an ordinary field.
+  */
+final case class SignupResponse(user: User, signedIn: Boolean) derives JsonCodec
+
+/** The token out of a verification link, posted back by the SPA page the link lands on. */
+final case class VerifyEmailRequest(token: String) derives JsonCodec
+
+/** Asks for a fresh verification link. Carries the address rather than reading it off a session: the account that needs
+  * one is typically the account that cannot sign in.
+  */
+final case class ResendVerificationRequest(email: String) derives JsonCodec
+
 /** One social account linked to the signed-in user. `email` is whatever the provider reported when the link was made,
   * shown so the user can tell two accounts at the same provider apart; it is never what a sign-in matches on.
   */

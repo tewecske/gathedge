@@ -23,8 +23,20 @@ private class SignInPage {
     */
   private val errorVar: Var[Option[String]] = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
   private val errorSignal = errorVar.signal
+
+  /** Seeded the same way from `?verified=1`, which is where [[VerifyEmailPage]] sends a freshly verified account. */
+  private val noticeVar: Var[Option[String]] = {
+    Var(OAuthMessages.queryParam("verified").map(_ => "Your email address is verified. Sign in to continue."))
+  }
+  private val noticeSignal = noticeVar.signal
+
+  /** Set when the server answers 403, i.e. the password was right but the address is unverified. That is the only
+    * moment offering a resend makes sense — before it, the address may not even have an account.
+    */
+  private val canResendVar = Var(false)
   private val inFlightVar = Var(false)
   private val inFlightSignal = inFlightVar.signal
+  private val resendBus = new EventBus[Unit]()
   private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
   private val providersSignal = providersVar.signal
   private val hasProvidersSignal = providersSignal.map(_.nonEmpty).distinct
@@ -49,7 +61,9 @@ private class SignInPage {
         div(
           cls := "card-body",
           h1(cls := "card-title", "Sign in"),
+          child.maybe <-- noticeSignal.map(_.map(renderNotice)),
           child.maybe <-- errorSignal.map(_.map(renderError)),
+          child.maybe <-- canResendVar.signal.map(Option.when(_)(resendBlock)),
           fieldSet(
             cls := "fieldset",
             legend(cls := "fieldset-legend", "Email"),
@@ -88,7 +102,8 @@ private class SignInPage {
             // The password form still works; offering no social buttons is the right degraded state.
             providersVar.set(Nil)
         },
-      submitStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None)),
+      submitStream -->
+        Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None, canResendVar -> false)),
       submitStream.flatMapSwitch(_ => login()) -->
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>
@@ -96,8 +111,40 @@ private class SignInPage {
             AppState.setUser(res.user)
             AppRouter.router.pushState(Page.Home)
           case Left(err) =>
-            Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+            Var.set(
+              inFlightVar -> false,
+              errorVar -> Some(err.message),
+              // 403 here means exactly one thing: the credentials were right and the address is
+              // not verified. Anything else is a reason a resend would not help with.
+              canResendVar -> (err.status == 403),
+            )
         },
+      resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(emailVar.now())) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_) =>
+            Var.set(
+              canResendVar -> false,
+              errorVar -> None,
+              noticeVar -> Some("If that address needs verifying, a new link is on its way."),
+            )
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+        },
+    )
+  }
+
+  /** Deliberately not wired to the notice above: a resend only ever reports that *something* was sent, never whether
+    * the address has an account, so the copy stays the same as the one [[CheckInboxPage]] shows.
+    */
+  private lazy val resendBlock: HtmlElement = {
+    div(
+      cls := "mt-2",
+      button(
+        cls := "btn btn-outline btn-sm w-full",
+        typ := "button",
+        onClick.mapToUnit --> resendBus.writer,
+        "Resend verification email",
+      ),
     )
   }
 
@@ -107,5 +154,9 @@ private class SignInPage {
 
   private def renderError(message: String): HtmlElement = {
     div(role := "alert", cls := "alert alert-error", span(message))
+  }
+
+  private def renderNotice(message: String): HtmlElement = {
+    div(role := "status", cls := "alert alert-success", span(message))
   }
 }

@@ -1,9 +1,11 @@
 package webapp1.backend.service
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.db.{
+  EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
+  SqliteEmailVerificationTokenRepository,
   SqliteOAuthIdentityRepository,
   SqliteSessionRepository,
   SqliteUserRepository,
@@ -15,15 +17,23 @@ import zio.test._
 
 object AdminServiceSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[Any, Throwable, UserRepository & SessionRepository & OAuthIdentityRepository] = {
-    TestDataSource.sqlite >>>
-      (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+  private val repoLayers: ZLayer[
+    Any,
+    Throwable,
+    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
+  ] = {
+    TestDataSource.sqlite >>> (
+      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live ++
+        SqliteEmailVerificationTokenRepository.live
+    )
   }
 
   // AuthService shares the same DataSource so a session issued by a login can be checked against
   // the effect an admin password reset has on it.
-  private val layer: ZLayer[Any, Throwable, AdminService & AuthService] =
-    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> (AdminServiceLive.live ++ AuthServiceLive.live)
+  private val layer: ZLayer[Any, Throwable, AdminService & AuthService] = {
+    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+      (AdminServiceLive.live ++ AuthServiceLive.live)
+  }
 
   def spec = suite("AdminService (SQLite)")(
     test("creates a user and lists it") {

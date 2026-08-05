@@ -1,8 +1,13 @@
 package webapp1.backend.http
 
-import webapp1.backend.TestDataSource
+import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
-import webapp1.backend.db.{SqliteOAuthIdentityRepository, SqliteSessionRepository, SqliteUserRepository}
+import webapp1.backend.db.{
+  SqliteEmailVerificationTokenRepository,
+  SqliteOAuthIdentityRepository,
+  SqliteSessionRepository,
+  SqliteUserRepository,
+}
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{
   AuthService,
@@ -63,11 +68,15 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
 
   private val layer = {
     val repos = {
-      TestDataSource.sqlite >>>
-        (SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live)
+      TestDataSource.sqlite >>> (
+        SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live ++
+          SqliteEmailVerificationTokenRepository.live
+      )
     }
-    AppConfig.live ++ stubClients ++
-      ((repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live) >>> AuthServiceLive.live)
+    AppConfig.live ++ stubClients ++ (
+      (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthServiceLive.live
+    )
   }
 
   private val stateCookieName = "oauth_state"
@@ -97,7 +106,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
     ZIO.serviceWithZIO[AuthService] { service =>
       orDieWithFailure(service.signup(email, "password123")).map { case (user, session) =>
-        (user.id, session)
+        (user.id, session.get)
       }
     }
   }

@@ -23,12 +23,15 @@ import webapp1.shared.dto.{
   LinkedIdentity,
   LoginRequest,
   ProvidersResponse,
+  ResendVerificationRequest,
   SetPasswordRequest,
   SignupRequest,
+  SignupResponse,
   UpdateRoleRequest,
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
   UpdateUserRequest,
+  VerifyEmailRequest,
 }
 import zio.schema.{DeriveSchema, Schema}
 
@@ -59,7 +62,10 @@ object ApiSchemas {
   given Schema[InvitationInfo] = DeriveSchema.gen[InvitationInfo]
 
   given Schema[AuthResponse] = DeriveSchema.gen[AuthResponse]
+  given Schema[SignupResponse] = DeriveSchema.gen[SignupResponse]
   given Schema[SignupRequest] = DeriveSchema.gen[SignupRequest]
+  given Schema[VerifyEmailRequest] = DeriveSchema.gen[VerifyEmailRequest]
+  given Schema[ResendVerificationRequest] = DeriveSchema.gen[ResendVerificationRequest]
   given Schema[LoginRequest] = DeriveSchema.gen[LoginRequest]
   given Schema[UpdateThemeRequest] = DeriveSchema.gen[UpdateThemeRequest]
   given Schema[LinkedIdentity] = DeriveSchema.gen[LinkedIdentity]
