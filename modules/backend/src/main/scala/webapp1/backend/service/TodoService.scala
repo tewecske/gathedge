@@ -18,6 +18,17 @@ trait TodoService {
   def moveTodo(userId: Long, id: Long, newStatus: TodoStatus): IO[TodoFailure, TodoItem]
 }
 
+object TodoService {
+  def addTodo(userId: Long, text: String): ZIO[TodoService, TodoFailure, TodoItem] =
+    ZIO.serviceWithZIO[TodoService](_.addTodo(userId, text))
+
+  def listTodos(userId: Long): URIO[TodoService, List[TodoItem]] =
+    ZIO.serviceWithZIO[TodoService](_.listTodos(userId))
+
+  def moveTodo(userId: Long, id: Long, newStatus: TodoStatus): ZIO[TodoService, TodoFailure, TodoItem] =
+    ZIO.serviceWithZIO[TodoService](_.moveTodo(userId, id, newStatus))
+}
+
 final class TodoServiceLive(repo: TodoRepository) extends TodoService {
 
   private def toDomain(row: TodoItemRow): TodoItem = {

@@ -16,7 +16,7 @@ object InvitationRoutes {
     InvitationEndpoints.getInvitation
       .implementHandler(
         handler { (token: String) =>
-          ZIO.serviceWithZIO[GroupService](_.getInvitationInfo(token)).mapError(ApiFailures.group)
+          GroupService.getInvitationInfo(token).mapError(ApiFailures.group)
         }
       )
   }
@@ -25,11 +25,9 @@ object InvitationRoutes {
     InvitationEndpoints.acceptInvitation
       .implementHandler(
         handler { (token: String) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            group        <- groupService.acceptInvitation(user.id, user.email, token).mapError(ApiFailures.group)
-          } yield group
+          withContext { (user: User) =>
+            GroupService.acceptInvitation(user.id, user.email, token).mapError(ApiFailures.group)
+          }
         }
       )
   }

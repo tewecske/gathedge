@@ -13,37 +13,25 @@ object GroupRoutes {
     GroupEndpoints.createGroup
       .implementHandler(
         handler { (body: CreateGroupRequest) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            group        <- groupService.createGroup(user.id, body.name).mapError(ApiFailures.group)
-          } yield group
+          withContext { (user: User) =>
+            GroupService.createGroup(user.id, body.name).mapError(ApiFailures.group)
+          }
         }
       )
   }
 
   private val listGroupsRoute = {
     GroupEndpoints.listGroups
-      .implementHandler(
-        handler { (_: Unit) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            groups       <- groupService.myGroups(user.id)
-          } yield groups
-        }
-      )
+      .implementHandler(handler((_: Unit) => withContext((user: User) => GroupService.myGroups(user.id))))
   }
 
   private val getGroupRoute = {
     GroupEndpoints.getGroup
       .implementHandler(
         handler { (groupId: Long) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            group        <- groupService.getGroup(user.id, groupId).mapError(ApiFailures.group)
-          } yield group
+          withContext { (user: User) =>
+            GroupService.getGroup(user.id, groupId).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -52,11 +40,9 @@ object GroupRoutes {
     GroupEndpoints.deleteGroup
       .implementHandler(
         handler { (groupId: Long) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            _            <- groupService.deleteGroup(user.id, groupId).mapError(ApiFailures.group)
-          } yield ()
+          withContext { (user: User) =>
+            GroupService.deleteGroup(user.id, groupId).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -65,11 +51,9 @@ object GroupRoutes {
     GroupEndpoints.listPairs
       .implementHandler(
         handler { (groupId: Long) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            pairs        <- groupService.listPairs(user.id, groupId).mapError(ApiFailures.group)
-          } yield pairs
+          withContext { (user: User) =>
+            GroupService.listPairs(user.id, groupId).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -78,13 +62,11 @@ object GroupRoutes {
     GroupEndpoints.addPair
       .implementHandler(
         handler { (groupId: Long, body: CreatePairRequest) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            pair         <- groupService
-                              .addPair(user.id, user.email, groupId, body.source, body.target)
-                              .mapError(ApiFailures.group)
-          } yield pair
+          withContext { (user: User) =>
+            GroupService
+              .addPair(user.id, user.email, groupId, body.source, body.target)
+              .mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -93,11 +75,9 @@ object GroupRoutes {
     GroupEndpoints.listMembers
       .implementHandler(
         handler { (groupId: Long) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            members      <- groupService.listMembers(user.id, groupId).mapError(ApiFailures.group)
-          } yield members
+          withContext { (user: User) =>
+            GroupService.listMembers(user.id, groupId).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -106,11 +86,9 @@ object GroupRoutes {
     GroupEndpoints.removeMember
       .implementHandler(
         handler { (groupId: Long, targetUserId: Long) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            _            <- groupService.removeMember(user.id, groupId, targetUserId).mapError(ApiFailures.group)
-          } yield ()
+          withContext { (user: User) =>
+            GroupService.removeMember(user.id, groupId, targetUserId).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -119,11 +97,9 @@ object GroupRoutes {
     GroupEndpoints.updateMemberRole
       .implementHandler(
         handler { (groupId: Long, targetUserId: Long, body: UpdateRoleRequest) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            _            <- groupService.updateMemberRole(user.id, groupId, targetUserId, body.role).mapError(ApiFailures.group)
-          } yield ()
+          withContext { (user: User) =>
+            GroupService.updateMemberRole(user.id, groupId, targetUserId, body.role).mapError(ApiFailures.group)
+          }
         }
       )
   }
@@ -132,11 +108,9 @@ object GroupRoutes {
     GroupEndpoints.inviteMember
       .implementHandler(
         handler { (groupId: Long, body: InviteMemberRequest) =>
-          for {
-            user         <- ZIO.service[User]
-            groupService <- ZIO.service[GroupService]
-            _            <- groupService.inviteMember(user.id, groupId, body.email, body.role).mapError(ApiFailures.group)
-          } yield ()
+          withContext { (user: User) =>
+            GroupService.inviteMember(user.id, groupId, body.email, body.role).mapError(ApiFailures.group)
+          }
         }
       )
   }

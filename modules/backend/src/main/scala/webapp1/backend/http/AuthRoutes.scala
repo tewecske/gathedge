@@ -52,14 +52,16 @@ object AuthRoutes {
     AuthEndpoints.signup
       .implementHandler(
         handler { (body: SignupRequest) =>
-          for {
-            context     <- ZIO.service[RequestContext]
-            authService <- ZIO.service[AuthService]
-            cfg         <- ZIO.service[AppConfig]
-            result      <- authService.signup(body.email, body.password, context.clientIp).mapError(ApiFailures.auth)
-            // No session id means verification is mandatory here: the account exists but stays
-            // signed out until the emailed link is followed, so there is no cookie to set.
-          } yield (SignupResponse(result._1, signedIn = result._2.isDefined), result._2.flatMap(sessionCookie(_, cfg)))
+          withContext { (context: RequestContext, cfg: AppConfig) =>
+            AuthService
+              .signup(body.email, body.password, context.clientIp)
+              .mapError(ApiFailures.auth)
+              // No session id means verification is mandatory here: the account exists but stays
+              // signed out until the emailed link is followed, so there is no cookie to set.
+              .map { case (user, sessionId) =>
+                (SignupResponse(user, signedIn = sessionId.isDefined), sessionId.flatMap(sessionCookie(_, cfg)))
+              }
+          }
         }
       )
   }
@@ -68,12 +70,12 @@ object AuthRoutes {
     AuthEndpoints.login
       .implementHandler(
         handler { (body: LoginRequest) =>
-          for {
-            context     <- ZIO.service[RequestContext]
-            authService <- ZIO.service[AuthService]
-            cfg         <- ZIO.service[AppConfig]
-            result      <- authService.login(body.email, body.password, context.clientIp).mapError(ApiFailures.authLogin)
-          } yield (AuthResponse(result._1), sessionCookie(result._2, cfg))
+          withContext { (context: RequestContext, cfg: AppConfig) =>
+            AuthService
+              .login(body.email, body.password, context.clientIp)
+              .mapError(ApiFailures.authLogin)
+              .map { case (user, sessionId) => (AuthResponse(user), sessionCookie(sessionId, cfg)) }
+          }
         }
       )
   }
@@ -81,9 +83,7 @@ object AuthRoutes {
   private val verifyEmailRoute = {
     AuthEndpoints.verifyEmail
       .implementHandler(
-        handler { (body: VerifyEmailRequest) =>
-          ZIO.serviceWithZIO[AuthService](_.verifyEmail(body.token)).mapError(ApiFailures.verifyEmail)
-        }
+        handler((body: VerifyEmailRequest) => AuthService.verifyEmail(body.token).mapError(ApiFailures.verifyEmail))
       )
   }
 
@@ -91,11 +91,9 @@ object AuthRoutes {
     AuthEndpoints.resendVerification
       .implementHandler(
         handler { (body: ResendVerificationRequest) =>
-          for {
-            context     <- ZIO.service[RequestContext]
-            authService <- ZIO.service[AuthService]
-            _           <- authService.resendVerification(body.email, context.clientIp).mapError(ApiFailures.resendVerification)
-          } yield ()
+          withContext { (context: RequestContext) =>
+            AuthService.resendVerification(body.email, context.clientIp).mapError(ApiFailures.resendVerification)
+          }
         }
       )
   }
@@ -104,32 +102,29 @@ object AuthRoutes {
     AuthEndpoints.logout
       .implementHandler(
         handler { (_: Unit) =>
-          for {
-            context     <- ZIO.service[RequestContext]
-            authService <- ZIO.service[AuthService]
-            cfg         <- ZIO.service[AppConfig]
+          withContext { (context: RequestContext, cfg: AppConfig) =>
             // Logging out with no session cookie is a no-op, not an error.
-            _           <- ZIO.foreachDiscard(context.sessionId)(authService.logout)
-          } yield Some(Header.SetCookie(SessionAuth.expiredSessionCookie(cfg.session.cookieSecure)))
+            ZIO
+              .foreachDiscard(context.sessionId)(AuthService.logout)
+              .as(Some(Header.SetCookie(SessionAuth.expiredSessionCookie(cfg.session.cookieSecure))))
+          }
         }
       )
   }
 
   private val meRoute = {
-    AuthEndpoints.me.implementHandler(handler((_: Unit) => ZIO.serviceWith[User](user => AuthResponse(user))))
+    AuthEndpoints.me.implementHandler(handler((_: Unit) => withContext((user: User) => AuthResponse(user))))
   }
 
   private val updateThemeRoute = {
     AuthEndpoints.updateTheme
       .implementHandler(
         handler { (body: UpdateThemeRequest) =>
-          for {
-            user        <- ZIO.service[User]
-            authService <- ZIO.service[AuthService]
+          withContext { (user: User) =>
             // A failure here is a bug or a dead database, not something the caller can act on:
             // die and let Main's route-level handler log the cause and answer a generic 500.
-            updated     <- authService.updateTheme(user.id, body.theme).orDie
-          } yield AuthResponse(updated)
+            AuthService.updateTheme(user.id, body.theme).orDie.map(AuthResponse(_))
+          }
         }
       )
   }
@@ -137,7 +132,7 @@ object AuthRoutes {
   private val providersRoute = {
     AuthEndpoints.providers
       .implementHandler(
-        handler((_: Unit) => ZIO.serviceWith[AppConfig](cfg => ProvidersResponse(cfg.configuredOAuthProviders)))
+        handler((_: Unit) => withContext((cfg: AppConfig) => ProvidersResponse(cfg.configuredOAuthProviders)))
       )
   }
 
@@ -145,13 +140,12 @@ object AuthRoutes {
     AuthEndpoints.identities
       .implementHandler(
         handler { (_: Unit) =>
-          for {
-            user        <- ZIO.service[User]
-            cfg         <- ZIO.service[AppConfig]
-            authService <- ZIO.service[AuthService]
-            identities  <- authService.listIdentities(user.id)
-            hasPassword <- authService.hasPassword(user.id)
-          } yield IdentitiesResponse(identities, hasPassword, cfg.configuredOAuthProviders)
+          withContext { (user: User, cfg: AppConfig) =>
+            for {
+              identities  <- AuthService.listIdentities(user.id)
+              hasPassword <- AuthService.hasPassword(user.id)
+            } yield IdentitiesResponse(identities, hasPassword, cfg.configuredOAuthProviders)
+          }
         }
       )
   }
@@ -160,14 +154,14 @@ object AuthRoutes {
     AuthEndpoints.unlinkIdentity
       .implementHandler(
         handler { (segment: String) =>
-          for {
-            user        <- ZIO.service[User]
-            authService <- ZIO.service[AuthService]
-            provider    <- ZIO
-                             .fromOption(OAuthProvider.fromString(segment))
-                             .orElseFail(ApiFailures.auth(AuthFailure.OAuthFailed(s"unknown provider '$segment'")))
-            _           <- authService.unlinkOAuth(user.id, provider).mapError(ApiFailures.auth)
-          } yield ()
+          withContext { (user: User) =>
+            for {
+              provider <- ZIO
+                            .fromOption(OAuthProvider.fromString(segment))
+                            .orElseFail(ApiFailures.auth(AuthFailure.OAuthFailed(s"unknown provider '$segment'")))
+              _        <- AuthService.unlinkOAuth(user.id, provider).mapError(ApiFailures.auth)
+            } yield ()
+          }
         }
       )
   }
@@ -176,11 +170,9 @@ object AuthRoutes {
     AuthEndpoints.setPassword
       .implementHandler(
         handler { (body: SetPasswordRequest) =>
-          for {
-            user        <- ZIO.service[User]
-            authService <- ZIO.service[AuthService]
-            _           <- authService.setPassword(user.id, body.currentPassword, body.newPassword).mapError(ApiFailures.auth)
-          } yield ()
+          withContext { (user: User) =>
+            AuthService.setPassword(user.id, body.currentPassword, body.newPassword).mapError(ApiFailures.auth)
+          }
         }
       )
   }
@@ -267,40 +259,41 @@ object AuthRoutes {
     */
   private def resolveClient(segment: String) = {
     for {
-      provider <- ZIO
-                    .fromOption(OAuthProvider.fromString(segment))
-                    .orElseFail(errorResponse(Status.NotFound, "Unknown sign-in provider"))
-      clients  <- ZIO.service[OAuthClients]
-      client   <- ZIO
-                    .fromOption(clients.forProvider(provider))
-                    .orElseFail(errorResponse(Status.NotFound, s"${provider.display} sign-in is not configured"))
+      provider    <- ZIO
+                       .fromOption(OAuthProvider.fromString(segment))
+                       .orElseFail(errorResponse(Status.NotFound, "Unknown sign-in provider"))
+      maybeClient <- OAuthClients.forProvider(provider)
+      client      <- ZIO
+                       .fromOption(maybeClient)
+                       .orElseFail(errorResponse(Status.NotFound, s"${provider.display} sign-in is not configured"))
     } yield client
   }
 
   private val oauthStartRoute = {
     Method.GET / "api" / "auth" / string("provider") / "start" ->
       handler { (segment: String, request: Request) =>
-        for {
-          cfg    <- ZIO.service[AppConfig]
-          client <- resolveClient(segment)
-          // `?link=1` is set by the settings page; anything else starts a plain sign-in. The intent is
-          // recorded in the cookie rather than trusted from the callback's query string.
-          intent  = {
-            if (request.queryParam("link").contains("1"))
-              OAuthIntent.Link
-            else
-              OAuthIntent.Login
+        withContext { (cfg: AppConfig) =>
+          for {
+            client <- resolveClient(segment)
+            // `?link=1` is set by the settings page; anything else starts a plain sign-in. The intent is
+            // recorded in the cookie rather than trusted from the callback's query string.
+            intent  = {
+              if (request.queryParam("link").contains("1"))
+                OAuthIntent.Link
+              else
+                OAuthIntent.Login
+            }
+            nonce  <- Random.nextUUID.map(_.toString)
+            url    <- ZIO
+                        .fromEither(URL.decode(client.authorizationUrl(nonce)))
+                        .tapErrorCause(cause =>
+                          ZIO.logErrorCause(s"Could not build the ${client.provider.wire} authorization URL", cause)
+                        )
+                        .mapError(_ => errorResponse(Status.InternalServerError, "Sign-in is unavailable"))
+          } yield {
+            val cookieValue = s"$nonce|${OAuthIntent.wire(intent)}"
+            Response.redirect(url).addCookie(oauthStateCookie(cookieValue, cfg.session.cookieSecure, 10.minutes))
           }
-          nonce  <- Random.nextUUID.map(_.toString)
-          url    <- ZIO
-                      .fromEither(URL.decode(client.authorizationUrl(nonce)))
-                      .tapErrorCause(cause =>
-                        ZIO.logErrorCause(s"Could not build the ${client.provider.wire} authorization URL", cause)
-                      )
-                      .mapError(_ => errorResponse(Status.InternalServerError, "Sign-in is unavailable"))
-        } yield {
-          val cookieValue = s"$nonce|${OAuthIntent.wire(intent)}"
-          Response.redirect(url).addCookie(oauthStateCookie(cookieValue, cfg.session.cookieSecure, 10.minutes))
         }
       }
   }
@@ -308,72 +301,75 @@ object AuthRoutes {
   private val oauthCallbackRoute = {
     Method.GET / "api" / "auth" / string("provider") / "callback" ->
       handler { (segment: String, request: Request) =>
-        for {
-          cfg         <- ZIO.service[AppConfig]
-          client      <- resolveClient(segment)
-          // The cookie is read before anything else can fail, because every failure below needs the intent
-          // to know which page to land the user on.
-          cookieValue <- ZIO
-                           .fromOption(request.cookie(oauthStateCookieName).map(_.content))
-                           .orElseFail(oauthErrorRedirect(cfg, OAuthIntent.Login, "missing_state"))
-          cookieParts  = cookieValue.split('|')
-          intent       = cookieParts.lift(1).flatMap(OAuthIntent.parse).getOrElse(OAuthIntent.Login)
-          nonce        = cookieParts.headOption.getOrElse("")
-          state       <- ZIO
-                           .fromOption(request.queryParam("state"))
-                           .orElseFail(oauthErrorRedirect(cfg, intent, "missing_state"))
-          _           <- ZIO.unless(nonce.nonEmpty && state == nonce)(ZIO.fail(oauthErrorRedirect(cfg, intent, "state_mismatch")))
-          code        <- ZIO.fromOption(request.queryParam("code")).orElseFail(oauthErrorRedirect(cfg, intent, "missing_code"))
-          authService <- ZIO.service[AuthService]
-          identity    <-
-            client
-              .exchangeAndVerify(code)
-              .tapErrorCause(cause =>
-                ZIO.logErrorCause(s"${client.provider.wire} code exchange or id_token verification failed", cause)
-              )
-              .mapError(_ => oauthErrorRedirect(cfg, intent, "failed"))
-          response    <-
-            intent match {
-              case OAuthIntent.Login =>
-                authService
-                  .loginWithOAuth(identity)
-                  .mapBoth(
-                    {
-                      // The one failure the user can actually act on, and the entire reason the settings
-                      // page exists: their email is taken by an account that has never linked this provider.
-                      case AuthFailure.OAuthAccountExists(_) =>
-                        oauthErrorRedirect(cfg, intent, "account_exists")
-                      case _                                 =>
-                        oauthErrorRedirect(cfg, intent, "failed")
-                    },
-                    { case (_, sessionId) =>
-                      redirectResponse(cfg.app.publicBaseUrl).addCookie(
-                        SessionAuth.buildSessionCookie(sessionId, cfg.session.cookieSecure)
-                      )
-                    },
-                  )
-              case OAuthIntent.Link  =>
-                for {
-                  // The `authenticated` aspect cannot cover this route: its failure is a 401 body, and every
-                  // exit from a top-level navigation has to be a redirect. So the session is resolved here.
-                  sessionId <- ZIO
-                                 .fromOption(SessionAuth.sessionIdFrom(request))
-                                 .orElseFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
-                  user      <- authService
-                                 .currentUser(sessionId)
-                                 .someOrFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
-                  _         <- authService
-                                 .linkOAuth(user.id, identity)
-                                 .mapError {
-                                   case AuthFailure.OAuthAlreadyLinked =>
-                                     oauthErrorRedirect(cfg, intent, "already_linked")
-                                   case _                              =>
-                                     oauthErrorRedirect(cfg, intent, "failed")
-                                 }
-                } yield redirectResponse(s"${cfg.app.publicBaseUrl}/settings?linked=${identity.provider.wire}")
-            }
-        } yield {
-          response.addCookie(oauthStateCookie("", cfg.session.cookieSecure, Duration.Zero))
+        withContext { (cfg: AppConfig) =>
+          for {
+            client      <- resolveClient(segment)
+            // The cookie is read before anything else can fail, because every failure below needs the intent
+            // to know which page to land the user on.
+            cookieValue <- ZIO
+                             .fromOption(request.cookie(oauthStateCookieName).map(_.content))
+                             .orElseFail(oauthErrorRedirect(cfg, OAuthIntent.Login, "missing_state"))
+            cookieParts  = cookieValue.split('|')
+            intent       = cookieParts.lift(1).flatMap(OAuthIntent.parse).getOrElse(OAuthIntent.Login)
+            nonce        = cookieParts.headOption.getOrElse("")
+            state       <- ZIO
+                             .fromOption(request.queryParam("state"))
+                             .orElseFail(oauthErrorRedirect(cfg, intent, "missing_state"))
+            _           <- ZIO.unless(nonce.nonEmpty && state == nonce)(
+                             ZIO.fail(oauthErrorRedirect(cfg, intent, "state_mismatch"))
+                           )
+            code        <-
+              ZIO.fromOption(request.queryParam("code")).orElseFail(oauthErrorRedirect(cfg, intent, "missing_code"))
+            identity    <-
+              client
+                .exchangeAndVerify(code)
+                .tapErrorCause(cause =>
+                  ZIO.logErrorCause(s"${client.provider.wire} code exchange or id_token verification failed", cause)
+                )
+                .mapError(_ => oauthErrorRedirect(cfg, intent, "failed"))
+            response    <-
+              intent match {
+                case OAuthIntent.Login =>
+                  AuthService
+                    .loginWithOAuth(identity)
+                    .mapBoth(
+                      {
+                        // The one failure the user can actually act on, and the entire reason the settings
+                        // page exists: their email is taken by an account that has never linked this provider.
+                        case AuthFailure.OAuthAccountExists(_) =>
+                          oauthErrorRedirect(cfg, intent, "account_exists")
+                        case _                                 =>
+                          oauthErrorRedirect(cfg, intent, "failed")
+                      },
+                      { case (_, sessionId) =>
+                        redirectResponse(cfg.app.publicBaseUrl).addCookie(
+                          SessionAuth.buildSessionCookie(sessionId, cfg.session.cookieSecure)
+                        )
+                      },
+                    )
+                case OAuthIntent.Link  =>
+                  for {
+                    // The `authenticated` aspect cannot cover this route: its failure is a 401 body, and every
+                    // exit from a top-level navigation has to be a redirect. So the session is resolved here.
+                    sessionId <- ZIO
+                                   .fromOption(SessionAuth.sessionIdFrom(request))
+                                   .orElseFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
+                    user      <- AuthService
+                                   .currentUser(sessionId)
+                                   .someOrFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
+                    _         <- AuthService
+                                   .linkOAuth(user.id, identity)
+                                   .mapError {
+                                     case AuthFailure.OAuthAlreadyLinked =>
+                                       oauthErrorRedirect(cfg, intent, "already_linked")
+                                     case _                              =>
+                                       oauthErrorRedirect(cfg, intent, "failed")
+                                   }
+                  } yield redirectResponse(s"${cfg.app.publicBaseUrl}/settings?linked=${identity.provider.wire}")
+              }
+          } yield {
+            response.addCookie(oauthStateCookie("", cfg.session.cookieSecure, Duration.Zero))
+          }
         }
       }
   }

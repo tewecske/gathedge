@@ -11,7 +11,7 @@ import JsonSupport.*
 /** The cross-cutting HTTP concerns, as `HandlerAspect`s rather than calls repeated at the top of every handler.
   *
   * An aspect that produces a context (`HandlerAspect[Env, User]`) resolves the value once per request and hands it to
-  * the handler through the environment, so a protected handler just asks for `ZIO.service[User]` and cannot forget to
+  * the handler through the environment, so a protected handler just asks for it with `withContext` and cannot forget to
   * authenticate: the route does not compile unless some aspect supplies the `User`.
   */
 object RouteSupport {
@@ -164,15 +164,14 @@ object RouteSupport {
 
   private def currentUser(request: Request): ZIO[AuthService, Response, User] = {
     for {
-      authService <- ZIO.service[AuthService]
-      maybeUser   <-
+      maybeUser <-
         SessionAuth.sessionIdFrom(request) match {
           case None      =>
             ZIO.succeed(None)
           case Some(sid) =>
-            authService.currentUser(sid)
+            AuthService.currentUser(sid)
         }
-      user        <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
+      user      <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
     } yield user
   }
 

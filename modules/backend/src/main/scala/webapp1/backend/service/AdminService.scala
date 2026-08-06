@@ -34,6 +34,34 @@ trait AdminService {
   def deleteUser(actingAdminId: Long, id: Long): IO[AdminFailure, Unit]
 }
 
+object AdminService {
+  def listUsers: URIO[AdminService, List[User]] =
+    ZIO.serviceWithZIO[AdminService](_.listUsers)
+
+  def getUser(id: Long): ZIO[AdminService, AdminFailure, User] =
+    ZIO.serviceWithZIO[AdminService](_.getUser(id))
+
+  def createUser(
+    actingAdminId: Long,
+    email: String,
+    password: String,
+    isAdmin: Boolean,
+  ): ZIO[AdminService, AdminFailure, User] =
+    ZIO.serviceWithZIO[AdminService](_.createUser(actingAdminId, email, password, isAdmin))
+
+  def updateUser(
+    actingAdminId: Long,
+    id: Long,
+    email: String,
+    isAdmin: Boolean,
+    password: Option[String],
+  ): ZIO[AdminService, AdminFailure, User] =
+    ZIO.serviceWithZIO[AdminService](_.updateUser(actingAdminId, id, email, isAdmin, password))
+
+  def deleteUser(actingAdminId: Long, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.deleteUser(actingAdminId, id))
+}
+
 /** Admin actions that change accounts (create/promote-or-demote/delete) are logged to the `security` logger as an audit
   * trail, per summary.md's "logging for application events, such as user actions".
   */

@@ -54,6 +54,55 @@ trait GroupService {
   def acceptInvitation(userId: Long, userEmail: String, token: String): IO[GroupFailure, Group]
 }
 
+object GroupService {
+  def createGroup(userId: Long, name: String): ZIO[GroupService, GroupFailure, Group] =
+    ZIO.serviceWithZIO[GroupService](_.createGroup(userId, name))
+
+  def myGroups(userId: Long): URIO[GroupService, List[Group]] =
+    ZIO.serviceWithZIO[GroupService](_.myGroups(userId))
+
+  def getGroup(userId: Long, groupId: Long): ZIO[GroupService, GroupFailure, Group] =
+    ZIO.serviceWithZIO[GroupService](_.getGroup(userId, groupId))
+
+  def deleteGroup(userId: Long, groupId: Long): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.deleteGroup(userId, groupId))
+
+  def listPairs(userId: Long, groupId: Long): ZIO[GroupService, GroupFailure, List[GroupPair]] =
+    ZIO.serviceWithZIO[GroupService](_.listPairs(userId, groupId))
+
+  def addPair(
+    userId: Long,
+    userEmail: String,
+    groupId: Long,
+    source: String,
+    target: String,
+  ): ZIO[GroupService, GroupFailure, GroupPair] =
+    ZIO.serviceWithZIO[GroupService](_.addPair(userId, userEmail, groupId, source, target))
+
+  def listMembers(userId: Long, groupId: Long): ZIO[GroupService, GroupFailure, List[GroupMember]] =
+    ZIO.serviceWithZIO[GroupService](_.listMembers(userId, groupId))
+
+  def removeMember(userId: Long, groupId: Long, targetUserId: Long): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.removeMember(userId, groupId, targetUserId))
+
+  def updateMemberRole(
+    userId: Long,
+    groupId: Long,
+    targetUserId: Long,
+    newRole: GroupRole,
+  ): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.updateMemberRole(userId, groupId, targetUserId, newRole))
+
+  def inviteMember(userId: Long, groupId: Long, email: String, role: GroupRole): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.inviteMember(userId, groupId, email, role))
+
+  def getInvitationInfo(token: String): ZIO[GroupService, GroupFailure, InvitationInfo] =
+    ZIO.serviceWithZIO[GroupService](_.getInvitationInfo(token))
+
+  def acceptInvitation(userId: Long, userEmail: String, token: String): ZIO[GroupService, GroupFailure, Group] =
+    ZIO.serviceWithZIO[GroupService](_.acceptInvitation(userId, userEmail, token))
+}
+
 final class GroupServiceLive(
   groupRepo: GroupRepository,
   memberRepo: GroupMemberRepository,

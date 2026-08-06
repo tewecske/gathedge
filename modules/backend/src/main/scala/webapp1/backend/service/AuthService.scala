@@ -103,6 +103,59 @@ trait AuthService {
   def updateTheme(userId: Long, theme: Theme): Task[User]
 }
 
+object AuthService {
+  def signup(
+    email: String,
+    password: String,
+    clientIp: Option[String] = None,
+  ): ZIO[AuthService, AuthFailure, (User, Option[String])] =
+    ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp))
+
+  def login(
+    email: String,
+    password: String,
+    clientIp: Option[String] = None,
+  ): ZIO[AuthService, AuthFailure, (User, String)] =
+    ZIO.serviceWithZIO[AuthService](_.login(email, password, clientIp))
+
+  def verifyEmail(token: String): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.verifyEmail(token))
+
+  def resendVerification(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.resendVerification(email, clientIp))
+
+  def loginWithOAuth(identity: OAuthIdentity): ZIO[AuthService, AuthFailure, (User, String)] =
+    ZIO.serviceWithZIO[AuthService](_.loginWithOAuth(identity))
+
+  def linkOAuth(userId: Long, identity: OAuthIdentity): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.linkOAuth(userId, identity))
+
+  def unlinkOAuth(userId: Long, provider: OAuthProvider): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.unlinkOAuth(userId, provider))
+
+  def listIdentities(userId: Long): URIO[AuthService, List[LinkedIdentity]] =
+    ZIO.serviceWithZIO[AuthService](_.listIdentities(userId))
+
+  def hasPassword(userId: Long): URIO[AuthService, Boolean] =
+    ZIO.serviceWithZIO[AuthService](_.hasPassword(userId))
+
+  def setPassword(
+    userId: Long,
+    currentPassword: Option[String],
+    newPassword: String,
+  ): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.setPassword(userId, currentPassword, newPassword))
+
+  def logout(sessionId: String): URIO[AuthService, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.logout(sessionId))
+
+  def currentUser(sessionId: String): URIO[AuthService, Option[User]] =
+    ZIO.serviceWithZIO[AuthService](_.currentUser(sessionId))
+
+  def updateTheme(userId: Long, theme: Theme): RIO[AuthService, User] =
+    ZIO.serviceWithZIO[AuthService](_.updateTheme(userId, theme))
+}
+
 final class AuthServiceLive(
   userRepo: UserRepository,
   sessionRepo: SessionRepository,

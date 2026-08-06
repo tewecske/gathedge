@@ -12,13 +12,7 @@ object TodoRoutes {
   private val listRoute = {
     TodoEndpoints.listTodos
       .implementHandler(
-        handler { (_: Unit) =>
-          for {
-            user        <- ZIO.service[User]
-            todoService <- ZIO.service[TodoService]
-            items       <- todoService.listTodos(user.id)
-          } yield items
-        }
+        handler((_: Unit) => withContext((user: User) => TodoService.listTodos(user.id)))
       )
   }
 
@@ -26,11 +20,7 @@ object TodoRoutes {
     TodoEndpoints.createTodo
       .implementHandler(
         handler { (body: CreateTodoRequest) =>
-          for {
-            user        <- ZIO.service[User]
-            todoService <- ZIO.service[TodoService]
-            item        <- todoService.addTodo(user.id, body.text).mapError(ApiFailures.todo)
-          } yield item
+          withContext((user: User) => TodoService.addTodo(user.id, body.text).mapError(ApiFailures.todo))
         }
       )
   }
@@ -39,11 +29,7 @@ object TodoRoutes {
     TodoEndpoints.updateTodoStatus
       .implementHandler(
         handler { (id: Long, body: UpdateTodoStatusRequest) =>
-          for {
-            user        <- ZIO.service[User]
-            todoService <- ZIO.service[TodoService]
-            item        <- todoService.moveTodo(user.id, id, body.status).mapError(ApiFailures.todo)
-          } yield item
+          withContext((user: User) => TodoService.moveTodo(user.id, id, body.status).mapError(ApiFailures.todo))
         }
       )
   }

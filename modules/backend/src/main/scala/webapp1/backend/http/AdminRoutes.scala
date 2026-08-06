@@ -13,32 +13,28 @@ import zio.http.*
   * here is a plain function from the endpoint's input type to its output type, so there is no JSON reading or writing
   * and no way to answer with a body or a status the description doesn't allow. The cross-cutting checks are what stays
   * in this file — `adminOnly` and `csrf` are `HandlerAspect`s applied to the whole `Routes` value, and the acting
-  * administrator arrives as `ZIO.service[User]`.
+  * administrator arrives through `withContext`.
   */
 object AdminRoutes {
 
   private val listUsersRoute = {
-    AdminEndpoints.listUsers.implementHandler(handler((_: Unit) => ZIO.serviceWithZIO[AdminService](_.listUsers)))
+    AdminEndpoints.listUsers.implementHandler(handler((_: Unit) => AdminService.listUsers))
   }
 
   private val getUserRoute = {
     AdminEndpoints.getUser
-      .implementHandler(
-        handler((id: Long) => ZIO.serviceWithZIO[AdminService](_.getUser(id)).mapError(ApiFailures.admin))
-      )
+      .implementHandler(handler((id: Long) => AdminService.getUser(id).mapError(ApiFailures.admin)))
   }
 
   private val createUserRoute = {
     AdminEndpoints.createUser
       .implementHandler(
         handler { (body: CreateUserRequest) =>
-          for {
-            actingAdmin  <- ZIO.service[User]
-            adminService <- ZIO.service[AdminService]
-            user         <- adminService
-                              .createUser(actingAdmin.id, body.email, body.password, body.isAdmin)
-                              .mapError(ApiFailures.admin)
-          } yield user
+          withContext((actingAdmin: User) => {
+            AdminService
+              .createUser(actingAdmin.id, body.email, body.password, body.isAdmin)
+              .mapError(ApiFailures.admin)
+          })
         }
       )
   }
@@ -47,13 +43,11 @@ object AdminRoutes {
     AdminEndpoints.updateUser
       .implementHandler(
         handler { (id: Long, body: UpdateUserRequest) =>
-          for {
-            actingAdmin  <- ZIO.service[User]
-            adminService <- ZIO.service[AdminService]
-            user         <- adminService
-                              .updateUser(actingAdmin.id, id, body.email, body.isAdmin, body.password)
-                              .mapError(ApiFailures.admin)
-          } yield user
+          withContext((actingAdmin: User) => {
+            AdminService
+              .updateUser(actingAdmin.id, id, body.email, body.isAdmin, body.password)
+              .mapError(ApiFailures.admin)
+          })
         }
       )
   }
@@ -62,11 +56,7 @@ object AdminRoutes {
     AdminEndpoints.deleteUser
       .implementHandler(
         handler { (id: Long) =>
-          for {
-            actingAdmin  <- ZIO.service[User]
-            adminService <- ZIO.service[AdminService]
-            _            <- adminService.deleteUser(actingAdmin.id, id).mapError(ApiFailures.admin)
-          } yield ()
+          withContext((actingAdmin: User) => AdminService.deleteUser(actingAdmin.id, id).mapError(ApiFailures.admin))
         }
       )
   }
