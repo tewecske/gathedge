@@ -63,10 +63,10 @@ object Main extends ZIOAppDefault {
       cfg         <- ZIO.service[AppConfig]
       _           <- ZIO.foreachDiscard(cfg.productionIssues)(issue => ZIO.logError(s"Unsafe production config: $issue"))
       _           <- ZIO.when(cfg.productionIssues.nonEmpty) {
-          ZIO.fail(
-            new IllegalStateException("Refusing to start: the production configuration is unsafe (see errors above)")
-          )
-        }
+                       ZIO.fail(
+                         new IllegalStateException("Refusing to start: the production configuration is unsafe (see errors above)")
+                       )
+                     }
       dataSource  <- ZIO.service[DataSource]
       _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
       _           <- AdminSeeder.seedIfNeeded
