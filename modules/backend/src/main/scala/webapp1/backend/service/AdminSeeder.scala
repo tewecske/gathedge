@@ -17,10 +17,9 @@ object AdminSeeder {
       _      <-
         ZIO.unless(config.isProduction) {
           for {
-            userRepo <- ZIO.service[UserRepository]
-            hasher   <- ZIO.service[PasswordHasher]
-            exists   <- userRepo.existsAdmin
-            _        <-
+            hasher <- ZIO.service[PasswordHasher]
+            exists <- UserRepository.existsAdmin
+            _      <-
               ZIO.unless(exists) {
                 // Same normalization AuthService.login applies before looking an account up —
                 // without it a BOOTSTRAP_ADMIN_EMAIL containing capitals seeds an account that
@@ -31,7 +30,7 @@ object AdminSeeder {
                   now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
                   // Verified on creation: nobody is going to read a link sent to a placeholder
                   // address, and a bootstrap admin that cannot sign in defeats its own purpose.
-                  _    <- userRepo.insert(
+                  _    <- UserRepository.insert(
                             email,
                             Some(hash),
                             isAdmin = true,

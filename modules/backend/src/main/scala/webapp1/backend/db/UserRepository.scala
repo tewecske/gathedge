@@ -40,6 +40,56 @@ trait UserRepository {
   def deleteById(id: Long): Task[Long]
 }
 
+/** Accessors, so a caller writes `UserRepository.findById(id)` instead of pulling the repository out of the environment
+  * first. Every repository in this package has one; the `ZLayer`s stay in the `Postgres*`/`Sqlite*` objects below.
+  */
+object UserRepository {
+  def insert(
+    email: String,
+    passwordHash: Option[String],
+    isAdmin: Boolean,
+    theme: String,
+    createdAt: Long,
+    emailVerifiedAt: Option[Long],
+  ): RIO[UserRepository, UserRow] =
+    ZIO.serviceWithZIO[UserRepository](_.insert(email, passwordHash, isAdmin, theme, createdAt, emailVerifiedAt))
+
+  def findByEmail(email: String): RIO[UserRepository, Option[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.findByEmail(email))
+
+  def findById(id: Long): RIO[UserRepository, Option[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.findById(id))
+
+  def updateTheme(userId: Long, theme: String): RIO[UserRepository, Unit] =
+    ZIO.serviceWithZIO[UserRepository](_.updateTheme(userId, theme))
+
+  def markEmailVerified(userId: Long, verifiedAt: Long): RIO[UserRepository, Unit] =
+    ZIO.serviceWithZIO[UserRepository](_.markEmailVerified(userId, verifiedAt))
+
+  def existsAdmin: RIO[UserRepository, Boolean] =
+    ZIO.serviceWithZIO[UserRepository](_.existsAdmin)
+
+  def listAll: RIO[UserRepository, List[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.listAll)
+
+  def updateProfile(id: Long, email: String, isAdmin: Boolean): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.updateProfile(id, email, isAdmin))
+
+  def updatePasswordHash(id: Long, passwordHash: String): RIO[UserRepository, Unit] =
+    ZIO.serviceWithZIO[UserRepository](_.updatePasswordHash(id, passwordHash))
+
+  def updateProfileAndPassword(
+    id: Long,
+    email: String,
+    isAdmin: Boolean,
+    passwordHash: Option[String],
+  ): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.updateProfileAndPassword(id, email, isAdmin, passwordHash))
+
+  def deleteById(id: Long): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.deleteById(id))
+}
+
 /** Dialect-generic implementation shared by both Postgres and SQLite. Quill's `ctx.run` dispatches SQL rendering off
   * `ctx.idiom` at runtime, so a single quoted-query body works for any `ZioJdbcContext[Dialect, Naming]` — no need to
   * hand-duplicate the query bodies per dialect, only the context instance differs (see the two `object`s below). Every

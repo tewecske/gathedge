@@ -97,10 +97,8 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
-    ZIO.serviceWithZIO[AuthService] { service =>
-      orDieWithFailure(service.signup(email, "password123")).map { case (user, session) =>
-        (user.id, session.get)
-      }
+    orDieWithFailure(AuthService.signup(email, "password123")).map { case (user, session) =>
+      (user.id, session.get)
     }
   }
 
@@ -194,11 +192,10 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
           created          <- signUp("linker@example.com")
           (userId, session) = created
           linked           <- runRoutes(AuthRoutes.routes, callback("google", "code=c&state=n", Some("n|link"), Some(session)))
-          authService      <- ZIO.service[AuthService]
-          identities       <- authService.listIdentities(userId)
+          identities       <- AuthService.listIdentities(userId)
           // The same subject now logs in, and must land in the account it was linked to.
           loggedIn         <- orDieWithFailure(
-                                authService.loginWithOAuth(
+                                AuthService.loginWithOAuth(
                                   OAuthIdentity(OAuthProvider.Google, stubSubject, stubEmail, emailVerified = true)
                                 )
                               )
@@ -252,28 +249,26 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       // 204 that would leave it permanently unreachable.
       test("unlinking the last credential of a social-only account is a 409") {
         for {
-          authService <- ZIO.service[AuthService]
-          created     <- orDieWithFailure(
-                           authService.loginWithOAuth(
-                             OAuthIdentity(OAuthProvider.Google, "social-only-subject", "social-only@example.com", true)
-                           )
-                         )
-          request      = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
-          response    <- runRoutes(AuthRoutes.routes, request)
+          created  <- orDieWithFailure(
+                        AuthService.loginWithOAuth(
+                          OAuthIdentity(OAuthProvider.Google, "social-only-subject", "social-only@example.com", true)
+                        )
+                      )
+          request   = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
+          response <- runRoutes(AuthRoutes.routes, request)
         } yield assertTrue(response.status == Status.Conflict)
       },
       test("setting a password answers 204 and then permits password login") {
         for {
-          authService <- ZIO.service[AuthService]
-          created     <- orDieWithFailure(
-                           authService.loginWithOAuth(
-                             OAuthIdentity(OAuthProvider.Google, "needs-password", "needs-password@example.com", true)
-                           )
-                         )
-          body         = SetPasswordRequest(None, "password123").toJson
-          request      = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
-          response    <- runRoutes(AuthRoutes.routes, request)
-          loggedIn    <- authService.login("needs-password@example.com", "password123").either
+          created  <- orDieWithFailure(
+                        AuthService.loginWithOAuth(
+                          OAuthIdentity(OAuthProvider.Google, "needs-password", "needs-password@example.com", true)
+                        )
+                      )
+          body      = SetPasswordRequest(None, "password123").toJson
+          request   = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
+          response <- runRoutes(AuthRoutes.routes, request)
+          loggedIn <- AuthService.login("needs-password@example.com", "password123").either
         } yield assertTrue(response.status == Status.NoContent, loggedIn.isRight)
       },
       test("a password change with the wrong current password is a 400 against that field") {

@@ -75,7 +75,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
-    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2.get))
+    orDieWithFailure(AuthService.signup(email, "password123")).map(_._2.get)
   }
 
   /** Returns the acting administrator and their session id. `createUser` takes an acting-admin id for its audit log; 0
@@ -83,10 +83,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     */
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, (User, String)] = {
     for {
-      adminService <- ZIO.service[AdminService]
-      authService  <- ZIO.service[AuthService]
-      admin        <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
-      session      <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
+      admin   <- orDieWithFailure(AdminService.createUser(0L, email, "password123", isAdmin = true))
+      session <- orDieWithFailure(AuthService.login(email, "password123")).map(_._2)
     } yield (admin, session)
   }
 
@@ -342,19 +340,17 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("updating a user goes through, and leaving the password blank keeps the old one") {
           for {
-            admin        <- adminSession("updater@example.com")
-            adminService <- ZIO.service[AdminService]
-            target       <- orDieWithFailure(adminService.createUser(admin._1.id, "target@example.com", "password123", false))
-            request       = {
+            admin       <- adminSession("updater@example.com")
+            target      <- orDieWithFailure(AdminService.createUser(admin._1.id, "target@example.com", "password123", false))
+            request      = {
               Request.put(
                 s"/api/admin/users/${target.id}",
                 Body.fromString(UpdateUserRequest("renamed@example.com", isAdmin = true, password = None).toJson),
               )
             }
-            response     <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
-            raw          <- body(response)
-            authService  <- ZIO.service[AuthService]
-            stillLogsIn  <- orDieWithFailure(authService.login("renamed@example.com", "password123"))
+            response    <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
+            raw         <- body(response)
+            stillLogsIn <- orDieWithFailure(AuthService.login("renamed@example.com", "password123"))
           } yield assertTrue(
             response.status == Status.Ok,
             raw.fromJson[User].map(_.email) == Right("renamed@example.com"),
@@ -364,15 +360,14 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("deleting a user is a 204 with an empty body") {
           for {
-            admin        <- adminSession("deleter@example.com")
-            adminService <- ZIO.service[AdminService]
-            target       <- orDieWithFailure(adminService.createUser(admin._1.id, "doomed@example.com", "password123", false))
-            response     <- runRoutes(
-                              AdminRoutes.routes,
-                              withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
-                            )
-            raw          <- body(response)
-            remaining    <- adminService.listUsers
+            admin     <- adminSession("deleter@example.com")
+            target    <- orDieWithFailure(AdminService.createUser(admin._1.id, "doomed@example.com", "password123", false))
+            response  <- runRoutes(
+                           AdminRoutes.routes,
+                           withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
+                         )
+            raw       <- body(response)
+            remaining <- AdminService.listUsers
           } yield assertTrue(
             response.status == Status.NoContent,
             raw.isEmpty,

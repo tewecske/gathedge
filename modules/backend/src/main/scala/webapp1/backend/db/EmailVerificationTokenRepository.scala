@@ -20,6 +20,23 @@ trait EmailVerificationTokenRepository {
   def deleteExpired(before: Long): Task[Long]
 }
 
+object EmailVerificationTokenRepository {
+  def insert(row: EmailVerificationTokenRow): RIO[EmailVerificationTokenRepository, EmailVerificationTokenRow] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.insert(row))
+
+  def findByToken(token: String): RIO[EmailVerificationTokenRepository, Option[EmailVerificationTokenRow]] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.findByToken(token))
+
+  def markConsumed(token: String, consumedAt: Long): RIO[EmailVerificationTokenRepository, Unit] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.markConsumed(token, consumedAt))
+
+  def deleteForUser(userId: Long): RIO[EmailVerificationTokenRepository, Long] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.deleteForUser(userId))
+
+  def deleteExpired(before: Long): RIO[EmailVerificationTokenRepository, Long] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.deleteExpired(before))
+}
+
 /** Verification tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
 final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,

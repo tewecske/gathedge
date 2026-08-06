@@ -20,6 +20,12 @@ trait SentEmails {
 }
 
 object SentEmails {
+  def all: URIO[SentEmails, Vector[SentEmail]] =
+    ZIO.serviceWithZIO[SentEmails](_.all)
+
+  def lastVerificationToken: URIO[SentEmails, Option[String]] =
+    ZIO.serviceWithZIO[SentEmails](_.lastVerificationToken)
+
   private val linkPattern = """/verify-email/([A-Za-z0-9_-]+)""".r
 
   private def tokenIn(body: String): Option[String] = {

@@ -45,15 +45,13 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
-    ZIO.serviceWithZIO[AuthService](service => orDieWithFailure(service.signup(email, "password123")).map(_._2.get))
+    orDieWithFailure(AuthService.signup(email, "password123")).map(_._2.get)
   }
 
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, String] = {
     for {
-      adminService <- ZIO.service[AdminService]
-      authService  <- ZIO.service[AuthService]
-      _            <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
-      session      <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
+      _       <- orDieWithFailure(AdminService.createUser(0L, email, "password123", isAdmin = true))
+      session <- orDieWithFailure(AuthService.login(email, "password123")).map(_._2)
     } yield session
   }
 

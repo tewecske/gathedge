@@ -49,17 +49,15 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
-    ZIO.serviceWithZIO[AuthService] { service =>
-      orDieWithFailure(service.signup(email, "password123")).map { case (user, sessionId) =>
-        // `sessionId` is None only when the deployment requires a verified address; these
-        // specs run on the default config, where signup still opens a session.
-        (user.id, sessionId.get)
-      }
+    orDieWithFailure(AuthService.signup(email, "password123")).map { case (user, sessionId) =>
+      // `sessionId` is None only when the deployment requires a verified address; these
+      // specs run on the default config, where signup still opens a session.
+      (user.id, sessionId.get)
     }
   }
 
   private def createGroup(userId: Long, name: String): ZIO[GroupService, Nothing, Group] = {
-    ZIO.serviceWithZIO[GroupService](service => orDieWithFailure(service.createGroup(userId, name)))
+    orDieWithFailure(GroupService.createGroup(userId, name))
   }
 
   /** Tokens are emailed, never returned by the API, so a test that needs one puts the row in itself. */
@@ -70,23 +68,22 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
     token: String,
   ): ZIO[GroupInvitationRepository, Nothing, Unit] = {
     for {
-      invitationRepo <- ZIO.service[GroupInvitationRepository]
-      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _              <- orDieWithFailure(
-                          invitationRepo.insert(
-                            GroupInvitationRow(
-                              0L,
-                              group.id,
-                              email,
-                              GroupRole.toDbString(GroupRole.ReadWrite),
-                              token,
-                              invitedBy,
-                              now,
-                              now + 1.day.toMillis,
-                              None,
-                            )
-                          )
-                        )
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _   <- orDieWithFailure(
+               GroupInvitationRepository.insert(
+                 GroupInvitationRow(
+                   0L,
+                   group.id,
+                   email,
+                   GroupRole.toDbString(GroupRole.ReadWrite),
+                   token,
+                   invitedBy,
+                   now,
+                   now + 1.day.toMillis,
+                   None,
+                 )
+               )
+             )
     } yield ()
   }
 

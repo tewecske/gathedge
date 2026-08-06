@@ -24,6 +24,23 @@ trait OAuthIdentityRepository {
   def deleteByUserAndProvider(userId: Long, provider: String): Task[Long]
 }
 
+object OAuthIdentityRepository {
+  def findByProviderAndSubject(
+    provider: String,
+    subject: String,
+  ): RIO[OAuthIdentityRepository, Option[OAuthIdentityRow]] =
+    ZIO.serviceWithZIO[OAuthIdentityRepository](_.findByProviderAndSubject(provider, subject))
+
+  def listForUser(userId: Long): RIO[OAuthIdentityRepository, List[OAuthIdentityRow]] =
+    ZIO.serviceWithZIO[OAuthIdentityRepository](_.listForUser(userId))
+
+  def insert(row: OAuthIdentityRow): RIO[OAuthIdentityRepository, OAuthIdentityRow] =
+    ZIO.serviceWithZIO[OAuthIdentityRepository](_.insert(row))
+
+  def deleteByUserAndProvider(userId: Long, provider: String): RIO[OAuthIdentityRepository, Long] =
+    ZIO.serviceWithZIO[OAuthIdentityRepository](_.deleteByUserAndProvider(userId, provider))
+}
+
 /** The provider's `subject` identifies a person at that provider, so no log line here carries one — see
   * [[QuillRepository.logged]].
   */

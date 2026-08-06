@@ -17,6 +17,17 @@ trait TodoRepository {
   def updateStatus(id: Long, userId: Long, status: String): Task[Option[TodoItemRow]]
 }
 
+object TodoRepository {
+  def insert(userId: Long, text: String, status: String, createdAt: Long): RIO[TodoRepository, TodoItemRow] =
+    ZIO.serviceWithZIO[TodoRepository](_.insert(userId, text, status, createdAt))
+
+  def listForUser(userId: Long): RIO[TodoRepository, List[TodoItemRow]] =
+    ZIO.serviceWithZIO[TodoRepository](_.listForUser(userId))
+
+  def updateStatus(id: Long, userId: Long, status: String): RIO[TodoRepository, Option[TodoItemRow]] =
+    ZIO.serviceWithZIO[TodoRepository](_.updateStatus(id, userId, status))
+}
+
 final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
   quillContext: ZioJdbcContext[Dialect, Naming],

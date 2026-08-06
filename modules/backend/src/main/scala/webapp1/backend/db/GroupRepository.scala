@@ -21,6 +21,28 @@ trait GroupRepository {
   def delete(id: Long): Task[Unit]
 }
 
+object GroupRepository {
+  def insert(name: String, createdAt: Long): RIO[GroupRepository, GroupRow] =
+    ZIO.serviceWithZIO[GroupRepository](_.insert(name, createdAt))
+
+  def insertWithCreator(
+    name: String,
+    creatorId: Long,
+    creatorRole: String,
+    createdAt: Long,
+  ): RIO[GroupRepository, GroupRow] =
+    ZIO.serviceWithZIO[GroupRepository](_.insertWithCreator(name, creatorId, creatorRole, createdAt))
+
+  def findById(id: Long): RIO[GroupRepository, Option[GroupRow]] =
+    ZIO.serviceWithZIO[GroupRepository](_.findById(id))
+
+  def listForUser(userId: Long): RIO[GroupRepository, List[(GroupRow, String)]] =
+    ZIO.serviceWithZIO[GroupRepository](_.listForUser(userId))
+
+  def delete(id: Long): RIO[GroupRepository, Unit] =
+    ZIO.serviceWithZIO[GroupRepository](_.delete(id))
+}
+
 final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
   quillContext: ZioJdbcContext[Dialect, Naming],
@@ -101,6 +123,26 @@ trait GroupMemberRepository {
   def countAdmins(groupId: Long): Task[Long]
 }
 
+object GroupMemberRepository {
+  def addMember(groupId: Long, userId: Long, role: String, joinedAt: Long): RIO[GroupMemberRepository, Unit] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.addMember(groupId, userId, role, joinedAt))
+
+  def findRole(groupId: Long, userId: Long): RIO[GroupMemberRepository, Option[String]] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.findRole(groupId, userId))
+
+  def listForGroup(groupId: Long): RIO[GroupMemberRepository, List[(GroupMemberRow, String)]] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.listForGroup(groupId))
+
+  def removeMember(groupId: Long, userId: Long): RIO[GroupMemberRepository, Unit] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.removeMember(groupId, userId))
+
+  def updateRole(groupId: Long, userId: Long, role: String): RIO[GroupMemberRepository, Unit] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.updateRole(groupId, userId, role))
+
+  def countAdmins(groupId: Long): RIO[GroupMemberRepository, Long] =
+    ZIO.serviceWithZIO[GroupMemberRepository](_.countAdmins(groupId))
+}
+
 final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
   quillContext: ZioJdbcContext[Dialect, Naming],
@@ -176,6 +218,21 @@ trait GroupPairRepository {
   def listForGroup(groupId: Long): Task[List[GroupPairRow]]
 }
 
+object GroupPairRepository {
+  def insert(
+    groupId: Long,
+    source: String,
+    target: String,
+    createdBy: Long,
+    createdByEmail: String,
+    createdAt: Long,
+  ): RIO[GroupPairRepository, GroupPairRow] =
+    ZIO.serviceWithZIO[GroupPairRepository](_.insert(groupId, source, target, createdBy, createdByEmail, createdAt))
+
+  def listForGroup(groupId: Long): RIO[GroupPairRepository, List[GroupPairRow]] =
+    ZIO.serviceWithZIO[GroupPairRepository](_.listForGroup(groupId))
+}
+
 final class GroupPairRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
   quillContext: ZioJdbcContext[Dialect, Naming],
@@ -224,6 +281,17 @@ trait GroupInvitationRepository {
   def insert(row: GroupInvitationRow): Task[GroupInvitationRow]
   def findByToken(token: String): Task[Option[GroupInvitationRow]]
   def markAccepted(token: String, acceptedAt: Long): Task[Unit]
+}
+
+object GroupInvitationRepository {
+  def insert(row: GroupInvitationRow): RIO[GroupInvitationRepository, GroupInvitationRow] =
+    ZIO.serviceWithZIO[GroupInvitationRepository](_.insert(row))
+
+  def findByToken(token: String): RIO[GroupInvitationRepository, Option[GroupInvitationRow]] =
+    ZIO.serviceWithZIO[GroupInvitationRepository](_.findByToken(token))
+
+  def markAccepted(token: String, acceptedAt: Long): RIO[GroupInvitationRepository, Unit] =
+    ZIO.serviceWithZIO[GroupInvitationRepository](_.markAccepted(token, acceptedAt))
 }
 
 /** Invitation tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */

@@ -81,19 +81,16 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     suite("Postgres dialect (testcontainers)")(
       test("signup, login, todo add/move, and group create/pairs all round-trip through real Postgres") {
         for {
-          authService  <- ZIO.service[webapp1.backend.service.AuthService]
-          todoService  <- ZIO.service[webapp1.backend.service.TodoService]
-          groupService <- ZIO.service[webapp1.backend.service.GroupService]
-          signupResult <- authService.signup("pguser@example.com", "password123")
+          signupResult <- AuthService.signup("pguser@example.com", "password123")
           (user, _)     = signupResult
-          todo         <- todoService.addTodo(user.id, "verify postgres")
-          moved        <- todoService.moveTodo(user.id, todo.id, TodoStatus.Done)
-          group        <- groupService.createGroup(user.id, "PG Group")
-          pair         <- groupService.addPair(user.id, user.email, group.id, "src", "tgt")
-          pairs        <- groupService.listPairs(user.id, group.id)
+          todo         <- TodoService.addTodo(user.id, "verify postgres")
+          moved        <- TodoService.moveTodo(user.id, todo.id, TodoStatus.Done)
+          group        <- GroupService.createGroup(user.id, "PG Group")
+          pair         <- GroupService.addPair(user.id, user.email, group.id, "src", "tgt")
+          pairs        <- GroupService.listPairs(user.id, group.id)
           // Proves the creator's membership row committed with the group: without it the group
           // would be invisible here and unreachable through every other group endpoint.
-          myGroups     <- groupService.myGroups(user.id)
+          myGroups     <- GroupService.myGroups(user.id)
         } yield assertTrue(
           moved.status == TodoStatus.Done,
           group.name == "PG Group",
@@ -104,20 +101,18 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       },
       test("an admin profile-and-password edit commits as one unit and drops the user's sessions") {
         for {
-          adminService    <- ZIO.service[webapp1.backend.service.AdminService]
-          authService     <- ZIO.service[webapp1.backend.service.AuthService]
-          admin           <- adminService.createUser(0L, "pgadmin@example.com", "password123", isAdmin = true)
-          target          <- adminService.createUser(admin.id, "pgtarget@example.com", "password123", isAdmin = false)
-          session         <- authService.login("pgtarget@example.com", "password123").map(_._2)
-          updated         <- adminService.updateUser(
+          admin           <- AdminService.createUser(0L, "pgadmin@example.com", "password123", isAdmin = true)
+          target          <- AdminService.createUser(admin.id, "pgtarget@example.com", "password123", isAdmin = false)
+          session         <- AuthService.login("pgtarget@example.com", "password123").map(_._2)
+          updated         <- AdminService.updateUser(
                                admin.id,
                                target.id,
                                "pgrenamed@example.com",
                                isAdmin = true,
                                password = Some("replacedpw"),
                              )
-          afterReset      <- authService.currentUser(session)
-          withNewPassword <- authService.login("pgrenamed@example.com", "replacedpw")
+          afterReset      <- AuthService.currentUser(session)
+          withNewPassword <- AuthService.login("pgrenamed@example.com", "replacedpw")
         } yield assertTrue(
           updated.email == "pgrenamed@example.com",
           updated.isAdmin,
@@ -132,17 +127,14 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // into a bare 500 for any admin trying to remove a user who had ever added a pair or sent an invitation.
       test("deleting a user cascades to the group pairs they authored and the invitations they sent") {
         for {
-          adminService   <- ZIO.service[webapp1.backend.service.AdminService]
-          groupService   <- ZIO.service[webapp1.backend.service.GroupService]
-          pairRepo       <- ZIO.service[GroupPairRepository]
-          admin          <- adminService.createUser(0L, "pgdeladmin@example.com", "password123", isAdmin = true)
-          target         <- adminService.createUser(admin.id, "pgdeltarget@example.com", "password123", isAdmin = false)
-          group          <- groupService.createGroup(target.id, "Doomed Author Group")
-          _              <- groupService.addPair(target.id, target.email, group.id, "src", "tgt")
-          _              <- groupService.inviteMember(target.id, group.id, "pginvitee@example.com", GroupRole.ReadWrite)
-          _              <- adminService.deleteUser(admin.id, target.id)
-          gone           <- adminService.getUser(target.id).either
-          remainingPairs <- pairRepo.listForGroup(group.id)
+          admin          <- AdminService.createUser(0L, "pgdeladmin@example.com", "password123", isAdmin = true)
+          target         <- AdminService.createUser(admin.id, "pgdeltarget@example.com", "password123", isAdmin = false)
+          group          <- GroupService.createGroup(target.id, "Doomed Author Group")
+          _              <- GroupService.addPair(target.id, target.email, group.id, "src", "tgt")
+          _              <- GroupService.inviteMember(target.id, group.id, "pginvitee@example.com", GroupRole.ReadWrite)
+          _              <- AdminService.deleteUser(admin.id, target.id)
+          gone           <- AdminService.getUser(target.id).either
+          remainingPairs <- GroupPairRepository.listForGroup(group.id)
         } yield assertTrue(gone == Left(webapp1.backend.service.AdminFailure.NotFound), remainingPairs.isEmpty)
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential

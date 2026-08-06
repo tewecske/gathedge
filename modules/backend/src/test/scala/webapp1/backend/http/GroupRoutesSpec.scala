@@ -53,17 +53,15 @@ object GroupRoutesSpec extends ZIOSpecDefault {
     * goes into the cookie.
     */
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
-    ZIO.serviceWithZIO[AuthService] { service =>
-      orDieWithFailure(service.signup(email, "password123")).map { case (user, sessionId) =>
-        // `sessionId` is None only when the deployment requires a verified address; these
-        // specs run on the default config, where signup still opens a session.
-        (user.id, sessionId.get)
-      }
+    orDieWithFailure(AuthService.signup(email, "password123")).map { case (user, sessionId) =>
+      // `sessionId` is None only when the deployment requires a verified address; these
+      // specs run on the default config, where signup still opens a session.
+      (user.id, sessionId.get)
     }
   }
 
   private def createGroup(userId: Long, name: String): ZIO[GroupService, Nothing, Group] = {
-    ZIO.serviceWithZIO[GroupService](service => orDieWithFailure(service.createGroup(userId, name)))
+    orDieWithFailure(GroupService.createGroup(userId, name))
   }
 
   /** Joins a user to a group in a given role. Invitation tokens are only ever emailed, never returned by the API, so
@@ -77,26 +75,24 @@ object GroupRoutesSpec extends ZIOSpecDefault {
     role: GroupRole,
   ): ZIO[GroupService & GroupInvitationRepository, Nothing, Unit] = {
     for {
-      invitationRepo <- ZIO.service[GroupInvitationRepository]
-      groupService   <- ZIO.service[GroupService]
-      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      token           = s"token-for-$email"
-      _              <- orDieWithFailure(
-                          invitationRepo.insert(
-                            GroupInvitationRow(
-                              0L,
-                              group.id,
-                              email,
-                              GroupRole.toDbString(role),
-                              token,
-                              invitedBy,
-                              now,
-                              now + 1.day.toMillis,
-                              None,
-                            )
-                          )
-                        )
-      _              <- orDieWithFailure(groupService.acceptInvitation(userId, email, token))
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      token = s"token-for-$email"
+      _    <- orDieWithFailure(
+                GroupInvitationRepository.insert(
+                  GroupInvitationRow(
+                    0L,
+                    group.id,
+                    email,
+                    GroupRole.toDbString(role),
+                    token,
+                    invitedBy,
+                    now,
+                    now + 1.day.toMillis,
+                    None,
+                  )
+                )
+              )
+      _    <- orDieWithFailure(GroupService.acceptInvitation(userId, email, token))
     } yield ()
   }
 

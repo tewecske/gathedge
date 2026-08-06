@@ -25,6 +25,23 @@ trait SessionRepository {
   def deleteExpired(before: Long): Task[Long]
 }
 
+object SessionRepository {
+  def insert(session: SessionRow): RIO[SessionRepository, Unit] =
+    ZIO.serviceWithZIO[SessionRepository](_.insert(session))
+
+  def findActive(id: String, now: Long): RIO[SessionRepository, Option[SessionRow]] =
+    ZIO.serviceWithZIO[SessionRepository](_.findActive(id, now))
+
+  def revoke(id: String, revokedAt: Long): RIO[SessionRepository, Unit] =
+    ZIO.serviceWithZIO[SessionRepository](_.revoke(id, revokedAt))
+
+  def revokeAllForUser(userId: Long, revokedAt: Long): RIO[SessionRepository, Unit] =
+    ZIO.serviceWithZIO[SessionRepository](_.revokeAllForUser(userId, revokedAt))
+
+  def deleteExpired(before: Long): RIO[SessionRepository, Long] =
+    ZIO.serviceWithZIO[SessionRepository](_.deleteExpired(before))
+}
+
 /** Session ids are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
 final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource,
