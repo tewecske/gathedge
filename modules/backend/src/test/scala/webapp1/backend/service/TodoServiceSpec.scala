@@ -1,7 +1,7 @@
 package webapp1.backend.service
 
 import webapp1.backend.TestDataSource
-import webapp1.backend.db.{SqliteTodoRepository, TodoRepository}
+import webapp1.backend.db.TodoRepository
 import webapp1.shared.domain.TodoStatus
 import zio._
 import zio.test._
@@ -9,7 +9,7 @@ import zio.test._
 object TodoServiceSpec extends ZIOSpecDefault {
 
   private val layer: ZLayer[Any, Throwable, TodoService] =
-    (TestDataSource.sqlite >>> SqliteTodoRepository.test) >>> TodoService.live
+    (TestDataSource.sqlite >>> TodoRepository.test) >>> TodoService.live
 
   def spec = suite("TodoService (SQLite)")(
     test("rejects a blank todo (no-op)") {

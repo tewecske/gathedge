@@ -3,16 +3,15 @@ package webapp1.backend.http
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  EmailVerificationTokenRepository,
   GroupInvitationRepository,
   GroupInvitationRow,
-  SqliteEmailVerificationTokenRepository,
-  SqliteGroupInvitationRepository,
-  SqliteGroupMemberRepository,
-  SqliteGroupPairRepository,
-  SqliteGroupRepository,
-  SqliteOAuthIdentityRepository,
-  SqliteSessionRepository,
-  SqliteUserRepository,
+  GroupMemberRepository,
+  GroupPairRepository,
+  GroupRepository,
+  OAuthIdentityRepository,
+  SessionRepository,
+  UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{AuthService, EmailSender, GroupService, RateLimiter}
@@ -35,9 +34,9 @@ object GroupRoutesSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     TestDataSource.sqlite >>> (
-      SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
-        SqliteGroupInvitationRepository.test ++ SqliteUserRepository.test ++ SqliteSessionRepository.test ++
-        SqliteOAuthIdentityRepository.test ++ SqliteEmailVerificationTokenRepository.test
+      GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
+        GroupInvitationRepository.test ++ UserRepository.test ++ SessionRepository.test ++
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test
     )
   }
 

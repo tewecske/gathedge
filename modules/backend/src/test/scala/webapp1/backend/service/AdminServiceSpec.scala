@@ -1,16 +1,7 @@
 package webapp1.backend.service
 
 import webapp1.backend.{TestAuthLayers, TestDataSource}
-import webapp1.backend.db.{
-  EmailVerificationTokenRepository,
-  OAuthIdentityRepository,
-  SessionRepository,
-  SqliteEmailVerificationTokenRepository,
-  SqliteOAuthIdentityRepository,
-  SqliteSessionRepository,
-  SqliteUserRepository,
-  UserRepository,
-}
+import webapp1.backend.db.{EmailVerificationTokenRepository, OAuthIdentityRepository, SessionRepository, UserRepository}
 import webapp1.backend.security.PasswordHasher
 import zio._
 import zio.test._
@@ -23,8 +14,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
   ] = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteOAuthIdentityRepository.test ++
-        SqliteEmailVerificationTokenRepository.test
+      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
+        EmailVerificationTokenRepository.test
     )
   }
 

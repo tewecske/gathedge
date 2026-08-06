@@ -8,7 +8,7 @@ import zio.*
 import javax.sql.DataSource
 
 /** Single-use proof-of-address tokens issued at signup and on resend. Same dual-dialect shape as every other repository
-  * here: one generic implementation, two thin `ZLayer` objects.
+  * here: one generic implementation, two thin `ZLayer`s on the companion.
   */
 trait EmailVerificationTokenRepository {
   def insert(row: EmailVerificationTokenRow): Task[EmailVerificationTokenRow]
@@ -35,6 +35,18 @@ object EmailVerificationTokenRepository {
 
   def deleteExpired(before: Long): RIO[EmailVerificationTokenRepository, Long] =
     ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.deleteExpired(before))
+
+  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
+    new EmailVerificationTokenRepositoryLive(
+      ds,
+      new PostgresZioJdbcContext(SnakeCase),
+    ): EmailVerificationTokenRepository
+  })
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new EmailVerificationTokenRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): EmailVerificationTokenRepository
+  )
 }
 
 /** Verification tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
@@ -76,20 +88,4 @@ final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: 
       s"emailVerificationTokens.deleteExpired rows=$rows"
     }
   }
-}
-
-object PostgresEmailVerificationTokenRepository {
-  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
-    new EmailVerificationTokenRepositoryLive(
-      ds,
-      new PostgresZioJdbcContext(SnakeCase),
-    ): EmailVerificationTokenRepository
-  })
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteEmailVerificationTokenRepository {
-  val test: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new EmailVerificationTokenRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): EmailVerificationTokenRepository
-  )
 }

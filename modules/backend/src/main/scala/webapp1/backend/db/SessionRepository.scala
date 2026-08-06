@@ -40,6 +40,15 @@ object SessionRepository {
 
   def deleteExpired(before: Long): RIO[SessionRepository, Long] =
     ZIO.serviceWithZIO[SessionRepository](_.deleteExpired(before))
+
+  val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new SessionRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): SessionRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new SessionRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): SessionRepository
+  )
 }
 
 /** Session ids are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
@@ -85,17 +94,4 @@ final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
     }
     logged(run(ctx.run(q)))(rows => s"sessions.deleteExpired rows=$rows")
   }
-}
-
-object PostgresSessionRepository {
-  val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new SessionRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): SessionRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteSessionRepository {
-  val test: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new SessionRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): SessionRepository
-  )
 }

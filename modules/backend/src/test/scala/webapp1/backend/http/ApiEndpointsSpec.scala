@@ -3,15 +3,15 @@ package webapp1.backend.http
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
-  SqliteEmailVerificationTokenRepository,
-  SqliteGroupInvitationRepository,
-  SqliteGroupMemberRepository,
-  SqliteGroupPairRepository,
-  SqliteGroupRepository,
-  SqliteOAuthIdentityRepository,
-  SqliteSessionRepository,
-  SqliteTodoRepository,
-  SqliteUserRepository,
+  EmailVerificationTokenRepository,
+  GroupInvitationRepository,
+  GroupMemberRepository,
+  GroupPairRepository,
+  GroupRepository,
+  OAuthIdentityRepository,
+  SessionRepository,
+  TodoRepository,
+  UserRepository,
 }
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{
@@ -57,10 +57,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
 
   private val repos = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteTodoRepository.test ++
-        SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
-        SqliteGroupInvitationRepository.test ++ SqliteOAuthIdentityRepository.test ++
-        SqliteEmailVerificationTokenRepository.test
+      UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
+        GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
+        GroupInvitationRepository.test ++ OAuthIdentityRepository.test ++
+        EmailVerificationTokenRepository.test
     )
   }
 

@@ -2,12 +2,7 @@ package webapp1.backend.http
 
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
-import webapp1.backend.db.{
-  SqliteEmailVerificationTokenRepository,
-  SqliteOAuthIdentityRepository,
-  SqliteSessionRepository,
-  SqliteUserRepository,
-}
+import webapp1.backend.db.{EmailVerificationTokenRepository, OAuthIdentityRepository, SessionRepository, UserRepository}
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{AuthService, OAuthClients, RateLimiter}
 import webapp1.shared.dto.{AuthResponse, ErrorResponse, LoginRequest, SignupRequest, SignupResponse}
@@ -29,8 +24,8 @@ object AuthFlowSpec extends ZIOSpecDefault {
   private val services: ZLayer[Any, Throwable, AuthService & OAuthClients & AppConfig] = {
     val repos = {
       TestDataSource.sqlite >>> (
-        SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteOAuthIdentityRepository.test ++
-          SqliteEmailVerificationTokenRepository.test
+        UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
+          EmailVerificationTokenRepository.test
       )
     }
     AppConfig.live ++ (

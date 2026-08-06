@@ -5,11 +5,6 @@ import webapp1.backend.db.{
   EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
-  SqliteEmailVerificationTokenRepository,
-  SqliteOAuthIdentityRepository,
-  SqliteSessionRepository,
-  SqliteTodoRepository,
-  SqliteUserRepository,
   TodoRepository,
   UserRepository,
 }
@@ -34,8 +29,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
     UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
   ] = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteTodoRepository.test ++
-        SqliteOAuthIdentityRepository.test ++ SqliteEmailVerificationTokenRepository.test
+      UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test
     )
   }
 

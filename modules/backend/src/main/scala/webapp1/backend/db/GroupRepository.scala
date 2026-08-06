@@ -41,6 +41,15 @@ object GroupRepository {
 
   def delete(id: Long): RIO[GroupRepository, Unit] =
     ZIO.serviceWithZIO[GroupRepository](_.delete(id))
+
+  val live: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupRepository
+  )
 }
 
 final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
@@ -99,19 +108,6 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 }
 
-object PostgresGroupRepository {
-  val live: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteGroupRepository {
-  val test: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupRepository
-  )
-}
-
 trait GroupMemberRepository {
   def addMember(groupId: Long, userId: Long, role: String, joinedAt: Long): Task[Unit]
   def findRole(groupId: Long, userId: Long): Task[Option[String]]
@@ -141,6 +137,15 @@ object GroupMemberRepository {
 
   def countAdmins(groupId: Long): RIO[GroupMemberRepository, Long] =
     ZIO.serviceWithZIO[GroupMemberRepository](_.countAdmins(groupId))
+
+  val live: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupMemberRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupMemberRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupMemberRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupMemberRepository
+  )
 }
 
 final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
@@ -193,19 +198,6 @@ final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrat
   }
 }
 
-object PostgresGroupMemberRepository {
-  val live: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupMemberRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupMemberRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteGroupMemberRepository {
-  val test: ZLayer[DataSource, Nothing, GroupMemberRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupMemberRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupMemberRepository
-  )
-}
-
 trait GroupPairRepository {
   def insert(
     groupId: Long,
@@ -231,6 +223,15 @@ object GroupPairRepository {
 
   def listForGroup(groupId: Long): RIO[GroupPairRepository, List[GroupPairRow]] =
     ZIO.serviceWithZIO[GroupPairRepository](_.listForGroup(groupId))
+
+  val live: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupPairRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupPairRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupPairRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupPairRepository
+  )
 }
 
 final class GroupPairRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
@@ -264,19 +265,6 @@ final class GroupPairRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrateg
   }
 }
 
-object PostgresGroupPairRepository {
-  val live: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupPairRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupPairRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteGroupPairRepository {
-  val test: ZLayer[DataSource, Nothing, GroupPairRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupPairRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupPairRepository
-  )
-}
-
 trait GroupInvitationRepository {
   def insert(row: GroupInvitationRow): Task[GroupInvitationRow]
   def findByToken(token: String): Task[Option[GroupInvitationRow]]
@@ -292,6 +280,15 @@ object GroupInvitationRepository {
 
   def markAccepted(token: String, acceptedAt: Long): RIO[GroupInvitationRepository, Unit] =
     ZIO.serviceWithZIO[GroupInvitationRepository](_.markAccepted(token, acceptedAt))
+
+  val live: ZLayer[DataSource, Nothing, GroupInvitationRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupInvitationRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupInvitationRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, GroupInvitationRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new GroupInvitationRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupInvitationRepository
+  )
 }
 
 /** Invitation tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
@@ -321,17 +318,4 @@ final class GroupInvitationRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingS
     val q = quote(invitations.filter(_.token == lift(token)).update(_.acceptedAt -> lift(Option(acceptedAt))))
     logged(run(ctx.run(q)).unit)(_ => "groupInvitations.markAccepted")
   }
-}
-
-object PostgresGroupInvitationRepository {
-  val live: ZLayer[DataSource, Nothing, GroupInvitationRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupInvitationRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupInvitationRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteGroupInvitationRepository {
-  val test: ZLayer[DataSource, Nothing, GroupInvitationRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupInvitationRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupInvitationRepository
-  )
 }

@@ -7,9 +7,9 @@ import zio.*
 
 import javax.sql.DataSource
 
-/** Dialect-independent interface. [[PostgresOAuthIdentityRepository.live]] backs production (Postgres),
-  * [[SqliteOAuthIdentityRepository.test]] backs tests (SQLite) — see the plan's "dual-dialect DB strategy". Both wrap
-  * the same [[OAuthIdentityRepositoryLive]] below and are swapped in purely via ZLayer wiring.
+/** Dialect-independent interface. [[OAuthIdentityRepository.live]] backs production (Postgres),
+  * [[OAuthIdentityRepository.test]] backs tests (SQLite) — see the plan's "dual-dialect DB strategy". Both wrap the
+  * same [[OAuthIdentityRepositoryLive]] below and are swapped in purely via ZLayer wiring.
   */
 trait OAuthIdentityRepository {
 
@@ -39,6 +39,15 @@ object OAuthIdentityRepository {
 
   def deleteByUserAndProvider(userId: Long, provider: String): RIO[OAuthIdentityRepository, Long] =
     ZIO.serviceWithZIO[OAuthIdentityRepository](_.deleteByUserAndProvider(userId, provider))
+
+  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new OAuthIdentityRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): OAuthIdentityRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new OAuthIdentityRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): OAuthIdentityRepository
+  )
 }
 
 /** The provider's `subject` identifies a person at that provider, so no log line here carries one — see
@@ -79,17 +88,4 @@ final class OAuthIdentityRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStr
       s"oauthIdentities.deleteByUserAndProvider userId=$userId provider=$provider rows=$rows"
     }
   }
-}
-
-object PostgresOAuthIdentityRepository {
-  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new OAuthIdentityRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): OAuthIdentityRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteOAuthIdentityRepository {
-  val test: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new OAuthIdentityRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): OAuthIdentityRepository
-  )
 }

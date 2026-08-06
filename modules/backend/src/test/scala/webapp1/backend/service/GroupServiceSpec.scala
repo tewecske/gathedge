@@ -5,11 +5,9 @@ import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   GroupInvitationRepository,
   GroupInvitationRow,
-  SqliteGroupInvitationRepository,
-  SqliteGroupMemberRepository,
-  SqliteGroupPairRepository,
-  SqliteGroupRepository,
-  SqliteUserRepository,
+  GroupMemberRepository,
+  GroupPairRepository,
+  GroupRepository,
   UserRepository,
 }
 import webapp1.shared.domain.GroupRole
@@ -22,8 +20,8 @@ object GroupServiceSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     TestDataSource.sqlite >>> (
-      SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
-        SqliteGroupInvitationRepository.test ++ SqliteUserRepository.test
+      GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
+        GroupInvitationRepository.test ++ UserRepository.test
     )
   }
 

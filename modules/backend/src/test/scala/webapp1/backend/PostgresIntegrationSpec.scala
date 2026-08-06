@@ -7,17 +7,16 @@ import webapp1.backend.TestAuthLayers
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   DbDialect,
+  EmailVerificationTokenRepository,
   FlywayMigrator,
+  GroupInvitationRepository,
+  GroupMemberRepository,
   GroupPairRepository,
-  PostgresEmailVerificationTokenRepository,
-  PostgresGroupInvitationRepository,
-  PostgresGroupMemberRepository,
-  PostgresGroupPairRepository,
-  PostgresGroupRepository,
-  PostgresOAuthIdentityRepository,
-  PostgresSessionRepository,
-  PostgresTodoRepository,
-  PostgresUserRepository,
+  GroupRepository,
+  OAuthIdentityRepository,
+  SessionRepository,
+  TodoRepository,
+  UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{AdminService, AuthService, EmailSender, GroupService, RateLimiter, TodoService}
@@ -63,10 +62,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     containerDataSource >>> (
-      PostgresUserRepository.live ++ PostgresSessionRepository.live ++ PostgresTodoRepository.live ++
-        PostgresGroupRepository.live ++ PostgresGroupMemberRepository.live ++ PostgresGroupPairRepository.live ++
-        PostgresGroupInvitationRepository.live ++ PostgresOAuthIdentityRepository.live ++
-        PostgresEmailVerificationTokenRepository.live
+      UserRepository.live ++ SessionRepository.live ++ TodoRepository.live ++
+        GroupRepository.live ++ GroupMemberRepository.live ++ GroupPairRepository.live ++
+        GroupInvitationRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live
     )
   }
 

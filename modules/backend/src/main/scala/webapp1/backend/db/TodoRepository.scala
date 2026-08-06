@@ -26,6 +26,15 @@ object TodoRepository {
 
   def updateStatus(id: Long, userId: Long, status: String): RIO[TodoRepository, Option[TodoItemRow]] =
     ZIO.serviceWithZIO[TodoRepository](_.updateStatus(id, userId, status))
+
+  val live: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new TodoRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): TodoRepository
+  )
+
+  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
+  val test: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new TodoRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): TodoRepository
+  )
 }
 
 final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
@@ -72,17 +81,4 @@ final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       s"todos.updateStatus id=$id userId=$userId status=$status updated=${updated.isDefined}"
     }
   }
-}
-
-object PostgresTodoRepository {
-  val live: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new TodoRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): TodoRepository
-  )
-}
-
-/** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-object SqliteTodoRepository {
-  val test: ZLayer[DataSource, Nothing, TodoRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new TodoRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): TodoRepository
-  )
 }
