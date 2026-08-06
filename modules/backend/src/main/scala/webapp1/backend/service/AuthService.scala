@@ -154,9 +154,47 @@ object AuthService {
 
   def updateTheme(userId: Long, theme: Theme): RIO[AuthService, User] =
     ZIO.serviceWithZIO[AuthService](_.updateTheme(userId, theme))
+
+  /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
+    * [[webapp1.backend.security.PasswordHasher]] is configured with.
+    */
+  private val timingEqualizerSource = "account-enumeration-guard"
+
+  /** How long a verification link stays redeemable. Shorter than the 7 days a group invite gets: an invite is passed
+    * between people, a verification link goes straight back to the address that just signed up.
+    */
+  val verificationValidity: Duration = 24.hours
+
+  val live: URLayer[
+    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository & PasswordHasher &
+      RateLimiter & EmailSender & AppConfig,
+    AuthService,
+  ] = ZLayer {
+    for {
+      userRepo            <- ZIO.service[UserRepository]
+      sessionRepo         <- ZIO.service[SessionRepository]
+      identityRepo        <- ZIO.service[OAuthIdentityRepository]
+      tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
+      hasher              <- ZIO.service[PasswordHasher]
+      rateLimiter         <- ZIO.service[RateLimiter]
+      emailSender         <- ZIO.service[EmailSender]
+      config              <- ZIO.service[AppConfig]
+      timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
+    } yield AuthServiceLive(
+      userRepo,
+      sessionRepo,
+      identityRepo,
+      tokenRepo,
+      hasher,
+      rateLimiter,
+      emailSender,
+      config,
+      timingEqualizerHash,
+    ): AuthService
+  }
 }
 
-final class AuthServiceLive(
+final case class AuthServiceLive(
   userRepo: UserRepository,
   sessionRepo: SessionRepository,
   identityRepo: OAuthIdentityRepository,
@@ -266,7 +304,7 @@ final class AuthServiceLive(
       _     <-
         tokenRepo
           .insert(
-            EmailVerificationTokenRow(0L, userId, token, now, now + AuthServiceLive.verificationValidity.toMillis, None)
+            EmailVerificationTokenRow(0L, userId, token, now, now + AuthService.verificationValidity.toMillis, None)
           )
           .orDie
       link   = s"${config.app.publicBaseUrl}/verify-email/$token"
@@ -275,7 +313,7 @@ final class AuthServiceLive(
                    email,
                    "Confirm your email address",
                    s"Confirm your email address by following this link: $link\n\n" +
-                     s"The link stops working in ${AuthServiceLive.verificationValidity.toHours} hours.",
+                     s"The link stops working in ${AuthService.verificationValidity.toHours} hours.",
                  )
                  .catchAllCause(cause => ZIO.logErrorCause(s"Could not send verification email to '$email'", cause))
     } yield ()
@@ -559,46 +597,5 @@ final class AuthServiceLive(
       _   <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
       row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
     } yield toDomain(row)
-  }
-}
-
-object AuthServiceLive {
-
-  /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
-    * [[PasswordHasher]] is configured with.
-    */
-  private val timingEqualizerSource = "account-enumeration-guard"
-
-  /** How long a verification link stays redeemable. Shorter than the 7 days a group invite gets: an invite is passed
-    * between people, a verification link goes straight back to the address that just signed up.
-    */
-  val verificationValidity: Duration = 24.hours
-
-  val live: URLayer[
-    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository & PasswordHasher &
-      RateLimiter & EmailSender & AppConfig,
-    AuthService,
-  ] = ZLayer {
-    for {
-      userRepo            <- ZIO.service[UserRepository]
-      sessionRepo         <- ZIO.service[SessionRepository]
-      identityRepo        <- ZIO.service[OAuthIdentityRepository]
-      tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
-      hasher              <- ZIO.service[PasswordHasher]
-      rateLimiter         <- ZIO.service[RateLimiter]
-      emailSender         <- ZIO.service[EmailSender]
-      config              <- ZIO.service[AppConfig]
-      timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
-    } yield new AuthServiceLive(
-      userRepo,
-      sessionRepo,
-      identityRepo,
-      tokenRepo,
-      hasher,
-      rateLimiter,
-      emailSender,
-      config,
-      timingEqualizerHash,
-    ): AuthService
   }
 }

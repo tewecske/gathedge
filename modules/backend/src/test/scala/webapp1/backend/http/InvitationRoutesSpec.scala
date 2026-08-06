@@ -15,14 +15,7 @@ import webapp1.backend.db.{
   SqliteUserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{
-  AuthService,
-  AuthServiceLive,
-  EmailSender,
-  GroupService,
-  GroupServiceLive,
-  InMemoryRateLimiter,
-}
+import webapp1.backend.service.{AuthService, EmailSender, GroupService, RateLimiter}
 import webapp1.shared.domain.{Group, GroupRole, InvitationInfo}
 import zio.*
 import zio.http.*
@@ -49,10 +42,10 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
 
   private val layer: ZLayer[Any, Throwable, AuthService & GroupService & GroupInvitationRepository] = {
     repoLayer ++ (
-      (repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-        AuthServiceLive.live
+      (repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthService.live
     ) ++
-      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
+      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, (Long, String)] = {

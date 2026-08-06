@@ -287,7 +287,7 @@ object MicrosoftOAuthClient {
   }
 }
 
-final class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthClients {
+final case class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthClients {
 
   private val clients: Map[OAuthProvider, OAuthClient] = {
     OAuthProvider.all
@@ -313,6 +313,5 @@ object OAuthClients {
   def forProvider(provider: OAuthProvider): URIO[OAuthClients, Option[OAuthClient]] =
     ZIO.serviceWith[OAuthClients](_.forProvider(provider))
 
-  val live: URLayer[AppConfig & Client, OAuthClients] =
-    ZLayer.fromFunction((cfg: AppConfig, client: Client) => new OAuthClientsLive(cfg, client): OAuthClients)
+  val live: URLayer[AppConfig & Client, OAuthClients] = ZLayer.fromFunction(OAuthClientsLive.apply)
 }

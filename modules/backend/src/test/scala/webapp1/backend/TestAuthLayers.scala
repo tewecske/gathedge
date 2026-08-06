@@ -56,7 +56,7 @@ object RecordingEmailSender {
   }
 }
 
-/** Layer plumbing every auth spec needs now that `AuthServiceLive` depends on a mailer and on config.
+/** Layer plumbing every auth spec needs now that `AuthService.live` depends on a mailer and on config.
   *
   * `AppConfig.live` reads `application.conf`, where `app.require-email-verification` is false — which is what keeps the
   * existing specs (and the e2e golden path) describing an unverified account that can still sign in. A spec that wants
@@ -70,7 +70,7 @@ object TestAuthLayers {
       .project(config => config.copy(app = config.app.copy(requireEmailVerification = requireEmailVerification)))
   }
 
-  /** The non-repository half of `AuthServiceLive`'s requirements: a config and the logging mailer it selects. */
+  /** The non-repository half of `AuthService.live`'s requirements: a config and the logging mailer it selects. */
   val emailAndConfig: ZLayer[Any, Throwable, EmailSender & AppConfig] = {
     AppConfig.live ++ (AppConfig.live >>> EmailSender.live)
   }

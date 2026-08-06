@@ -30,7 +30,7 @@ final class LoggingEmailSender extends EmailSender {
   * ever called from a fiber that is already free to take its time, and every caller either forks it or tolerates its
   * failure.
   */
-final class SmtpEmailSender(config: AppConfig) extends EmailSender {
+final case class SmtpEmailSender(config: AppConfig) extends EmailSender {
   private val smtp = config.mail.smtp
 
   private val session: Session = {
@@ -78,7 +78,7 @@ object EmailSender {
         if (config.isMailConfigured) {
           ZIO
             .logInfo(s"Sending mail via SMTP at ${config.mail.smtp.host}:${config.mail.smtp.port}")
-            .as(new SmtpEmailSender(config): EmailSender)
+            .as(SmtpEmailSender(config): EmailSender)
         } else {
           ZIO
             .logInfo("No SMTP host configured; outgoing mail will be logged instead of sent")

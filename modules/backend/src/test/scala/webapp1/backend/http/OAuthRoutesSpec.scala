@@ -9,14 +9,7 @@ import webapp1.backend.db.{
   SqliteUserRepository,
 }
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
-import webapp1.backend.service.{
-  AuthService,
-  AuthServiceLive,
-  InMemoryRateLimiter,
-  OAuthClient,
-  OAuthClients,
-  OAuthIdentity,
-}
+import webapp1.backend.service.{AuthService, OAuthClient, OAuthClients, OAuthIdentity, RateLimiter}
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{ErrorResponse, IdentitiesResponse, SetPasswordRequest}
 import zio.*
@@ -74,8 +67,8 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       )
     }
     AppConfig.live ++ stubClients ++ (
-      (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-        AuthServiceLive.live
+      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthService.live
     )
   }
 

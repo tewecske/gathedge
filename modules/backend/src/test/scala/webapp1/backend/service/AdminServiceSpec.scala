@@ -31,8 +31,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
   // AuthService shares the same DataSource so a session issued by a login can be checked against
   // the effect an admin password reset has on it.
   private val layer: ZLayer[Any, Throwable, AdminService & AuthService] = {
-    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-      (AdminServiceLive.live ++ AuthServiceLive.live)
+    (repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+      (AdminService.live ++ AuthService.live)
   }
 
   def spec = suite("AdminService (SQLite)")(

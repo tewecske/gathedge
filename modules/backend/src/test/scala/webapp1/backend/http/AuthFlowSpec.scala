@@ -9,7 +9,7 @@ import webapp1.backend.db.{
   SqliteUserRepository,
 }
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
-import webapp1.backend.service.{AuthService, AuthServiceLive, InMemoryRateLimiter, OAuthClients}
+import webapp1.backend.service.{AuthService, OAuthClients, RateLimiter}
 import webapp1.shared.dto.{AuthResponse, ErrorResponse, LoginRequest, SignupRequest, SignupResponse}
 import zio.*
 import zio.http.*
@@ -34,8 +34,8 @@ object AuthFlowSpec extends ZIOSpecDefault {
       )
     }
     AppConfig.live ++ (
-      (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-        AuthServiceLive.live
+      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthService.live
     ) ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
   }

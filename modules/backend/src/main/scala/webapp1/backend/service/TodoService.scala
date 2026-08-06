@@ -27,9 +27,11 @@ object TodoService {
 
   def moveTodo(userId: Long, id: Long, newStatus: TodoStatus): ZIO[TodoService, TodoFailure, TodoItem] =
     ZIO.serviceWithZIO[TodoService](_.moveTodo(userId, id, newStatus))
+
+  val live: URLayer[TodoRepository, TodoService] = ZLayer.fromFunction(TodoServiceLive.apply)
 }
 
-final class TodoServiceLive(repo: TodoRepository) extends TodoService {
+final case class TodoServiceLive(repo: TodoRepository) extends TodoService {
 
   private def toDomain(row: TodoItemRow): TodoItem = {
     TodoItem(row.id, row.text, TodoStatus.fromString(row.status).getOrElse(TodoStatus.ToDo), row.createdAt.toString)
@@ -62,9 +64,4 @@ final class TodoServiceLive(repo: TodoRepository) extends TodoService {
           ZIO.fail(TodoFailure.NotFound)
       }
   }
-}
-
-object TodoServiceLive {
-  val live: URLayer[TodoRepository, TodoService] =
-    ZLayer.fromFunction((repo: TodoRepository) => new TodoServiceLive(repo): TodoService)
 }

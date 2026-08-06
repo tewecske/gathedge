@@ -14,15 +14,7 @@ import webapp1.backend.db.{
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{
-  AdminService,
-  AdminServiceLive,
-  AuthService,
-  AuthServiceLive,
-  InMemoryRateLimiter,
-  TodoService,
-  TodoServiceLive,
-}
+import webapp1.backend.service.{AdminService, AuthService, RateLimiter, TodoService}
 import webapp1.shared.validation.Validation
 import zio.*
 import zio.http.*
@@ -48,8 +40,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   }
 
   private val layer: ZLayer[Any, Throwable, AuthService & AdminService & TodoService] = {
-    (repoLayers ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-      (AuthServiceLive.live ++ AdminServiceLive.live ++ TodoServiceLive.live)
+    (repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+      (AuthService.live ++ AdminService.live ++ TodoService.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {

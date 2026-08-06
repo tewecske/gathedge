@@ -16,16 +16,12 @@ import webapp1.backend.db.{
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{
   AdminService,
-  AdminServiceLive,
   AuthService,
-  AuthServiceLive,
   EmailSender,
   GroupService,
-  GroupServiceLive,
-  InMemoryRateLimiter,
   OAuthClients,
+  RateLimiter,
   TodoService,
-  TodoServiceLive,
 }
 import webapp1.shared.api.ApiFailure
 import webapp1.shared.domain.{Group, GroupMember, Theme, TodoItem, User}
@@ -71,11 +67,11 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   private val layer = {
     AppConfig.live ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live) ++ (
-        (repos ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-          (AuthServiceLive.live ++ AdminServiceLive.live)
+        (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+          (AuthService.live ++ AdminService.live)
       ) ++
-      (repos >>> TodoServiceLive.live) ++
-      ((repos ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
+      (repos >>> TodoService.live) ++
+      ((repos ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {

@@ -30,7 +30,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
   // repoLayer is referenced twice below; ZIO memoizes same-instance layers within
   // one composition, so both branches share a single underlying (SQLite) DB.
   private val layer: ZLayer[Any, Throwable, GroupService & GroupInvitationRepository & UserRepository] =
-    repoLayer ++ ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
+    repoLayer ++ ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
 
   def spec = suite("GroupService (SQLite)")(
     test("creating a group makes the creator an admin member") {

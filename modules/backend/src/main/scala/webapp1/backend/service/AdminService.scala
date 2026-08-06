@@ -60,12 +60,15 @@ object AdminService {
 
   def deleteUser(actingAdminId: Long, id: Long): ZIO[AdminService, AdminFailure, Unit] =
     ZIO.serviceWithZIO[AdminService](_.deleteUser(actingAdminId, id))
+
+  val live: URLayer[UserRepository & SessionRepository & PasswordHasher, AdminService] =
+    ZLayer.fromFunction(AdminServiceLive.apply)
 }
 
 /** Admin actions that change accounts (create/promote-or-demote/delete) are logged to the `security` logger as an audit
   * trail, per summary.md's "logging for application events, such as user actions".
   */
-final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepository, hasher: PasswordHasher)
+final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepository, hasher: PasswordHasher)
     extends AdminService {
 
   private def toDomain(row: UserRow): User = {
@@ -165,10 +168,4 @@ final class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepos
       _    <- audit(actingAdminId, s"deleted user '${user.email}' (id=$id)")
     } yield ()
   }
-}
-
-object AdminServiceLive {
-  val live: URLayer[UserRepository & SessionRepository & PasswordHasher, AdminService] = ZLayer.fromFunction(
-    (u: UserRepository, s: SessionRepository, h: PasswordHasher) => new AdminServiceLive(u, s, h): AdminService
-  )
 }

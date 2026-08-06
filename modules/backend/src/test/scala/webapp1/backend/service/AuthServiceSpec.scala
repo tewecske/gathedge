@@ -38,11 +38,11 @@ object AuthServiceSpec extends ZIOSpecDefault {
     */
   private def authServiceLayer(requireEmailVerification: Boolean): ZLayer[Any, Throwable, AuthService & SentEmails] = {
     val support = {
-      PasswordHasher.live ++ InMemoryRateLimiter.live ++ RecordingEmailSender.live ++
+      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++
         TestAuthLayers.configWith(requireEmailVerification)
     }
     val built   = repoLayers ++ support
-    built >>> (AuthServiceLive.live ++ ZLayer.service[SentEmails])
+    built >>> (AuthService.live ++ ZLayer.service[SentEmails])
   }
 
   def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite)
@@ -260,7 +260,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
             recorded    <- ZIO.service[SentEmails]
             _           <- authService.signup("stale@example.com", "password123")
             token       <- recorded.lastVerificationToken
-            _           <- TestClock.adjust(AuthServiceLive.verificationValidity.plus(1.minute))
+            _           <- TestClock.adjust(AuthService.verificationValidity.plus(1.minute))
             result      <- authService.verifyEmail(token.get).either
           } yield assertTrue(result == Left(AuthFailure.InvalidVerificationToken))
         },

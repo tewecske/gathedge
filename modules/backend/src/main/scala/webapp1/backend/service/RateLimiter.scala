@@ -17,6 +17,12 @@ trait RateLimiter {
   def runPruner: URIO[Any, Nothing]
 }
 
+object RateLimiter {
+  val live: ULayer[RateLimiter] = ZLayer.fromZIO(
+    Ref.make(Map.empty[String, Vector[Long]]).map(InMemoryRateLimiter(_))
+  )
+}
+
 /** Key namespaces. Limiting per account only would let one attacker spray a single password across many accounts
   * untouched, so callers check both dimensions and block if either trips.
   */
@@ -33,7 +39,7 @@ object RateLimitKey {
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single
   * backend instance; would need a shared store (e.g. the DB) to hold across multiple instances.
   */
-final class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends RateLimiter {
+final case class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends RateLimiter {
   import InMemoryRateLimiter._
 
   private def prune(attempts: Vector[Long], now: Long): Vector[Long] = {
@@ -83,8 +89,4 @@ object InMemoryRateLimiter {
   val pruneInterval: Duration = 15.minutes
 
   private def normalize(key: String): String = key.trim.toLowerCase
-
-  val live: ULayer[RateLimiter] = ZLayer.fromZIO(
-    Ref.make(Map.empty[String, Vector[Long]]).map(new InMemoryRateLimiter(_))
-  )
 }

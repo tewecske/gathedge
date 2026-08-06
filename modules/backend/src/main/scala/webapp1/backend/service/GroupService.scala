@@ -101,9 +101,14 @@ object GroupService {
 
   def acceptInvitation(userId: Long, userEmail: String, token: String): ZIO[GroupService, GroupFailure, Group] =
     ZIO.serviceWithZIO[GroupService](_.acceptInvitation(userId, userEmail, token))
+
+  val live: URLayer[
+    GroupRepository & GroupMemberRepository & GroupPairRepository & GroupInvitationRepository & EmailSender & AppConfig,
+    GroupService,
+  ] = ZLayer.fromFunction(GroupServiceLive.apply)
 }
 
-final class GroupServiceLive(
+final case class GroupServiceLive(
   groupRepo: GroupRepository,
   memberRepo: GroupMemberRepository,
   pairRepo: GroupPairRepository,
@@ -324,20 +329,4 @@ final class GroupServiceLive(
       group        <- findGroupOrDie(invite.groupId)
     } yield toDomain(group, invite.role)
   }
-}
-
-object GroupServiceLive {
-  val live: URLayer[
-    GroupRepository & GroupMemberRepository & GroupPairRepository & GroupInvitationRepository & EmailSender & AppConfig,
-    GroupService,
-  ] = ZLayer.fromFunction(
-    (
-      g: GroupRepository,
-      m: GroupMemberRepository,
-      p: GroupPairRepository,
-      i: GroupInvitationRepository,
-      e: EmailSender,
-      cfg: AppConfig,
-    ) => new GroupServiceLive(g, m, p, i, e, cfg): GroupService
-  )
 }

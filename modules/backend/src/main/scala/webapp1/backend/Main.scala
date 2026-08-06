@@ -27,15 +27,14 @@ import webapp1.backend.http.{
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
   AdminSeeder,
-  AdminServiceLive,
-  AuthServiceLive,
+  AdminService,
+  AuthService,
   EmailSender,
-  GroupServiceLive,
-  InMemoryRateLimiter,
+  GroupService,
   OAuthClients,
   RateLimiter,
   SessionReaper,
-  TodoServiceLive,
+  TodoService,
 }
 import zio.*
 import zio.http.*
@@ -91,15 +90,15 @@ object Main extends ZIOAppDefault {
     PostgresOAuthIdentityRepository.live,
     PostgresEmailVerificationTokenRepository.live,
     PasswordHasher.live,
-    InMemoryRateLimiter.live,
+    RateLimiter.live,
     EmailSender.live,
-    AuthServiceLive.live,
+    AuthService.live,
     OAuthClients.live,
     // The outbound half of zio-http: the providers' token and tokeninfo endpoints are the only calls this server makes.
     Client.default,
-    TodoServiceLive.live,
-    GroupServiceLive.live,
-    AdminServiceLive.live,
+    TodoService.live,
+    GroupService.live,
+    AdminService.live,
     Server.customized,
     ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.binding(cfg.app.serverHost, cfg.app.serverPort))),
     ZLayer(ZIO.serviceWith[AppConfig](cfg => NettyConfig.default.maxThreads(cfg.netty.maxThreads))),

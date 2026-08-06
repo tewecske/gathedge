@@ -8,7 +8,7 @@ trait PasswordHasher {
   def verify(password: String, hash: String): Task[Boolean]
 }
 
-final class BCryptPasswordHasher(cost: Int) extends PasswordHasher {
+final case class BCryptPasswordHasher(cost: Int) extends PasswordHasher {
   def hash(password: String): Task[String] = {
     ZIO.attemptBlocking(BCrypt.hashpw(password, BCrypt.gensalt(cost)))
   }
@@ -21,5 +21,5 @@ final class BCryptPasswordHasher(cost: Int) extends PasswordHasher {
 object PasswordHasher {
   // Cost 12 balances hashing latency against brute-force resistance for an
   // interactive login endpoint (~250ms/hash on typical server hardware).
-  val live: ULayer[PasswordHasher] = ZLayer.succeed(new BCryptPasswordHasher(cost = 12): PasswordHasher)
+  val live: ULayer[PasswordHasher] = ZLayer.succeed(BCryptPasswordHasher(cost = 12): PasswordHasher)
 }

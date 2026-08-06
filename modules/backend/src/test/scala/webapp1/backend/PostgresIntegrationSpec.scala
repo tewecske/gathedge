@@ -20,14 +20,7 @@ import webapp1.backend.db.{
   PostgresUserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{
-  AdminServiceLive,
-  AuthServiceLive,
-  EmailSender,
-  GroupServiceLive,
-  InMemoryRateLimiter,
-  TodoServiceLive,
-}
+import webapp1.backend.service.{AdminService, AuthService, EmailSender, GroupService, RateLimiter, TodoService}
 import webapp1.shared.domain.{GroupRole, TodoStatus}
 import zio._
 import zio.test._
@@ -80,8 +73,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // `>+>` rather than `>>>` so the repositories stay in the environment alongside the services: the delete-user test
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
-    repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
-      (AuthServiceLive.live ++ TodoServiceLive.live ++ GroupServiceLive.live ++ AdminServiceLive.live)
+    repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
+      (AuthService.live ++ TodoService.live ++ GroupService.live ++ AdminService.live)
   }
 
   def spec = {

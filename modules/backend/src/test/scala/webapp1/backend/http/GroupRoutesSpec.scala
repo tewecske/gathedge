@@ -15,14 +15,7 @@ import webapp1.backend.db.{
   SqliteUserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{
-  AuthService,
-  AuthServiceLive,
-  EmailSender,
-  GroupService,
-  GroupServiceLive,
-  InMemoryRateLimiter,
-}
+import webapp1.backend.service.{AuthService, EmailSender, GroupService, RateLimiter}
 import webapp1.shared.domain.{Group, GroupRole}
 import webapp1.shared.dto.{ErrorResponse, InviteMemberRequest, UpdateRoleRequest}
 import zio.*
@@ -50,10 +43,10 @@ object GroupRoutesSpec extends ZIOSpecDefault {
 
   private val layer: ZLayer[Any, Throwable, AuthService & GroupService & GroupInvitationRepository] = {
     repoLayer ++ (
-      (repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-        AuthServiceLive.live
+      (repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+        AuthService.live
     ) ++
-      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupServiceLive.live)
+      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
   }
 
   /** Signs a user up and returns both halves the routes need: the user id the services key on, and the session id that
