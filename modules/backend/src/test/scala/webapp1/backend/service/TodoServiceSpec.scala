@@ -9,7 +9,7 @@ import zio.test._
 object TodoServiceSpec extends ZIOSpecDefault {
 
   private val layer: ZLayer[Any, Throwable, TodoService] =
-    (TestDataSource.sqlite >>> SqliteTodoRepository.live) >>> TodoServiceLive.live
+    (TestDataSource.sqlite >>> SqliteTodoRepository.test) >>> TodoServiceLive.live
 
   def spec = suite("TodoService (SQLite)")(
     test("rejects a blank todo (no-op)") {

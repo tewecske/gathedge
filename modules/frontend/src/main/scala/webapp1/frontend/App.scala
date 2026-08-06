@@ -47,7 +47,10 @@ object App {
   }
 
   def render(): HtmlElement = {
-    val viewSignal = gateSignal.combineWith(AppRouter.router.currentPageSignal)
+    // `.distinct` matters: `currentPageSignal` is not deduplicated (Waypoint builds it from a merge
+    // of route events), so navigating to the page already displayed emits it again — and every
+    // emission here rebuilds the page element, discarding its state and re-running its mount loads.
+    val viewSignal = gateSignal.combineWith(AppRouter.router.currentPageSignal).distinct
     div(
       onMountCallback { ctx =>
         ApiClient

@@ -22,8 +22,8 @@ object GroupServiceSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     TestDataSource.sqlite >>> (
-      SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live ++ SqliteUserRepository.live
+      SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
+        SqliteGroupInvitationRepository.test ++ SqliteUserRepository.test
     )
   }
 

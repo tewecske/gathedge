@@ -28,8 +28,8 @@ object AuthServiceSpec extends ZIOSpecDefault {
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
   ] = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteOAuthIdentityRepository.live ++
-        SqliteEmailVerificationTokenRepository.live
+      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteOAuthIdentityRepository.test ++
+        SqliteEmailVerificationTokenRepository.test
     )
   }
 

@@ -42,8 +42,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
     UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
   ] = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
-        SqliteOAuthIdentityRepository.live ++ SqliteEmailVerificationTokenRepository.live
+      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteTodoRepository.test ++
+        SqliteOAuthIdentityRepository.test ++ SqliteEmailVerificationTokenRepository.test
     )
   }
 

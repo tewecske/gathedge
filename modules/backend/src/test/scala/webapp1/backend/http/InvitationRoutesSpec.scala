@@ -41,9 +41,9 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     TestDataSource.sqlite >>> (
-      SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live ++ SqliteUserRepository.live ++ SqliteSessionRepository.live ++
-        SqliteOAuthIdentityRepository.live ++ SqliteEmailVerificationTokenRepository.live
+      SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
+        SqliteGroupInvitationRepository.test ++ SqliteUserRepository.test ++ SqliteSessionRepository.test ++
+        SqliteOAuthIdentityRepository.test ++ SqliteEmailVerificationTokenRepository.test
     )
   }
 

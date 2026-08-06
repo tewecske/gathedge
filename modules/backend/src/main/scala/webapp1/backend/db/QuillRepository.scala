@@ -30,4 +30,18 @@ abstract class QuillRepository[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   protected def transaction[T](queries: ZIO[DataSource, Throwable, T]): Task[T] = {
     run(ctx.transaction(queries))
   }
+
+  /** One INFO line per completed action. Logged after success so the message can report what the query did (rows
+    * affected, whether a row was found); a failure is logged where it is handled, not here.
+    *
+    * '''Never put a credential in the message.''' Password hashes, session ids, verification tokens, invitation tokens
+    * and OAuth subjects are all readable in `logs/backend.log` and in `docker logs`; log the surrogate id or a `found=`
+    * flag instead. Emails are left out for the same reason.
+    *
+    * `trace` is taken explicitly so `ZIO.logInfo` reports the repository method that called this, not this helper —
+    * without it every line's `location` is `QuillRepository.logged`.
+    */
+  protected def logged[T](query: Task[T])(message: T => String)(implicit trace: Trace): Task[T] = {
+    query.tap(result => ZIO.logInfo(message(result)))
+  }
 }

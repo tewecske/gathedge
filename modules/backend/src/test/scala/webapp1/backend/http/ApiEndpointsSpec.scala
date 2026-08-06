@@ -61,10 +61,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
 
   private val repos = {
     TestDataSource.sqlite >>> (
-      SqliteUserRepository.live ++ SqliteSessionRepository.live ++ SqliteTodoRepository.live ++
-        SqliteGroupRepository.live ++ SqliteGroupMemberRepository.live ++ SqliteGroupPairRepository.live ++
-        SqliteGroupInvitationRepository.live ++ SqliteOAuthIdentityRepository.live ++
-        SqliteEmailVerificationTokenRepository.live
+      SqliteUserRepository.test ++ SqliteSessionRepository.test ++ SqliteTodoRepository.test ++
+        SqliteGroupRepository.test ++ SqliteGroupMemberRepository.test ++ SqliteGroupPairRepository.test ++
+        SqliteGroupInvitationRepository.test ++ SqliteOAuthIdentityRepository.test ++
+        SqliteEmailVerificationTokenRepository.test
     )
   }
 

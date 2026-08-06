@@ -107,8 +107,9 @@ private class SignUpPage {
             AppRouter.router.pushState(Page.CheckInbox)
           case Right(res) =>
             inFlightVar.set(false)
+            // As in SignInPage: the `RequireAnon` guard navigates to Home off this write. Doing it
+            // here too would emit Home twice and remount the landing page.
             AppState.setUser(res.user)
-            AppRouter.router.pushState(Page.Home)
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
