@@ -8,6 +8,7 @@ import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   DbDialect,
   FlywayMigrator,
+  GroupPairRepository,
   PostgresEmailVerificationTokenRepository,
   PostgresGroupInvitationRepository,
   PostgresGroupMemberRepository,
@@ -27,7 +28,7 @@ import webapp1.backend.service.{
   InMemoryRateLimiter,
   TodoServiceLive,
 }
-import webapp1.shared.domain.TodoStatus
+import webapp1.shared.domain.{GroupRole, TodoStatus}
 import zio._
 import zio.test._
 
@@ -76,8 +77,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     )
   }
 
+  // `>+>` rather than `>>>` so the repositories stay in the environment alongside the services: the delete-user test
+  // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
-    repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig >>>
+    repoLayer ++ PasswordHasher.live ++ InMemoryRateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
       (AuthServiceLive.live ++ TodoServiceLive.live ++ GroupServiceLive.live ++ AdminServiceLive.live)
   }
 
@@ -128,6 +131,26 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterReset.isEmpty,
           withNewPassword._1.id == target.id,
         )
+      },
+      // Only Postgres can catch this: SQLite runs with `PRAGMA foreign_keys` off, so `group_pairs.created_by` and
+      // `group_invitations.invited_by` are inert there and the delete succeeds however the constraint is declared.
+      // Before V6 those two were the only user references without an ON DELETE action, and this raised
+      // "update or delete on table \"users\" violates foreign key constraint" — which `deleteById`'s `.orDie` turned
+      // into a bare 500 for any admin trying to remove a user who had ever added a pair or sent an invitation.
+      test("deleting a user cascades to the group pairs they authored and the invitations they sent") {
+        for {
+          adminService <- ZIO.service[webapp1.backend.service.AdminService]
+          groupService <- ZIO.service[webapp1.backend.service.GroupService]
+          pairRepo <- ZIO.service[GroupPairRepository]
+          admin <- adminService.createUser(0L, "pgdeladmin@example.com", "password123", isAdmin = true)
+          target <- adminService.createUser(admin.id, "pgdeltarget@example.com", "password123", isAdmin = false)
+          group <- groupService.createGroup(target.id, "Doomed Author Group")
+          _ <- groupService.addPair(target.id, target.email, group.id, "src", "tgt")
+          _ <- groupService.inviteMember(target.id, group.id, "pginvitee@example.com", GroupRole.ReadWrite)
+          _ <- adminService.deleteUser(admin.id, target.id)
+          gone <- adminService.getUser(target.id).either
+          remainingPairs <- pairRepo.listForGroup(group.id)
+        } yield assertTrue(gone == Left(webapp1.backend.service.AdminFailure.NotFound), remainingPairs.isEmpty)
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
   }

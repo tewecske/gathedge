@@ -3,18 +3,21 @@
   RollingFileAppender — that one writes to a relative logs/ path, which is meaningless in an image
   with a read-only-ish working dir. Everything goes to stdout/stderr instead, where `docker logs`
   and any log driver can pick it up. Selected via -Dlogback.configurationFile in the Dockerfile.
+
+  `%kvp` carries the ZIO log annotations — see the comment on the other file for why the request
+  log is unreadable without it.
 -->
 <configuration>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg %kvp%n</pattern>
         </encoder>
     </appender>
 
     <appender name="SECURITY" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [SECURITY] %-5level %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [SECURITY] %-5level %msg %kvp%n</pattern>
         </encoder>
     </appender>
 

@@ -23,16 +23,26 @@ object RouteSupport {
     * answers an un-sandboxed defect with `Response.internalServerError(FiberFailure(cause).getMessage)`, i.e. the whole
     * cause chain and stack trace as the response body, and its own `sandbox` logging would produce a bare 500 with no
     * JSON body for a client that only ever parses JSON.
+    *
+    * Both halves log. The 500 body is deliberately opaque — a client is told nothing beyond "internal server error" —
+    * so the log line is the only account of what happened, and it names the defect inline rather than leaving it to the
+    * attached cause: the cause reaches logback as a `FiberFailure` throwable and prints as a stack trace under the
+    * message, which is unreadable at a glance and unfindable with `grep`. A handled failure is a `Response` a handler
+    * built on purpose and needs no attention, but a 4xx that surprises whoever is looking at the frontend is much
+    * easier to place when the server says which status it sent for which path, hence the debug line.
     */
   def handleFailures[Env](routes: Routes[Env, Response]): Routes[Env, Nothing] = {
     val handled = {
       routes.handleErrorRequestCauseZIO { (request: Request, cause: Cause[Response]) =>
         cause.failureOption match {
           case Some(response) =>
-            ZIO.succeed(response)
+            ZIO
+              .logDebug(s"${request.method} ${request.path} -> ${response.status.code}")
+              .when(response.status.code >= 400)
+              .as(response)
           case None =>
             ZIO
-              .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}", cause)
+              .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}: ${describe(cause)}", cause)
               .unless(cause.isInterruptedOnly)
               .as(errorResponse(Status.InternalServerError, "Internal server error"))
         }
@@ -55,6 +65,50 @@ object RouteSupport {
     // carry the replacement along.
     handled.notFound = Handler.fromFunction[Request](_ => errorResponse(Status.NotFound, "Not found"))
     handled
+  }
+
+  /** The one-line form of a defect, for the head of the log entry.
+    *
+    * The root cause is what actually names the problem — a `.orDie`'d repository call arrives wrapped, and it is the
+    * innermost `SQLException` that says which constraint or column was at fault. Newlines are flattened because several
+    * drivers put detail on a second line (Postgres' `Detail: Key (id)=(28) is still referenced from ...`), which would
+    * otherwise split the entry and hide the useful half from a `grep`.
+    */
+  private def describe(cause: Cause[Any]): String = {
+    cause.defects.headOption match {
+      case None =>
+        if (cause.isInterruptedOnly)
+          "interrupted"
+        else
+          "no defect"
+      case Some(defect) =>
+        val root = rootCause(defect)
+        val head = s"${defect.getClass.getName}: ${oneLine(defect.getMessage)}"
+        if (root eq defect)
+          head
+        else
+          s"$head [caused by ${root.getClass.getName}: ${oneLine(root.getMessage)}]"
+    }
+  }
+
+  /** Bounded rather than recursive to the end: a `getCause` chain can be self-referential, and this runs on the way to
+    * answering a request.
+    */
+  private def rootCause(throwable: Throwable): Throwable = {
+    var current = throwable
+    var depth = 0
+    while (current.getCause != null && (current.getCause ne current) && depth < 10) {
+      current = current.getCause
+      depth += 1
+    }
+    current
+  }
+
+  private def oneLine(message: String): String = {
+    if (message == null)
+      "(no message)"
+    else
+      message.replaceAll("\\s*\\R\\s*", " ").trim
   }
 
   /** Methods that a cross-site page can trigger without a CORS preflight, so requiring a custom header on them would
