@@ -14,10 +14,10 @@ object TodoPageSpec extends ZIOSpecDefault {
         dom.document.body.appendChild(container)
         // No backend is running; mounting must not throw even though the initial
         // GET /api/todos will fail (ApiClient.networkSafe turns that into a Left).
-        val rootNode = L.render(container, TodoPage.render())
+        val rootNode  = L.render(container, TodoPage.render())
 
-        val text = container.textContent
-        val hasAddInput = container.querySelector("input") != null
+        val text          = container.textContent
+        val hasAddInput   = container.querySelector("input") != null
         val hasAllColumns = text.contains("To Do") && text.contains("In Progress") && text.contains("Done")
 
         rootNode.unmount()
@@ -30,13 +30,13 @@ object TodoPageSpec extends ZIOSpecDefault {
       test("submitting a blank item shows a validation error and leaves the button enabled") {
         val container = dom.document.createElement("div")
         dom.document.body.appendChild(container)
-        val rootNode = L.render(container, TodoPage.render())
+        val rootNode  = L.render(container, TodoPage.render())
 
-        val addForm = container.querySelector("form").asInstanceOf[dom.html.Form]
+        val addForm   = container.querySelector("form").asInstanceOf[dom.html.Form]
         val addButton = container.querySelector("form button").asInstanceOf[dom.html.Button]
         addForm.dispatchEvent(new dom.Event("submit"))
 
-        val alertText = Option(container.querySelector(".alert")).map(_.textContent).getOrElse("")
+        val alertText    = Option(container.querySelector(".alert")).map(_.textContent).getOrElse("")
         val stillEnabled = !addButton.disabled
 
         rootNode.unmount()

@@ -66,32 +66,34 @@ object AuthFlowSpec extends ZIOSpecDefault {
       test("signup sets a session cookie that /api/me accepts, and logout expires it") {
         for {
           client <- ZIO.service[Client]
-          _ <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
-          url <- baseUrl
+          _      <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
+          url    <- baseUrl
 
-          signup <- client(
-            Request
-              .post(url / "api" / "auth" / "signup", json(SignupRequest("wire@example.com", "password123")))
-              .addHeader(csrfHeader)
-          )
+          signup     <- client(
+                          Request
+                            .post(url / "api" / "auth" / "signup", json(SignupRequest("wire@example.com", "password123")))
+                            .addHeader(csrfHeader)
+                        )
           signupBody <- signup.body.asString
-          cookie = sessionCookie(signup)
+          cookie      = sessionCookie(signup)
 
-          me <- client(
-            Request.get(url / "api" / "me").addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
-          )
+          me     <-
+            client(
+              Request.get(url / "api" / "me").addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
+            )
           meBody <- me.body.asString
 
           logout <- client(
-            Request
-              .post(url / "api" / "auth" / "logout", Body.empty)
-              .addHeader(csrfHeader)
-              .addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
-          )
+                      Request
+                        .post(url / "api" / "auth" / "logout", Body.empty)
+                        .addHeader(csrfHeader)
+                        .addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
+                    )
 
-          afterLogout <- client(
-            Request.get(url / "api" / "me").addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
-          )
+          afterLogout <-
+            client(
+              Request.get(url / "api" / "me").addCookie(Cookie.Request(SessionAuth.cookieName, cookie.getOrElse("")))
+            )
         } yield assertTrue(
           signup.status == Status.Created,
           cookie.exists(_.nonEmpty),
@@ -107,37 +109,38 @@ object AuthFlowSpec extends ZIOSpecDefault {
       test("the session cookie is HttpOnly and SameSite=Lax, so script and cross-site navigation can't use it") {
         for {
           client <- ZIO.service[Client]
-          _ <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
-          url <- baseUrl
+          _      <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
+          url    <- baseUrl
           signup <- client(
-            Request
-              .post(url / "api" / "auth" / "signup", json(SignupRequest("cookie@example.com", "password123")))
-              .addHeader(csrfHeader)
-          )
-          cookie = signup
-            .headers(Header.SetCookie)
-            .collectFirst {
-              case Header.SetCookie(c) if c.name == SessionAuth.cookieName =>
-                c
-            }
+                      Request
+                        .post(url / "api" / "auth" / "signup", json(SignupRequest("cookie@example.com", "password123")))
+                        .addHeader(csrfHeader)
+                    )
+          cookie  = signup
+                      .headers(Header.SetCookie)
+                      .collectFirst {
+                        case Header.SetCookie(c) if c.name == SessionAuth.cookieName =>
+                          c
+                      }
         } yield assertTrue(cookie.exists(_.isHttpOnly), cookie.exists(_.sameSite.contains(Cookie.SameSite.Lax)))
       },
       test("a wrong password comes back as a JSON 401, not an empty body") {
         for {
           client <- ZIO.service[Client]
-          _ <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
-          url <- baseUrl
-          _ <- client(
-            Request
-              .post(url / "api" / "auth" / "signup", json(SignupRequest("wrongpw@example.com", "password123")))
-              .addHeader(csrfHeader)
-          )
-          login <- client(
-            Request
-              .post(url / "api" / "auth" / "login", json(LoginRequest("wrongpw@example.com", "not-the-password")))
-              .addHeader(csrfHeader)
-          )
-          body <- login.body.asString
+          _      <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
+          url    <- baseUrl
+          _      <- client(
+                      Request
+                        .post(url / "api" / "auth" / "signup", json(SignupRequest("wrongpw@example.com", "password123")))
+                        .addHeader(csrfHeader)
+                    )
+          login  <-
+            client(
+              Request
+                .post(url / "api" / "auth" / "login", json(LoginRequest("wrongpw@example.com", "not-the-password")))
+                .addHeader(csrfHeader)
+            )
+          body   <- login.body.asString
         } yield assertTrue(
           login.status == Status.Unauthorized,
           body.fromJson[ErrorResponse].map(_.message) == Right("Invalid email or password"),
@@ -145,12 +148,13 @@ object AuthFlowSpec extends ZIOSpecDefault {
       },
       test("a POST without the CSRF header never reaches the service") {
         for {
-          client <- ZIO.service[Client]
-          _ <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
-          url <- baseUrl
-          response <- client(
-            Request.post(url / "api" / "auth" / "signup", json(SignupRequest("nocsrf@example.com", "password123")))
-          )
+          client   <- ZIO.service[Client]
+          _        <- TestServer.addRoutes(RouteSupport.handleFailures(AuthRoutes.routes))
+          url      <- baseUrl
+          response <-
+            client(
+              Request.post(url / "api" / "auth" / "signup", json(SignupRequest("nocsrf@example.com", "password123")))
+            )
         } yield assertTrue(response.status == Status.Forbidden)
       },
     ).provide(

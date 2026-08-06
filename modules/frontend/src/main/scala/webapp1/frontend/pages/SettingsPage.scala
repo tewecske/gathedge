@@ -23,34 +23,33 @@ object SettingsPage {
   */
 private class SettingsPage {
   private val identitiesVar: Var[List[LinkedIdentity]] = Var(Nil)
-  private val identitiesSignal = identitiesVar.signal
-  private val hasPasswordVar = Var(false)
-  private val hasPasswordSignal = hasPasswordVar.signal
-  private val availableVar: Var[List[OAuthProvider]] = Var(Nil)
+  private val identitiesSignal                         = identitiesVar.signal
+  private val hasPasswordVar                           = Var(false)
+  private val hasPasswordSignal                        = hasPasswordVar.signal
+  private val availableVar: Var[List[OAuthProvider]]   = Var(Nil)
 
   /** Only providers with no link yet: a second Google account on the same login would make unlink-by-provider
     * ambiguous, and the server refuses it as `OAuthAlreadyLinked` anyway.
     */
   private val linkableSignal = {
-    availableVar
-      .signal
+    availableVar.signal
       .combineWith(identitiesSignal)
       .map { case (available, linked) =>
         available.filterNot(p => linked.exists(_.provider == p))
       }
   }
 
-  private val currentPasswordVar = Var("")
-  private val newPasswordVar = Var("")
-  private val errorVar: Var[Option[String]] = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
+  private val currentPasswordVar             = Var("")
+  private val newPasswordVar                 = Var("")
+  private val errorVar: Var[Option[String]]  = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
   private val noticeVar: Var[Option[String]] = Var(OAuthMessages.queryParam("linked").map(OAuthMessages.linkedMessage))
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val inFlightVar                    = Var(false)
+  private val inFlightSignal                 = inFlightVar.signal
 
-  private val reloadBus = new EventBus[Unit]()
-  private val unlinkBus = new EventBus[OAuthProvider]()
+  private val reloadBus         = new EventBus[Unit]()
+  private val unlinkBus         = new EventBus[OAuthProvider]()
   private val passwordSubmitBus = new EventBus[Unit]()
-  private val resendBus = new EventBus[Unit]()
+  private val resendBus         = new EventBus[Unit]()
 
   /** The email card is driven off the session state rather than a fetch of its own: `/api/me` already carries
     * `emailVerified`, and this page is only reachable with a session.
@@ -85,12 +84,12 @@ private class SettingsPage {
             identitiesVar.set(res.identities)
             hasPasswordVar.set(res.hasPassword)
             availableVar.set(res.available)
-          case Left(err) =>
+          case Left(err)  =>
             errorVar.set(Some(err.message))
         },
       unlinkBus.events.flatMapSwitch(ApiClient.unlinkIdentity) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(errorVar -> None, noticeVar -> Some("Account unlinked."))
             reloadBus.emit(())
           case Left(err) =>
@@ -99,26 +98,25 @@ private class SettingsPage {
       passwordStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
       passwordStream.flatMapSwitch(_ => submitPassword()) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(
-              inFlightVar -> false,
+              inFlightVar        -> false,
               currentPasswordVar -> "",
-              newPasswordVar -> "",
-              noticeVar -> Some("Password saved."),
+              newPasswordVar     -> "",
+              noticeVar          -> Some("Password saved."),
             )
             reloadBus.emit(())
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
-      resendBus
-        .events
+      resendBus.events
         .sample(unverifiedEmailSignal)
         .collect { case Some(email) =>
           email
         }
         .flatMapSwitch(ApiClient.resendVerification) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(errorVar -> None, noticeVar -> Some("Verification link sent — check your inbox."))
           case Left(err) =>
             Var.set(errorVar -> Some(err.message), noticeVar -> None)
@@ -165,7 +163,7 @@ private class SettingsPage {
   private def renderResend(): HtmlElement = {
     div(
       cls := "flex items-center justify-between gap-4 mt-2",
-      p(cls := "text-sm opacity-70", "Click the link we emailed you, or send yourself a new one."),
+      p(cls      := "text-sm opacity-70", "Click the link we emailed you, or send yourself a new one."),
       button(cls := "btn btn-sm", typ := "button", onClick.mapToUnit --> resendBus.writer, "Resend verification email"),
     )
   }
@@ -176,13 +174,13 @@ private class SettingsPage {
       div(
         cls := "card-body",
         h2(cls := "card-title text-lg", "Linked accounts"),
-        p(cls := "text-sm opacity-70", "Sign in with any of these instead of your password."),
+        p(cls  := "text-sm opacity-70", "Sign in with any of these instead of your password."),
         child.maybe <--
           identitiesSignal.map(identities =>
             Option.when(identities.isEmpty)(p(cls := "text-sm", "Nothing linked yet."))
           ),
         ul(
-          cls := "flex flex-col divide-y divide-base-300",
+          cls  := "flex flex-col divide-y divide-base-300",
           children <--
             identitiesSignal.splitSeq(_.provider) { identitySignal =>
               renderIdentityRow(identitySignal.key, identitySignal)
@@ -236,7 +234,7 @@ private class SettingsPage {
         cls := "card-body",
         h2(cls := "card-title text-lg", child.text <-- hasPasswordSignal.map(passwordFormTitle)),
         fieldSet(
-          cls := "fieldset",
+          cls  := "fieldset",
           // `label`, not `legend`: a fieldset promotes its *first* legend child to the caption over the
           // top border no matter where it sits, which pulled "New password" above the current-password
           // field. Same class, so it renders identically.
@@ -248,8 +246,8 @@ private class SettingsPage {
                 div(
                   label(cls := "fieldset-legend", "Current password"),
                   input(
-                    cls := "input w-full",
-                    typ := "password",
+                    cls     := "input w-full",
+                    typ     := "password",
                     controlled(value <-- currentPasswordVar.signal, onInput.mapToValue --> currentPasswordVar.writer),
                   ),
                 )
@@ -257,14 +255,14 @@ private class SettingsPage {
             ),
           label(cls := "fieldset-legend", "New password"),
           input(
-            cls := "input w-full",
-            typ := "password",
+            cls     := "input w-full",
+            typ     := "password",
             controlled(value <-- newPasswordVar.signal, onInput.mapToValue --> newPasswordVar.writer),
           ),
-          p(cls := "label", s"At least ${Validation.minPasswordLength} characters"),
+          p(cls     := "label", s"At least ${Validation.minPasswordLength} characters"),
         ),
         div(
-          cls := "card-actions justify-end mt-4",
+          cls  := "card-actions justify-end mt-4",
           button(
             cls := "btn btn-primary",
             typ := "submit",

@@ -7,13 +7,13 @@ import zio.http.*
   * repositories); this object only knows about HTTP-level concerns.
   */
 object SessionAuth {
-  val cookieName = "session"
+  val cookieName                = "session"
   val sessionDuration: Duration = 7.days
 
   // JSON-only API + this required header blocks cross-site form/simple-fetch CSRF
   // without needing a separate token scheme (cross-site requests can't set custom
   // headers without a CORS preflight, which we don't allow).
-  val csrfHeaderName = "X-Requested-With"
+  val csrfHeaderName  = "X-Requested-With"
   val csrfHeaderValue = "XMLHttpRequest"
 
   def sessionIdFrom(request: Request): Option[String] = {

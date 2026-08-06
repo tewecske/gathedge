@@ -10,11 +10,11 @@ enum TodoStatus derives JsonCodec {
   /** Click-to-move cycles forward: To Do -> In Progress -> Done -> To Do. */
   def next: TodoStatus = {
     this match {
-      case TodoStatus.ToDo =>
+      case TodoStatus.ToDo       =>
         TodoStatus.InProgress
       case TodoStatus.InProgress =>
         TodoStatus.Done
-      case TodoStatus.Done =>
+      case TodoStatus.Done       =>
         TodoStatus.ToDo
     }
   }
@@ -23,24 +23,24 @@ enum TodoStatus derives JsonCodec {
 object TodoStatus {
   def fromString(s: String): Option[TodoStatus] = {
     s match {
-      case "todo" =>
+      case "todo"        =>
         Some(ToDo)
       case "in_progress" =>
         Some(InProgress)
-      case "done" =>
+      case "done"        =>
         Some(Done)
-      case _ =>
+      case _             =>
         None
     }
   }
 
   def toDbString(status: TodoStatus): String = {
     status match {
-      case ToDo =>
+      case ToDo       =>
         "todo"
       case InProgress =>
         "in_progress"
-      case Done =>
+      case Done       =>
         "done"
     }
   }

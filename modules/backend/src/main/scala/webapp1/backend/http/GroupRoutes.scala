@@ -10,142 +10,132 @@ import zio.http.*
 object GroupRoutes {
 
   private val createGroupRoute = {
-    GroupEndpoints
-      .createGroup
+    GroupEndpoints.createGroup
       .implementHandler(
         handler { (body: CreateGroupRequest) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            group <- groupService.createGroup(user.id, body.name).mapError(ApiFailures.group)
+            group        <- groupService.createGroup(user.id, body.name).mapError(ApiFailures.group)
           } yield group
         }
       )
   }
 
   private val listGroupsRoute = {
-    GroupEndpoints
-      .listGroups
+    GroupEndpoints.listGroups
       .implementHandler(
         handler { (_: Unit) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            groups <- groupService.myGroups(user.id)
+            groups       <- groupService.myGroups(user.id)
           } yield groups
         }
       )
   }
 
   private val getGroupRoute = {
-    GroupEndpoints
-      .getGroup
+    GroupEndpoints.getGroup
       .implementHandler(
         handler { (groupId: Long) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            group <- groupService.getGroup(user.id, groupId).mapError(ApiFailures.group)
+            group        <- groupService.getGroup(user.id, groupId).mapError(ApiFailures.group)
           } yield group
         }
       )
   }
 
   private val deleteGroupRoute = {
-    GroupEndpoints
-      .deleteGroup
+    GroupEndpoints.deleteGroup
       .implementHandler(
         handler { (groupId: Long) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            _ <- groupService.deleteGroup(user.id, groupId).mapError(ApiFailures.group)
+            _            <- groupService.deleteGroup(user.id, groupId).mapError(ApiFailures.group)
           } yield ()
         }
       )
   }
 
   private val listPairsRoute = {
-    GroupEndpoints
-      .listPairs
+    GroupEndpoints.listPairs
       .implementHandler(
         handler { (groupId: Long) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            pairs <- groupService.listPairs(user.id, groupId).mapError(ApiFailures.group)
+            pairs        <- groupService.listPairs(user.id, groupId).mapError(ApiFailures.group)
           } yield pairs
         }
       )
   }
 
   private val addPairRoute = {
-    GroupEndpoints
-      .addPair
+    GroupEndpoints.addPair
       .implementHandler(
         handler { (groupId: Long, body: CreatePairRequest) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            pair <- groupService
-              .addPair(user.id, user.email, groupId, body.source, body.target)
-              .mapError(ApiFailures.group)
+            pair         <- groupService
+                              .addPair(user.id, user.email, groupId, body.source, body.target)
+                              .mapError(ApiFailures.group)
           } yield pair
         }
       )
   }
 
   private val listMembersRoute = {
-    GroupEndpoints
-      .listMembers
+    GroupEndpoints.listMembers
       .implementHandler(
         handler { (groupId: Long) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            members <- groupService.listMembers(user.id, groupId).mapError(ApiFailures.group)
+            members      <- groupService.listMembers(user.id, groupId).mapError(ApiFailures.group)
           } yield members
         }
       )
   }
 
   private val removeMemberRoute = {
-    GroupEndpoints
-      .removeMember
+    GroupEndpoints.removeMember
       .implementHandler(
         handler { (groupId: Long, targetUserId: Long) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            _ <- groupService.removeMember(user.id, groupId, targetUserId).mapError(ApiFailures.group)
+            _            <- groupService.removeMember(user.id, groupId, targetUserId).mapError(ApiFailures.group)
           } yield ()
         }
       )
   }
 
   private val updateRoleRoute = {
-    GroupEndpoints
-      .updateMemberRole
+    GroupEndpoints.updateMemberRole
       .implementHandler(
         handler { (groupId: Long, targetUserId: Long, body: UpdateRoleRequest) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            _ <- groupService.updateMemberRole(user.id, groupId, targetUserId, body.role).mapError(ApiFailures.group)
+            _            <- groupService.updateMemberRole(user.id, groupId, targetUserId, body.role).mapError(ApiFailures.group)
           } yield ()
         }
       )
   }
 
   private val inviteMemberRoute = {
-    GroupEndpoints
-      .inviteMember
+    GroupEndpoints.inviteMember
       .implementHandler(
         handler { (groupId: Long, body: InviteMemberRequest) =>
           for {
-            user <- ZIO.service[User]
+            user         <- ZIO.service[User]
             groupService <- ZIO.service[GroupService]
-            _ <- groupService.inviteMember(user.id, groupId, body.email, body.role).mapError(ApiFailures.group)
+            _            <- groupService.inviteMember(user.id, groupId, body.email, body.role).mapError(ApiFailures.group)
           } yield ()
         }
       )

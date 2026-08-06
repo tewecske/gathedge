@@ -8,7 +8,7 @@ object Main {
     Option(dom.document.getElementById("app")) match {
       case Some(container) =>
         render(container, App.render())
-      case None =>
+      case None            =>
         // index.html and this id are shipped together, so this only fires if the host page is wrong.
         dom.console.error("webapp1: no #app element to mount into")
     }

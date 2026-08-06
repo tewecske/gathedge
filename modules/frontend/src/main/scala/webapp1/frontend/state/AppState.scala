@@ -11,13 +11,13 @@ object AppState {
   // Kept private so the only writes go through setUser/clearUser (which also keep the
   // document theme in sync); everything else reads the signal.
   private val currentUserVar: Var[Option[User]] = Var(None)
-  val currentUserSignal: Signal[Option[User]] = currentUserVar.signal
+  val currentUserSignal: Signal[Option[User]]   = currentUserVar.signal
 
   private def themeName(theme: Theme): String = {
     theme match {
       case Theme.Light =>
         "light"
-      case Theme.Dark =>
+      case Theme.Dark  =>
         "dark"
     }
   }

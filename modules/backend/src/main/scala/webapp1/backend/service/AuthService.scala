@@ -159,9 +159,9 @@ final class AuthServiceLive(
 
   private def createSession(userId: Long): UIO[String] = {
     for {
-      id <- newOpaqueToken()
+      id  <- newOpaqueToken()
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
+      _   <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
     } yield id
   }
 
@@ -208,67 +208,67 @@ final class AuthServiceLive(
   private def issueVerification(userId: Long, email: String): UIO[Unit] = {
     for {
       token <- newOpaqueToken()
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <- tokenRepo.deleteForUser(userId).orDie
-      _ <-
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _     <- tokenRepo.deleteForUser(userId).orDie
+      _     <-
         tokenRepo
           .insert(
             EmailVerificationTokenRow(0L, userId, token, now, now + AuthServiceLive.verificationValidity.toMillis, None)
           )
           .orDie
-      link = s"${config.app.publicBaseUrl}/verify-email/$token"
-      _ <- emailSender
-        .send(
-          email,
-          "Confirm your email address",
-          s"Confirm your email address by following this link: $link\n\n" +
-            s"The link stops working in ${AuthServiceLive.verificationValidity.toHours} hours.",
-        )
-        .catchAllCause(cause => ZIO.logErrorCause(s"Could not send verification email to '$email'", cause))
+      link   = s"${config.app.publicBaseUrl}/verify-email/$token"
+      _     <- emailSender
+                 .send(
+                   email,
+                   "Confirm your email address",
+                   s"Confirm your email address by following this link: $link\n\n" +
+                     s"The link stops working in ${AuthServiceLive.verificationValidity.toHours} hours.",
+                 )
+                 .catchAllCause(cause => ZIO.logErrorCause(s"Could not send verification email to '$email'", cause))
     } yield ()
   }
 
   def signup(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, Option[String])] = {
     val normalizedEmail = email.trim.toLowerCase
-    val keys = rateLimitKeys(normalizedEmail, clientIp)
+    val keys            = rateLimitKeys(normalizedEmail, clientIp)
     for {
-      _ <- validateCredentials(normalizedEmail, password)
-      blocked <- anyKeyBlocked(keys)
-      _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
-      existing <- userRepo.findByEmail(normalizedEmail).orDie
-      _ <-
+      _         <- validateCredentials(normalizedEmail, password)
+      blocked   <- anyKeyBlocked(keys)
+      _         <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      existing  <- userRepo.findByEmail(normalizedEmail).orDie
+      _         <-
         ZIO.when(existing.isDefined) {
           recordFailure(keys) *> ZIO.fail(AuthFailure.EmailAlreadyRegistered)
         }
-      hash <- hasher.hash(password).orDie
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, "light", now, emailVerifiedAt = None).orDie
-      _ <- issueVerification(row.id, normalizedEmail)
+      hash      <- hasher.hash(password).orDie
+      now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row       <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, "light", now, emailVerifiedAt = None).orDie
+      _         <- issueVerification(row.id, normalizedEmail)
       // With verification mandatory the account cannot act until the link is followed, so it gets
       // no session at all rather than one that every guarded route would refuse.
       sessionId <- ZIO.unless(config.app.requireEmailVerification)(createSession(row.id))
-      _ <- clearFailures(keys)
+      _         <- clearFailures(keys)
     } yield (toDomain(row), sessionId)
   }
 
   def login(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = email.trim.toLowerCase
-    val keys = rateLimitKeys(normalizedEmail, clientIp)
+    val keys            = rateLimitKeys(normalizedEmail, clientIp)
     for {
-      blocked <- anyKeyBlocked(keys)
-      _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
-      maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
-      row <-
+      blocked   <- anyKeyBlocked(keys)
+      _         <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      maybeRow  <- userRepo.findByEmail(normalizedEmail).orDie
+      row       <-
         maybeRow match {
-          case None =>
+          case None    =>
             equalizeTiming *> recordFailure(keys) *> logFailedAttempt(normalizedEmail, "no such account") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(r) =>
             ZIO.succeed(r)
         }
-      _ <-
+      _         <-
         row.passwordHash match {
-          case None =>
+          case None       =>
             equalizeTiming *> recordFailure(keys) *>
               logFailedAttempt(normalizedEmail, "no password set (Google-only account)") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
@@ -287,12 +287,12 @@ final class AuthServiceLive(
         }
       // Deliberately after the password check: refusing an unverified account before knowing the
       // password would tell an attacker which addresses have accounts.
-      _ <-
+      _         <-
         ZIO.when(config.app.requireEmailVerification && row.emailVerifiedAt.isEmpty) {
           logFailedAttempt(normalizedEmail, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
         }
       sessionId <- createSession(row.id)
-      _ <- clearFailures(keys)
+      _         <- clearFailures(keys)
     } yield (toDomain(row), sessionId)
   }
 
@@ -300,10 +300,10 @@ final class AuthServiceLive(
     for {
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row <- tokenRepo.findByToken(token).orDie.someOrFail(AuthFailure.InvalidVerificationToken)
-      _ <- ZIO.when(row.consumedAt.isDefined || row.expiresAt <= now)(ZIO.fail(AuthFailure.InvalidVerificationToken))
-      _ <- tokenRepo.markConsumed(token, now).orDie
-      _ <- userRepo.markEmailVerified(row.userId, now).orDie
-      _ <- SecurityLog.info(s"Email verified for user ${row.userId}")
+      _   <- ZIO.when(row.consumedAt.isDefined || row.expiresAt <= now)(ZIO.fail(AuthFailure.InvalidVerificationToken))
+      _   <- tokenRepo.markConsumed(token, now).orDie
+      _   <- userRepo.markEmailVerified(row.userId, now).orDie
+      _   <- SecurityLog.info(s"Email verified for user ${row.userId}")
     } yield ()
   }
 
@@ -311,24 +311,24 @@ final class AuthServiceLive(
     val normalizedEmail = email.trim.toLowerCase
     // Both keys go through the verification namespace, so asking for links neither consumes nor is
     // consumed by the login budget for the same address or address family.
-    val keys = RateLimitKey.verification(normalizedEmail) :: clientIp.map(RateLimitKey.verification).toList
+    val keys            = RateLimitKey.verification(normalizedEmail) :: clientIp.map(RateLimitKey.verification).toList
     for {
-      blocked <- anyKeyBlocked(keys)
-      _ <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      blocked  <- anyKeyBlocked(keys)
+      _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
       // Every request counts, not just the ones that find an account — the limiter's only counter
       // is `recordFailure`, and counting successes is exactly what caps resends here.
-      _ <- recordFailure(keys)
+      _        <- recordFailure(keys)
       maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
       // Silence for an unknown or already-verified address: the caller gets the same 204 either
       // way, so this endpoint says nothing about which addresses have accounts.
-      _ <- ZIO.foreachDiscard(maybeRow.filter(_.emailVerifiedAt.isEmpty))(row => issueVerification(row.id, row.email))
+      _        <- ZIO.foreachDiscard(maybeRow.filter(_.emailVerifiedAt.isEmpty))(row => issueVerification(row.id, row.email))
     } yield ()
   }
 
   private def insertIdentity(userId: Long, identity: OAuthIdentity): UIO[Unit] = {
     for {
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <-
+      _   <-
         identityRepo
           .insert(OAuthIdentityRow(0L, userId, identity.provider.wire, identity.subject, Some(identity.email), now))
           .orDie
@@ -339,7 +339,7 @@ final class AuthServiceLive(
     val normalizedEmail = identity.email.trim.toLowerCase
     for {
       existingLink <- identityRepo.findByProviderAndSubject(identity.provider.wire, identity.subject).orDie
-      row <-
+      row          <-
         existingLink match {
           case Some(link) =>
             // The link is a FK onto users with ON DELETE CASCADE, so a link with no user is a broken
@@ -350,7 +350,7 @@ final class AuthServiceLive(
               .someOrElseZIO(
                 ZIO.die(new IllegalStateException(s"oauth_identities row ${link.id} points at a missing user"))
               )
-          case None =>
+          case None       =>
             userRepo
               .findByEmail(normalizedEmail)
               .orDie
@@ -360,9 +360,9 @@ final class AuthServiceLive(
                     s"Refused ${identity.provider.wire} sign-in for '$normalizedEmail': " +
                       "the email belongs to an account with no such linked identity"
                   ) *> ZIO.fail(AuthFailure.OAuthAccountExists(identity.provider))
-                case None =>
+                case None    =>
                   for {
-                    now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                    now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
                     // Only providers that actually assert the claim count as proof. Microsoft never
                     // does, so accounts created through it start unverified — harmless, since they
                     // have no password and the gate is on password login.
@@ -377,29 +377,29 @@ final class AuthServiceLive(
                           emailVerifiedAt = Option.when(identity.emailVerified)(now),
                         )
                         .orDie
-                    _ <- insertIdentity(created.id, identity)
-                    _ <- SecurityLog.info(
-                      s"Account created via ${identity.provider.wire} sign-in for '$normalizedEmail'"
-                    )
+                    _       <- insertIdentity(created.id, identity)
+                    _       <- SecurityLog.info(
+                                 s"Account created via ${identity.provider.wire} sign-in for '$normalizedEmail'"
+                               )
                   } yield created
               }
         }
-      sessionId <- createSession(row.id)
+      sessionId    <- createSession(row.id)
     } yield (toDomain(row), sessionId)
   }
 
   def linkOAuth(userId: Long, identity: OAuthIdentity): IO[AuthFailure, Unit] = {
     for {
       existingLink <- identityRepo.findByProviderAndSubject(identity.provider.wire, identity.subject).orDie
-      _ <- ZIO.when(existingLink.isDefined)(ZIO.fail(AuthFailure.OAuthAlreadyLinked))
-      mine <- identityRepo.listForUser(userId).orDie
+      _            <- ZIO.when(existingLink.isDefined)(ZIO.fail(AuthFailure.OAuthAlreadyLinked))
+      mine         <- identityRepo.listForUser(userId).orDie
       // One identity per provider per account: two Google accounts on one login would make the
       // settings page's unlink-by-provider ambiguous.
-      _ <- ZIO.when(mine.exists(_.provider == identity.provider.wire))(ZIO.fail(AuthFailure.OAuthAlreadyLinked))
-      _ <- insertIdentity(userId, identity)
+      _            <- ZIO.when(mine.exists(_.provider == identity.provider.wire))(ZIO.fail(AuthFailure.OAuthAlreadyLinked))
+      _            <- insertIdentity(userId, identity)
       // Linking already proved account ownership (it needs a session) and the provider proved the
       // address — but only for the address it reported, so this verifies nothing when the two differ.
-      _ <-
+      _            <-
         ZIO.when(identity.emailVerified) {
           userRepo
             .findById(userId)
@@ -407,24 +407,24 @@ final class AuthServiceLive(
             .flatMap {
               case Some(row) if row.emailVerifiedAt.isEmpty && row.email == identity.email.trim.toLowerCase =>
                 Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => userRepo.markEmailVerified(userId, now).orDie)
-              case _ =>
+              case _                                                                                        =>
                 ZIO.unit
             }
         }
-      _ <- SecurityLog.info(s"Linked ${identity.provider.wire} identity to user $userId")
+      _            <- SecurityLog.info(s"Linked ${identity.provider.wire} identity to user $userId")
     } yield ()
   }
 
   def unlinkOAuth(userId: Long, provider: OAuthProvider): IO[AuthFailure, Unit] = {
     for {
-      mine <- identityRepo.listForUser(userId).orDie
-      _ <- ZIO.unless(mine.exists(_.provider == provider.wire))(ZIO.fail(AuthFailure.OAuthFailed("not linked")))
+      mine  <- identityRepo.listForUser(userId).orDie
+      _     <- ZIO.unless(mine.exists(_.provider == provider.wire))(ZIO.fail(AuthFailure.OAuthFailed("not linked")))
       hasPw <- hasPassword(userId)
       // Without this an account whose only credential is the identity being removed becomes
       // permanently unreachable — there is no password to fall back to and no other provider.
-      _ <- ZIO.when(!hasPw && mine.sizeIs <= 1)(ZIO.fail(AuthFailure.LastCredential))
-      _ <- identityRepo.deleteByUserAndProvider(userId, provider.wire).orDie
-      _ <- SecurityLog.info(s"Unlinked ${provider.wire} identity from user $userId")
+      _     <- ZIO.when(!hasPw && mine.sizeIs <= 1)(ZIO.fail(AuthFailure.LastCredential))
+      _     <- identityRepo.deleteByUserAndProvider(userId, provider.wire).orDie
+      _     <- SecurityLog.info(s"Unlinked ${provider.wire} identity from user $userId")
     } yield ()
   }
 
@@ -438,21 +438,21 @@ final class AuthServiceLive(
 
   def setPassword(userId: Long, currentPassword: Option[String], newPassword: String): IO[AuthFailure, Unit] = {
     for {
-      row <- userRepo
-        .findById(userId)
-        .orDie
-        .someOrElseZIO(ZIO.die(new IllegalStateException(s"user $userId not found")))
-      _ <- ZIO
-        .fromEither(Validation.validatePassword(newPassword))
-        .mapError(message => AuthFailure.ValidationError(Map("newPassword" -> message)))
-      _ <-
+      row  <- userRepo
+                .findById(userId)
+                .orDie
+                .someOrElseZIO(ZIO.die(new IllegalStateException(s"user $userId not found")))
+      _    <- ZIO
+                .fromEither(Validation.validatePassword(newPassword))
+                .mapError(message => AuthFailure.ValidationError(Map("newPassword" -> message)))
+      _    <-
         row.passwordHash match {
-          case None =>
+          case None           =>
             // No password yet, so there is nothing to prove: the session cookie is the authorisation.
             ZIO.unit
           case Some(existing) =>
             currentPassword match {
-              case None =>
+              case None           =>
                 ZIO.fail(AuthFailure.ValidationError(Map("currentPassword" -> "Enter your current password")))
               case Some(supplied) =>
                 hasher
@@ -469,15 +469,15 @@ final class AuthServiceLive(
             }
         }
       hash <- hasher.hash(newPassword).orDie
-      _ <- userRepo.updatePasswordHash(userId, hash).orDie
-      _ <- SecurityLog.info(
-        s"Password ${
-            if (row.passwordHash.isDefined)
-              "changed"
-            else
-              "set"
-          } for user $userId"
-      )
+      _    <- userRepo.updatePasswordHash(userId, hash).orDie
+      _    <- SecurityLog.info(
+                s"Password ${
+                    if (row.passwordHash.isDefined)
+                      "changed"
+                    else
+                      "set"
+                  } for user $userId"
+              )
     } yield ()
   }
 
@@ -488,11 +488,11 @@ final class AuthServiceLive(
   def currentUser(sessionId: String): UIO[Option[User]] = {
     (
       for {
-        now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
         maybeSession <- sessionRepo.findActive(sessionId, now)
-        maybeUser <-
+        maybeUser    <-
           maybeSession match {
-            case None =>
+            case None    =>
               ZIO.none
             case Some(s) =>
               userRepo.findById(s.userId)
@@ -503,7 +503,7 @@ final class AuthServiceLive(
 
   def updateTheme(userId: Long, theme: Theme): Task[User] = {
     for {
-      _ <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
+      _   <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
       row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
     } yield toDomain(row)
   }
@@ -527,14 +527,14 @@ object AuthServiceLive {
     AuthService,
   ] = ZLayer {
     for {
-      userRepo <- ZIO.service[UserRepository]
-      sessionRepo <- ZIO.service[SessionRepository]
-      identityRepo <- ZIO.service[OAuthIdentityRepository]
-      tokenRepo <- ZIO.service[EmailVerificationTokenRepository]
-      hasher <- ZIO.service[PasswordHasher]
-      rateLimiter <- ZIO.service[RateLimiter]
-      emailSender <- ZIO.service[EmailSender]
-      config <- ZIO.service[AppConfig]
+      userRepo            <- ZIO.service[UserRepository]
+      sessionRepo         <- ZIO.service[SessionRepository]
+      identityRepo        <- ZIO.service[OAuthIdentityRepository]
+      tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
+      hasher              <- ZIO.service[PasswordHasher]
+      rateLimiter         <- ZIO.service[RateLimiter]
+      emailSender         <- ZIO.service[EmailSender]
+      config              <- ZIO.service[AppConfig]
       timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
     } yield new AuthServiceLive(
       userRepo,

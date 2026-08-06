@@ -41,36 +41,36 @@ private case class AddPairForm(source: String = "", target: String = "", showErr
 }
 
 private class GroupDetailPage(groupId: Long) {
-  private val groupVar = Var(Option.empty[Group])
+  private val groupVar    = Var(Option.empty[Group])
   private val groupSignal = groupVar.signal
-  private val pairsVar = Var(List.empty[GroupPair])
+  private val pairsVar    = Var(List.empty[GroupPair])
   private val pairsSignal = pairsVar.signal
 
-  private val formVar = Var(AddPairForm())
-  private val sourceVar = formVar.zoom(_.source)((form, source) => form.copy(source = source))
-  private val targetVar = formVar.zoom(_.target)((form, target) => form.copy(target = target))
+  private val formVar           = Var(AddPairForm())
+  private val sourceVar         = formVar.zoom(_.source)((form, source) => form.copy(source = source))
+  private val targetVar         = formVar.zoom(_.target)((form, target) => form.copy(target = target))
   private val sourceErrorSignal = formVar.signal.map(_.displayError(_.sourceError))
   private val targetErrorSignal = formVar.signal.map(_.displayError(_.targetError))
 
   // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val errorSignal                   = errorVar.signal
+  private val inFlightVar                   = Var(false)
+  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
-  private val addPairBus = new EventBus[Unit]()
+  private val loadBus        = new EventBus[Unit]()
+  private val addPairBus     = new EventBus[Unit]()
   private val deleteGroupBus = new EventBus[Unit]()
 
-  private val loadStream = loadBus.events
+  private val loadStream    = loadBus.events
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val addPairStream = addPairBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
-  private val deleteStream = deleteGroupBus.events.filterWith(inFlightSignal.not)
+  private val deleteStream  = deleteGroupBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), "← Back to groups")),
-      h1(cls := "text-2xl font-bold mb-4", text <-- groupSignal.map(_.map(_.name).getOrElse("Group")).distinct),
+      h1(cls  := "text-2xl font-bold mb-4", text <-- groupSignal.map(_.map(_.name).getOrElse("Group")).distinct),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupDetail(groupId), g.myRole))),
       child.maybe <-- errorSignal.map(_.map(msg => renderAlert("alert-error", msg))),
       child.maybe <-- groupSignal.map(_.filter(_.myRole.canWrite).map(_ => renderAddPairForm())),
@@ -81,7 +81,7 @@ private class GroupDetailPage(groupId: Long) {
       loadStream --> Observer[Unit](_ => errorVar.set(None)),
       loadStream.flatMapSwitch(_ => ApiClient.getGroup(groupId)) -->
         Observer[Either[ApiError, Group]] {
-          case Right(g) =>
+          case Right(g)  =>
             groupVar.set(Some(g))
           case Left(err) =>
             errorVar.set(Some(err.message))
@@ -90,12 +90,12 @@ private class GroupDetailPage(groupId: Long) {
         Observer[Either[ApiError, List[GroupPair]]] {
           case Right(items) =>
             pairsVar.set(items)
-          case Left(err) =>
+          case Left(err)    =>
             errorVar.set(Some(err.message))
         },
       addPairStream -->
         Observer[Option[CreatePairRequest]] {
-          case None =>
+          case None    =>
             formVar.update(_.copy(showErrors = true))
           case Some(_) =>
             Var.set(inFlightVar -> true, errorVar -> None)
@@ -109,13 +109,13 @@ private class GroupDetailPage(groupId: Long) {
           case Right(pair) =>
             pairsVar.update(_ :+ pair)
             Var.set(inFlightVar -> false, formVar -> AddPairForm(), errorVar -> None)
-          case Left(err) =>
+          case Left(err)   =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       deleteStream --> Observer[Unit](_ => inFlightVar.set(true)),
       deleteStream.flatMapSwitch(_ => ApiClient.deleteGroup(groupId)) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             inFlightVar.set(false)
             AppRouter.router.pushState(Page.Groups)
           case Left(err) =>
@@ -130,18 +130,18 @@ private class GroupDetailPage(groupId: Long) {
       cls := "flex gap-2 mb-4 items-start",
       onSubmit.preventDefault.mapToUnit --> addPairBus.writer,
       FormField.render(sourceErrorSignal)(
-        cls := "flex-1",
+        cls      := "flex-1",
         input(
-          cls := "input w-full",
+          cls         := "input w-full",
           cls("input-error") <-- sourceErrorSignal.map(_.nonEmpty),
           placeholder := "Source",
           controlled(value <-- sourceVar.signal, onInput.mapToValue --> sourceVar.writer),
         ),
       ),
       FormField.render(targetErrorSignal)(
-        cls := "flex-1",
+        cls      := "flex-1",
         input(
-          cls := "input w-full",
+          cls         := "input w-full",
           cls("input-error") <-- targetErrorSignal.map(_.nonEmpty),
           placeholder := "Target",
           controlled(value <-- targetVar.signal, onInput.mapToValue --> targetVar.writer),

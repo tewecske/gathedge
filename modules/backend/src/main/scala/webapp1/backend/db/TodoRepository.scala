@@ -46,9 +46,11 @@ final class TodoRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val queries = {
       for {
         affected <- ctx.run(
-          quote(todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status)))
-        )
-        result <-
+                      quote(
+                        todos.filter(t => t.id == lift(id) && t.userId == lift(userId)).update(_.status -> lift(status))
+                      )
+                    )
+        result   <-
           if (affected > 0)
             ctx.run(quote(todos.filter(_.id == lift(id)))).map(_.headOption)
           else

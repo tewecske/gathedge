@@ -52,8 +52,7 @@ object DocsRoutes {
     * through `/api/auth/login` sends it on its own.
     */
   private val sessionScheme: OpenAPI.SecurityScheme = {
-    OpenAPI
-      .SecurityScheme
+    OpenAPI.SecurityScheme
       .ApiKey(
         description = Some(Doc.p("Opaque session token set by /api/auth/signup and /api/auth/login.")),
         name = SessionAuth.cookieName,
@@ -83,10 +82,9 @@ object DocsRoutes {
       })
     }
 
-    val paths = document
-      .paths
+    val paths = document.paths
       .map { case (path, item) =>
-        val open = publicDocument.paths.getOrElse(path, OpenAPI.PathItem.empty)
+        val open   = publicDocument.paths.getOrElse(path, OpenAPI.PathItem.empty)
         val marked = item.copy(
           get = mark(item.get, open.get),
           put = mark(item.put, open.put),
@@ -102,8 +100,7 @@ object DocsRoutes {
 
     val components = document.components.getOrElse(OpenAPI.Components())
     val withScheme = {
-      OpenAPI
-        .Key
+      OpenAPI.Key
         .fromString(sessionSchemeName)
         .map { key =>
           components.copy(securitySchemes = components.securitySchemes + (key -> OpenAPI.ReferenceOr.Or(sessionScheme)))

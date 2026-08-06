@@ -88,9 +88,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, (User, String)] = {
     for {
       adminService <- ZIO.service[AdminService]
-      authService <- ZIO.service[AuthService]
-      admin <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
-      session <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
+      authService  <- ZIO.service[AuthService]
+      admin        <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
+      session      <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
     } yield (admin, session)
   }
 
@@ -118,7 +118,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           )
           for {
             response <- runRoutes(AuthRoutes.routes, request)
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
             raw.fromJson[SignupResponse].map(_.user.email) == Right("new@example.com"),
@@ -131,24 +131,25 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("login answers 200 and a cookie; the wrong password is a 401 in the usual ErrorResponse shape") {
           for {
-            _ <- signUp("login@example.com")
-            good <- runRoutes(
-              AuthRoutes.routes,
-              withCsrf(
-                Request.post(
-                  "/api/auth/login",
-                  Body.fromString(LoginRequest("login@example.com", "password123").toJson),
-                )
-              ),
-            )
+            _       <- signUp("login@example.com")
+            good    <- runRoutes(
+                         AuthRoutes.routes,
+                         withCsrf(
+                           Request.post(
+                             "/api/auth/login",
+                             Body.fromString(LoginRequest("login@example.com", "password123").toJson),
+                           )
+                         ),
+                       )
             goodRaw <- body(good)
-            bad <- runRoutes(
-              AuthRoutes.routes,
-              withCsrf(
-                Request.post("/api/auth/login", Body.fromString(LoginRequest("login@example.com", "nope").toJson))
-              ),
-            )
-            badRaw <- body(bad)
+            bad     <-
+              runRoutes(
+                AuthRoutes.routes,
+                withCsrf(
+                  Request.post("/api/auth/login", Body.fromString(LoginRequest("login@example.com", "nope").toJson))
+                ),
+              )
+            badRaw  <- body(bad)
           } yield assertTrue(
             good.status == Status.Ok,
             goodRaw.fromJson[AuthResponse].map(_.user.email) == Right("login@example.com"),
@@ -161,13 +162,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // no Content-Length, which is exactly what a browser client needs in order to decode it at all.
         test("logout is an empty 204 that expires the cookie, with or without a session") {
           for {
-            session <- signUp("logout@example.com")
+            session             <- signUp("logout@example.com")
             withSessionResponse <- runRoutes(
-              AuthRoutes.routes,
-              withCsrf(withSession(Request.post("/api/auth/logout", Body.empty), session)),
-            )
-            raw <- body(withSessionResponse)
-            anonymous <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/auth/logout", Body.empty)))
+                                     AuthRoutes.routes,
+                                     withCsrf(withSession(Request.post("/api/auth/logout", Body.empty), session)),
+                                   )
+            raw                 <- body(withSessionResponse)
+            anonymous           <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/auth/logout", Body.empty)))
           } yield assertTrue(
             withSessionResponse.status == Status.NoContent,
             raw.isEmpty,
@@ -177,9 +178,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("/api/me returns the signed-in user, Theme still a bare JSON string") {
           for {
-            session <- signUp("me@example.com")
+            session  <- signUp("me@example.com")
             response <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me"), session))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Ok,
             raw.contains("\"theme\":\"Light\""),
@@ -197,14 +198,14 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           )
           for {
             response <- runRoutes(AuthRoutes.routes, request)
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(response.status == Status.NoContent, raw.isEmpty)
         },
         test("an unknown verification token is a 400 in the usual ErrorResponse shape") {
           val request = withCsrf(Request.post("/api/auth/verify", Body.fromString(VerifyEmailRequest("nope").toJson)))
           for {
             response <- runRoutes(AuthRoutes.routes, request)
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("verification link")),
@@ -216,16 +217,17 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // the frontend would fail to decode every item it loads.
         test("creating and listing todos keeps TodoStatus a bare string") {
           for {
-            session <- signUp("todo@example.com")
-            created <- runRoutes(
-              TodoRoutes.routes,
-              withCsrf(
-                withSession(Request.post("/api/todos", Body.fromString(CreateTodoRequest("milk").toJson)), session)
-              ),
-            )
+            session    <- signUp("todo@example.com")
+            created    <-
+              runRoutes(
+                TodoRoutes.routes,
+                withCsrf(
+                  withSession(Request.post("/api/todos", Body.fromString(CreateTodoRequest("milk").toJson)), session)
+                ),
+              )
             createdRaw <- body(created)
-            listed <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
-            listedRaw <- body(listed)
+            listed     <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
+            listedRaw  <- body(listed)
           } yield assertTrue(
             created.status == Status.Created,
             createdRaw.contains("\"status\":\"ToDo\""),
@@ -238,14 +240,15 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       suite("groups")(
         test("creating a group and listing its members keeps GroupRole a bare string") {
           for {
-            session <- signUp("group@example.com")
-            created <- runRoutes(
-              GroupRoutes.routes,
-              withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Acme"}""")), session)),
-            )
+            session    <- signUp("group@example.com")
+            created    <-
+              runRoutes(
+                GroupRoutes.routes,
+                withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Acme"}""")), session)),
+              )
             createdRaw <- body(created)
-            groupId = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
-            members <- runRoutes(GroupRoutes.routes, withSession(Request.get(s"/api/groups/$groupId/members"), session))
+            groupId     = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
+            members    <- runRoutes(GroupRoutes.routes, withSession(Request.get(s"/api/groups/$groupId/members"), session))
             membersRaw <- body(members)
           } yield assertTrue(
             created.status == Status.Created,
@@ -256,17 +259,18 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("deleting a group is an empty 204") {
           for {
-            session <- signUp("delete-group@example.com")
-            created <- runRoutes(
-              GroupRoutes.routes,
-              withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Doomed"}""")), session)),
-            )
+            session    <- signUp("delete-group@example.com")
+            created    <-
+              runRoutes(
+                GroupRoutes.routes,
+                withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Doomed"}""")), session)),
+              )
             createdRaw <- body(created)
-            groupId = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
-            deleted <- runRoutes(
-              GroupRoutes.routes,
-              withCsrf(withSession(Request.delete(s"/api/groups/$groupId"), session)),
-            )
+            groupId     = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
+            deleted    <- runRoutes(
+                            GroupRoutes.routes,
+                            withCsrf(withSession(Request.delete(s"/api/groups/$groupId"), session)),
+                          )
             deletedRaw <- body(deleted)
           } yield assertTrue(deleted.status == Status.NoContent, deletedRaw.isEmpty)
         },
@@ -274,9 +278,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       suite("admin")(
         test("listing users returns a body the frontend's zio-json codec decodes") {
           for {
-            admin <- adminSession("list@example.com")
+            admin    <- adminSession("list@example.com")
             response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), admin._2))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Ok,
             raw.fromJson[List[User]].map(_.map(_.email)) == Right(List("list@example.com")),
@@ -284,13 +288,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("creating a user answers 201 with the created user") {
           for {
-            admin <- adminSession("creator@example.com")
-            request = Request.post(
-              "/api/admin/users",
-              Body.fromString(CreateUserRequest("fresh@example.com", "password123", isAdmin = false).toJson),
-            )
+            admin    <- adminSession("creator@example.com")
+            request   = Request.post(
+                          "/api/admin/users",
+                          Body.fromString(CreateUserRequest("fresh@example.com", "password123", isAdmin = false).toJson),
+                        )
             response <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
             raw.fromJson[User].map(_.email) == Right("fresh@example.com"),
@@ -302,13 +306,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // what keeps the two codec stacks interchangeable for a client that only knows the DTO.
         test("a duplicate email is a 409 whose body still decodes as the usual ErrorResponse") {
           for {
-            admin <- adminSession("dup@example.com")
-            request = Request.post(
-              "/api/admin/users",
-              Body.fromString(CreateUserRequest("dup@example.com", "password123", isAdmin = false).toJson),
-            )
+            admin    <- adminSession("dup@example.com")
+            request   = Request.post(
+                          "/api/admin/users",
+                          Body.fromString(CreateUserRequest("dup@example.com", "password123", isAdmin = false).toJson),
+                        )
             response <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Conflict,
             !raw.contains("fieldErrors"),
@@ -317,13 +321,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("a short password is a 400 carrying the service's per-field messages") {
           for {
-            admin <- adminSession("weak@example.com")
-            request = Request.post(
-              "/api/admin/users",
-              Body.fromString(CreateUserRequest("weak-user@example.com", "short", isAdmin = false).toJson),
-            )
+            admin    <- adminSession("weak@example.com")
+            request   = Request.post(
+                          "/api/admin/users",
+                          Body.fromString(CreateUserRequest("weak-user@example.com", "short", isAdmin = false).toJson),
+                        )
             response <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message) == Right("Validation failed"),
@@ -332,9 +336,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("an unknown id is a 404 with the message the mapping gives it") {
           for {
-            admin <- adminSession("missing@example.com")
+            admin    <- adminSession("missing@example.com")
             response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users/999999"), admin._2))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.NotFound,
             raw.fromJson[ErrorResponse].map(_.message) == Right("User not found"),
@@ -342,17 +346,19 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("updating a user goes through, and leaving the password blank keeps the old one") {
           for {
-            admin <- adminSession("updater@example.com")
+            admin        <- adminSession("updater@example.com")
             adminService <- ZIO.service[AdminService]
-            target <- orDieWithFailure(adminService.createUser(admin._1.id, "target@example.com", "password123", false))
-            request = Request.put(
-              s"/api/admin/users/${target.id}",
-              Body.fromString(UpdateUserRequest("renamed@example.com", isAdmin = true, password = None).toJson),
-            )
-            response <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
-            raw <- body(response)
-            authService <- ZIO.service[AuthService]
-            stillLogsIn <- orDieWithFailure(authService.login("renamed@example.com", "password123"))
+            target       <- orDieWithFailure(adminService.createUser(admin._1.id, "target@example.com", "password123", false))
+            request       = {
+              Request.put(
+                s"/api/admin/users/${target.id}",
+                Body.fromString(UpdateUserRequest("renamed@example.com", isAdmin = true, password = None).toJson),
+              )
+            }
+            response     <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
+            raw          <- body(response)
+            authService  <- ZIO.service[AuthService]
+            stillLogsIn  <- orDieWithFailure(authService.login("renamed@example.com", "password123"))
           } yield assertTrue(
             response.status == Status.Ok,
             raw.fromJson[User].map(_.email) == Right("renamed@example.com"),
@@ -362,15 +368,15 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("deleting a user is a 204 with an empty body") {
           for {
-            admin <- adminSession("deleter@example.com")
+            admin        <- adminSession("deleter@example.com")
             adminService <- ZIO.service[AdminService]
-            target <- orDieWithFailure(adminService.createUser(admin._1.id, "doomed@example.com", "password123", false))
-            response <- runRoutes(
-              AdminRoutes.routes,
-              withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
-            )
-            raw <- body(response)
-            remaining <- adminService.listUsers
+            target       <- orDieWithFailure(adminService.createUser(admin._1.id, "doomed@example.com", "password123", false))
+            response     <- runRoutes(
+                              AdminRoutes.routes,
+                              withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
+                            )
+            raw          <- body(response)
+            remaining    <- adminService.listUsers
           } yield assertTrue(
             response.status == Status.NoContent,
             raw.isEmpty,
@@ -379,12 +385,12 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
         test("an administrator still cannot delete their own account") {
           for {
-            admin <- adminSession("self@example.com")
+            admin    <- adminSession("self@example.com")
             response <- runRoutes(
-              AdminRoutes.routes,
-              withCsrf(withSession(Request.delete(s"/api/admin/users/${admin._1.id}"), admin._2)),
-            )
-            raw <- body(response)
+                          AdminRoutes.routes,
+                          withCsrf(withSession(Request.delete(s"/api/admin/users/${admin._1.id}"), admin._2)),
+                        )
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message) == Right("You cannot delete your own account"),
@@ -396,7 +402,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("the aspects still apply on a described route: no session is a 401, no CSRF header a 403") {
           for {
             unauthenticated <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
-            noCsrf <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
+            noCsrf          <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
           } yield assertTrue(unauthenticated.status == Status.Unauthorized, noCsrf.status == Status.Forbidden)
         },
         // A description has to *declare* a status for a client generated from it to decode one: an undeclared status
@@ -408,12 +414,12 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // on the wire, whether or not a description names it.
         test("the aspect-built bodies decode with the endpoints' own zio-schema codecs") {
           val unauthorizedCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Unauthorized]
-          val forbiddenCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Forbidden]
+          val forbiddenCodec    = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Forbidden]
           for {
-            unauthenticated <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
+            unauthenticated     <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
             unauthenticatedBody <- unauthenticated.body.asChunk.orDie
-            noCsrf <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
-            noCsrfBody <- noCsrf.body.asChunk.orDie
+            noCsrf              <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
+            noCsrfBody          <- noCsrf.body.asChunk.orDie
           } yield assertTrue(
             unauthorizedCodec.decode(unauthenticatedBody) == Right(ApiFailure.Unauthorized("Not authenticated")),
             forbiddenCodec.decode(noCsrfBody) == Right(ApiFailure.Forbidden("Missing required header")),
@@ -422,13 +428,13 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // ...and the same for the generic 500 `handleFailures` produces around a defect — also undeclared, since a
         // dead database is not part of the API's contract, but still `ApiFailure`-shaped on the wire.
         test("the generic 500 body decodes with the InternalError codec") {
-          val internalCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.InternalError]
+          val internalCodec                      = JsonCodec.schemaBasedBinaryCodec[ApiFailure.InternalError]
           val dyingRoutes: Routes[Any, Response] = {
             Routes(Method.GET / "api" / "boom" -> handler((_: Request) => ZIO.die(new RuntimeException("boom"))))
           }
           for {
             response <- runRoutes(dyingRoutes, Request.get("/api/boom"))
-            chunk <- response.body.asChunk.orDie
+            chunk    <- response.body.asChunk.orDie
           } yield assertTrue(
             response.status == Status.InternalServerError,
             internalCodec.decode(chunk) == Right(ApiFailure.InternalError("Internal server error")),
@@ -442,12 +448,12 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("a body the request codec rejects is a 400 in the usual ErrorResponse shape") {
           val badRequestCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.BadRequest]
           for {
-            session <- signUp("malformed@example.com")
+            session  <- signUp("malformed@example.com")
             response <- runRoutes(
-              TodoRoutes.routes,
-              withCsrf(withSession(Request.post("/api/todos", Body.fromString("{ not json")), session)),
-            )
-            raw <- body(response)
+                          TodoRoutes.routes,
+                          withCsrf(withSession(Request.post("/api/todos", Body.fromString("{ not json")), session)),
+                        )
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse] == Right(ErrorResponse("Malformed request", Map.empty)),
@@ -462,12 +468,12 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // without the declaration the client would fail the response as a defect instead of decoding it.
         test("a rejected body stays JSON for a caller that asks for HTML") {
           for {
-            session <- signUp("codec-html@example.com")
-            request = withCsrf(
-              withSession(Request.put("/api/me/theme", Body.fromString("""{"thme":"dark"}""")), session)
-            )
+            session  <- signUp("codec-html@example.com")
+            request   = withCsrf(
+                          withSession(Request.put("/api/me/theme", Body.fromString("""{"thme":"dark"}""")), session)
+                        )
             response <- runRoutes(AuthRoutes.routes, request.addHeader(Header.Accept.name, "text/html"))
-            raw <- body(response)
+            raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
             response.header(Header.ContentType).map(_.mediaType) == Some(MediaType.application.json),

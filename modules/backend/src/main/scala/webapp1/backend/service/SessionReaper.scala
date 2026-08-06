@@ -17,16 +17,17 @@ object SessionReaper {
     val once = {
       for {
         sessionRepo <- ZIO.service[SessionRepository]
-        tokenRepo <- ZIO.service[EmailVerificationTokenRepository]
-        now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        sessions <- sessionRepo.deleteExpired(now)
-        _ <- ZIO.when(sessions > 0)(ZIO.logInfo(s"Purged $sessions expired session(s)"))
-        tokens <- tokenRepo.deleteExpired(now)
-        _ <- ZIO.when(tokens > 0)(ZIO.logInfo(s"Purged $tokens expired verification token(s)"))
+        tokenRepo   <- ZIO.service[EmailVerificationTokenRepository]
+        now         <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        sessions    <- sessionRepo.deleteExpired(now)
+        _           <- ZIO.when(sessions > 0)(ZIO.logInfo(s"Purged $sessions expired session(s)"))
+        tokens      <- tokenRepo.deleteExpired(now)
+        _           <- ZIO.when(tokens > 0)(ZIO.logInfo(s"Purged $tokens expired verification token(s)"))
       } yield ()
     }
     // A failed sweep must not kill the fiber: log it and try again next interval.
-    (once.catchAllCause(cause => ZIO.logErrorCause("Could not purge expired rows", cause)) *> ZIO.sleep(interval))
-      .forever
+    (once.catchAllCause(cause => ZIO.logErrorCause("Could not purge expired rows", cause)) *> ZIO.sleep(
+      interval
+    )).forever
   }
 }

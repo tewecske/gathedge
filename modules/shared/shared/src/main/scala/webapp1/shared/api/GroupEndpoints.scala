@@ -27,7 +27,7 @@ import ApiSchemas.given
   */
 object GroupEndpoints {
 
-  private val groupId = PathCodec.long("id")
+  private val groupId  = PathCodec.long("id")
   private val memberId = PathCodec.long("userId")
 
   /** See [[AdminEndpoints.deleteUser]] for why an empty 204 is described as a status codec and never as

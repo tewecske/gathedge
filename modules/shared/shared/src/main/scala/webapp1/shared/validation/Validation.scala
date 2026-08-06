@@ -16,9 +16,9 @@ object Validation {
 
   // The upper bounds below mirror the column widths in db/migration/*: exceeding one used to reach
   // the database and come back as a constraint violation (a 500), instead of a field error.
-  val maxEmailLength = 255 // users.email, group_invitations.email
-  val maxNameLength = 255 // groups.name
-  val maxTextLength = 2000 // todo_items.text, group_pairs.source/target
+  val maxEmailLength = 255  // users.email, group_invitations.email
+  val maxNameLength  = 255  // groups.name
+  val maxTextLength  = 2000 // todo_items.text, group_pairs.source/target
 
   def isValidEmail(email: String): Boolean = {
     emailPattern.matches(email.trim) && email.trim.length <= maxEmailLength

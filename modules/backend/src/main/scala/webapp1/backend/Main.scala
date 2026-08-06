@@ -60,22 +60,21 @@ object Main extends ZIOAppDefault {
 
   private val program = {
     for {
-      cfg <- ZIO.service[AppConfig]
-      _ <- ZIO.foreachDiscard(cfg.productionIssues)(issue => ZIO.logError(s"Unsafe production config: $issue"))
-      _ <-
-        ZIO.when(cfg.productionIssues.nonEmpty) {
+      cfg         <- ZIO.service[AppConfig]
+      _           <- ZIO.foreachDiscard(cfg.productionIssues)(issue => ZIO.logError(s"Unsafe production config: $issue"))
+      _           <- ZIO.when(cfg.productionIssues.nonEmpty) {
           ZIO.fail(
             new IllegalStateException("Refusing to start: the production configuration is unsafe (see errors above)")
           )
         }
-      dataSource <- ZIO.service[DataSource]
-      _ <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
-      _ <- AdminSeeder.seedIfNeeded
+      dataSource  <- ZIO.service[DataSource]
+      _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
+      _           <- AdminSeeder.seedIfNeeded
       rateLimiter <- ZIO.service[RateLimiter]
-      _ <- rateLimiter.runPruner.forkDaemon
-      _ <- SessionReaper.run.forkDaemon
-      _ <- ZIO.logInfo(s"Starting webapp1 backend on ${cfg.app.serverHost}:${cfg.app.serverPort} (env=${cfg.app.env})")
-      _ <- Server.serve(allRoutes)
+      _           <- rateLimiter.runPruner.forkDaemon
+      _           <- SessionReaper.run.forkDaemon
+      _           <- ZIO.logInfo(s"Starting webapp1 backend on ${cfg.app.serverHost}:${cfg.app.serverPort} (env=${cfg.app.env})")
+      _           <- Server.serve(allRoutes)
     } yield ()
   }
 

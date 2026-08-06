@@ -15,11 +15,11 @@ object SignUpPageSpec extends ZIOSpecDefault {
       test("shows a validation error for a too-short password") {
         val container = dom.document.createElement("div")
         dom.document.body.appendChild(container)
-        val rootNode = L.render(container, SignUpPage.render())
+        val rootNode  = L.render(container, SignUpPage.render())
 
-        val emailInput = container.querySelector("input[type=email]").asInstanceOf[dom.html.Input]
+        val emailInput    = container.querySelector("input[type=email]").asInstanceOf[dom.html.Input]
         val passwordInput = container.querySelector("input[type=password]").asInstanceOf[dom.html.Input]
-        val signUpForm = container.querySelector("form").asInstanceOf[dom.html.Form]
+        val signUpForm    = container.querySelector("form").asInstanceOf[dom.html.Form]
 
         emailInput.value = "user@example.com"
         emailInput.dispatchEvent(new dom.Event("input"))

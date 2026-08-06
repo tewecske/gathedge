@@ -54,11 +54,11 @@ object ApiFailure {
     */
   final case class InternalError(message: String) extends ApiFailure
 
-  given Schema[BadRequest] = DeriveSchema.gen[BadRequest]
-  given Schema[Unauthorized] = DeriveSchema.gen[Unauthorized]
-  given Schema[Forbidden] = DeriveSchema.gen[Forbidden]
-  given Schema[NotFound] = DeriveSchema.gen[NotFound]
-  given Schema[Conflict] = DeriveSchema.gen[Conflict]
+  given Schema[BadRequest]      = DeriveSchema.gen[BadRequest]
+  given Schema[Unauthorized]    = DeriveSchema.gen[Unauthorized]
+  given Schema[Forbidden]       = DeriveSchema.gen[Forbidden]
+  given Schema[NotFound]        = DeriveSchema.gen[NotFound]
+  given Schema[Conflict]        = DeriveSchema.gen[Conflict]
   given Schema[TooManyRequests] = DeriveSchema.gen[TooManyRequests]
-  given Schema[InternalError] = DeriveSchema.gen[InternalError]
+  given Schema[InternalError]   = DeriveSchema.gen[InternalError]
 }

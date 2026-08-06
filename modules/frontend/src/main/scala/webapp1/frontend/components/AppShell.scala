@@ -21,7 +21,7 @@ object AppShell {
   def render(active: Page, content: HtmlElement): HtmlElement = new AppShell(active, content).render()
 
   // Laminar 17 has no keys for the popover API, which is what the account dropdown is built on.
-  private val popoverAttr = htmlAttr("popover", Codec.stringAsIs)
+  private val popoverAttr       = htmlAttr("popover", Codec.stringAsIs)
   private val popoverTargetAttr = htmlAttr("popovertarget", Codec.stringAsIs)
 
   // `child <--` can briefly hold the outgoing and incoming shell in the DOM at once, and a
@@ -36,16 +36,16 @@ object AppShell {
 
 private class AppShell(active: Page, content: HtmlElement) {
   private val themeToggleBus = new EventBus[Unit]()
-  private val logoutBus = new EventBus[Unit]()
+  private val logoutBus      = new EventBus[Unit]()
 
   private val currentUserSignal = AppState.currentUserSignal
-  private val isAdminSignal = currentUserSignal.map(_.exists(_.isAdmin)).distinct
-  private val themeSignal = currentUserSignal.map(_.map(_.theme).getOrElse(Theme.Light)).distinct
-  private val emailSignal = currentUserSignal.map(_.map(_.email).getOrElse("")).distinct
-  private val initialSignal = emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
+  private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
+  private val themeSignal       = currentUserSignal.map(_.map(_.theme).getOrElse(Theme.Light)).distinct
+  private val emailSignal       = currentUserSignal.map(_.map(_.email).getOrElse("")).distinct
+  private val initialSignal     = emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
 
   private val instanceId = AppShell.nextInstanceId()
-  private val menuId = s"user-menu-$instanceId"
+  private val menuId     = s"user-menu-$instanceId"
   private val menuAnchor = s"--user-menu-$instanceId"
 
   def render(): HtmlElement = {
@@ -59,7 +59,7 @@ private class AppShell(active: Page, content: HtmlElement) {
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>
             AppState.setUser(res.user)
-          case Left(_) =>
+          case Left(_)    =>
             () // theme toggle failure is low-stakes; silently keep prior theme
         },
       logoutBus.events.flatMapSwitch(_ => ApiClient.logout) -->
@@ -75,7 +75,7 @@ private class AppShell(active: Page, content: HtmlElement) {
     theme match {
       case Theme.Light =>
         Theme.Dark
-      case Theme.Dark =>
+      case Theme.Dark  =>
         Theme.Light
     }
   }
@@ -110,14 +110,12 @@ private class AppShell(active: Page, content: HtmlElement) {
           cls := "btn btn-ghost btn-sm",
           typ := "button",
           text <--
-            themeSignal
-              .map {
-                case Theme.Light =>
-                  "Switch to dark"
-                case Theme.Dark =>
-                  "Switch to light"
-              }
-              .distinct,
+            themeSignal.map {
+              case Theme.Light =>
+                "Switch to dark"
+              case Theme.Dark  =>
+                "Switch to light"
+            }.distinct,
           onClick.mapToUnit --> themeToggleBus.writer,
         ),
         renderAccountMenuTrigger(),
@@ -131,12 +129,12 @@ private class AppShell(active: Page, content: HtmlElement) {
     */
   private def renderAccountMenuTrigger(): HtmlElement = {
     button(
-      cls := "btn btn-ghost btn-circle avatar avatar-placeholder",
-      typ := "button",
-      aria.label := "Account menu",
+      cls                        := "btn btn-ghost btn-circle avatar avatar-placeholder",
+      typ                        := "button",
+      aria.label                 := "Account menu",
       title <-- emailSignal,
       AppShell.popoverTargetAttr := menuId,
-      styleAttr := s"anchor-name:$menuAnchor",
+      styleAttr                  := s"anchor-name:$menuAnchor",
       div(cls := "bg-neutral text-neutral-content w-8 rounded-full", span(cls := "text-xs", text <-- initialSignal)),
     )
   }
@@ -146,10 +144,10 @@ private class AppShell(active: Page, content: HtmlElement) {
     */
   private def renderAccountMenu(): HtmlElement = {
     ul(
-      cls := "dropdown dropdown-end menu w-52 rounded-box bg-base-100 shadow-sm",
+      cls                  := "dropdown dropdown-end menu w-52 rounded-box bg-base-100 shadow-sm",
       AppShell.popoverAttr := "auto",
-      idAttr := menuId,
-      styleAttr := s"position-anchor:$menuAnchor",
+      idAttr               := menuId,
+      styleAttr            := s"position-anchor:$menuAnchor",
       li(
         a(
           cls := (

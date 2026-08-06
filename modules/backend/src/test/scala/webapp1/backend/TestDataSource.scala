@@ -18,7 +18,7 @@ object TestDataSource {
           ZIO.attempt {
             val tempFile = Files.createTempFile("webapp1-test", ".db")
             tempFile.toFile.deleteOnExit()
-            val config = new HikariConfig()
+            val config   = new HikariConfig()
             config.setJdbcUrl(s"jdbc:sqlite:${tempFile.toAbsolutePath}")
             // Explicit driver class, not DriverManager lookup: tests run unforked in sbt's own JVM, where
             // DriverManager registers the ServiceLoader-discovered drivers exactly once, against whichever
@@ -31,7 +31,7 @@ object TestDataSource {
             new HikariDataSource(config)
           }
         )(ds => ZIO.attempt(ds.close()).orDie)
-      _ <- FlywayMigrator.migrate(ds, DbDialect.Sqlite)
+      _  <- FlywayMigrator.migrate(ds, DbDialect.Sqlite)
     } yield ds: DataSource
   }
 }

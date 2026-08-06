@@ -32,20 +32,20 @@ private case class CreateGroupForm(name: String = "", showErrors: Boolean = fals
 }
 
 private class GroupsPage {
-  private val groupsVar = Var(List.empty[Group])
+  private val groupsVar    = Var(List.empty[Group])
   private val groupsSignal = groupsVar.signal
 
-  private val formVar = Var(CreateGroupForm())
-  private val nameVar = formVar.zoom(_.name)((form, name) => form.copy(name = name))
+  private val formVar         = Var(CreateGroupForm())
+  private val nameVar         = formVar.zoom(_.name)((form, name) => form.copy(name = name))
   private val nameErrorSignal = formVar.signal.map(_.displayError(_.nameError))
 
   // Server-side failures only; the field-level problem renders next to its input.
   private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val errorSignal                   = errorVar.signal
+  private val inFlightVar                   = Var(false)
+  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
+  private val loadBus   = new EventBus[Unit]()
   private val createBus = new EventBus[Unit]()
 
   // Validation is pure; the effects hang off the resulting stream as observers.
@@ -57,7 +57,7 @@ private class GroupsPage {
       child.maybe <-- errorSignal.map(_.map(renderError)),
       renderCreateForm(),
       div(
-        cls := "card bg-base-100 shadow mt-4",
+        cls  := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
           ul(
@@ -73,12 +73,12 @@ private class GroupsPage {
         Observer[Either[ApiError, List[Group]]] {
           case Right(groups) =>
             Var.set(groupsVar -> groups, errorVar -> None)
-          case Left(err) =>
+          case Left(err)     =>
             errorVar.set(Some(err.message))
         },
       createStream -->
         Observer[Option[CreateGroupRequest]] {
-          case None =>
+          case None    =>
             formVar.update(_.copy(showErrors = true))
           case Some(_) =>
             Var.set(inFlightVar -> true, errorVar -> None)
@@ -92,7 +92,7 @@ private class GroupsPage {
           case Right(group) =>
             groupsVar.update(_ :+ group)
             Var.set(inFlightVar -> false, formVar -> CreateGroupForm(), errorVar -> None)
-          case Left(err) =>
+          case Left(err)    =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => loadBus.emit(())),
@@ -104,9 +104,9 @@ private class GroupsPage {
       cls := "flex gap-2 items-start",
       onSubmit.preventDefault.mapToUnit --> createBus.writer,
       FormField.render(nameErrorSignal)(
-        cls := "flex-1",
+        cls      := "flex-1",
         input(
-          cls := "input w-full",
+          cls         := "input w-full",
           cls("input-error") <-- nameErrorSignal.map(_.nonEmpty),
           placeholder := "New group name",
           controlled(value <-- nameVar.signal, onInput.mapToValue --> nameVar.writer),
@@ -120,7 +120,7 @@ private class GroupsPage {
     li(
       cls := "list-row",
       a(
-        cls := "link link-hover flex-1",
+        cls    := "link link-hover flex-1",
         AppRouter.router.navigateTo(Page.GroupDetail(id)),
         text <-- groupSignal.map(_.name).distinct,
       ),

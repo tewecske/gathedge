@@ -14,13 +14,13 @@ object AdminSeeder {
   def seedIfNeeded: RIO[AppConfig & UserRepository & PasswordHasher, Unit] = {
     for {
       config <- ZIO.service[AppConfig]
-      _ <-
+      _      <-
         ZIO.unless(config.isProduction) {
           for {
             userRepo <- ZIO.service[UserRepository]
-            hasher <- ZIO.service[PasswordHasher]
-            exists <- userRepo.existsAdmin
-            _ <-
+            hasher   <- ZIO.service[PasswordHasher]
+            exists   <- userRepo.existsAdmin
+            _        <-
               ZIO.unless(exists) {
                 // Same normalization AuthService.login applies before looking an account up —
                 // without it a BOOTSTRAP_ADMIN_EMAIL containing capitals seeds an account that
@@ -28,18 +28,18 @@ object AdminSeeder {
                 val email = config.bootstrapAdmin.email.trim.toLowerCase
                 for {
                   hash <- hasher.hash(config.bootstrapAdmin.password)
-                  now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                  now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
                   // Verified on creation: nobody is going to read a link sent to a placeholder
                   // address, and a bootstrap admin that cannot sign in defeats its own purpose.
-                  _ <- userRepo.insert(
-                    email,
-                    Some(hash),
-                    isAdmin = true,
-                    theme = "light",
-                    createdAt = now,
-                    emailVerifiedAt = Some(now),
-                  )
-                  _ <- ZIO.logInfo(s"Bootstrap admin account created: $email")
+                  _    <- userRepo.insert(
+                            email,
+                            Some(hash),
+                            isAdmin = true,
+                            theme = "light",
+                            createdAt = now,
+                            emailVerifiedAt = Some(now),
+                          )
+                  _    <- ZIO.logInfo(s"Bootstrap admin account created: $email")
                 } yield ()
               }
           } yield ()

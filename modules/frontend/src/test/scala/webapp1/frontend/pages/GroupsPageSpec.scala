@@ -12,11 +12,11 @@ object GroupsPageSpec extends ZIOSpecDefault {
       test("renders a heading and a create-group form, without a backend") {
         val container = dom.document.createElement("div")
         dom.document.body.appendChild(container)
-        val rootNode = L.render(container, GroupsPage.render())
+        val rootNode  = L.render(container, GroupsPage.render())
 
         val hasHeading = container.textContent.contains("Groups")
-        val hasInput = container.querySelector("input") != null
-        val hasButton = container.querySelector("button") != null
+        val hasInput   = container.querySelector("input") != null
+        val hasButton  = container.querySelector("button") != null
 
         rootNode.unmount()
         dom.document.body.removeChild(container)
@@ -26,11 +26,11 @@ object GroupsPageSpec extends ZIOSpecDefault {
       test("submitting a blank name shows a field error, but only after the submit") {
         val container = dom.document.createElement("div")
         dom.document.body.appendChild(container)
-        val rootNode = L.render(container, GroupsPage.render())
+        val rootNode  = L.render(container, GroupsPage.render())
 
         val beforeSubmit = Option(container.querySelector(".text-error")).map(_.textContent)
         container.querySelector("form").asInstanceOf[dom.html.Form].dispatchEvent(new dom.Event("submit"))
-        val afterSubmit = Option(container.querySelector(".text-error")).map(_.textContent)
+        val afterSubmit  = Option(container.querySelector(".text-error")).map(_.textContent)
 
         rootNode.unmount()
         dom.document.body.removeChild(container)

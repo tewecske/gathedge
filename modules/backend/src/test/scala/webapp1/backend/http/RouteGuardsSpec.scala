@@ -59,9 +59,9 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, String] = {
     for {
       adminService <- ZIO.service[AdminService]
-      authService <- ZIO.service[AuthService]
-      _ <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
-      session <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
+      authService  <- ZIO.service[AuthService]
+      _            <- orDieWithFailure(adminService.createUser(0L, email, "password123", isAdmin = true))
+      session      <- orDieWithFailure(authService.login(email, "password123")).map(_._2)
     } yield session
   }
 
@@ -69,17 +69,17 @@ object RouteGuardsSpec extends ZIOSpecDefault {
     suite("route guards")(
       test("a state-changing request without the CSRF header is refused") {
         for {
-          session <- signUp("csrf@example.com")
-          request = withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
+          session  <- signUp("csrf@example.com")
+          request   = withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
           response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.Forbidden)
       },
       test("the same request with the CSRF header goes through") {
         for {
-          session <- signUp("csrf-ok@example.com")
-          request = withCsrf(
-            withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
-          )
+          session  <- signUp("csrf-ok@example.com")
+          request   = withCsrf(
+                        withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
+                      )
           response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.Created)
       },
@@ -87,7 +87,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       // without the header — the frontend's initial page loads don't send one.
       test("a read is not subject to the CSRF header") {
         for {
-          session <- signUp("csrf-read@example.com")
+          session  <- signUp("csrf-read@example.com")
           response <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
         } yield assertTrue(response.status == Status.Ok)
       },
@@ -110,7 +110,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       },
       test("an admin route denies a signed-in non-admin") {
         for {
-          session <- signUp("plain@example.com")
+          session  <- signUp("plain@example.com")
           response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), session))
         } yield assertTrue(response.status == Status.Forbidden)
       },
@@ -121,7 +121,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       },
       test("an admin route admits an administrator") {
         for {
-          session <- adminSession("boss@example.com")
+          session  <- adminSession("boss@example.com")
           response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), session))
         } yield assertTrue(response.status == Status.Ok)
       },
@@ -130,20 +130,20 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       test("text longer than the column width is a 400, not a 500") {
         val tooLong = "a" * (Validation.maxTextLength + 1)
         for {
-          session <- signUp("long-text@example.com")
-          body = Body.fromString(s"""{"text":"$tooLong"}""")
-          request = withCsrf(withSession(Request.post("/api/todos", body), session))
+          session  <- signUp("long-text@example.com")
+          body      = Body.fromString(s"""{"text":"$tooLong"}""")
+          request   = withCsrf(withSession(Request.post("/api/todos", body), session))
           response <- runRoutes(TodoRoutes.routes, request)
         } yield assertTrue(response.status == Status.BadRequest)
       },
       test("a defect becomes a generic JSON 500 rather than a stack trace in the body") {
-        val boom = new RuntimeException("relation \"users\" does not exist")
+        val boom                               = new RuntimeException("relation \"users\" does not exist")
         val dyingRoutes: Routes[Any, Response] = {
           Routes(Method.GET / "api" / "boom" -> handler((_: Request) => ZIO.die(boom)))
         }
         for {
           response <- runRoutes(dyingRoutes, Request.get("/api/boom"))
-          body <- response.body.asString
+          body     <- response.body.asString
         } yield assertTrue(
           response.status == Status.InternalServerError,
           body == """{"message":"Internal server error","fieldErrors":{}}""",
@@ -155,7 +155,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       test("a path that matches no route is a JSON 404 that does not echo the path") {
         for {
           response <- runRoutes(TodoRoutes.routes, Request.get("/api/no-such-thing"))
-          body <- response.body.asString
+          body     <- response.body.asString
         } yield assertTrue(
           response.status == Status.NotFound,
           body == """{"message":"Not found","fieldErrors":{}}""",

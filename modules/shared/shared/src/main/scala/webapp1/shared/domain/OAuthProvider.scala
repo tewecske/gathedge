@@ -20,7 +20,7 @@ object OAuthProvider {
     */
   def wireName(provider: OAuthProvider): String = {
     provider match {
-      case Google =>
+      case Google    =>
         "google"
       case Microsoft =>
         "microsoft"
@@ -29,11 +29,11 @@ object OAuthProvider {
 
   def fromString(s: String): Option[OAuthProvider] = {
     s.toLowerCase match {
-      case "google" =>
+      case "google"    =>
         Some(Google)
       case "microsoft" =>
         Some(Microsoft)
-      case _ =>
+      case _           =>
         None
     }
   }
@@ -41,7 +41,7 @@ object OAuthProvider {
   /** What the sign-in button and the settings row call it. */
   def displayName(provider: OAuthProvider): String = {
     provider match {
-      case Google =>
+      case Google    =>
         "Google"
       case Microsoft =>
         "Microsoft"
@@ -51,7 +51,7 @@ object OAuthProvider {
   val all: List[OAuthProvider] = List(Google, Microsoft)
 
   extension (provider: OAuthProvider) {
-    def wire: String = wireName(provider)
+    def wire: String    = wireName(provider)
     def display: String = displayName(provider)
   }
 }

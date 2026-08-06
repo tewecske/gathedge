@@ -14,7 +14,7 @@ object DataSourceFactory {
   val postgresLive: ZLayer[AppConfig, Throwable, DataSource] = ZLayer.scoped {
     for {
       cfg <- ZIO.service[AppConfig]
-      ds <-
+      ds  <-
         ZIO.acquireRelease(
           ZIO.attempt {
             val hikariConfig = new HikariConfig()

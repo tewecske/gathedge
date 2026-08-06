@@ -16,7 +16,7 @@ import java.util.Base64
   */
 object MicrosoftOAuthClientSpec extends ZIOSpecDefault {
 
-  private val clientId = "client-id-under-test"
+  private val clientId   = "client-id-under-test"
   private val tenantGuid = "11111111-2222-3333-4444-555555555555"
 
   private def config(tenant: String): MicrosoftSection = {

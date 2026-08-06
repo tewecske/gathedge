@@ -5,24 +5,24 @@ import com.raquo.waypoint._
 sealed trait Page
 
 object Page {
-  case object SignIn extends Page
-  case object SignUp extends Page
-  case object Home extends Page
-  case object Groups extends Page
-  final case class GroupDetail(id: Long) extends Page
-  final case class GroupMembers(id: Long) extends Page
+  case object SignIn                           extends Page
+  case object SignUp                           extends Page
+  case object Home                             extends Page
+  case object Groups                           extends Page
+  final case class GroupDetail(id: Long)       extends Page
+  final case class GroupMembers(id: Long)      extends Page
   final case class AcceptInvite(token: String) extends Page
 
   /** Where a verification link lands. Public: the account it verifies usually cannot sign in yet. */
   final case class VerifyEmail(token: String) extends Page
 
   /** Shown after a signup that did not sign the user in, and wherever a fresh link needs asking for. */
-  case object CheckInbox extends Page
-  case object Settings extends Page
-  case object Admin extends Page
+  case object CheckInbox                     extends Page
+  case object Settings                       extends Page
+  case object Admin                          extends Page
   final case class AdminUserDetail(id: Long) extends Page
-  case object Forbidden extends Page
-  case object NotFound extends Page
+  case object Forbidden                      extends Page
+  case object NotFound                       extends Page
 
   enum AuthGuard {
 
@@ -38,11 +38,11 @@ object Page {
 
   def guardFor(page: Page): AuthGuard = {
     page match {
-      case SignIn | SignUp =>
+      case SignIn | SignUp                                                      =>
         AuthGuard.RequireAnon
       case AcceptInvite(_) | VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
         AuthGuard.Public
-      case _ =>
+      case _                                                                    =>
         AuthGuard.RequireAuth
     }
   }
@@ -51,71 +51,71 @@ object Page {
 object AppRouter {
   import Page._
 
-  private val signInRoute = Route.static(SignIn, root / "sign-in")
-  private val signUpRoute = Route.static(SignUp, root / "sign-up")
-  private val homeRoute = Route.static(Home, root)
-  private val groupsRoute = Route.static(Groups, root / "groups")
-  private val settingsRoute = Route.static(Settings, root / "settings")
-  private val groupDetailRoute = Route(
+  private val signInRoute          = Route.static(SignIn, root / "sign-in")
+  private val signUpRoute          = Route.static(SignUp, root / "sign-up")
+  private val homeRoute            = Route.static(Home, root)
+  private val groupsRoute          = Route.static(Groups, root / "groups")
+  private val settingsRoute        = Route.static(Settings, root / "settings")
+  private val groupDetailRoute     = Route(
     encode = (p: GroupDetail) => p.id,
     decode = (id: Long) => GroupDetail(id),
     pattern = root / "groups" / segment[Long],
   )
-  private val groupMembersRoute = Route(
+  private val groupMembersRoute    = Route(
     encode = (p: GroupMembers) => p.id,
     decode = (id: Long) => GroupMembers(id),
     pattern = root / "groups" / segment[Long] / "members",
   )
-  private val acceptInviteRoute = Route(
+  private val acceptInviteRoute    = Route(
     encode = (p: AcceptInvite) => p.token,
     decode = (token: String) => AcceptInvite(token),
     pattern = root / "invitations" / segment[String],
   )
-  private val verifyEmailRoute = Route(
+  private val verifyEmailRoute     = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
     pattern = root / "verify-email" / segment[String],
   )
-  private val checkInboxRoute = Route.static(CheckInbox, root / "check-inbox")
-  private val adminRoute = Route.static(Admin, root / "admin" / "users")
+  private val checkInboxRoute      = Route.static(CheckInbox, root / "check-inbox")
+  private val adminRoute           = Route.static(Admin, root / "admin" / "users")
   private val adminUserDetailRoute = Route(
     encode = (p: AdminUserDetail) => p.id,
     decode = (id: Long) => AdminUserDetail(id),
     pattern = root / "admin" / "users" / segment[Long],
   )
-  private val forbiddenRoute = Route.static(Forbidden, root / "forbidden")
+  private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden")
 
   // All pages are derivable from the URL alone, so serialization (used only for
   // browser-history state) is just a tag — no JSON library needed.
   private def serialize(page: Page): String = {
     page match {
-      case SignIn =>
+      case SignIn              =>
         "SignIn"
-      case SignUp =>
+      case SignUp              =>
         "SignUp"
-      case Home =>
+      case Home                =>
         "Home"
-      case Groups =>
+      case Groups              =>
         "Groups"
-      case Settings =>
+      case Settings            =>
         "Settings"
-      case GroupDetail(id) =>
+      case GroupDetail(id)     =>
         s"GroupDetail:$id"
-      case GroupMembers(id) =>
+      case GroupMembers(id)    =>
         s"GroupMembers:$id"
       case AcceptInvite(token) =>
         s"AcceptInvite:$token"
-      case VerifyEmail(token) =>
+      case VerifyEmail(token)  =>
         s"VerifyEmail:$token"
-      case CheckInbox =>
+      case CheckInbox          =>
         "CheckInbox"
-      case Admin =>
+      case Admin               =>
         "Admin"
       case AdminUserDetail(id) =>
         s"AdminUserDetail:$id"
-      case Forbidden =>
+      case Forbidden           =>
         "Forbidden"
-      case NotFound =>
+      case NotFound            =>
         "NotFound"
     }
   }
@@ -139,23 +139,23 @@ object AppRouter {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else {
       tag match {
-        case "SignIn" =>
+        case "SignIn"     =>
           SignIn
-        case "SignUp" =>
+        case "SignUp"     =>
           SignUp
-        case "Home" =>
+        case "Home"       =>
           Home
-        case "Groups" =>
+        case "Groups"     =>
           Groups
-        case "Settings" =>
+        case "Settings"   =>
           Settings
         case "CheckInbox" =>
           CheckInbox
-        case "Admin" =>
+        case "Admin"      =>
           Admin
-        case "Forbidden" =>
+        case "Forbidden"  =>
           Forbidden
-        case _ =>
+        case _            =>
           NotFound
       }
     }

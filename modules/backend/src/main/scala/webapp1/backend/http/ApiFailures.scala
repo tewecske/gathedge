@@ -40,31 +40,31 @@ object ApiFailures {
     failure: AuthFailure
   ): ApiFailure.BadRequest | ApiFailure.Unauthorized | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
     failure match {
-      case AuthFailure.InvalidCredentials =>
+      case AuthFailure.InvalidCredentials           =>
         ApiFailure.Unauthorized("Invalid email or password")
-      case AuthFailure.EmailAlreadyRegistered =>
+      case AuthFailure.EmailAlreadyRegistered       =>
         emailAlreadyRegistered
       case AuthFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
-      case AuthFailure.RateLimited =>
+      case AuthFailure.RateLimited                  =>
         ApiFailure.TooManyRequests("Too many attempts. Try again later.")
-      case AuthFailure.OAuthFailed(reason) =>
+      case AuthFailure.OAuthFailed(reason)          =>
         ApiFailure.BadRequest(s"Sign-in failed: $reason")
       case AuthFailure.OAuthAccountExists(provider) =>
         ApiFailure.Conflict(
           s"An account with this email already exists. Sign in with your password, " +
             s"then link ${provider.display} from Settings."
         )
-      case AuthFailure.OAuthAlreadyLinked =>
+      case AuthFailure.OAuthAlreadyLinked           =>
         ApiFailure.Conflict("That account is already linked")
-      case AuthFailure.LastCredential =>
+      case AuthFailure.LastCredential               =>
         ApiFailure.Conflict("Set a password first — this is the only way left to sign in to this account")
-      case AuthFailure.EmailNotVerified =>
+      case AuthFailure.EmailNotVerified             =>
         // Unreachable through this mapping: only `login` can raise it, and `login` uses
         // `authLogin` below to answer 403 instead. Mapped anyway because the match is exhaustive,
         // and to 401 because that is the only status every endpoint on this mapping declares.
         ApiFailure.Unauthorized("Invalid email or password")
-      case AuthFailure.InvalidVerificationToken =>
+      case AuthFailure.InvalidVerificationToken     =>
         verificationTokenInvalid
     }
   }
@@ -79,7 +79,7 @@ object ApiFailures {
     failure match {
       case AuthFailure.EmailNotVerified =>
         ApiFailure.Forbidden("Verify your email address before signing in")
-      case other =>
+      case other                        =>
         auth(other)
     }
   }
@@ -93,7 +93,7 @@ object ApiFailures {
     failure match {
       case AuthFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
-      case _ =>
+      case _                                        =>
         verificationTokenInvalid
     }
   }
@@ -103,11 +103,11 @@ object ApiFailures {
     */
   def resendVerification(failure: AuthFailure): ApiFailure.BadRequest | ApiFailure.TooManyRequests = {
     failure match {
-      case AuthFailure.RateLimited =>
+      case AuthFailure.RateLimited                  =>
         ApiFailure.TooManyRequests("Too many attempts. Try again later.")
       case AuthFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
-      case _ =>
+      case _                                        =>
         ApiFailure.BadRequest("Could not send a verification link")
     }
   }
@@ -116,7 +116,7 @@ object ApiFailures {
     failure match {
       case TodoFailure.ValidationError(message) =>
         ApiFailure.BadRequest(message, Map("text" -> message))
-      case TodoFailure.NotFound =>
+      case TodoFailure.NotFound                 =>
         ApiFailure.NotFound("Todo item not found")
     }
   }
@@ -127,17 +127,17 @@ object ApiFailures {
     failure match {
       case GroupFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
-      case GroupFailure.NotFound =>
+      case GroupFailure.NotFound                     =>
         ApiFailure.NotFound("Group not found")
-      case GroupFailure.NotMember =>
+      case GroupFailure.NotMember                    =>
         ApiFailure.Forbidden("You are not a member of this group")
-      case GroupFailure.ReadOnlyMember =>
+      case GroupFailure.ReadOnlyMember               =>
         ApiFailure.Forbidden("Your role in this group is read-only")
-      case GroupFailure.AdminOnly =>
+      case GroupFailure.AdminOnly                    =>
         ApiFailure.Forbidden("Only a group administrator can do this")
-      case GroupFailure.LastAdmin =>
+      case GroupFailure.LastAdmin                    =>
         ApiFailure.Conflict("A group must always have at least one administrator; promote another member first")
-      case GroupFailure.InvitationInvalid =>
+      case GroupFailure.InvitationInvalid            =>
         invitationInvalid
     }
   }
@@ -146,13 +146,13 @@ object ApiFailures {
     failure match {
       case AdminFailure.ValidationError(fieldErrors) =>
         ApiFailure.BadRequest("Validation failed", fieldErrors)
-      case AdminFailure.DuplicateEmail =>
+      case AdminFailure.DuplicateEmail               =>
         emailAlreadyRegistered
-      case AdminFailure.NotFound =>
+      case AdminFailure.NotFound                     =>
         ApiFailure.NotFound("User not found")
-      case AdminFailure.SelfDemote =>
+      case AdminFailure.SelfDemote                   =>
         ApiFailure.BadRequest("You cannot remove your own administrator privileges")
-      case AdminFailure.SelfDelete =>
+      case AdminFailure.SelfDelete                   =>
         ApiFailure.BadRequest("You cannot delete your own account")
     }
   }

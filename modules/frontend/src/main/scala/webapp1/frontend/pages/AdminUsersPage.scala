@@ -35,34 +35,34 @@ private case class CreateUserForm(
   /** `Some` exactly when the form is valid, so it doubles as the validity check. */
   def toRequest: Option[CreateUserRequest] = {
     for {
-      validEmail <- Validation.validateEmail(email).toOption
+      validEmail    <- Validation.validateEmail(email).toOption
       validPassword <- Validation.validatePassword(password).toOption
     } yield CreateUserRequest(validEmail, validPassword, isAdmin)
   }
 }
 
 private class AdminUsersPage {
-  private val usersVar = Var(List.empty[User])
+  private val usersVar    = Var(List.empty[User])
   private val usersSignal = usersVar.signal
 
-  private val formVar = Var(CreateUserForm())
+  private val formVar    = Var(CreateUserForm())
   private val formSignal = formVar.signal
 
   // Writable lenses into the one form Var, so inputs stay two-way bound without a Var per field.
-  private val emailVar = formVar.zoom(_.email)((form, email) => form.copy(email = email))
+  private val emailVar    = formVar.zoom(_.email)((form, email) => form.copy(email = email))
   private val passwordVar = formVar.zoom(_.password)((form, password) => form.copy(password = password))
-  private val isAdminVar = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
+  private val isAdminVar  = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
 
-  private val emailErrorSignal = formSignal.map(_.displayError(_.emailError))
+  private val emailErrorSignal    = formSignal.map(_.displayError(_.emailError))
   private val passwordErrorSignal = formSignal.map(_.displayError(_.passwordError))
 
   // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val errorSignal                   = errorVar.signal
+  private val inFlightVar                   = Var(false)
+  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
+  private val loadBus   = new EventBus[Unit]()
   private val createBus = new EventBus[Unit]()
 
   // Validation is pure; the effects hang off the resulting stream as observers.
@@ -78,12 +78,12 @@ private class AdminUsersPage {
         Observer[Either[ApiError, List[User]]] {
           case Right(users) =>
             Var.set(usersVar -> users, errorVar -> None)
-          case Left(err) =>
+          case Left(err)    =>
             errorVar.set(Some(err.message))
         },
       createStream -->
         Observer[Option[CreateUserRequest]] {
-          case None =>
+          case None    =>
             formVar.update(_.copy(showErrors = true))
           case Some(_) =>
             Var.set(inFlightVar -> true, errorVar -> None)
@@ -97,7 +97,7 @@ private class AdminUsersPage {
           case Right(user) =>
             usersVar.update(_ :+ user)
             Var.set(inFlightVar -> false, formVar -> CreateUserForm(), errorVar -> None)
-          case Left(err) =>
+          case Left(err)   =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => loadBus.emit(())),
@@ -109,32 +109,32 @@ private class AdminUsersPage {
       cls := "card bg-base-100 shadow mb-4",
       div(
         cls := "card-body",
-        h2(cls := "card-title", "Create user"),
+        h2(cls       := "card-title", "Create user"),
         form(
-          cls := "flex flex-wrap gap-2 items-start",
+          cls        := "flex flex-wrap gap-2 items-start",
           // Browser validation would pre-empt our own messages, and they differ from the server's rules.
           noValidate := true,
           onSubmit.preventDefault.mapToUnit --> createBus.writer,
           FormField.render(emailErrorSignal)(
             input(
-              cls := "input",
+              cls         := "input",
               cls("input-error") <-- emailErrorSignal.map(_.nonEmpty),
-              typ := "email",
+              typ         := "email",
               placeholder := "Email",
               controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
             )
           ),
           FormField.render(passwordErrorSignal)(
             input(
-              cls := "input",
+              cls         := "input",
               cls("input-error") <-- passwordErrorSignal.map(_.nonEmpty),
-              typ := "password",
+              typ         := "password",
               placeholder := s"Password (min ${Validation.minPasswordLength} characters)",
               controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
             )
           ),
           label(
-            cls := "label gap-2 h-12",
+            cls      := "label gap-2 h-12",
             input(
               typ := "checkbox",
               cls := "checkbox",

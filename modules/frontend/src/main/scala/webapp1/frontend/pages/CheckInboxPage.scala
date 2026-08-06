@@ -15,13 +15,13 @@ object CheckInboxPage {
 }
 
 private class CheckInboxPage {
-  private val emailVar = Var("")
-  private val errorVar: Var[Option[String]] = Var(None)
+  private val emailVar                       = Var("")
+  private val errorVar: Var[Option[String]]  = Var(None)
   private val noticeVar: Var[Option[String]] = Var(None)
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
-  private val submitBus = new EventBus[Unit]()
-  private val submitStream = submitBus.events.filterWith(inFlightSignal.not)
+  private val inFlightVar                    = Var(false)
+  private val inFlightSignal                 = inFlightVar.signal
+  private val submitBus                      = new EventBus[Unit]()
+  private val submitStream                   = submitBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
@@ -33,27 +33,27 @@ private class CheckInboxPage {
           cls := "card-body",
           h1(cls := "card-title", "Check your inbox"),
           p(
-            cls := "text-sm",
+            cls  := "text-sm",
             "We sent you a link to confirm your email address. Follow it to finish setting up your account.",
           ),
           child.maybe <-- noticeVar.signal.map(_.map(renderNotice)),
           child.maybe <-- errorVar.signal.map(_.map(renderError)),
           fieldSet(
-            cls := "fieldset",
-            legend(cls := "fieldset-legend", "Didn't get it? Enter your email to resend"),
+            cls  := "fieldset",
+            legend(cls    := "fieldset-legend", "Didn't get it? Enter your email to resend"),
             input(
-              cls := "input w-full",
-              typ := "email",
+              cls         := "input w-full",
+              typ         := "email",
               placeholder := "you@example.com",
               controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
             ),
           ),
           div(
-            cls := "card-actions justify-end mt-4",
+            cls  := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Resend link"),
           ),
           p(
-            cls := "text-sm mt-2",
+            cls  := "text-sm mt-2",
             "Already confirmed? ",
             a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Sign in"),
           ),
@@ -64,10 +64,10 @@ private class CheckInboxPage {
         Observer[Either[ApiError, Unit]] {
           // Deliberately non-committal: the server answers the same for an unknown address, an
           // already-verified one and a fresh send, and this copy must not say more than that.
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(
               inFlightVar -> false,
-              noticeVar -> Some("If that address needs verifying, a new link is on its way."),
+              noticeVar   -> Some("If that address needs verifying, a new link is on its way."),
             )
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))

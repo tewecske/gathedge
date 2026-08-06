@@ -8,7 +8,7 @@ enum GroupRole derives JsonCodec {
     ReadOnly
 
   def canWrite: Boolean = this != GroupRole.ReadOnly
-  def isAdmin: Boolean = this == GroupRole.Admin
+  def isAdmin: Boolean  = this == GroupRole.Admin
 }
 
 object GroupRole {
@@ -16,24 +16,24 @@ object GroupRole {
 
   def fromString(s: String): Option[GroupRole] = {
     s match {
-      case "admin" =>
+      case "admin"      =>
         Some(Admin)
       case "read_write" =>
         Some(ReadWrite)
-      case "read_only" =>
+      case "read_only"  =>
         Some(ReadOnly)
-      case _ =>
+      case _            =>
         None
     }
   }
 
   def toDbString(role: GroupRole): String = {
     role match {
-      case Admin =>
+      case Admin     =>
         "admin"
       case ReadWrite =>
         "read_write"
-      case ReadOnly =>
+      case ReadOnly  =>
         "read_only"
     }
   }

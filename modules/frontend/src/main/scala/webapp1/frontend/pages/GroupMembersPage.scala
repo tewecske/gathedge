@@ -20,29 +20,29 @@ object GroupMembersPage {
   * once the group itself has loaded, so the access gate below is evaluated post-load rather than via [[Page.guardFor]].
   */
 private class GroupMembersPage(groupId: Long) {
-  private val groupVar = Var(Option.empty[Group])
-  private val groupSignal = groupVar.signal
-  private val membersVar = Var(List.empty[GroupMember])
+  private val groupVar      = Var(Option.empty[Group])
+  private val groupSignal   = groupVar.signal
+  private val membersVar    = Var(List.empty[GroupMember])
   private val membersSignal = membersVar.signal
 
-  private val inviteEmailVar = Var("")
+  private val inviteEmailVar    = Var("")
   private val inviteEmailSignal = inviteEmailVar.signal
-  private val inviteRoleVar = Var[GroupRole](GroupRole.ReadWrite)
-  private val inviteRoleSignal = inviteRoleVar.signal
+  private val inviteRoleVar     = Var[GroupRole](GroupRole.ReadWrite)
+  private val inviteRoleSignal  = inviteRoleVar.signal
 
   private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val infoVar: Var[Option[String]] = Var(None)
-  private val infoSignal = infoVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val errorSignal                   = errorVar.signal
+  private val infoVar: Var[Option[String]]  = Var(None)
+  private val infoSignal                    = infoVar.signal
+  private val inFlightVar                   = Var(false)
+  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
-  private val inviteBus = new EventBus[Unit]()
+  private val loadBus         = new EventBus[Unit]()
+  private val inviteBus       = new EventBus[Unit]()
   private val removeMemberBus = new EventBus[Long]()
-  private val roleChangeBus = new EventBus[(Long, GroupRole)]()
+  private val roleChangeBus   = new EventBus[(Long, GroupRole)]()
 
-  private val loadStream = loadBus.events
+  private val loadStream   = loadBus.events
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val inviteStream = inviteBus.events.filterWith(inFlightSignal.not).map(_ => validateInvite())
 
@@ -50,7 +50,7 @@ private class GroupMembersPage(groupId: Long) {
     div(
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.GroupDetail(groupId)), "← Back to group")),
       h1(
-        cls := "text-2xl font-bold mb-4",
+        cls   := "text-2xl font-bold mb-4",
         text <-- groupSignal.map(_.map(g => s"${g.name} — Members").getOrElse("Members")).distinct,
       ),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupMembers(groupId), g.myRole))),
@@ -60,9 +60,9 @@ private class GroupMembersPage(groupId: Long) {
         groupSignal.map {
           case Some(g) if g.myRole.isAdmin =>
             Some(renderMembersSection())
-          case Some(_) =>
+          case Some(_)                     =>
             Some(renderForbidden())
-          case None =>
+          case None                        =>
             None
         },
       // The group and its members load in parallel and share one error slot, so clear it when a
@@ -70,7 +70,7 @@ private class GroupMembersPage(groupId: Long) {
       loadStream --> Observer[Unit](_ => errorVar.set(None)),
       loadStream.flatMapSwitch(_ => ApiClient.getGroup(groupId)) -->
         Observer[Either[ApiError, Group]] {
-          case Right(g) =>
+          case Right(g)  =>
             groupVar.set(Some(g))
           case Left(err) =>
             errorVar.set(Some(err.message))
@@ -79,14 +79,14 @@ private class GroupMembersPage(groupId: Long) {
         Observer[Either[ApiError, List[GroupMember]]] {
           case Right(items) =>
             membersVar.set(items)
-          case Left(err) =>
+          case Left(err)    =>
             errorVar.set(Some(err.message))
         },
       inviteStream -->
         Observer[Either[String, InviteMemberRequest]] {
           case Left(err) =>
             errorVar.set(Some(err))
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(inFlightVar -> true, errorVar -> None)
         },
       inviteStream
@@ -97,12 +97,12 @@ private class GroupMembersPage(groupId: Long) {
         Observer[(InviteMemberRequest, Either[ApiError, Unit])] {
           case (request, Right(_)) =>
             Var.set(
-              inFlightVar -> false,
+              inFlightVar    -> false,
               inviteEmailVar -> "",
-              errorVar -> None,
-              infoVar -> Some(s"Invited ${request.email}"),
+              errorVar       -> None,
+              infoVar        -> Some(s"Invited ${request.email}"),
             )
-          case (_, Left(err)) =>
+          case (_, Left(err))      =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       // Auto-dismiss the confirmation; flatMapSwitch cancels the pending timer if a newer
@@ -114,7 +114,7 @@ private class GroupMembersPage(groupId: Long) {
           case (userId, Right(_)) =>
             membersVar.update(_.filterNot(_.userId == userId))
             errorVar.set(None)
-          case (_, Left(err)) =>
+          case (_, Left(err))     =>
             errorVar.set(Some(err.message))
         },
       roleChangeBus.events.flatMapSwitch(changeRole) -->
@@ -129,7 +129,7 @@ private class GroupMembersPage(groupId: Long) {
               })
             )
             errorVar.set(None)
-          case (_, Left(err)) =>
+          case (_, Left(err))             =>
             // membersVar is untouched, so the `controlled` select below snaps back to the
             // role that is actually stored rather than showing the failed selection.
             errorVar.set(Some(err.message))
@@ -199,13 +199,13 @@ private class GroupMembersPage(groupId: Long) {
       cls := "flex gap-2 mt-4",
       onSubmit.preventDefault.mapToUnit --> inviteBus.writer,
       input(
-        cls := "input flex-1",
-        typ := "email",
+        cls         := "input flex-1",
+        typ         := "email",
         placeholder := "Email to invite",
         controlled(value <-- inviteEmailSignal, onInput.mapToValue --> inviteEmailVar.writer),
       ),
       select(
-        cls := "select",
+        cls         := "select",
         GroupRole.all.map(role => option(value := role.toString, role.toString)),
         controlled(
           value <-- inviteRoleSignal.map(_.toString).distinct,
@@ -215,7 +215,7 @@ private class GroupMembersPage(groupId: Long) {
             },
         ),
       ),
-      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Invite"),
+      button(cls    := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Invite"),
     )
   }
 

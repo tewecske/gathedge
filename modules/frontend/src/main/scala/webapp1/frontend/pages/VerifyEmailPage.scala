@@ -19,9 +19,9 @@ object VerifyEmailPage {
 }
 
 private class VerifyEmailPage(token: String) {
-  private val errorVar: Var[Option[String]] = Var(None)
-  private val resendEmailVar = Var("")
-  private val resendBus = new EventBus[Unit]()
+  private val errorVar: Var[Option[String]]  = Var(None)
+  private val resendEmailVar                 = Var("")
+  private val resendBus                      = new EventBus[Unit]()
   private val noticeVar: Var[Option[String]] = Var(None)
 
   def render(): HtmlElement = {
@@ -33,10 +33,9 @@ private class VerifyEmailPage(token: String) {
           cls := "card-body",
           h1(cls := "card-title", "Verifying your email"),
           child <--
-            errorVar
-              .signal
+            errorVar.signal
               .map {
-                case None =>
+                case None          =>
                   span(cls := "loading loading-spinner loading-lg self-center")
                 case Some(message) =>
                   div(role := "alert", cls := "alert alert-error", span(message))
@@ -47,7 +46,7 @@ private class VerifyEmailPage(token: String) {
       ),
       ApiClient.verifyEmail(token) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             // A full navigation rather than pushState: the sign-in form seeds its notice from
             // `location.search`, which a Waypoint push would not repopulate.
             dom.window.location.href = "/sign-in?verified=1"
@@ -56,7 +55,7 @@ private class VerifyEmailPage(token: String) {
         },
       resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(resendEmailVar.now())) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(errorVar -> None, noticeVar -> Some("If that address needs verifying, a new link is on its way."))
           case Left(err) =>
             errorVar.set(Some(err.message))
@@ -69,17 +68,17 @@ private class VerifyEmailPage(token: String) {
     form(
       onSubmit.preventDefault.mapToUnit --> resendBus.writer,
       fieldSet(
-        cls := "fieldset",
-        legend(cls := "fieldset-legend", "Email"),
+        cls   := "fieldset",
+        legend(cls    := "fieldset-legend", "Email"),
         input(
-          cls := "input w-full",
-          typ := "email",
+          cls         := "input w-full",
+          typ         := "email",
           placeholder := "you@example.com",
           controlled(value <-- resendEmailVar.signal, onInput.mapToValue --> resendEmailVar.writer),
         ),
       ),
       div(cls := "card-actions justify-end mt-4", button(cls := "btn btn-primary", typ := "submit", "Send a new link")),
-      p(cls := "text-sm mt-2", a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Back to sign in")),
+      p(cls   := "text-sm mt-2", a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Back to sign in")),
     )
   }
 

@@ -22,7 +22,7 @@ trait RateLimiter {
   */
 object RateLimitKey {
   def email(value: String): String = s"email:${value.trim.toLowerCase}"
-  def ip(value: String): String = s"ip:${value.trim}"
+  def ip(value: String): String    = s"ip:${value.trim}"
 
   /** Separate from [[email]] so asking for another verification link cannot burn an account's login budget, nor the
     * other way round.
@@ -42,7 +42,7 @@ final class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends R
 
   def isBlocked(key: String): UIO[Boolean] = {
     for {
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
       attempts <- state.get.map(_.getOrElse(normalize(key), Vector.empty))
     } yield prune(attempts, now).size >= maxAttempts
   }
@@ -50,11 +50,11 @@ final class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends R
   def recordFailure(key: String): UIO[Unit] = {
     for {
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <- state.update { m =>
-        val k = normalize(key)
-        val pruned = prune(m.getOrElse(k, Vector.empty), now)
-        m.updated(k, pruned :+ now)
-      }
+      _   <- state.update { m =>
+               val k      = normalize(key)
+               val pruned = prune(m.getOrElse(k, Vector.empty), now)
+               m.updated(k, pruned :+ now)
+             }
     } yield ()
   }
 
@@ -69,17 +69,17 @@ final class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends R
     (
       for {
         now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        _ <- state.update(_.view.mapValues(prune(_, now)).filter(_._2.nonEmpty).toMap)
-        _ <- ZIO.sleep(pruneInterval)
+        _   <- state.update(_.view.mapValues(prune(_, now)).filter(_._2.nonEmpty).toMap)
+        _   <- ZIO.sleep(pruneInterval)
       } yield ()
     ).forever
   }
 }
 
 object InMemoryRateLimiter {
-  val maxAttempts = 5
-  val window: Duration = 15.minutes
-  val windowMillis: Long = window.toMillis
+  val maxAttempts             = 5
+  val window: Duration        = 15.minutes
+  val windowMillis: Long      = window.toMillis
   val pruneInterval: Duration = 15.minutes
 
   private def normalize(key: String): String = key.trim.toLowerCase

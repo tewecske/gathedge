@@ -37,8 +37,8 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
 
   /** Returns a fixed identity, so a "code" in these tests is just a marker that the exchange step was reached. */
   private final class StubClient(identity: OAuthIdentity) extends OAuthClient {
-    val provider: OAuthProvider = identity.provider
-    def authorizationUrl(state: String): String = s"https://provider.example.com/authorize?state=$state"
+    val provider: OAuthProvider                              = identity.provider
+    def authorizationUrl(state: String): String              = s"https://provider.example.com/authorize?state=$state"
     def exchangeAndVerify(code: String): Task[OAuthIdentity] = {
       if (code == "bad-code")
         ZIO.fail(new RuntimeException("exchange rejected"))
@@ -48,7 +48,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
   }
 
   private val stubSubject = "stub-subject-1"
-  private val stubEmail = "stub@example.com"
+  private val stubEmail   = "stub@example.com"
 
   /** Google is stubbed and Microsoft deliberately absent, so the "unconfigured provider" case is reachable without
     * touching config.
@@ -56,7 +56,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
   private val stubClients: ULayer[OAuthClients] = {
     ZLayer.succeed {
       new OAuthClients {
-        private val google = {
+        private val google                                            = {
           new StubClient(OAuthIdentity(OAuthProvider.Google, stubSubject, stubEmail, emailVerified = true))
         }
         def forProvider(provider: OAuthProvider): Option[OAuthClient] = {
@@ -94,7 +94,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
     stateCookie: Option[String],
     session: Option[String] = None,
   ): Request = {
-    val base = Request.get(urlOf(s"/api/auth/$provider/callback?$query"))
+    val base      = Request.get(urlOf(s"/api/auth/$provider/callback?$query"))
     val withState = stateCookie.fold(base)(value => base.addCookie(Cookie.Request(stateCookieName, value)))
     session.fold(withState)(id => withSession(withState, id))
   }
@@ -128,7 +128,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       test("start redirects to the provider and sets an HttpOnly state cookie holding nonce and intent") {
         for {
           response <- runRoutes(AuthRoutes.routes, Request.get("/api/auth/google/start"))
-          cookie = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
+          cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
         } yield {
           assertTrue(
             response.status.isRedirection,
@@ -141,7 +141,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       test("?link=1 records the link intent in the cookie instead") {
         for {
           response <- runRoutes(AuthRoutes.routes, Request.get(urlOf("/api/auth/google/start?link=1")))
-          cookie = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
+          cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
         } yield assertTrue(cookie.exists(_.content.endsWith("|link")))
       },
       // The state cookie is the only thing standing in for the CSRF header on this route, so a callback
@@ -149,10 +149,10 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       test("a callback whose state does not match the cookie is refused") {
         for {
           response <- runRoutes(
-            AuthRoutes.routes,
-            callback("google", "code=c&state=attacker-nonce", Some("real-nonce|login")),
-          )
-          cookie = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
+                        AuthRoutes.routes,
+                        callback("google", "code=c&state=attacker-nonce", Some("real-nonce|login")),
+                      )
+          cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
         } yield {
           assertTrue(locationOf(response).endsWith("/sign-in?error=state_mismatch"), cookie.isEmpty)
         }
@@ -165,7 +165,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       test("a successful login callback sets the session cookie and lands on the app root") {
         for {
           response <- runRoutes(AuthRoutes.routes, callback("google", "code=c&state=n", Some("n|login")))
-          session = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
+          session   = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
         } yield {
           assertTrue(session.exists(_.content.nonEmpty), !locationOf(response).contains("error="))
         }
@@ -184,9 +184,9 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       // sign-in page turns into "…then link it from Settings".
       test("a login callback for an email owned by another account redirects with account_exists") {
         for {
-          _ <- signUp(stubEmail)
+          _        <- signUp(stubEmail)
           response <- runRoutes(AuthRoutes.routes, callback("google", "code=c&state=n", Some("n|login")))
-          session = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
+          session   = response.headers(Header.SetCookie).map(_.value).find(_.name == SessionAuth.cookieName)
         } yield {
           assertTrue(locationOf(response).endsWith("/sign-in?error=account_exists"), session.isEmpty)
         }
@@ -198,17 +198,17 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       },
       test("a link callback with a session attaches the identity and that identity then signs in") {
         for {
-          created <- signUp("linker@example.com")
+          created          <- signUp("linker@example.com")
           (userId, session) = created
-          linked <- runRoutes(AuthRoutes.routes, callback("google", "code=c&state=n", Some("n|link"), Some(session)))
-          authService <- ZIO.service[AuthService]
-          identities <- authService.listIdentities(userId)
+          linked           <- runRoutes(AuthRoutes.routes, callback("google", "code=c&state=n", Some("n|link"), Some(session)))
+          authService      <- ZIO.service[AuthService]
+          identities       <- authService.listIdentities(userId)
           // The same subject now logs in, and must land in the account it was linked to.
-          loggedIn <- orDieWithFailure(
-            authService.loginWithOAuth(
-              OAuthIdentity(OAuthProvider.Google, stubSubject, stubEmail, emailVerified = true)
-            )
-          )
+          loggedIn         <- orDieWithFailure(
+                                authService.loginWithOAuth(
+                                  OAuthIdentity(OAuthProvider.Google, stubSubject, stubEmail, emailVerified = true)
+                                )
+                              )
         } yield {
           assertTrue(
             locationOf(linked).endsWith("/settings?linked=google"),
@@ -219,9 +219,9 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       },
       test("the identities endpoint reports the linked providers, whether a password is set, and what is available") {
         for {
-          created <- signUp("identities@example.com")
+          created  <- signUp("identities@example.com")
           response <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me/identities"), created._2))
-          body <- response.body.asString
+          body     <- response.body.asString
         } yield {
           assertTrue(
             response.status == Status.Ok,
@@ -237,17 +237,17 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       },
       test("unlinking a provider that is not linked is a 400, not a silent success") {
         for {
-          created <- signUp("nothing-linked@example.com")
-          request = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
+          created  <- signUp("nothing-linked@example.com")
+          request   = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
           response <- runRoutes(AuthRoutes.routes, request)
         } yield assertTrue(response.status == Status.BadRequest)
       },
       test("an unparseable provider segment on unlink is a 400 naming what was wrong") {
         for {
-          created <- signUp("bad-segment@example.com")
-          request = withCsrf(withSession(Request.delete("/api/me/identities/myspace"), created._2))
+          created  <- signUp("bad-segment@example.com")
+          request   = withCsrf(withSession(Request.delete("/api/me/identities/myspace"), created._2))
           response <- runRoutes(AuthRoutes.routes, request)
-          body <- response.body.asString
+          body     <- response.body.asString
         } yield {
           assertTrue(
             response.status == Status.BadRequest,
@@ -260,36 +260,36 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       test("unlinking the last credential of a social-only account is a 409") {
         for {
           authService <- ZIO.service[AuthService]
-          created <- orDieWithFailure(
-            authService.loginWithOAuth(
-              OAuthIdentity(OAuthProvider.Google, "social-only-subject", "social-only@example.com", true)
-            )
-          )
-          request = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
-          response <- runRoutes(AuthRoutes.routes, request)
+          created     <- orDieWithFailure(
+                           authService.loginWithOAuth(
+                             OAuthIdentity(OAuthProvider.Google, "social-only-subject", "social-only@example.com", true)
+                           )
+                         )
+          request      = withCsrf(withSession(Request.delete("/api/me/identities/google"), created._2))
+          response    <- runRoutes(AuthRoutes.routes, request)
         } yield assertTrue(response.status == Status.Conflict)
       },
       test("setting a password answers 204 and then permits password login") {
         for {
           authService <- ZIO.service[AuthService]
-          created <- orDieWithFailure(
-            authService.loginWithOAuth(
-              OAuthIdentity(OAuthProvider.Google, "needs-password", "needs-password@example.com", true)
-            )
-          )
-          body = SetPasswordRequest(None, "password123").toJson
-          request = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
-          response <- runRoutes(AuthRoutes.routes, request)
-          loggedIn <- authService.login("needs-password@example.com", "password123").either
+          created     <- orDieWithFailure(
+                           authService.loginWithOAuth(
+                             OAuthIdentity(OAuthProvider.Google, "needs-password", "needs-password@example.com", true)
+                           )
+                         )
+          body         = SetPasswordRequest(None, "password123").toJson
+          request      = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
+          response    <- runRoutes(AuthRoutes.routes, request)
+          loggedIn    <- authService.login("needs-password@example.com", "password123").either
         } yield assertTrue(response.status == Status.NoContent, loggedIn.isRight)
       },
       test("a password change with the wrong current password is a 400 against that field") {
         for {
-          created <- signUp("wrong-current@example.com")
-          body = SetPasswordRequest(Some("not-the-password"), "newpassword123").toJson
-          request = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
+          created  <- signUp("wrong-current@example.com")
+          body      = SetPasswordRequest(Some("not-the-password"), "newpassword123").toJson
+          request   = withCsrf(withSession(Request.put("/api/me/password", Body.fromString(body)), created._2))
           response <- runRoutes(AuthRoutes.routes, request)
-          parsed <- response.body.asString.map(_.fromJson[ErrorResponse])
+          parsed   <- response.body.asString.map(_.fromJson[ErrorResponse])
         } yield {
           assertTrue(
             response.status == Status.BadRequest,
@@ -299,7 +299,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       },
       test("the settings mutations still require the CSRF header") {
         for {
-          created <- signUp("csrf-settings@example.com")
+          created  <- signUp("csrf-settings@example.com")
           response <- runRoutes(AuthRoutes.routes, withSession(Request.delete("/api/me/identities/google"), created._2))
         } yield assertTrue(response.status == Status.Forbidden)
       },

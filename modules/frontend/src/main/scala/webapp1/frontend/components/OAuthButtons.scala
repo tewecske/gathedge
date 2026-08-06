@@ -51,17 +51,17 @@ object OAuthMessages {
 
   def errorMessage(code: String): String = {
     code match {
-      case "account_exists" =>
+      case "account_exists"                   =>
         "An account with this email already exists. Sign in with your password, then link the provider from Settings."
-      case "already_linked" =>
+      case "already_linked"                   =>
         "That account is already linked — to this login or to another one."
-      case "link_requires_session" =>
+      case "link_requires_session"            =>
         "Your session expired before the link completed. Sign in again and retry."
       case "state_mismatch" | "missing_state" =>
         "That sign-in attempt could not be verified. Please start again."
-      case "missing_code" | "failed" =>
+      case "missing_code" | "failed"          =>
         "Sign-in failed. Please try again."
-      case _ =>
+      case _                                  =>
         "Sign-in failed. Please try again."
     }
   }

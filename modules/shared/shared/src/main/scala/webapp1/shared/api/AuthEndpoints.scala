@@ -150,8 +150,7 @@ object AuthEndpoints {
     * union onto signup and login, which cannot raise it.
     */
   val unlinkIdentity = {
-    Endpoint(Method.DELETE / "api" / "me" / "identities" / provider)
-      .withCodecError
+    Endpoint(Method.DELETE / "api" / "me" / "identities" / provider).withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
   }

@@ -13,7 +13,7 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
   private def withPage[A](use: dom.Element => A): A = {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
-    val rootNode = L.render(container, AdminUsersPage.render())
+    val rootNode  = L.render(container, AdminUsersPage.render())
     try {
       use(container)
     } finally {

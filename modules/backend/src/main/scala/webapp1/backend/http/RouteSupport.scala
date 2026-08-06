@@ -40,7 +40,7 @@ object RouteSupport {
               .logDebug(s"${request.method} ${request.path} -> ${response.status.code}")
               .when(response.status.code >= 400)
               .as(response)
-          case None =>
+          case None           =>
             ZIO
               .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}: ${describe(cause)}", cause)
               .unless(cause.isInterruptedOnly)
@@ -76,7 +76,7 @@ object RouteSupport {
     */
   private def describe(cause: Cause[Any]): String = {
     cause.defects.headOption match {
-      case None =>
+      case None         =>
         if (cause.isInterruptedOnly)
           "interrupted"
         else
@@ -96,7 +96,7 @@ object RouteSupport {
     */
   private def rootCause(throwable: Throwable): Throwable = {
     var current = throwable
-    var depth = 0
+    var depth   = 0
     while (current.getCause != null && (current.getCause ne current) && depth < 10) {
       current = current.getCause
       depth += 1
@@ -165,14 +165,14 @@ object RouteSupport {
   private def currentUser(request: Request): ZIO[AuthService, Response, User] = {
     for {
       authService <- ZIO.service[AuthService]
-      maybeUser <-
+      maybeUser   <-
         SessionAuth.sessionIdFrom(request) match {
-          case None =>
+          case None      =>
             ZIO.succeed(None)
           case Some(sid) =>
             authService.currentUser(sid)
         }
-      user <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
+      user        <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
     } yield user
   }
 

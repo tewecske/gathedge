@@ -30,7 +30,7 @@ object EndpointClient {
   val executor: EndpointExecutor[Any, Unit, Scope] = {
     Unsafe.unsafe { implicit unsafe =>
       val client = runtime.unsafe.run(ZIO.service[Client]).getOrThrow()
-      val base = URL.decode(dom.window.location.origin).toOption.get
+      val base   = URL.decode(dom.window.location.origin).toOption.get
       // CSRF is not part of any endpoint description (it is a HandlerAspect on the server), so the header still has
       // to be set here — once, on the client, rather than per call.
       EndpointExecutor(client.addHeader("X-Requested-With", "XMLHttpRequest"), base)
@@ -50,17 +50,17 @@ object EndpointClient {
     failure match {
       case ApiFailure.BadRequest(message, fieldErrors) =>
         ApiError(400, message, fieldErrors)
-      case ApiFailure.Unauthorized(message) =>
+      case ApiFailure.Unauthorized(message)            =>
         ApiError(401, message, Map.empty)
-      case ApiFailure.Forbidden(message) =>
+      case ApiFailure.Forbidden(message)               =>
         ApiError(403, message, Map.empty)
-      case ApiFailure.NotFound(message) =>
+      case ApiFailure.NotFound(message)                =>
         ApiError(404, message, Map.empty)
-      case ApiFailure.Conflict(message) =>
+      case ApiFailure.Conflict(message)                =>
         ApiError(409, message, Map.empty)
-      case ApiFailure.TooManyRequests(message) =>
+      case ApiFailure.TooManyRequests(message)         =>
         ApiError(429, message, Map.empty)
-      case ApiFailure.InternalError(message) =>
+      case ApiFailure.InternalError(message)           =>
         ApiError(500, message, Map.empty)
     }
   }
@@ -77,8 +77,7 @@ object EndpointClient {
     */
   def run[A](effect: ZIO[Scope, ApiFailure, A]): EventStream[Either[ApiError, A]] = {
     val future = Unsafe.unsafe { implicit unsafe =>
-      runtime
-        .unsafe
+      runtime.unsafe
         .runToFuture(
           ZIO
             .scoped(effect)

@@ -46,13 +46,13 @@ object ApiEndpoint {
     * for an expired session, which every authenticated page has to recognise.
     */
   object failure {
-    val badRequest: ErrorCodec[ApiFailure.BadRequest] = HttpCodec.error[ApiFailure.BadRequest](Status.BadRequest)
+    val badRequest: ErrorCodec[ApiFailure.BadRequest]     = HttpCodec.error[ApiFailure.BadRequest](Status.BadRequest)
     val unauthorized: ErrorCodec[ApiFailure.Unauthorized] = HttpCodec.error[ApiFailure.Unauthorized](
       Status.Unauthorized
     )
-    val forbidden: ErrorCodec[ApiFailure.Forbidden] = HttpCodec.error[ApiFailure.Forbidden](Status.Forbidden)
-    val notFound: ErrorCodec[ApiFailure.NotFound] = HttpCodec.error[ApiFailure.NotFound](Status.NotFound)
-    val conflict: ErrorCodec[ApiFailure.Conflict] = HttpCodec.error[ApiFailure.Conflict](Status.Conflict)
+    val forbidden: ErrorCodec[ApiFailure.Forbidden]       = HttpCodec.error[ApiFailure.Forbidden](Status.Forbidden)
+    val notFound: ErrorCodec[ApiFailure.NotFound]         = HttpCodec.error[ApiFailure.NotFound](Status.NotFound)
+    val conflict: ErrorCodec[ApiFailure.Conflict]         = HttpCodec.error[ApiFailure.Conflict](Status.Conflict)
 
     val tooManyRequests: ErrorCodec[ApiFailure.TooManyRequests] = {
       HttpCodec.error[ApiFailure.TooManyRequests](Status.TooManyRequests)
@@ -80,8 +80,7 @@ object ApiEndpoint {
     * and it feeds `ZIO.die`; `CustomError` is the one case that round-trips, which is all that branch needs.
     */
   private val codecError: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] = {
-    failure
-      .badRequest
+    failure.badRequest
       .transformOrFail[HttpCodecError](bad => Right(HttpCodecError.CustomError("BadRequest", bad.message)))(_ =>
         Right(ApiFailure.BadRequest("Malformed request"))
       )

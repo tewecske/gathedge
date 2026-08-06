@@ -12,9 +12,9 @@ object Theme {
     s.toLowerCase match {
       case "light" =>
         Some(Theme.Light)
-      case "dark" =>
+      case "dark"  =>
         Some(Theme.Dark)
-      case _ =>
+      case _       =>
         None
     }
   }

@@ -78,22 +78,22 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
   ): ZIO[GroupInvitationRepository, Nothing, Unit] = {
     for {
       invitationRepo <- ZIO.service[GroupInvitationRepository]
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <- orDieWithFailure(
-        invitationRepo.insert(
-          GroupInvitationRow(
-            0L,
-            group.id,
-            email,
-            GroupRole.toDbString(GroupRole.ReadWrite),
-            token,
-            invitedBy,
-            now,
-            now + 1.day.toMillis,
-            None,
-          )
-        )
-      )
+      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _              <- orDieWithFailure(
+                          invitationRepo.insert(
+                            GroupInvitationRow(
+                              0L,
+                              group.id,
+                              email,
+                              GroupRole.toDbString(GroupRole.ReadWrite),
+                              token,
+                              invitedBy,
+                              now,
+                              now + 1.day.toMillis,
+                              None,
+                            )
+                          )
+                        )
     } yield ()
   }
 
@@ -103,11 +103,11 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
       // session — the token is the secret.
       test("viewing an invitation works with no session at all") {
         for {
-          owner <- signUp("inviter@example.com")
-          group <- createGroup(owner._1, "Book Club")
-          _ <- invite(group, owner._1, "guest@example.com", "public-token")
+          owner    <- signUp("inviter@example.com")
+          group    <- createGroup(owner._1, "Book Club")
+          _        <- invite(group, owner._1, "guest@example.com", "public-token")
           response <- runRoutes(InvitationRoutes.routes, Request.get("/api/invitations/public-token"))
-          raw <- response.body.asString.orDie
+          raw      <- response.body.asString.orDie
         } yield assertTrue(
           response.status == Status.Ok,
           raw.fromJson[InvitationInfo].map(_.groupName) == Right("Book Club"),
@@ -127,32 +127,32 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
       test("accepting without a session is unauthorized") {
         for {
           response <- runRoutes(
-            InvitationRoutes.routes,
-            withCsrf(Request.post("/api/invitations/t/accept", Body.empty)),
-          )
+                        InvitationRoutes.routes,
+                        withCsrf(Request.post("/api/invitations/t/accept", Body.empty)),
+                      )
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("accepting an invitation addressed to somebody else is refused") {
         for {
-          owner <- signUp("owner2@example.com")
+          owner    <- signUp("owner2@example.com")
           intruder <- signUp("intruder@example.com")
-          group <- createGroup(owner._1, "Private")
-          _ <- invite(group, owner._1, "wanted@example.com", "someone-elses-token")
-          request = withCsrf(
-            withSession(Request.post("/api/invitations/someone-elses-token/accept", Body.empty), intruder._2)
-          )
+          group    <- createGroup(owner._1, "Private")
+          _        <- invite(group, owner._1, "wanted@example.com", "someone-elses-token")
+          request   = withCsrf(
+                        withSession(Request.post("/api/invitations/someone-elses-token/accept", Body.empty), intruder._2)
+                      )
           response <- runRoutes(InvitationRoutes.routes, request)
         } yield assertTrue(response.status == Status.BadRequest)
       },
       test("the invitee accepts and lands in the group") {
         for {
-          owner <- signUp("owner3@example.com")
-          invitee <- signUp("invitee@example.com")
-          group <- createGroup(owner._1, "Welcoming")
-          _ <- invite(group, owner._1, "invitee@example.com", "good-token")
-          request = withCsrf(withSession(Request.post("/api/invitations/good-token/accept", Body.empty), invitee._2))
+          owner    <- signUp("owner3@example.com")
+          invitee  <- signUp("invitee@example.com")
+          group    <- createGroup(owner._1, "Welcoming")
+          _        <- invite(group, owner._1, "invitee@example.com", "good-token")
+          request   = withCsrf(withSession(Request.post("/api/invitations/good-token/accept", Body.empty), invitee._2))
           response <- runRoutes(InvitationRoutes.routes, request)
-          raw <- response.body.asString.orDie
+          raw      <- response.body.asString.orDie
         } yield assertTrue(
           response.status == Status.Ok,
           raw.fromJson[Group].map(_.name) == Right("Welcoming"),
@@ -161,13 +161,13 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
       },
       test("a token can only be accepted once") {
         for {
-          owner <- signUp("owner4@example.com")
+          owner   <- signUp("owner4@example.com")
           invitee <- signUp("twice@example.com")
-          group <- createGroup(owner._1, "Once")
-          _ <- invite(group, owner._1, "twice@example.com", "single-use")
-          request = withCsrf(withSession(Request.post("/api/invitations/single-use/accept", Body.empty), invitee._2))
-          first <- runRoutes(InvitationRoutes.routes, request)
-          second <- runRoutes(InvitationRoutes.routes, request)
+          group   <- createGroup(owner._1, "Once")
+          _       <- invite(group, owner._1, "twice@example.com", "single-use")
+          request  = withCsrf(withSession(Request.post("/api/invitations/single-use/accept", Body.empty), invitee._2))
+          first   <- runRoutes(InvitationRoutes.routes, request)
+          second  <- runRoutes(InvitationRoutes.routes, request)
         } yield assertTrue(first.status == Status.Ok, second.status == Status.BadRequest)
       },
     ).provide(layer, Scope.default) @@ TestAspect.timeout(60.seconds)

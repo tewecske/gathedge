@@ -13,33 +13,33 @@ object SignInPage {
 }
 
 private class SignInPage {
-  private val emailVar = Var("")
-  private val emailSignal = emailVar.signal
-  private val passwordVar = Var("")
+  private val emailVar       = Var("")
+  private val emailSignal    = emailVar.signal
+  private val passwordVar    = Var("")
   private val passwordSignal = passwordVar.signal
 
   /** Seeded from `?error=` so a failed OAuth round trip explains itself: the callback redirects here on failure, and
     * without this the user lands back on a blank form with no idea why.
     */
   private val errorVar: Var[Option[String]] = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
-  private val errorSignal = errorVar.signal
+  private val errorSignal                   = errorVar.signal
 
   /** Seeded the same way from `?verified=1`, which is where [[VerifyEmailPage]] sends a freshly verified account. */
   private val noticeVar: Var[Option[String]] = {
     Var(OAuthMessages.queryParam("verified").map(_ => "Your email address is verified. Sign in to continue."))
   }
-  private val noticeSignal = noticeVar.signal
+  private val noticeSignal                   = noticeVar.signal
 
   /** Set when the server answers 403, i.e. the password was right but the address is unverified. That is the only
     * moment offering a resend makes sense — before it, the address may not even have an account.
     */
-  private val canResendVar = Var(false)
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
-  private val resendBus = new EventBus[Unit]()
+  private val canResendVar                           = Var(false)
+  private val inFlightVar                            = Var(false)
+  private val inFlightSignal                         = inFlightVar.signal
+  private val resendBus                              = new EventBus[Unit]()
   private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
-  private val providersSignal = providersVar.signal
-  private val hasProvidersSignal = providersSignal.map(_.nonEmpty).distinct
+  private val providersSignal                        = providersVar.signal
+  private val hasProvidersSignal                     = providersSignal.map(_.nonEmpty).distinct
 
   private lazy val socialBlock: HtmlElement = {
     div(div(cls := "divider text-xs", "or"), OAuthButtons.render(providersSignal))
@@ -65,30 +65,30 @@ private class SignInPage {
           child.maybe <-- errorSignal.map(_.map(renderError)),
           child.maybe <-- canResendVar.signal.map(Option.when(_)(resendBlock)),
           fieldSet(
-            cls := "fieldset",
-            legend(cls := "fieldset-legend", "Email"),
+            cls  := "fieldset",
+            legend(cls    := "fieldset-legend", "Email"),
             input(
-              cls := "input w-full",
-              typ := "email",
+              cls         := "input w-full",
+              typ         := "email",
               placeholder := "you@example.com",
               controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
             ),
-            legend(cls := "fieldset-legend", "Password"),
+            legend(cls    := "fieldset-legend", "Password"),
             input(
-              cls := "input w-full",
-              typ := "password",
+              cls         := "input w-full",
+              typ         := "password",
               controlled(value <-- passwordSignal, onInput.mapToValue --> passwordVar.writer),
             ),
           ),
           div(
-            cls := "card-actions justify-end mt-4",
+            cls  := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Sign in"),
           ),
           // Hidden entirely when no provider is configured, rather than leaving a stray divider
           // above nothing. Built once and shown or hidden, not rebuilt per signal change.
           child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           p(
-            cls := "text-sm mt-2",
+            cls  := "text-sm mt-2",
             "No account? ",
             a(cls := "link", AppRouter.router.navigateTo(Page.SignUp), "Sign up"),
           ),
@@ -98,7 +98,7 @@ private class SignInPage {
         Observer[Either[ApiError, ProvidersResponse]] {
           case Right(res) =>
             providersVar.set(res.providers)
-          case Left(_) =>
+          case Left(_)    =>
             // The password form still works; offering no social buttons is the right degraded state.
             providersVar.set(Nil)
         },
@@ -113,10 +113,10 @@ private class SignInPage {
             // keeps the sign-in form out of the back history). Pushing Home as well made the router
             // emit Home twice, remounting the page and firing its load request a second time.
             AppState.setUser(res.user)
-          case Left(err) =>
+          case Left(err)  =>
             Var.set(
-              inFlightVar -> false,
-              errorVar -> Some(err.message),
+              inFlightVar  -> false,
+              errorVar     -> Some(err.message),
               // 403 here means exactly one thing: the credentials were right and the address is
               // not verified. Anything else is a reason a resend would not help with.
               canResendVar -> (err.status == 403),
@@ -124,11 +124,11 @@ private class SignInPage {
         },
       resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(emailVar.now())) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             Var.set(
               canResendVar -> false,
-              errorVar -> None,
-              noticeVar -> Some("If that address needs verifying, a new link is on its way."),
+              errorVar     -> None,
+              noticeVar    -> Some("If that address needs verifying, a new link is on its way."),
             )
           case Left(err) =>
             errorVar.set(Some(err.message))

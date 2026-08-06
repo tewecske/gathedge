@@ -29,7 +29,7 @@ private def centeredMessage(title: String, message: String, target: Page, linkTe
         cls := "card-body items-center text-center",
         h1(cls := "card-title", title),
         p(message),
-        a(cls := "btn btn-primary mt-4", AppRouter.router.navigateTo(target), linkText),
+        a(cls  := "btn btn-primary mt-4", AppRouter.router.navigateTo(target), linkText),
       ),
     ),
   )

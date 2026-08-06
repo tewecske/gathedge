@@ -118,7 +118,7 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     )
     val updated = {
       passwordHash match {
-        case None =>
+        case None       =>
           run(profile)
         case Some(hash) =>
           val password = ctx.run(quote(users.filter(_.id == lift(id)).update(_.passwordHash -> lift(Option(hash)))))

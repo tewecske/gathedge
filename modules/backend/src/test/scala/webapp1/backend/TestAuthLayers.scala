@@ -38,7 +38,7 @@ object RecordingEmailSender {
       Ref
         .make(Vector.empty[SentEmail])
         .map { ref =>
-          val sender = {
+          val sender    = {
             new EmailSender {
               def send(to: String, subject: String, body: String): Task[Unit] = {
                 ref.update(_ :+ SentEmail(to, subject, body))
@@ -66,8 +66,7 @@ object TestAuthLayers {
 
   /** `AppConfig` with `require-email-verification` overridden, for the specs that exercise the login gate. */
   def configWith(requireEmailVerification: Boolean): ZLayer[Any, Config.Error, AppConfig] = {
-    AppConfig
-      .live
+    AppConfig.live
       .project(config => config.copy(app = config.app.copy(requireEmailVerification = requireEmailVerification)))
   }
 

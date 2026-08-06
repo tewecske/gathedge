@@ -26,7 +26,7 @@ final class TodoServiceLive(repo: TodoRepository) extends TodoService {
 
   def addTodo(userId: Long, text: String): IO[TodoFailure, TodoItem] = {
     Validation.validateNonBlank(text, "Text") match {
-      case Left(err) =>
+      case Left(err)        =>
         ZIO.fail(TodoFailure.ValidationError(err))
       case Right(validText) =>
         for {
@@ -47,14 +47,13 @@ final class TodoServiceLive(repo: TodoRepository) extends TodoService {
       .flatMap {
         case Some(row) =>
           ZIO.succeed(toDomain(row))
-        case None =>
+        case None      =>
           ZIO.fail(TodoFailure.NotFound)
       }
   }
 }
 
 object TodoServiceLive {
-  val live: URLayer[TodoRepository, TodoService] = ZLayer.fromFunction((repo: TodoRepository) =>
-    new TodoServiceLive(repo): TodoService
-  )
+  val live: URLayer[TodoRepository, TodoService] =
+    ZLayer.fromFunction((repo: TodoRepository) => new TodoServiceLive(repo): TodoService)
 }

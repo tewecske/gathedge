@@ -28,7 +28,7 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     with GroupRepository {
   import ctx._
 
-  private inline def groupsQ = quote(querySchema[GroupRow]("groups"))
+  private inline def groupsQ  = quote(querySchema[GroupRow]("groups"))
   private inline def membersQ = quote(querySchema[GroupMemberRow]("group_members"))
 
   def insert(name: String, createdAt: Long): Task[GroupRow] = {
@@ -40,7 +40,7 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def insertWithCreator(name: String, creatorId: Long, creatorRole: String, createdAt: Long): Task[GroupRow] = {
-    val row = GroupRow(0L, name, createdAt)
+    val row     = GroupRow(0L, name, createdAt)
     // Both writes or neither: a group whose creator's membership row is missing is invisible in
     // "my groups" and, because every operation on it requires membership, impossible to delete.
     // `group_members` is written here rather than through GroupMemberRepository on purpose — see
@@ -48,7 +48,7 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val queries = {
       for {
         id <- ctx.run(quote(groupsQ.insertValue(lift(row)).returningGenerated(_.id)))
-        _ <- ctx.run(quote(membersQ.insertValue(lift(GroupMemberRow(id, creatorId, creatorRole, createdAt)))))
+        _  <- ctx.run(quote(membersQ.insertValue(lift(GroupMemberRow(id, creatorId, creatorRole, createdAt)))))
       } yield id
     }
     logged(transaction(queries).map(id => row.copy(id = id))) { group =>
@@ -109,7 +109,7 @@ final class GroupMemberRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrat
   import ctx._
 
   private inline def members = quote(querySchema[GroupMemberRow]("group_members"))
-  private inline def usersQ = quote(querySchema[UserRow]("users"))
+  private inline def usersQ  = quote(querySchema[UserRow]("users"))
 
   def addMember(groupId: Long, userId: Long, role: String, joinedAt: Long): Task[Unit] = {
     val q = quote(members.insertValue(lift(GroupMemberRow(groupId, userId, role, joinedAt))))

@@ -22,54 +22,50 @@ object AdminRoutes {
   }
 
   private val getUserRoute = {
-    AdminEndpoints
-      .getUser
+    AdminEndpoints.getUser
       .implementHandler(
         handler((id: Long) => ZIO.serviceWithZIO[AdminService](_.getUser(id)).mapError(ApiFailures.admin))
       )
   }
 
   private val createUserRoute = {
-    AdminEndpoints
-      .createUser
+    AdminEndpoints.createUser
       .implementHandler(
         handler { (body: CreateUserRequest) =>
           for {
-            actingAdmin <- ZIO.service[User]
+            actingAdmin  <- ZIO.service[User]
             adminService <- ZIO.service[AdminService]
-            user <- adminService
-              .createUser(actingAdmin.id, body.email, body.password, body.isAdmin)
-              .mapError(ApiFailures.admin)
+            user         <- adminService
+                              .createUser(actingAdmin.id, body.email, body.password, body.isAdmin)
+                              .mapError(ApiFailures.admin)
           } yield user
         }
       )
   }
 
   private val updateUserRoute = {
-    AdminEndpoints
-      .updateUser
+    AdminEndpoints.updateUser
       .implementHandler(
         handler { (id: Long, body: UpdateUserRequest) =>
           for {
-            actingAdmin <- ZIO.service[User]
+            actingAdmin  <- ZIO.service[User]
             adminService <- ZIO.service[AdminService]
-            user <- adminService
-              .updateUser(actingAdmin.id, id, body.email, body.isAdmin, body.password)
-              .mapError(ApiFailures.admin)
+            user         <- adminService
+                              .updateUser(actingAdmin.id, id, body.email, body.isAdmin, body.password)
+                              .mapError(ApiFailures.admin)
           } yield user
         }
       )
   }
 
   private val deleteUserRoute = {
-    AdminEndpoints
-      .deleteUser
+    AdminEndpoints.deleteUser
       .implementHandler(
         handler { (id: Long) =>
           for {
-            actingAdmin <- ZIO.service[User]
+            actingAdmin  <- ZIO.service[User]
             adminService <- ZIO.service[AdminService]
-            _ <- adminService.deleteUser(actingAdmin.id, id).mapError(ApiFailures.admin)
+            _            <- adminService.deleteUser(actingAdmin.id, id).mapError(ApiFailures.admin)
           } yield ()
         }
       )

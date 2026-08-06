@@ -42,14 +42,14 @@ private case class EditUserForm(
   /** `Some` exactly when the form is valid, so it doubles as the validity check. */
   def toRequest: Option[UpdateUserRequest] = {
     for {
-      validEmail <- Validation.validateEmail(email).toOption
+      validEmail    <- Validation.validateEmail(email).toOption
       validPassword <- validatedPassword.toOption
     } yield UpdateUserRequest(validEmail, isAdmin, validPassword)
   }
 
   private def validatedPassword: Either[String, Option[String]] = {
     Some(password).filter(_.nonEmpty) match {
-      case None =>
+      case None          =>
         Right(None)
       case Some(entered) =>
         Validation.validatePassword(entered).map(Some(_))
@@ -59,31 +59,31 @@ private case class EditUserForm(
 
 private class AdminUserDetailPage(userId: Long) {
   private val userVar: Var[Option[User]] = Var(None)
-  private val userSignal = userVar.signal
-  private val notFoundVar = Var(false)
-  private val notFoundSignal = notFoundVar.signal
+  private val userSignal                 = userVar.signal
+  private val notFoundVar                = Var(false)
+  private val notFoundSignal             = notFoundVar.signal
 
-  private val formVar = Var(EditUserForm())
-  private val emailVar = formVar.zoom(_.email)((form, email) => form.copy(email = email))
-  private val passwordVar = formVar.zoom(_.password)((form, password) => form.copy(password = password))
-  private val isAdminVar = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
-  private val emailErrorSignal = formVar.signal.map(_.displayError(_.emailError))
+  private val formVar             = Var(EditUserForm())
+  private val emailVar            = formVar.zoom(_.email)((form, email) => form.copy(email = email))
+  private val passwordVar         = formVar.zoom(_.password)((form, password) => form.copy(password = password))
+  private val isAdminVar          = formVar.zoom(_.isAdmin)((form, isAdmin) => form.copy(isAdmin = isAdmin))
+  private val emailErrorSignal    = formVar.signal.map(_.displayError(_.emailError))
   private val passwordErrorSignal = formVar.signal.map(_.displayError(_.passwordError))
 
   // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val infoVar: Var[Option[String]] = Var(None)
-  private val infoSignal = infoVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val errorSignal                   = errorVar.signal
+  private val infoVar: Var[Option[String]]  = Var(None)
+  private val infoSignal                    = infoVar.signal
+  private val inFlightVar                   = Var(false)
+  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
-  private val saveBus = new EventBus[Unit]()
+  private val loadBus   = new EventBus[Unit]()
+  private val saveBus   = new EventBus[Unit]()
   private val deleteBus = new EventBus[Unit]()
 
   // Validation is pure; the effects hang off the resulting stream as observers.
-  private val saveStream = saveBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
+  private val saveStream   = saveBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
   private val deleteStream = deleteBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
@@ -97,21 +97,21 @@ private class AdminUserDetailPage(userId: Long) {
       child.maybe <-- userSignal.map(_.isDefined).distinct.map(Option.when(_)(renderForm())),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.getUser(userId)) -->
         Observer[Either[ApiError, User]] {
-          case Right(u) =>
+          case Right(u)                       =>
             Var.set(
-              userVar -> Some(u),
-              formVar -> EditUserForm(email = u.email, isAdmin = u.isAdmin),
+              userVar     -> Some(u),
+              formVar     -> EditUserForm(email = u.email, isAdmin = u.isAdmin),
               notFoundVar -> false,
-              errorVar -> None,
+              errorVar    -> None,
             )
           case Left(err) if err.status == 404 =>
             notFoundVar.set(true)
-          case Left(err) =>
+          case Left(err)                      =>
             errorVar.set(Some(err.message))
         },
       saveStream -->
         Observer[Option[UpdateUserRequest]] {
-          case None =>
+          case None    =>
             formVar.update(_.copy(showErrors = true))
             infoVar.set(None)
           case Some(_) =>
@@ -123,15 +123,15 @@ private class AdminUserDetailPage(userId: Long) {
         }
         .flatMapSwitch(request => AdminApiClient.updateUser(userId, request)) -->
         Observer[Either[ApiError, User]] {
-          case Right(u) =>
+          case Right(u)  =>
             // Keep whatever is in the email/admin controls: the response confirms it, and the
             // user may already be editing again. Only the write-only password field is cleared.
             Var.set(
               inFlightVar -> false,
-              userVar -> Some(u),
+              userVar     -> Some(u),
               passwordVar -> "",
-              errorVar -> None,
-              infoVar -> Some("Saved"),
+              errorVar    -> None,
+              infoVar     -> Some("Saved"),
             )
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message), infoVar -> None)
@@ -143,7 +143,7 @@ private class AdminUserDetailPage(userId: Long) {
       deleteStream --> Observer[Unit](_ => inFlightVar.set(true)),
       deleteStream.flatMapSwitch(_ => AdminApiClient.deleteUser(userId)) -->
         Observer[Either[ApiError, Unit]] {
-          case Right(_) =>
+          case Right(_)  =>
             inFlightVar.set(false)
             AppRouter.router.pushState(Page.Admin)
           case Left(err) =>
@@ -159,7 +159,7 @@ private class AdminUserDetailPage(userId: Long) {
 
   private def renderForm(): HtmlElement = {
     form(
-      cls := "card bg-base-100 shadow",
+      cls        := "card bg-base-100 shadow",
       // Browser validation would pre-empt our own messages, and they differ from the server's rules.
       noValidate := true,
       onSubmit.preventDefault.mapToUnit --> saveBus.writer,
@@ -179,15 +179,15 @@ private class AdminUserDetailPage(userId: Long) {
           legend(cls := "fieldset-legend", "New password"),
           FormField.render(passwordErrorSignal)(
             input(
-              cls := "input w-full",
+              cls         := "input w-full",
               cls("input-error") <-- passwordErrorSignal.map(_.nonEmpty),
-              typ := "password",
+              typ         := "password",
               placeholder := "Leave blank to keep the current password",
               controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
             )
           ),
           label(
-            cls := "label gap-2 mt-2",
+            cls      := "label gap-2 mt-2",
             input(
               typ := "checkbox",
               cls := "checkbox",
@@ -199,8 +199,8 @@ private class AdminUserDetailPage(userId: Long) {
         div(
           cls := "card-actions justify-between mt-4",
           button(
-            cls := "btn btn-error btn-outline",
-            typ := "button",
+            cls      := "btn btn-error btn-outline",
+            typ      := "button",
             disabled <-- inFlightSignal,
             "Delete user",
             onClick.mapToUnit -->

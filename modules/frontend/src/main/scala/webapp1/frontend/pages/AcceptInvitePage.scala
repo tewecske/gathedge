@@ -21,13 +21,13 @@ object AcceptInvitePage {
 
 private class AcceptInvitePage(token: String) {
   private val invitationVar: Var[Option[InvitationInfo]] = Var(None)
-  private val invitationSignal = invitationVar.signal
-  private val errorVar: Var[Option[String]] = Var(None)
-  private val errorSignal = errorVar.signal
-  private val inFlightVar = Var(false)
-  private val inFlightSignal = inFlightVar.signal
+  private val invitationSignal                           = invitationVar.signal
+  private val errorVar: Var[Option[String]]              = Var(None)
+  private val errorSignal                                = errorVar.signal
+  private val inFlightVar                                = Var(false)
+  private val inFlightSignal                             = inFlightVar.signal
 
-  private val loadBus = new EventBus[Unit]()
+  private val loadBus   = new EventBus[Unit]()
   private val acceptBus = new EventBus[Unit]()
 
   private val acceptStream = acceptBus.events.filterWith(inFlightSignal.not)
@@ -53,7 +53,7 @@ private class AcceptInvitePage(token: String) {
         Observer[Either[ApiError, InvitationInfo]] {
           case Right(invitation) =>
             Var.set(invitationVar -> Some(invitation), errorVar -> None)
-          case Left(err) =>
+          case Left(err)         =>
             errorVar.set(Some(err.message))
         },
       acceptStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None)),
@@ -62,7 +62,7 @@ private class AcceptInvitePage(token: String) {
           case Right(group) =>
             inFlightVar.set(false)
             AppRouter.router.pushState(Page.GroupDetail(group.id))
-          case Left(err) =>
+          case Left(err)    =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => loadBus.emit(())),
@@ -79,7 +79,7 @@ private class AcceptInvitePage(token: String) {
         p(cls := "mt-4", "This invitation has expired.")
       } else {
         currentUser match {
-          case None =>
+          case None                                                  =>
             div(
               cls := "mt-4 flex gap-2",
               a(cls := "btn btn-primary", AppRouter.router.navigateTo(Page.SignIn), "Sign in"),
@@ -93,7 +93,7 @@ private class AcceptInvitePage(token: String) {
               "Accept invitation",
               onClick.mapToUnit --> acceptBus.writer,
             )
-          case Some(u) =>
+          case Some(u)                                               =>
             p(
               cls := "mt-4 text-warning",
               s"This invitation was sent to ${invitation.email}, but you're signed in as ${u.email}.",

@@ -95,11 +95,11 @@ abstract class BackChannelOAuthClient(client: Client) extends OAuthClient {
       FormField.simpleField("grant_type", "authorization_code"),
     )
     for {
-      url <- urlOf(tokenEndpoint)
+      url      <- urlOf(tokenEndpoint)
       // `fromURLEncodedForm` sets `Content-Type: application/x-www-form-urlencoded` itself, which the token
       // endpoint requires and which a hand-built body would have to declare separately.
       response <- send(Request.post(url, Body.fromURLEncodedForm(form)), "token exchange")
-      _ <-
+      _        <-
         ZIO
           .unless(response.status == Status.Ok)(
             ZIO.fail(
@@ -107,10 +107,11 @@ abstract class BackChannelOAuthClient(client: Client) extends OAuthClient {
             )
           )
           .unit
-      body <- response.body.asString
-      idToken <- ZIO
-        .fromEither(body.fromJson[TokenResponse])
-        .mapBoth(err => new RuntimeException(s"Malformed ${provider.toString} token response: $err"), _.id_token)
+      body     <- response.body.asString
+      idToken  <-
+        ZIO
+          .fromEither(body.fromJson[TokenResponse])
+          .mapBoth(err => new RuntimeException(s"Malformed ${provider.toString} token response: $err"), _.id_token)
     } yield idToken
   }
 }
@@ -123,42 +124,42 @@ final class GoogleOAuthClient(config: GoogleSection, client: Client) extends Bac
 
   val provider: OAuthProvider = OAuthProvider.Google
 
-  protected val clientId: String = config.clientId
-  protected val clientSecret: String = config.clientSecret
-  protected val redirectUri: String = config.redirectUri
+  protected val clientId: String      = config.clientId
+  protected val clientSecret: String  = config.clientSecret
+  protected val redirectUri: String   = config.redirectUri
   protected val tokenEndpoint: String = "https://oauth2.googleapis.com/token"
 
   def authorizationUrl(state: String): String = {
     val params = Map(
-      "client_id" -> config.clientId,
-      "redirect_uri" -> config.redirectUri,
+      "client_id"     -> config.clientId,
+      "redirect_uri"  -> config.redirectUri,
       "response_type" -> "code",
-      "scope" -> "openid email",
-      "state" -> state,
+      "scope"         -> "openid email",
+      "state"         -> state,
     )
     s"https://accounts.google.com/o/oauth2/v2/auth?${queryString(params)}"
   }
 
   def exchangeAndVerify(code: String): Task[OAuthIdentity] = {
     for {
-      idToken <- exchangeCode(code)
+      idToken  <- exchangeCode(code)
       identity <- verifyIdToken(idToken)
     } yield identity
   }
 
   private def verifyIdToken(idToken: String): Task[OAuthIdentity] = {
     for {
-      url <- urlOf("https://oauth2.googleapis.com/tokeninfo", QueryParams("id_token" -> idToken))
+      url      <- urlOf("https://oauth2.googleapis.com/tokeninfo", QueryParams("id_token" -> idToken))
       response <- send(Request.get(url), "id_token verification")
-      _ <-
+      _        <-
         ZIO
           .unless(response.status == Status.Ok)(ZIO.fail(new RuntimeException("Google id_token verification failed")))
           .unit
-      body <- response.body.asString
-      info <- ZIO
-        .fromEither(body.fromJson[GoogleTokenInfo])
-        .mapError(err => new RuntimeException(s"Malformed Google tokeninfo response: $err"))
-      _ <-
+      body     <- response.body.asString
+      info     <- ZIO
+                    .fromEither(body.fromJson[GoogleTokenInfo])
+                    .mapError(err => new RuntimeException(s"Malformed Google tokeninfo response: $err"))
+      _        <-
         ZIO
           .unless(info.aud == config.clientId)(ZIO.fail(new RuntimeException("Google id_token audience mismatch")))
           .unit
@@ -182,27 +183,27 @@ final class MicrosoftOAuthClient(config: MicrosoftSection, client: Client) exten
 
   val provider: OAuthProvider = OAuthProvider.Microsoft
 
-  protected val clientId: String = config.clientId
-  protected val clientSecret: String = config.clientSecret
-  protected val redirectUri: String = config.redirectUri
+  protected val clientId: String      = config.clientId
+  protected val clientSecret: String  = config.clientSecret
+  protected val redirectUri: String   = config.redirectUri
   protected val tokenEndpoint: String = s"https://login.microsoftonline.com/${config.tenant}/oauth2/v2.0/token"
 
   def authorizationUrl(state: String): String = {
     val params = Map(
-      "client_id" -> config.clientId,
-      "redirect_uri" -> config.redirectUri,
+      "client_id"     -> config.clientId,
+      "redirect_uri"  -> config.redirectUri,
       "response_type" -> "code",
-      "scope" -> "openid email profile",
+      "scope"         -> "openid email profile",
       "response_mode" -> "query",
-      "state" -> state,
+      "state"         -> state,
     )
     s"https://login.microsoftonline.com/${config.tenant}/oauth2/v2.0/authorize?${queryString(params)}"
   }
 
   def exchangeAndVerify(code: String): Task[OAuthIdentity] = {
     for {
-      idToken <- exchangeCode(code)
-      now <- Clock.instant
+      idToken  <- exchangeCode(code)
+      now      <- Clock.instant
       identity <- ZIO.fromEither(MicrosoftOAuthClient.identityFrom(idToken, config, now.getEpochSecond))
     } yield identity
   }
@@ -215,7 +216,7 @@ object MicrosoftOAuthClient {
     * tenant, and the host is pinned in every case.
     */
   private def issuerIsAcceptable(issuer: String, tenant: String): Boolean = {
-    val expected = s"https://login.microsoftonline.com/$tenant/v2.0"
+    val expected    = s"https://login.microsoftonline.com/$tenant/v2.0"
     val multiTenant = tenant == "common" || tenant == "organizations" || tenant == "consumers"
     if (multiTenant)
       issuer.startsWith("https://login.microsoftonline.com/") && issuer.endsWith("/v2.0")
@@ -232,13 +233,12 @@ object MicrosoftOAuthClient {
       Left("id_token is not a three-part JWS")
     else {
       for {
-        bytes <- scala
-          .util
-          .Try(Base64.getUrlDecoder.decode(parts(1)))
-          .toEither
-          .left
-          .map(err => s"id_token payload is not valid base64url: ${err.getMessage}")
-        json <- new String(bytes, StandardCharsets.UTF_8).fromJson[Json].left.map(err => s"id_token payload: $err")
+        bytes <- scala.util
+                   .Try(Base64.getUrlDecoder.decode(parts(1)))
+                   .toEither
+                   .left
+                   .map(err => s"id_token payload is not valid base64url: ${err.getMessage}")
+        json  <- new String(bytes, StandardCharsets.UTF_8).fromJson[Json].left.map(err => s"id_token payload: $err")
       } yield json
     }
   }
@@ -262,20 +262,20 @@ object MicrosoftOAuthClient {
   ): Either[Throwable, OAuthIdentity] = {
     val result = {
       for {
-        claims <- decodeIdTokenClaims(idToken)
-        issuer <- stringField(claims, "iss").toRight("id_token has no iss claim")
-        _ <- Either.cond(issuerIsAcceptable(issuer, config.tenant), (), s"id_token issuer '$issuer' is not accepted")
+        claims   <- decodeIdTokenClaims(idToken)
+        issuer   <- stringField(claims, "iss").toRight("id_token has no iss claim")
+        _        <- Either.cond(issuerIsAcceptable(issuer, config.tenant), (), s"id_token issuer '$issuer' is not accepted")
         audience <- stringField(claims, "aud").toRight("id_token has no aud claim")
-        _ <- Either.cond(audience == config.clientId, (), "id_token audience mismatch")
-        expiry <- longField(claims, "exp").toRight("id_token has no exp claim")
-        _ <- Either.cond(expiry > nowEpochSeconds, (), "id_token has expired")
-        subject <- stringField(claims, "sub").toRight("id_token has no sub claim")
+        _        <- Either.cond(audience == config.clientId, (), "id_token audience mismatch")
+        expiry   <- longField(claims, "exp").toRight("id_token has no exp claim")
+        _        <- Either.cond(expiry > nowEpochSeconds, (), "id_token has expired")
+        subject  <- stringField(claims, "sub").toRight("id_token has no sub claim")
         // Personal accounts report `email`; work/school accounts often only carry `preferred_username`.
         // Neither is trusted for account matching — it is stored for display — but an account with no
         // address at all has nothing to show, so treat that as a failure rather than inventing one.
-        email <- stringField(claims, "email")
-          .orElse(stringField(claims, "preferred_username"))
-          .toRight("id_token carries neither an email nor a preferred_username claim")
+        email    <- stringField(claims, "email")
+                      .orElse(stringField(claims, "preferred_username"))
+                      .toRight("id_token carries neither an email nor a preferred_username claim")
       } yield {
         // Microsoft asserts no email_verified claim. Work/school addresses are tenant-controlled and personal
         // ones are verified at account creation, but since nothing here matches on email, the flag is only
@@ -290,13 +290,12 @@ object MicrosoftOAuthClient {
 final class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthClients {
 
   private val clients: Map[OAuthProvider, OAuthClient] = {
-    OAuthProvider
-      .all
+    OAuthProvider.all
       .filter(config.isOAuthConfigured)
       .map { provider =>
         val impl = {
           provider match {
-            case OAuthProvider.Google =>
+            case OAuthProvider.Google    =>
               new GoogleOAuthClient(config.oauth.google, client): OAuthClient
             case OAuthProvider.Microsoft =>
               new MicrosoftOAuthClient(config.oauth.microsoft, client): OAuthClient
@@ -311,7 +310,6 @@ final class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthCli
 }
 
 object OAuthClients {
-  val live: URLayer[AppConfig & Client, OAuthClients] = ZLayer.fromFunction((cfg: AppConfig, client: Client) =>
-    new OAuthClientsLive(cfg, client): OAuthClients
-  )
+  val live: URLayer[AppConfig & Client, OAuthClients] =
+    ZLayer.fromFunction((cfg: AppConfig, client: Client) => new OAuthClientsLive(cfg, client): OAuthClients)
 }

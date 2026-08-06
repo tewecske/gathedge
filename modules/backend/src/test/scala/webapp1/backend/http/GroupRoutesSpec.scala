@@ -85,33 +85,30 @@ object GroupRoutesSpec extends ZIOSpecDefault {
   ): ZIO[GroupService & GroupInvitationRepository, Nothing, Unit] = {
     for {
       invitationRepo <- ZIO.service[GroupInvitationRepository]
-      groupService <- ZIO.service[GroupService]
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      token = s"token-for-$email"
-      _ <- orDieWithFailure(
-        invitationRepo.insert(
-          GroupInvitationRow(
-            0L,
-            group.id,
-            email,
-            GroupRole.toDbString(role),
-            token,
-            invitedBy,
-            now,
-            now + 1.day.toMillis,
-            None,
-          )
-        )
-      )
-      _ <- orDieWithFailure(groupService.acceptInvitation(userId, email, token))
+      groupService   <- ZIO.service[GroupService]
+      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      token           = s"token-for-$email"
+      _              <- orDieWithFailure(
+                          invitationRepo.insert(
+                            GroupInvitationRow(
+                              0L,
+                              group.id,
+                              email,
+                              GroupRole.toDbString(role),
+                              token,
+                              invitedBy,
+                              now,
+                              now + 1.day.toMillis,
+                              None,
+                            )
+                          )
+                        )
+      _              <- orDieWithFailure(groupService.acceptInvitation(userId, email, token))
     } yield ()
   }
 
   private def errorMessage(response: Response): ZIO[Any, Nothing, String] = {
-    response
-      .body
-      .asString
-      .orDie
+    response.body.asString.orDie
       .map(body => body.fromJson[ErrorResponse].fold(err => s"undecodable error body: $err", _.message))
   }
 
@@ -119,59 +116,59 @@ object GroupRoutesSpec extends ZIOSpecDefault {
     suite("GroupRoutes")(
       test("a signed-in non-member gets 403, not 404 — the group exists, they just aren't in it") {
         for {
-          owner <- signUp("owner@example.com")
+          owner    <- signUp("owner@example.com")
           outsider <- signUp("outsider@example.com")
-          group <- createGroup(owner._1, "Acme")
+          group    <- createGroup(owner._1, "Acme")
           response <- runRoutes(GroupRoutes.routes, withSession(Request.get(s"/api/groups/${group.id}"), outsider._2))
-          message <- errorMessage(response)
+          message  <- errorMessage(response)
         } yield assertTrue(response.status == Status.Forbidden, message == "You are not a member of this group")
       },
       test("a group that doesn't exist is 404") {
         for {
-          session <- signUp("nobody@example.com")
+          session  <- signUp("nobody@example.com")
           response <- runRoutes(GroupRoutes.routes, withSession(Request.get("/api/groups/9999"), session._2))
         } yield assertTrue(response.status == Status.NotFound)
       },
       test("a read-only member cannot add a pair") {
         for {
-          owner <- signUp("pair-owner@example.com")
-          reader <- signUp("reader@example.com")
-          group <- createGroup(owner._1, "Readers")
-          _ <- joinGroup(group, owner._1, reader._1, "reader@example.com", GroupRole.ReadOnly)
-          body = Body.fromString("""{"source":"a","target":"b"}""")
-          request = withCsrf(withSession(Request.post(s"/api/groups/${group.id}/pairs", body), reader._2))
+          owner    <- signUp("pair-owner@example.com")
+          reader   <- signUp("reader@example.com")
+          group    <- createGroup(owner._1, "Readers")
+          _        <- joinGroup(group, owner._1, reader._1, "reader@example.com", GroupRole.ReadOnly)
+          body      = Body.fromString("""{"source":"a","target":"b"}""")
+          request   = withCsrf(withSession(Request.post(s"/api/groups/${group.id}/pairs", body), reader._2))
           response <- runRoutes(GroupRoutes.routes, request)
-          message <- errorMessage(response)
+          message  <- errorMessage(response)
         } yield assertTrue(response.status == Status.Forbidden, message == "Your role in this group is read-only")
       },
       test("a non-admin member cannot invite") {
         for {
-          owner <- signUp("invite-owner@example.com")
-          member <- signUp("member@example.com")
-          group <- createGroup(owner._1, "Invites")
-          _ <- joinGroup(group, owner._1, member._1, "member@example.com", GroupRole.ReadWrite)
-          body = Body.fromString(InviteMemberRequest("someone@example.com", GroupRole.ReadOnly).toJson)
-          request = withCsrf(withSession(Request.post(s"/api/groups/${group.id}/invitations", body), member._2))
+          owner    <- signUp("invite-owner@example.com")
+          member   <- signUp("member@example.com")
+          group    <- createGroup(owner._1, "Invites")
+          _        <- joinGroup(group, owner._1, member._1, "member@example.com", GroupRole.ReadWrite)
+          body      = Body.fromString(InviteMemberRequest("someone@example.com", GroupRole.ReadOnly).toJson)
+          request   = withCsrf(withSession(Request.post(s"/api/groups/${group.id}/invitations", body), member._2))
           response <- runRoutes(GroupRoutes.routes, request)
-          message <- errorMessage(response)
+          message  <- errorMessage(response)
         } yield assertTrue(response.status == Status.Forbidden, message == "Only a group administrator can do this")
       },
       test("demoting the only administrator is a 409, not a 400") {
         for {
-          owner <- signUp("last-admin@example.com")
-          group <- createGroup(owner._1, "Solo")
-          body = Body.fromString(UpdateRoleRequest(GroupRole.ReadOnly).toJson)
-          request = withCsrf(withSession(Request.put(s"/api/groups/${group.id}/members/${owner._1}", body), owner._2))
+          owner    <- signUp("last-admin@example.com")
+          group    <- createGroup(owner._1, "Solo")
+          body      = Body.fromString(UpdateRoleRequest(GroupRole.ReadOnly).toJson)
+          request   = withCsrf(withSession(Request.put(s"/api/groups/${group.id}/members/${owner._1}", body), owner._2))
           response <- runRoutes(GroupRoutes.routes, request)
         } yield assertTrue(response.status == Status.Conflict)
       },
       test("a validation failure keeps its per-field errors") {
         for {
-          session <- signUp("blank-name@example.com")
-          request = withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"  "}""")), session._2))
+          session  <- signUp("blank-name@example.com")
+          request   = withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"  "}""")), session._2))
           response <- runRoutes(GroupRoutes.routes, request)
-          raw <- response.body.asString.orDie
-          decoded = raw.fromJson[ErrorResponse]
+          raw      <- response.body.asString.orDie
+          decoded   = raw.fromJson[ErrorResponse]
         } yield assertTrue(
           response.status == Status.BadRequest,
           decoded.map(_.fieldErrors.contains("name")) == Right(true),

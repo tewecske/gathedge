@@ -63,7 +63,7 @@ final class GroupServiceLive(
   config: AppConfig,
 ) extends GroupService {
 
-  private val secureRandom = new SecureRandom()
+  private val secureRandom                 = new SecureRandom()
   private val invitationValidity: Duration = 7.days
 
   private def toDomain(row: GroupRow, role: String): Group = {
@@ -89,12 +89,12 @@ final class GroupServiceLive(
 
   def createGroup(userId: Long, name: String): IO[GroupFailure, Group] = {
     Validation.validateNonBlank(name, "Name", Validation.maxNameLength) match {
-      case Left(err) =>
+      case Left(err)        =>
         ZIO.fail(GroupFailure.ValidationError(Map("name" -> err)))
       case Right(validName) =>
         val adminRole = GroupRole.toDbString(GroupRole.Admin)
         for {
-          now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
           group <- groupRepo.insertWithCreator(validName, userId, adminRole, now).orDie
         } yield toDomain(group, adminRole)
     }
@@ -114,9 +114,9 @@ final class GroupServiceLive(
   private def requireMembership(userId: Long, groupId: Long): IO[GroupFailure, GroupRole] = {
     for {
       maybeGroup <- groupRepo.findById(groupId).orDie
-      _ <- ZIO.fromOption(maybeGroup).orElseFail(GroupFailure.NotFound)
-      maybeRole <- memberRepo.findRole(groupId, userId).orDie
-      role <- ZIO.fromOption(maybeRole.flatMap(GroupRole.fromString)).orElseFail(GroupFailure.NotMember)
+      _          <- ZIO.fromOption(maybeGroup).orElseFail(GroupFailure.NotFound)
+      maybeRole  <- memberRepo.findRole(groupId, userId).orDie
+      role       <- ZIO.fromOption(maybeRole.flatMap(GroupRole.fromString)).orElseFail(GroupFailure.NotMember)
     } yield role
   }
 
@@ -136,7 +136,7 @@ final class GroupServiceLive(
 
   def getGroup(userId: Long, groupId: Long): IO[GroupFailure, Group] = {
     for {
-      role <- requireMembership(userId, groupId)
+      role  <- requireMembership(userId, groupId)
       group <- findGroupOrDie(groupId)
     } yield toDomain(group, GroupRole.toDbString(role))
   }
@@ -150,7 +150,7 @@ final class GroupServiceLive(
 
   def listPairs(userId: Long, groupId: Long): IO[GroupFailure, List[GroupPair]] = {
     for {
-      _ <- requireMembership(userId, groupId)
+      _    <- requireMembership(userId, groupId)
       rows <- pairRepo.listForGroup(groupId).orDie
     } yield rows.map(toDomain)
   }
@@ -170,16 +170,16 @@ final class GroupServiceLive(
     }
     for {
       role <- requireMembership(userId, groupId)
-      _ <- ZIO.unless(role.canWrite)(ZIO.fail(GroupFailure.ReadOnlyMember))
-      _ <- ZIO.when(fieldErrors.nonEmpty)(ZIO.fail(GroupFailure.ValidationError(fieldErrors)))
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row <- pairRepo.insert(groupId, source.trim, target.trim, userId, userEmail, now).orDie
+      _    <- ZIO.unless(role.canWrite)(ZIO.fail(GroupFailure.ReadOnlyMember))
+      _    <- ZIO.when(fieldErrors.nonEmpty)(ZIO.fail(GroupFailure.ValidationError(fieldErrors)))
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row  <- pairRepo.insert(groupId, source.trim, target.trim, userId, userEmail, now).orDie
     } yield toDomain(row)
   }
 
   def listMembers(userId: Long, groupId: Long): IO[GroupFailure, List[GroupMember]] = {
     for {
-      _ <- requireMembership(userId, groupId)
+      _    <- requireMembership(userId, groupId)
       rows <- memberRepo.listForGroup(groupId).orDie
     } yield rows.map { case (row, email) =>
       GroupMember(
@@ -193,33 +193,33 @@ final class GroupServiceLive(
 
   def removeMember(userId: Long, groupId: Long, targetUserId: Long): IO[GroupFailure, Unit] = {
     for {
-      _ <- requireAdmin(userId, groupId)
+      _          <- requireAdmin(userId, groupId)
       targetRole <- memberRepo.findRole(groupId, targetUserId).orDie.map(_.flatMap(GroupRole.fromString))
-      _ <- guardLastAdmin(groupId, targetRole)
-      _ <- memberRepo.removeMember(groupId, targetUserId).orDie
+      _          <- guardLastAdmin(groupId, targetRole)
+      _          <- memberRepo.removeMember(groupId, targetUserId).orDie
     } yield ()
   }
 
   def updateMemberRole(userId: Long, groupId: Long, targetUserId: Long, newRole: GroupRole): IO[GroupFailure, Unit] = {
     for {
-      _ <- requireAdmin(userId, groupId)
+      _          <- requireAdmin(userId, groupId)
       targetRole <- memberRepo.findRole(groupId, targetUserId).orDie.map(_.flatMap(GroupRole.fromString))
-      _ <- ZIO.when(newRole != GroupRole.Admin)(guardLastAdmin(groupId, targetRole))
-      _ <- memberRepo.updateRole(groupId, targetUserId, GroupRole.toDbString(newRole)).orDie
+      _          <- ZIO.when(newRole != GroupRole.Admin)(guardLastAdmin(groupId, targetRole))
+      _          <- memberRepo.updateRole(groupId, targetUserId, GroupRole.toDbString(newRole)).orDie
     } yield ()
   }
 
   def inviteMember(userId: Long, groupId: Long, email: String, role: GroupRole): IO[GroupFailure, Unit] = {
     val normalizedEmail = email.trim.toLowerCase
     for {
-      _ <- requireAdmin(userId, groupId)
-      _ <- ZIO
-        .fromEither(Validation.validateEmail(normalizedEmail))
-        .mapError(err => GroupFailure.ValidationError(Map("email" -> err)))
+      _     <- requireAdmin(userId, groupId)
+      _     <- ZIO
+                 .fromEither(Validation.validateEmail(normalizedEmail))
+                 .mapError(err => GroupFailure.ValidationError(Map("email" -> err)))
       group <- findGroupOrDie(groupId)
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      token = newToken()
-      _ <-
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      token  = newToken()
+      _     <-
         invitationRepo
           .insert(
             GroupInvitationRow(
@@ -235,18 +235,18 @@ final class GroupServiceLive(
             )
           )
           .orDie
-      link = s"${config.app.publicBaseUrl}/invitations/$token"
-      _ <-
+      link   = s"${config.app.publicBaseUrl}/invitations/$token"
+      _     <-
         emailSender.send(normalizedEmail, s"You're invited to join ${group.name}", s"Join the group here: $link").orDie
     } yield ()
   }
 
   def getInvitationInfo(token: String): IO[GroupFailure, InvitationInfo] = {
     for {
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      now         <- Clock.currentTime(TimeUnit.MILLISECONDS)
       maybeInvite <- invitationRepo.findByToken(token).orDie
-      invite <- ZIO.fromOption(maybeInvite).orElseFail(GroupFailure.InvitationInvalid)
-      group <- findGroupOrDie(invite.groupId)
+      invite      <- ZIO.fromOption(maybeInvite).orElseFail(GroupFailure.InvitationInvalid)
+      group       <- findGroupOrDie(invite.groupId)
     } yield InvitationInfo(
       group.name,
       invite.email,
@@ -258,21 +258,21 @@ final class GroupServiceLive(
 
   def acceptInvitation(userId: Long, userEmail: String, token: String): IO[GroupFailure, Group] = {
     for {
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      maybeInvite <- invitationRepo.findByToken(token).orDie
-      invite <- ZIO.fromOption(maybeInvite).orElseFail(GroupFailure.InvitationInvalid)
-      _ <- ZIO.when(invite.acceptedAt.isDefined || invite.expiresAt < now)(ZIO.fail(GroupFailure.InvitationInvalid))
-      _ <- ZIO.unless(invite.email.equalsIgnoreCase(userEmail))(ZIO.fail(GroupFailure.InvitationInvalid))
+      now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      maybeInvite  <- invitationRepo.findByToken(token).orDie
+      invite       <- ZIO.fromOption(maybeInvite).orElseFail(GroupFailure.InvitationInvalid)
+      _            <- ZIO.when(invite.acceptedAt.isDefined || invite.expiresAt < now)(ZIO.fail(GroupFailure.InvitationInvalid))
+      _            <- ZIO.unless(invite.email.equalsIgnoreCase(userEmail))(ZIO.fail(GroupFailure.InvitationInvalid))
       existingRole <- memberRepo.findRole(invite.groupId, userId).orDie
-      _ <-
+      _            <-
         existingRole match {
           case Some(_) =>
             memberRepo.updateRole(invite.groupId, userId, invite.role).orDie
-          case None =>
+          case None    =>
             memberRepo.addMember(invite.groupId, userId, invite.role, now).orDie
         }
-      _ <- invitationRepo.markAccepted(token, now).orDie
-      group <- findGroupOrDie(invite.groupId)
+      _            <- invitationRepo.markAccepted(token, now).orDie
+      group        <- findGroupOrDie(invite.groupId)
     } yield toDomain(group, invite.role)
   }
 }

@@ -38,8 +38,7 @@ object App {
   private final case class Gate(loaded: Boolean, signedIn: Boolean, isAdmin: Boolean)
 
   private val gateSignal: Signal[Gate] = {
-    sessionLoadedVar
-      .signal
+    sessionLoadedVar.signal
       .combineWithFn(AppState.currentUserSignal)((loaded, user) =>
         Gate(loaded, signedIn = user.isDefined, isAdmin = user.exists(_.isAdmin))
       )
@@ -53,13 +52,12 @@ object App {
     val viewSignal = gateSignal.combineWith(AppRouter.router.currentPageSignal).distinct
     div(
       onMountCallback { ctx =>
-        ApiClient
-          .me
+        ApiClient.me
           .foreach {
             case Right(res) =>
               AppState.setUser(res.user)
               sessionLoadedVar.set(true)
-            case Left(_) =>
+            case Left(_)    =>
               AppState.clearUser()
               sessionLoadedVar.set(true)
           }(using ctx.owner)
@@ -71,7 +69,7 @@ object App {
         Observer[Option[Page]] {
           case Some(target) =>
             AppRouter.router.replaceState(target)
-          case None =>
+          case None         =>
             ()
         },
       child <-- viewSignal.map(renderFor),
@@ -87,9 +85,9 @@ object App {
       Page.guardFor(page) match {
         case Page.AuthGuard.RequireAuth if !gate.signedIn =>
           Some(Page.SignIn)
-        case Page.AuthGuard.RequireAnon if gate.signedIn =>
+        case Page.AuthGuard.RequireAnon if gate.signedIn  =>
           Some(Page.Home)
-        case _ =>
+        case _                                            =>
           None
       }
     }
@@ -107,37 +105,37 @@ object App {
 
   private def renderPage(gate: Gate, page: Page): HtmlElement = {
     page match {
-      case Page.SignIn =>
+      case Page.SignIn                              =>
         SignInPage.render()
-      case Page.SignUp =>
+      case Page.SignUp                              =>
         SignUpPage.render()
-      case Page.Home =>
+      case Page.Home                                =>
         TodoPage.render()
-      case Page.Groups =>
+      case Page.Groups                              =>
         GroupsPage.render()
-      case Page.Settings =>
+      case Page.Settings                            =>
         SettingsPage.render()
-      case Page.GroupDetail(id) =>
+      case Page.GroupDetail(id)                     =>
         GroupDetailPage.render(id)
-      case Page.GroupMembers(id) =>
+      case Page.GroupMembers(id)                    =>
         GroupMembersPage.render(id)
-      case Page.AcceptInvite(token) =>
+      case Page.AcceptInvite(token)                 =>
         AcceptInvitePage.render(gate.signedIn, token)
-      case Page.VerifyEmail(token) =>
+      case Page.VerifyEmail(token)                  =>
         VerifyEmailPage.render(token)
-      case Page.CheckInbox =>
+      case Page.CheckInbox                          =>
         CheckInboxPage.render()
-      case Page.Admin if gate.isAdmin =>
+      case Page.Admin if gate.isAdmin               =>
         AdminUsersPage.render()
-      case Page.Admin =>
+      case Page.Admin                               =>
         ForbiddenPage.render()
       case Page.AdminUserDetail(id) if gate.isAdmin =>
         AdminUserDetailPage.render(id)
-      case Page.AdminUserDetail(_) =>
+      case Page.AdminUserDetail(_)                  =>
         ForbiddenPage.render()
-      case Page.Forbidden =>
+      case Page.Forbidden                           =>
         ForbiddenPage.render()
-      case Page.NotFound =>
+      case Page.NotFound                            =>
         NotFoundPage.render()
     }
   }

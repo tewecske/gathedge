@@ -63,7 +63,7 @@ final case class AppConfig(
   mail: MailSection,
   netty: NettySection,
 ) {
-  def appEnv: AppEnv = AppEnv.parse(app.env)
+  def appEnv: AppEnv        = AppEnv.parse(app.env)
   def isProduction: Boolean = appEnv == AppEnv.Production
 
   /** A provider with no client id/secret is simply switched off: its routes answer 404 and the frontend omits its
@@ -71,7 +71,7 @@ final case class AppConfig(
     */
   def isOAuthConfigured(provider: OAuthProvider): Boolean = {
     provider match {
-      case OAuthProvider.Google =>
+      case OAuthProvider.Google    =>
         oauth.google.clientId.nonEmpty && oauth.google.clientSecret.nonEmpty
       case OAuthProvider.Microsoft =>
         oauth.microsoft.clientId.nonEmpty && oauth.microsoft.clientSecret.nonEmpty
