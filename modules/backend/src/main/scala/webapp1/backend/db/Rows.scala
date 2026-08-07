@@ -58,6 +58,41 @@ final case class EmailVerificationTokenRow(
   consumedAt: Option[Long],
 )
 
+/** One sign-in attempt, successful or not. The history behind the in-memory rate limiter, which knows only the current
+  * 15-minute window and forgets it on restart.
+  *
+  * `email` is what the caller typed, normalized the same way [[webapp1.backend.service.RateLimitKey.email]] normalizes
+  * it, so an attempt against an address that has no account is still attributable. `userId` is `None` in exactly that
+  * case, and becomes `None` again if the account is later deleted — the row outlives it deliberately.
+  */
+final case class LoginAttemptRow(
+  id: Long,
+  email: String,
+  userId: Option[Long],
+  ip: Option[String],
+  outcome: String,
+  createdAt: Long,
+)
+
+/** The queryable half of the `security` logger: one row per administrator action, written by the same
+  * `AdminService.audit` call that emits the log line.
+  *
+  * `actorEmail` is a snapshot rather than a join, because the row has to still name who acted after that account is
+  * deleted. `detail` is prose for an administrator to read and must never carry a credential — see
+  * [[QuillRepository.logged]] for the same rule applied to log lines.
+  */
+final case class AuditLogRow(
+  id: Long,
+  occurredAt: Long,
+  actorUserId: Option[Long],
+  actorEmail: Option[String],
+  action: String,
+  targetType: Option[String],
+  targetId: Option[String],
+  detail: Option[String],
+  ip: Option[String],
+)
+
 final case class GroupInvitationRow(
   id: Long,
   groupId: Long,

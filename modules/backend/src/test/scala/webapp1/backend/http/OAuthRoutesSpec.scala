@@ -2,7 +2,14 @@ package webapp1.backend.http
 
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
-import webapp1.backend.db.{EmailVerificationTokenRepository, OAuthIdentityRepository, SessionRepository, UserRepository}
+import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
+  EmailVerificationTokenRepository,
+  OAuthIdentityRepository,
+  SessionRepository,
+  UserRepository,
+}
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{AuthService, OAuthClient, OAuthClients, OAuthIdentity, RateLimiter}
 import webapp1.shared.domain.OAuthProvider
@@ -58,7 +65,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
     val repos = {
       TestDataSource.sqlite >>> (
         UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test
+          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
       )
     }
     AppConfig.live ++ stubClients ++ (

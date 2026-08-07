@@ -1,8 +1,32 @@
 package webapp1.backend.service
 
-import webapp1.backend.db.{SessionRepository, UserRepository, UserRow}
-import webapp1.backend.security.{PasswordHasher, SecurityLog}
-import webapp1.shared.domain.{Theme, User}
+import webapp1.backend.db.{
+  AuditLogRepository,
+  AuditLogRow,
+  EmailVerificationTokenRepository,
+  EmailVerificationTokenRow,
+  LoginAttemptRepository,
+  LoginAttemptRow,
+  OAuthIdentityRepository,
+  OAuthIdentityRow,
+  SessionRepository,
+  SessionRow,
+  UserRepository,
+  UserRow,
+}
+import webapp1.backend.security.PasswordHasher
+import webapp1.shared.domain.{OAuthProvider, Theme, User}
+import webapp1.shared.dto.{
+  AdminIdentityInfo,
+  AdminSessionInfo,
+  AdminUserDetail,
+  AdminVerificationTokenInfo,
+  AuditAction,
+  AuditEntry,
+  LockoutStatus,
+  LoginAttemptEntry,
+  RateLimitEntry,
+}
 import webapp1.shared.validation.Validation
 import zio.*
 
@@ -18,20 +42,77 @@ enum AdminFailure {
     */
   case SelfDemote
   case SelfDelete
+
+  /** Detaching this provider would leave the account with nothing to sign in with. The same rule the account's own
+    * settings screen is held to (`AuthFailure.LastCredential`); an administrator is not exempt from it, because the
+    * account it would lock out is not theirs to lock out.
+    */
+  case LastCredential
+}
+
+/** Who is performing an administrator action, and from where.
+  *
+  * Carried rather than passed as a bare id because every mutating method now writes an `audit_log` row, and an audit
+  * trail that cannot say where an action came from answers half the question it exists to answer.
+  */
+final case class AdminActor(userId: Long, clientIp: Option[String] = None)
+
+object AdminActor {
+
+  /** The application acting on its own behalf rather than an administrator: startup seeding, and test fixtures that
+    * only want an account to exist. Id `0` matches no row, so the audit entry records no actor.
+    */
+  val system: AdminActor = AdminActor(0L, None)
 }
 
 trait AdminService {
   def listUsers: UIO[List[User]]
   def getUser(id: Long): IO[AdminFailure, User]
-  def createUser(actingAdminId: Long, email: String, password: String, isAdmin: Boolean): IO[AdminFailure, User]
+  def createUser(actor: AdminActor, email: String, password: String, isAdmin: Boolean): IO[AdminFailure, User]
   def updateUser(
-    actingAdminId: Long,
+    actor: AdminActor,
     id: Long,
     email: String,
     isAdmin: Boolean,
     password: Option[String],
   ): IO[AdminFailure, User]
-  def deleteUser(actingAdminId: Long, id: Long): IO[AdminFailure, Unit]
+  def deleteUser(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
+
+  /** Everything the administrator's account screen shows, gathered in one call. */
+  def userDetail(id: Long): IO[AdminFailure, AdminUserDetail]
+
+  /** Confirms the address without a link, for a user who cannot receive one. */
+  def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
+
+  /** Sends a fresh confirmation link, unconditionally — see `AuthService.issueVerificationFor` for why this is not
+    * `AuthService.resendVerification`.
+    */
+  def resendVerificationFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
+
+  /** Ends every session the account holds. */
+  def revokeSessions(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
+
+  /** Detaches one social account, unless it is the account's last credential. */
+  def unlinkIdentity(actor: AdminActor, id: Long, provider: OAuthProvider): IO[AdminFailure, Unit]
+
+  /** Lets a locked-out account sign in again, clearing both dimensions of the lock. */
+  def clearLockout(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
+
+  def auditLog(
+    limit: Int,
+    before: Option[Long],
+    action: Option[String],
+    actorId: Option[Long],
+    targetId: Option[String],
+  ): UIO[List[AuditEntry]]
+
+  def loginAttempts(limit: Int, outcome: Option[String]): UIO[List[LoginAttemptEntry]]
+
+  /** Every rate-limiter key currently holding failures. Reads a `Ref`, so it cannot fail. */
+  def rateLimits: UIO[List[RateLimitEntry]]
+
+  /** Clears one key, or every key when `key` is empty. */
+  def clearRateLimits(actor: AdminActor, key: Option[String]): UIO[Unit]
 }
 
 object AdminService {
@@ -42,34 +123,99 @@ object AdminService {
     ZIO.serviceWithZIO[AdminService](_.getUser(id))
 
   def createUser(
-    actingAdminId: Long,
+    actor: AdminActor,
     email: String,
     password: String,
     isAdmin: Boolean,
   ): ZIO[AdminService, AdminFailure, User] =
-    ZIO.serviceWithZIO[AdminService](_.createUser(actingAdminId, email, password, isAdmin))
+    ZIO.serviceWithZIO[AdminService](_.createUser(actor, email, password, isAdmin))
 
   def updateUser(
-    actingAdminId: Long,
+    actor: AdminActor,
     id: Long,
     email: String,
     isAdmin: Boolean,
     password: Option[String],
   ): ZIO[AdminService, AdminFailure, User] =
-    ZIO.serviceWithZIO[AdminService](_.updateUser(actingAdminId, id, email, isAdmin, password))
+    ZIO.serviceWithZIO[AdminService](_.updateUser(actor, id, email, isAdmin, password))
 
-  def deleteUser(actingAdminId: Long, id: Long): ZIO[AdminService, AdminFailure, Unit] =
-    ZIO.serviceWithZIO[AdminService](_.deleteUser(actingAdminId, id))
+  def deleteUser(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.deleteUser(actor, id))
 
-  val live: URLayer[UserRepository & SessionRepository & PasswordHasher, AdminService] =
-    ZLayer.fromFunction(AdminServiceLive.apply)
+  def userDetail(id: Long): ZIO[AdminService, AdminFailure, AdminUserDetail] =
+    ZIO.serviceWithZIO[AdminService](_.userDetail(id))
+
+  def verifyEmailFor(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.verifyEmailFor(actor, id))
+
+  def resendVerificationFor(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.resendVerificationFor(actor, id))
+
+  def revokeSessions(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.revokeSessions(actor, id))
+
+  def unlinkIdentity(actor: AdminActor, id: Long, provider: OAuthProvider): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.unlinkIdentity(actor, id, provider))
+
+  def clearLockout(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.clearLockout(actor, id))
+
+  def auditLog(
+    limit: Int,
+    before: Option[Long],
+    action: Option[String],
+    actorId: Option[Long],
+    targetId: Option[String],
+  ): URIO[AdminService, List[AuditEntry]] =
+    ZIO.serviceWithZIO[AdminService](_.auditLog(limit, before, action, actorId, targetId))
+
+  def loginAttempts(limit: Int, outcome: Option[String]): URIO[AdminService, List[LoginAttemptEntry]] =
+    ZIO.serviceWithZIO[AdminService](_.loginAttempts(limit, outcome))
+
+  def rateLimits: URIO[AdminService, List[RateLimitEntry]] =
+    ZIO.serviceWithZIO[AdminService](_.rateLimits)
+
+  def clearRateLimits(actor: AdminActor, key: Option[String]): URIO[AdminService, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.clearRateLimits(actor, key))
+
+  /** The window `clearLockout` looks back over when collecting the origins to unblock. The limiter's own window is 15
+    * minutes, so an hour comfortably covers every key that could still be holding a failure while leaving out addresses
+    * from days ago.
+    */
+  val lockoutOriginWindow: Duration = 1.hour
+
+  /** How much of an account's sign-in history the detail view carries. Enough to see a burst of failures and where it
+    * came from; not so much that the response becomes a log export.
+    */
+  val recentAttemptLimit: Int = 25
+
+  val live: URLayer[
+    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
+      LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService,
+    AdminService,
+  ] = ZLayer.fromFunction(AdminServiceLive.apply)
 }
 
-/** Admin actions that change accounts (create/promote-or-demote/delete) are logged to the `security` logger as an audit
-  * trail, per summary.md's "logging for application events, such as user actions".
+/** Every administrator action that changes an account is recorded twice: once to the `security` slf4j logger, which is
+  * what an operator watches, and once to `audit_log`, which is what the admin screens read. Both go through
+  * [[AuditTrail]] so the two cannot describe different sets of events.
+  *
+  * Nothing here reads a user's own data. `userDetail` reports which sessions and providers an account has and how its
+  * sign-ins have gone, and no more: the session id, the OAuth subject, the verification token and the password hash are
+  * all projected away before anything leaves this file.
   */
-final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: SessionRepository, hasher: PasswordHasher)
-    extends AdminService {
+final case class AdminServiceLive(
+  userRepo: UserRepository,
+  sessionRepo: SessionRepository,
+  identityRepo: OAuthIdentityRepository,
+  tokenRepo: EmailVerificationTokenRepository,
+  attemptRepo: LoginAttemptRepository,
+  auditRepo: AuditLogRepository,
+  auditTrail: AuditTrail,
+  hasher: PasswordHasher,
+  rateLimiter: RateLimiter,
+  authService: AuthService,
+) extends AdminService {
 
   private def toDomain(row: UserRow): User = {
     User(
@@ -86,15 +232,11 @@ final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: Session
     userRepo.findById(id).orDie.flatMap(ZIO.fromOption(_).orElseFail(AdminFailure.NotFound))
   }
 
-  private def audit(actingAdminId: Long, message: String): UIO[Unit] = {
-    SecurityLog.info(s"[admin id=$actingAdminId] $message")
-  }
-
   def listUsers: UIO[List[User]] = userRepo.listAll.orDie.map(_.map(toDomain))
 
   def getUser(id: Long): IO[AdminFailure, User] = requireUser(id).map(toDomain)
 
-  def createUser(actingAdminId: Long, email: String, password: String, isAdmin: Boolean): IO[AdminFailure, User] = {
+  def createUser(actor: AdminActor, email: String, password: String, isAdmin: Boolean): IO[AdminFailure, User] = {
     val normalizedEmail = email.trim.toLowerCase
     val fieldErrors     = {
       List(
@@ -111,12 +253,17 @@ final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: Session
       // An administrator creating an account vouches for the address, so it starts verified — the
       // person never sees a signup form to trigger a verification mail from.
       row      <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, "light", now, emailVerifiedAt = Some(now)).orDie
-      _        <- audit(actingAdminId, s"created user '$normalizedEmail' (id=${row.id}, isAdmin=$isAdmin)")
+      _        <- auditTrail.recordUser(
+                    actor,
+                    AuditAction.userCreate,
+                    row.id,
+                    s"created user '$normalizedEmail' (id=${row.id}, isAdmin=$isAdmin)",
+                  )
     } yield toDomain(row)
   }
 
   def updateUser(
-    actingAdminId: Long,
+    actor: AdminActor,
     id: Long,
     email: String,
     isAdmin: Boolean,
@@ -128,7 +275,7 @@ final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: Session
       _           <- ZIO
                        .fromEither(Validation.validateEmail(normalizedEmail))
                        .mapError(err => AdminFailure.ValidationError(Map("email" -> err)))
-      _           <- ZIO.when(id == actingAdminId && !isAdmin)(ZIO.fail(AdminFailure.SelfDemote))
+      _           <- ZIO.when(id == actor.userId && !isAdmin)(ZIO.fail(AdminFailure.SelfDemote))
       byEmail     <- userRepo.findByEmail(normalizedEmail).orDie
       _           <- ZIO.when(byEmail.exists(_.id != id))(ZIO.fail(AdminFailure.DuplicateEmail))
       newPassword <-
@@ -150,22 +297,250 @@ final case class AdminServiceLive(userRepo: UserRepository, sessionRepo: Session
       _           <-
         ZIO.when(newPassword.isDefined) {
           Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => sessionRepo.revokeAllForUser(id, now).orDie) *>
-            audit(actingAdminId, s"reset password for user '$normalizedEmail' (id=$id)")
+            auditTrail.recordUser(
+              actor,
+              AuditAction.userPasswordReset,
+              id,
+              s"reset password for user '$normalizedEmail' (id=$id), ending its sessions",
+            )
         }
       _           <-
         ZIO.when(before.isAdmin != isAdmin) {
-          audit(actingAdminId, s"changed admin status of user '$normalizedEmail' (id=$id) to isAdmin=$isAdmin")
+          auditTrail.recordUser(
+            actor,
+            AuditAction.userUpdate,
+            id,
+            s"changed admin status of user '$normalizedEmail' (id=$id) to isAdmin=$isAdmin",
+          )
+        }
+      _           <-
+        ZIO.when(before.email != normalizedEmail) {
+          auditTrail.recordUser(
+            actor,
+            AuditAction.userUpdate,
+            id,
+            s"changed the address of user id=$id to '$normalizedEmail'",
+          )
         }
       updated     <- requireUser(id)
     } yield toDomain(updated)
   }
 
-  def deleteUser(actingAdminId: Long, id: Long): IO[AdminFailure, Unit] = {
+  def deleteUser(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
     for {
-      _    <- ZIO.when(id == actingAdminId)(ZIO.fail(AdminFailure.SelfDelete))
+      _    <- ZIO.when(id == actor.userId)(ZIO.fail(AdminFailure.SelfDelete))
       user <- requireUser(id)
       _    <- userRepo.deleteById(id).orDie
-      _    <- audit(actingAdminId, s"deleted user '${user.email}' (id=$id)")
+      _    <- auditTrail.recordUser(actor, AuditAction.userDelete, id, s"deleted user '${user.email}' (id=$id)")
     } yield ()
+  }
+
+  private def toSessionInfo(row: SessionRow, now: Long): AdminSessionInfo = {
+    AdminSessionInfo(
+      createdAt = row.createdAt,
+      expiresAt = row.expiresAt,
+      revokedAt = row.revokedAt,
+      active = row.revokedAt.isEmpty && row.expiresAt > now,
+    )
+  }
+
+  private def toIdentityInfo(row: OAuthIdentityRow): Option[AdminIdentityInfo] = {
+    // A row whose provider no longer parses is one this build has dropped support for. Skipping it keeps the screen
+    // renderable, the same way `AuthService.toLinkedIdentity` does for the user's own settings page.
+    OAuthProvider.fromString(row.provider).map(provider => AdminIdentityInfo(provider, row.email, row.createdAt))
+  }
+
+  private def toTokenInfo(row: EmailVerificationTokenRow, now: Long): AdminVerificationTokenInfo = {
+    AdminVerificationTokenInfo(
+      createdAt = row.createdAt,
+      expiresAt = row.expiresAt,
+      consumed = row.consumedAt.isDefined,
+      expired = row.expiresAt <= now,
+    )
+  }
+
+  private def toAttemptEntry(row: LoginAttemptRow): LoginAttemptEntry = {
+    LoginAttemptEntry(row.id, row.createdAt, row.email, row.userId, row.ip, row.outcome)
+  }
+
+  private def toAuditEntry(row: AuditLogRow): AuditEntry = {
+    AuditEntry(
+      row.id,
+      row.occurredAt,
+      row.actorUserId,
+      row.actorEmail,
+      row.action,
+      row.targetType,
+      row.targetId,
+      row.detail,
+      row.ip,
+    )
+  }
+
+  /** The limiter keys that can keep one account out: its address, its verification budget, and every origin it was
+    * recently attempted from.
+    *
+    * `AuthService.login` blocks when *any* of them trips, so a lockout view that showed only the address key would
+    * report "not blocked" for a user who cannot sign in, and a clear button that cleared only that key would not unlock
+    * them.
+    */
+  private def lockoutKeysFor(email: String): UIO[List[String]] = {
+    for {
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      ips <- attemptRepo.distinctRecentIps(email, now - AdminService.lockoutOriginWindow.toMillis).orDie
+    } yield RateLimitKey.email(email) :: RateLimitKey.verification(email) :: ips.map(RateLimitKey.ip)
+  }
+
+  private def lockoutStatus(email: String): UIO[LockoutStatus] = {
+    for {
+      keys    <- lockoutKeysFor(email)
+      entries <- ZIO.foreach(keys)(rateLimiter.status)
+      blocked  = entries.filter(_.blocked)
+      // The address dimension is the one the count on screen refers to; the others only ever add to the blocked set.
+      emailKey = entries.headOption
+    } yield LockoutStatus(
+      blocked = blocked.nonEmpty,
+      attempts = emailKey.map(_.attempts).getOrElse(0),
+      maxAttempts = RateLimiter.maxAttempts,
+      windowMinutes = RateLimiter.window.toMinutes.toInt,
+      retryAfterMillis = blocked.map(_.retryAfterMillis).maxOption.getOrElse(0L),
+      blockedKeys = blocked.map(_.key),
+    )
+  }
+
+  def userDetail(id: Long): IO[AdminFailure, AdminUserDetail] = {
+    for {
+      row        <- requireUser(id)
+      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      identities <- identityRepo.listForUser(id).orDie
+      sessions   <- sessionRepo.listForUser(id).orDie
+      tokens     <- tokenRepo.findForUser(id).orDie
+      attempts   <- attemptRepo.recentForEmail(row.email, AdminService.recentAttemptLimit).orDie
+      lockout    <- lockoutStatus(row.email)
+      sessionInfo = sessions.map(toSessionInfo(_, now))
+    } yield AdminUserDetail(
+      user = toDomain(row),
+      hasPassword = row.passwordHash.isDefined,
+      emailVerifiedAt = row.emailVerifiedAt,
+      identities = identities.flatMap(toIdentityInfo),
+      sessions = sessionInfo,
+      activeSessions = sessionInfo.count(_.active),
+      verificationTokens = tokens.map(toTokenInfo(_, now)),
+      lockout = lockout,
+      // Keyed on the address rather than the account id, so attempts made against the address before it had an
+      // account — or with it misspelt into another account's — are not silently dropped from the picture.
+      recentLoginAttempts = attempts.map(toAttemptEntry),
+    )
+  }
+
+  def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
+    for {
+      row <- requireUser(id)
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      // Idempotent: confirming an already-confirmed address is a no-op rather than a failure, so a double click on
+      // the button is not an error the administrator has to interpret.
+      _   <- ZIO.when(row.emailVerifiedAt.isEmpty) {
+               userRepo.markEmailVerified(id, now).orDie *>
+                 auditTrail.recordUser(
+                   actor,
+                   AuditAction.userVerifyEmail,
+                   id,
+                   s"confirmed the email address of user id=$id",
+                 )
+             }
+    } yield ()
+  }
+
+  def resendVerificationFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
+    for {
+      row <- requireUser(id)
+      _   <- authService.issueVerificationFor(id, row.email)
+      _   <- auditTrail.recordUser(
+               actor,
+               AuditAction.userVerificationResend,
+               id,
+               s"sent a new confirmation link to user id=$id",
+             )
+    } yield ()
+  }
+
+  def revokeSessions(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
+    for {
+      _     <- requireUser(id)
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      count <- sessionRepo.listForUser(id).orDie.map(_.count(s => s.revokedAt.isEmpty && s.expiresAt > now))
+      _     <- sessionRepo.revokeAllForUser(id, now).orDie
+      _     <- auditTrail.recordUser(actor, AuditAction.userSessionsRevoked, id, s"ended $count session(s) of user id=$id")
+    } yield ()
+  }
+
+  def unlinkIdentity(actor: AdminActor, id: Long, provider: OAuthProvider): IO[AdminFailure, Unit] = {
+    for {
+      _ <- requireUser(id)
+      // Delegated rather than reimplemented, so the last-credential rule is enforced by the one method that owns it.
+      // An administrator is not exempt: the account this would lock out is not theirs.
+      _ <- authService
+             .unlinkOAuth(id, provider)
+             .mapError {
+               case AuthFailure.LastCredential =>
+                 AdminFailure.LastCredential
+               case _                          =>
+                 // The only other failure `unlinkOAuth` raises is "not linked", which for a request naming a
+                 // provider is the same thing as naming a resource that does not exist.
+                 AdminFailure.NotFound
+             }
+      _ <- auditTrail.recordUser(
+             actor,
+             AuditAction.userOAuthUnlink,
+             id,
+             s"detached the ${OAuthProvider.wireName(provider)} identity of user id=$id",
+           )
+    } yield ()
+  }
+
+  def clearLockout(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
+    for {
+      row  <- requireUser(id)
+      keys <- lockoutKeysFor(row.email)
+      _    <- ZIO.foreachDiscard(keys)(rateLimiter.clear)
+      _    <- auditTrail.recordUser(
+                actor,
+                AuditAction.userLockoutCleared,
+                id,
+                s"cleared the sign-in lockout of user id=$id (${keys.size} key(s))",
+              )
+    } yield ()
+  }
+
+  def auditLog(
+    limit: Int,
+    before: Option[Long],
+    action: Option[String],
+    actorId: Option[Long],
+    targetId: Option[String],
+  ): UIO[List[AuditEntry]] = {
+    auditRepo.list(limit, before, action, actorId, targetId).orDie.map(_.map(toAuditEntry))
+  }
+
+  def loginAttempts(limit: Int, outcome: Option[String]): UIO[List[LoginAttemptEntry]] = {
+    attemptRepo.recent(limit, outcome).orDie.map(_.map(toAttemptEntry))
+  }
+
+  def rateLimits: UIO[List[RateLimitEntry]] = rateLimiter.snapshot
+
+  def clearRateLimits(actor: AdminActor, key: Option[String]): UIO[Unit] = {
+    key match {
+      case Some(one) =>
+        rateLimiter.clear(one) *>
+          auditTrail.recordSystem(actor, AuditAction.systemRateLimitsCleared, "cleared one rate-limit key")
+      case None      =>
+        rateLimiter.clearAll.flatMap { dropped =>
+          auditTrail.recordSystem(
+            actor,
+            AuditAction.systemRateLimitsCleared,
+            s"cleared every rate-limit key ($dropped held)",
+          )
+        }
+    }
   }
 }

@@ -3,7 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, FormField, GroupSubmenu}
+import webapp1.frontend.components.{Alert, AppShell, FormField, GroupSubmenu}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupPair}
 import webapp1.shared.dto.CreatePairRequest
@@ -72,7 +72,7 @@ private class GroupDetailPage(groupId: Long) {
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), "← Back to groups")),
       h1(cls  := "text-2xl font-bold mb-4", text <-- groupSignal.map(_.map(_.name).getOrElse("Group")).distinct),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupDetail(groupId), g.myRole))),
-      child.maybe <-- errorSignal.map(_.map(msg => renderAlert("alert-error", msg))),
+      Alert.maybeError(errorSignal),
       child.maybe <-- groupSignal.map(_.filter(_.myRole.canWrite).map(_ => renderAddPairForm())),
       renderPairsTable(),
       child.maybe <-- groupSignal.map(_.filter(_.myRole.isAdmin).map(_ => renderDeleteGroupButton())),
@@ -192,7 +192,4 @@ private class GroupDetailPage(groupId: Long) {
     )
   }
 
-  private def renderAlert(kind: String, message: String): HtmlElement = {
-    div(role := "alert", cls := s"alert $kind mb-4", span(message))
-  }
 }

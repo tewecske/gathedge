@@ -2,6 +2,9 @@ package webapp1.backend.http
 
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
+  MetricsRepository,
   EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
@@ -9,7 +12,16 @@ import webapp1.backend.db.{
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{AdminService, AuthService, RateLimiter, TodoService}
+import webapp1.backend.service.{
+  AdminActor,
+  AdminService,
+  AuditTrail,
+  AuthService,
+  BackgroundJobs,
+  RateLimiter,
+  SystemService,
+  TodoService,
+}
 import webapp1.shared.validation.Validation
 import zio.*
 import zio.http.*
@@ -23,20 +35,21 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
   */
 object RouteGuardsSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[
-    Any,
-    Throwable,
-    UserRepository & SessionRepository & TodoRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
-  ] = {
+  private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
-        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
     )
   }
 
-  private val layer: ZLayer[Any, Throwable, AuthService & AdminService & TodoService] = {
-    (repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-      (AuthService.live ++ AdminService.live ++ TodoService.live)
+  // AdminService is stacked on top of AuthService rather than built beside it: it delegates the resend and unlink
+  // paths to the one service that owns them.
+  private val layer = {
+    val base = {
+      repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
+        TestAuthLayers.emailAndConfig
+    }
+    base >+> (AuthService.live ++ AuditTrail.live ++ TodoService.live) >+> (AdminService.live ++ SystemService.live)
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
@@ -45,7 +58,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
 
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, String] = {
     for {
-      _       <- orDieWithFailure(AdminService.createUser(0L, email, "password123", isAdmin = true))
+      _       <- orDieWithFailure(AdminService.createUser(AdminActor.system, email, "password123", isAdmin = true))
       session <- orDieWithFailure(AuthService.login(email, "password123")).map(_._2)
     } yield session
   }
@@ -109,6 +122,49 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           session  <- adminSession("boss@example.com")
           response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/users"), session))
         } yield assertTrue(response.status == Status.Ok)
+      },
+      // `AdminRoutes` is the one route set carrying *two* context-providing aspects — `adminOnly` for the acting
+      // administrator and `requestContext` for the peer address, which the audit trail records. That composes at the
+      // type level whatever the order, so these drive a mutating route with a path parameter through the real stack:
+      // getting it wrong is a `ClassCastException` at request time, not a compile error.
+      test("a mutating admin route reaches its handler with both the administrator and the request context") {
+        for {
+          session  <- adminSession("ops@example.com")
+          created  <-
+            orDieWithFailure(
+              AdminService.createUser(AdminActor.system, "ops-target@example.com", "password123", isAdmin = false)
+            )
+          request   = withCsrf(withSession(Request.delete(s"/api/admin/users/${created.id}/sessions"), session))
+          response <- runRoutes(AdminRoutes.routes, request)
+        } yield assertTrue(response.status == Status.NoContent)
+      },
+      test("a mutating admin route still requires the CSRF header") {
+        for {
+          session  <- adminSession("ops-csrf@example.com")
+          request   = withSession(Request.delete("/api/admin/users/1/sessions"), session)
+          response <- runRoutes(AdminRoutes.routes, request)
+        } yield assertTrue(response.status == Status.Forbidden)
+      },
+      test("an unparseable provider segment on the unlink route is a not-found, not a 500") {
+        for {
+          session  <- adminSession("ops-unlink@example.com")
+          created  <-
+            orDieWithFailure(
+              AdminService.createUser(AdminActor.system, "unlink-me@example.com", "password123", isAdmin = false)
+            )
+          request   = withCsrf(
+                        withSession(Request.delete(s"/api/admin/users/${created.id}/identities/facebook"), session)
+                      )
+          response <- runRoutes(AdminRoutes.routes, request)
+        } yield assertTrue(response.status == Status.NotFound)
+      },
+      test("the system overview is admin-only too") {
+        for {
+          plain   <- signUp("not-ops@example.com")
+          denied  <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/system"), plain))
+          session <- adminSession("sysadmin@example.com")
+          allowed <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/system"), session))
+        } yield assertTrue(denied.status == Status.Forbidden, allowed.status == Status.Ok)
       },
       // Over-length input used to reach the database and surface as a 500 with a stack trace in the
       // body; it has to come back as an ordinary validation failure.

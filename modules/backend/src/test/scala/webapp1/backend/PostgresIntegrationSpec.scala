@@ -6,6 +6,8 @@ import org.testcontainers.utility.DockerImageName
 import webapp1.backend.TestAuthLayers
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
@@ -19,7 +21,16 @@ import webapp1.backend.db.{
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{AdminService, AuthService, EmailSender, GroupService, RateLimiter, TodoService}
+import webapp1.backend.service.{
+  AdminActor,
+  AdminService,
+  AuditTrail,
+  AuthService,
+  EmailSender,
+  GroupService,
+  RateLimiter,
+  TodoService,
+}
 import webapp1.shared.domain.{GroupRole, TodoStatus}
 import zio._
 import zio.test._
@@ -65,7 +76,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       UserRepository.live ++ SessionRepository.live ++ TodoRepository.live ++
         GroupRepository.live ++ GroupMemberRepository.live ++ GroupPairRepository.live ++
         GroupInvitationRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live
+        EmailVerificationTokenRepository.live ++ LoginAttemptRepository.live ++ AuditLogRepository.live
     )
   }
 
@@ -73,7 +84,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
     repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
-      (AuthService.live ++ TodoService.live ++ GroupService.live ++ AdminService.live)
+      (AuthService.live ++ AuditTrail.live ++ TodoService.live ++ GroupService.live) >+> AdminService.live
   }
 
   def spec = {
@@ -100,11 +111,12 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       },
       test("an admin profile-and-password edit commits as one unit and drops the user's sessions") {
         for {
-          admin           <- AdminService.createUser(0L, "pgadmin@example.com", "password123", isAdmin = true)
-          target          <- AdminService.createUser(admin.id, "pgtarget@example.com", "password123", isAdmin = false)
+          admin           <- AdminService.createUser(AdminActor.system, "pgadmin@example.com", "password123", isAdmin = true)
+          target          <-
+            AdminService.createUser(AdminActor(admin.id), "pgtarget@example.com", "password123", isAdmin = false)
           session         <- AuthService.login("pgtarget@example.com", "password123").map(_._2)
           updated         <- AdminService.updateUser(
-                               admin.id,
+                               AdminActor(admin.id),
                                target.id,
                                "pgrenamed@example.com",
                                isAdmin = true,
@@ -126,15 +138,51 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // into a bare 500 for any admin trying to remove a user who had ever added a pair or sent an invitation.
       test("deleting a user cascades to the group pairs they authored and the invitations they sent") {
         for {
-          admin          <- AdminService.createUser(0L, "pgdeladmin@example.com", "password123", isAdmin = true)
-          target         <- AdminService.createUser(admin.id, "pgdeltarget@example.com", "password123", isAdmin = false)
+          admin          <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
+          target         <-
+            AdminService.createUser(AdminActor(admin.id), "pgdeltarget@example.com", "password123", isAdmin = false)
           group          <- GroupService.createGroup(target.id, "Doomed Author Group")
           _              <- GroupService.addPair(target.id, target.email, group.id, "src", "tgt")
           _              <- GroupService.inviteMember(target.id, group.id, "pginvitee@example.com", GroupRole.ReadWrite)
-          _              <- AdminService.deleteUser(admin.id, target.id)
+          _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone           <- AdminService.getUser(target.id).either
           remainingPairs <- GroupPairRepository.listForGroup(group.id)
         } yield assertTrue(gone == Left(webapp1.backend.service.AdminFailure.NotFound), remainingPairs.isEmpty)
+      },
+      // The V7 tables are the first user references declared ON DELETE SET NULL rather than CASCADE, and the same
+      // blind spot applies: SQLite enforces neither, so the whole SQLite suite passes whichever this is. Getting it
+      // wrong in either direction is a real bug — CASCADE would erase the record of what was done to an account the
+      // moment it is deleted, and NO ACTION would make `deleteUser` answer 500 for every account that has ever
+      // signed in.
+      test("deleting a user keeps its audit entries and sign-in history, with the references nulled out") {
+        for {
+          admin          <- AdminService.createUser(AdminActor.system, "pgaudit@example.com", "password123", isAdmin = true)
+          target         <-
+            AdminService.createUser(AdminActor(admin.id), "pgaudited@example.com", "password123", isAdmin = false)
+          // Both directions of the reference: the target has attempts and is the subject of an audit entry, and it
+          // is also the *actor* on one of its own (it clears its own lockout), so deleting it exercises
+          // `audit_log.actor_user_id` as well as `login_attempts.user_id`.
+          _              <- AuthService.login("pgaudited@example.com", "password123")
+          _              <- AuthService.login("pgaudited@example.com", "wrong").either
+          _              <- AdminService.clearLockout(AdminActor(target.id), target.id)
+          attemptsBefore <- AdminService.loginAttempts(50, None).map(_.count(_.userId.contains(target.id)))
+          auditBefore    <- AdminService.auditLog(50, None, None, None, Some(target.id.toString))
+          _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          gone           <- AdminService.getUser(target.id).either
+          attemptsAfter  <- AdminService.loginAttempts(50, None).map(_.filter(_.email == "pgaudited@example.com"))
+          auditAfter     <- AdminService.auditLog(50, None, None, None, Some(target.id.toString))
+        } yield assertTrue(
+          gone == Left(webapp1.backend.service.AdminFailure.NotFound),
+          attemptsBefore == 2,
+          auditBefore.nonEmpty,
+          // The rows survive; only the foreign keys are cleared.
+          attemptsAfter.size == 2,
+          attemptsAfter.forall(_.userId.isEmpty),
+          auditAfter.size >= auditBefore.size,
+          auditAfter.exists(_.actorEmail.contains("pgaudit@example.com")),
+          // The entry the deleted account wrote itself keeps the address it had, and loses only the id.
+          auditAfter.exists(entry => entry.actorEmail.contains("pgaudited@example.com") && entry.actorUserId.isEmpty),
+        )
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
   }

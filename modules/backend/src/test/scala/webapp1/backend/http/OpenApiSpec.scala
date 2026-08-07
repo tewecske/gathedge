@@ -90,6 +90,18 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/invitations/{token}/accept",
               "/api/admin/users",
               "/api/admin/users/{id}",
+              "/api/admin/users/{id}/detail",
+              "/api/admin/users/{id}/verify-email",
+              "/api/admin/users/{id}/verification/resend",
+              "/api/admin/users/{id}/sessions",
+              "/api/admin/users/{id}/identities/{provider}",
+              "/api/admin/users/{id}/lockout",
+              "/api/admin/audit",
+              "/api/admin/login-attempts",
+              "/api/admin/rate-limits",
+              "/api/admin/rate-limits/clear",
+              "/api/admin/system",
+              "/api/admin/system/prune",
             )
         )
       },
@@ -133,49 +145,73 @@ object OpenApiSpec extends ZIOSpecDefault {
         assertTrue(
           statuses ==
             Map(
-              ("POST", "/api/auth/signup")                    -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
+              ("POST", "/api/auth/signup")                              -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
               // The 403 is `AuthFailure.EmailNotVerified` — the service's own answer, not an aspect's, which is why
               // this is the one path outside groups/invitations that documents one.
-              ("POST", "/api/auth/login")                     -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests),
-              ("POST", "/api/auth/logout")                    -> Set(NoContent),
+              ("POST", "/api/auth/login")                               -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests),
+              ("POST", "/api/auth/logout")                              -> Set(NoContent),
               // Public, no input, no aspect: the one operation in the API that documents no failure status at all.
-              ("GET", "/api/auth/providers")                  -> Set(Ok),
+              ("GET", "/api/auth/providers")                            -> Set(Ok),
               // One 400 for an unknown, spent or expired token alike; nothing else is reachable.
-              ("POST", "/api/auth/verify")                    -> Set(NoContent, BadRequest),
+              ("POST", "/api/auth/verify")                              -> Set(NoContent, BadRequest),
               // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
-              ("POST", "/api/auth/verification/resend")       -> Set(NoContent, BadRequest, TooManyRequests),
-              ("GET", "/api/me")                              -> Set(Ok, Unauthorized),
-              ("PUT", "/api/me/theme")                        -> Set(Ok, BadRequest, Unauthorized),
-              ("GET", "/api/me/identities")                   -> Set(Ok, Unauthorized),
+              ("POST", "/api/auth/verification/resend")                 -> Set(NoContent, BadRequest, TooManyRequests),
+              ("GET", "/api/me")                                        -> Set(Ok, Unauthorized),
+              ("PUT", "/api/me/theme")                                  -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/me/identities")                             -> Set(Ok, Unauthorized),
               // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
-              ("DELETE", "/api/me/identities/{provider}")     -> Set(NoContent, BadRequest, Unauthorized, Conflict),
-              ("PUT", "/api/me/password")                     -> Set(NoContent, BadRequest, Unauthorized),
-              ("GET", "/api/todos")                           -> Set(Ok, Unauthorized),
-              ("POST", "/api/todos")                          -> Set(Created, BadRequest, Unauthorized, NotFound),
-              ("PUT", "/api/todos/{id}/status")               -> Set(Ok, BadRequest, Unauthorized, NotFound),
-              ("GET", "/api/groups")                          -> Set(Ok, Unauthorized),
-              ("POST", "/api/groups")                         -> Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/groups/{id}")                     -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("DELETE", "/api/groups/{id}")                  -> Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/groups/{id}/pairs")               -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("POST", "/api/groups/{id}/pairs")              ->
+              ("DELETE", "/api/me/identities/{provider}")               -> Set(NoContent, BadRequest, Unauthorized, Conflict),
+              ("PUT", "/api/me/password")                               -> Set(NoContent, BadRequest, Unauthorized),
+              ("GET", "/api/todos")                                     -> Set(Ok, Unauthorized),
+              ("POST", "/api/todos")                                    -> Set(Created, BadRequest, Unauthorized, NotFound),
+              ("PUT", "/api/todos/{id}/status")                         -> Set(Ok, BadRequest, Unauthorized, NotFound),
+              ("GET", "/api/groups")                                    -> Set(Ok, Unauthorized),
+              ("POST", "/api/groups")                                   -> Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/groups/{id}")                               -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("DELETE", "/api/groups/{id}")                            -> Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/groups/{id}/pairs")                         -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("POST", "/api/groups/{id}/pairs")                        ->
                 Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/groups/{id}/members")             -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("DELETE", "/api/groups/{id}/members/{userId}") ->
+              ("GET", "/api/groups/{id}/members")                       -> Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("DELETE", "/api/groups/{id}/members/{userId}")           ->
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("PUT", "/api/groups/{id}/members/{userId}")    ->
+              ("PUT", "/api/groups/{id}/members/{userId}")              ->
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("POST", "/api/groups/{id}/invitations")        ->
+              ("POST", "/api/groups/{id}/invitations")                  ->
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/invitations/{token}")             -> Set(Ok, BadRequest, Forbidden, NotFound, Conflict),
-              ("POST", "/api/invitations/{token}/accept")     ->
+              ("GET", "/api/invitations/{token}")                       -> Set(Ok, BadRequest, Forbidden, NotFound, Conflict),
+              ("POST", "/api/invitations/{token}/accept")               ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/admin/users")                     -> Set(Ok, Unauthorized),
-              ("POST", "/api/admin/users")                    -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
-              ("GET", "/api/admin/users/{id}")                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("PUT", "/api/admin/users/{id}")                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/admin/users/{id}")             -> Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users")                               -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/users")                              -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("PUT", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}")                       -> Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              // The six account-diagnostic operations all go through `ApiFailures.admin`, so they carry its whole
+              // union — the same residual slack the group endpoints have, and narrowing it means narrowing
+              // `AdminService`'s signatures rather than these descriptions. The 409 is real on the unlink (last
+              // credential) and only theoretical on the rest.
+              ("GET", "/api/admin/users/{id}/detail")                   -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("POST", "/api/admin/users/{id}/verify-email")            ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("POST", "/api/admin/users/{id}/verification/resend")     ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}/sessions")              ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}/identities/{provider}") ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}/lockout")               ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              // The four read-only operations declare only what they can actually answer: a 400 where a query
+              // parameter can fail to decode (`ApiEndpoint.codecError`), and the aspect's 401. `rateLimits`,
+              // `systemOverview` and `systemPrune` take no input at all, so they have no 400 to declare.
+              ("GET", "/api/admin/audit")                               -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/admin/login-attempts")                      -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/admin/rate-limits")                         -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/rate-limits/clear")                  -> Set(NoContent, BadRequest, Unauthorized),
+              ("GET", "/api/admin/system")                              -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/system/prune")                       -> Set(Ok, Unauthorized),
             )
         )
       },
@@ -183,6 +219,9 @@ object OpenApiSpec extends ZIOSpecDefault {
       // endpoint's own failures took that to 126 across the 25 operations there were then, and dropping the three a
       // well-behaved caller cannot provoke took it to 90. The four account-settings operations add six more: the
       // providers list declares none, `GET /api/me/identities` one, `PUT /api/me/password` two, and the unlink three.
+      // Email verification took it to 100, and the twelve administrator diagnostics operations add 33: four apiece for
+      // the six that go through `ApiFailures.admin`, two apiece for the three that only have a query or body codec to
+      // fail, and one apiece for the three that take no input at all.
       // Nothing enforces the arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a
       // number going back up. The three assertions under it are the rule itself, stated where it can be checked.
       test("no operation documents a status only some other endpoint can answer with") {
@@ -196,7 +235,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 100,
+          declared == 133,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `GroupService` on the two resources it
           // backs, plus `AuthService`'s unverified-email refusal on login.

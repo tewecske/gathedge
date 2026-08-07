@@ -21,8 +21,12 @@ object Page {
   case object Settings                       extends Page
   case object Admin                          extends Page
   final case class AdminUserDetail(id: Long) extends Page
-  case object Forbidden                      extends Page
-  case object NotFound                       extends Page
+
+  /** The two administrator screens that are not about one account: the audit trail, and the deployment itself. */
+  case object AdminAudit  extends Page
+  case object AdminSystem extends Page
+  case object Forbidden   extends Page
+  case object NotFound    extends Page
 
   enum AuthGuard {
 
@@ -83,6 +87,8 @@ object AppRouter {
     decode = (id: Long) => AdminUserDetail(id),
     pattern = root / "admin" / "users" / segment[Long],
   )
+  private val adminAuditRoute      = Route.static(AdminAudit, root / "admin" / "audit")
+  private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system")
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden")
 
   // All pages are derivable from the URL alone, so serialization (used only for
@@ -113,6 +119,10 @@ object AppRouter {
         "Admin"
       case AdminUserDetail(id) =>
         s"AdminUserDetail:$id"
+      case AdminAudit          =>
+        "AdminAudit"
+      case AdminSystem         =>
+        "AdminSystem"
       case Forbidden           =>
         "Forbidden"
       case NotFound            =>
@@ -139,23 +149,27 @@ object AppRouter {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else {
       tag match {
-        case "SignIn"     =>
+        case "SignIn"      =>
           SignIn
-        case "SignUp"     =>
+        case "SignUp"      =>
           SignUp
-        case "Home"       =>
+        case "Home"        =>
           Home
-        case "Groups"     =>
+        case "Groups"      =>
           Groups
-        case "Settings"   =>
+        case "Settings"    =>
           Settings
-        case "CheckInbox" =>
+        case "CheckInbox"  =>
           CheckInbox
-        case "Admin"      =>
+        case "Admin"       =>
           Admin
-        case "Forbidden"  =>
+        case "AdminAudit"  =>
+          AdminAudit
+        case "AdminSystem" =>
+          AdminSystem
+        case "Forbidden"   =>
           Forbidden
-        case _            =>
+        case _             =>
           NotFound
       }
     }
@@ -176,6 +190,8 @@ object AppRouter {
         checkInboxRoute,
         adminRoute,
         adminUserDetailRoute,
+        adminAuditRoute,
+        adminSystemRoute,
         forbiddenRoute,
       ),
       serializePage = serialize,

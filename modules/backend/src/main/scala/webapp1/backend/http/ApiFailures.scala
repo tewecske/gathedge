@@ -154,6 +154,8 @@ object ApiFailures {
         ApiFailure.BadRequest("You cannot remove your own administrator privileges")
       case AdminFailure.SelfDelete                   =>
         ApiFailure.BadRequest("You cannot delete your own account")
+      case AdminFailure.LastCredential               =>
+        ApiFailure.Conflict("That is the account's only way to sign in; give it a password first")
     }
   }
 }

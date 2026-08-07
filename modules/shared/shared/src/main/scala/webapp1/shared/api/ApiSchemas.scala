@@ -13,20 +13,36 @@ import webapp1.shared.domain.{
   User,
 }
 import webapp1.shared.dto.{
+  AdminIdentityInfo,
+  AdminSessionInfo,
+  AdminUserDetail,
+  AdminVerificationTokenInfo,
+  AuditEntry,
   AuthResponse,
+  ClearRateLimitRequest,
+  ConfigSummary,
   CreateGroupRequest,
   CreatePairRequest,
   CreateTodoRequest,
   CreateUserRequest,
+  DbStats,
   IdentitiesResponse,
   InviteMemberRequest,
+  JobStatus,
   LinkedIdentity,
+  LockoutStatus,
+  LoginAttemptEntry,
   LoginRequest,
+  MigrationInfo,
   ProvidersResponse,
+  PruneResult,
+  RateLimitEntry,
   ResendVerificationRequest,
+  RuntimeInfo,
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  SystemOverview,
   UpdateRoleRequest,
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
@@ -83,4 +99,22 @@ object ApiSchemas {
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]
+
+  given Schema[AdminSessionInfo]           = DeriveSchema.gen[AdminSessionInfo]
+  given Schema[AdminIdentityInfo]          = DeriveSchema.gen[AdminIdentityInfo]
+  given Schema[AdminVerificationTokenInfo] = DeriveSchema.gen[AdminVerificationTokenInfo]
+  given Schema[LockoutStatus]              = DeriveSchema.gen[LockoutStatus]
+  given Schema[LoginAttemptEntry]          = DeriveSchema.gen[LoginAttemptEntry]
+  given Schema[AdminUserDetail]            = DeriveSchema.gen[AdminUserDetail]
+  given Schema[AuditEntry]                 = DeriveSchema.gen[AuditEntry]
+  given Schema[RateLimitEntry]             = DeriveSchema.gen[RateLimitEntry]
+  given Schema[ClearRateLimitRequest]      = DeriveSchema.gen[ClearRateLimitRequest]
+
+  given Schema[ConfigSummary]  = DeriveSchema.gen[ConfigSummary]
+  given Schema[MigrationInfo]  = DeriveSchema.gen[MigrationInfo]
+  given Schema[JobStatus]      = DeriveSchema.gen[JobStatus]
+  given Schema[RuntimeInfo]    = DeriveSchema.gen[RuntimeInfo]
+  given Schema[DbStats]        = DeriveSchema.gen[DbStats]
+  given Schema[SystemOverview] = DeriveSchema.gen[SystemOverview]
+  given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
 }

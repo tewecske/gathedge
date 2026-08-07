@@ -3,6 +3,9 @@ package webapp1.backend.http
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
+  MetricsRepository,
   EmailVerificationTokenRepository,
   GroupInvitationRepository,
   GroupMemberRepository,
@@ -15,17 +18,23 @@ import webapp1.backend.db.{
 }
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
 import webapp1.backend.service.{
+  AdminActor,
   AdminService,
+  AuditTrail,
   AuthService,
+  BackgroundJobs,
   EmailSender,
   GroupService,
   OAuthClients,
   RateLimiter,
+  SystemService,
   TodoService,
 }
 import webapp1.shared.api.ApiFailure
 import webapp1.shared.domain.{Group, GroupMember, Theme, TodoItem, User}
 import webapp1.shared.dto.{
+  AdminUserDetail,
+  AuditEntry,
   AuthResponse,
   CreateTodoRequest,
   CreateUserRequest,
@@ -34,6 +43,7 @@ import webapp1.shared.dto.{
   ResendVerificationRequest,
   SignupRequest,
   SignupResponse,
+  SystemOverview,
   UpdateUserRequest,
   VerifyEmailRequest,
 }
@@ -43,7 +53,7 @@ import zio.json.*
 import zio.schema.codec.JsonCodec
 import zio.test.*
 
-import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
+import RouteRunner.{getWithQuery, orDieWithFailure, runRoutes, withCsrf, withSession}
 
 /** Every route file is implemented against the declarative `Endpoint` API, whose codecs come from zio-schema, while the
   * frontend's DTOs also derive zio-json codecs and the aspects in `RouteSupport` still write their error bodies with
@@ -60,15 +70,18 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
         GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
         GroupInvitationRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
     )
   }
 
   private val layer = {
     AppConfig.live ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live) ++ (
-        (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
-          (AuthService.live ++ AdminService.live)
+        // AdminService and SystemService both sit on top of AuthService/AuditTrail now, so the stack is built in
+        // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
+        repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
+          TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
+          (AdminService.live ++ SystemService.live)
       ) ++
       (repos >>> TodoService.live) ++
       ((repos ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
@@ -83,7 +96,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     */
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, (User, String)] = {
     for {
-      admin   <- orDieWithFailure(AdminService.createUser(0L, email, "password123", isAdmin = true))
+      admin   <- orDieWithFailure(AdminService.createUser(AdminActor.system, email, "password123", isAdmin = true))
       session <- orDieWithFailure(AuthService.login(email, "password123")).map(_._2)
     } yield (admin, session)
   }
@@ -341,7 +354,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("updating a user goes through, and leaving the password blank keeps the old one") {
           for {
             admin       <- adminSession("updater@example.com")
-            target      <- orDieWithFailure(AdminService.createUser(admin._1.id, "target@example.com", "password123", false))
+            target      <- orDieWithFailure(
+                             AdminService.createUser(AdminActor(admin._1.id), "target@example.com", "password123", false)
+                           )
             request      = {
               Request.put(
                 s"/api/admin/users/${target.id}",
@@ -361,7 +376,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("deleting a user is a 204 with an empty body") {
           for {
             admin     <- adminSession("deleter@example.com")
-            target    <- orDieWithFailure(AdminService.createUser(admin._1.id, "doomed@example.com", "password123", false))
+            target    <- orDieWithFailure(
+                           AdminService.createUser(AdminActor(admin._1.id), "doomed@example.com", "password123", false)
+                         )
             response  <- runRoutes(
                            AdminRoutes.routes,
                            withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
@@ -385,6 +402,91 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message) == Right("You cannot delete your own account"),
+          )
+        },
+        // The two codec stacks agree on this one too — it is by far the largest response body in the API, and the
+        // frontend decodes it with zio-json while the endpoint encodes it with zio-schema.
+        test("the account detail decodes as the DTO the frontend reads, and carries no credential") {
+          for {
+            admin    <- adminSession("detail@example.com")
+            target   <- orDieWithFailure(
+                          AdminService.createUser(AdminActor(admin._1.id), "detailed@example.com", "password123", false)
+                        )
+            _        <- orDieWithFailure(AuthService.login("detailed@example.com", "password123"))
+            response <- runRoutes(
+                          AdminRoutes.routes,
+                          withSession(Request.get(s"/api/admin/users/${target.id}/detail"), admin._2),
+                        )
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[AdminUserDetail].map(_.user.email) == Right("detailed@example.com"),
+            raw.fromJson[AdminUserDetail].map(_.hasPassword) == Right(true),
+            raw.fromJson[AdminUserDetail].map(_.activeSessions) == Right(1),
+            raw.fromJson[AdminUserDetail].map(_.lockout.maxAttempts) == Right(5),
+            !raw.contains("$2a$"),
+          )
+        },
+        // Five of the six diagnostics answer a bare 204. See `AdminEndpoints.deleteUser` for why that is a status
+        // codec rather than `.out[Unit]`, and why an empty body with no `Content-Length` is the thing to assert.
+        test("marking an address confirmed is a 204 with an empty body") {
+          for {
+            admin    <- adminSession("confirmer@example.com")
+            signedUp <- orDieWithFailure(AuthService.signup("to-confirm@example.com", "password123"))
+            request   = Request.post(s"/api/admin/users/${signedUp._1.id}/verify-email", Body.empty)
+            response <- runRoutes(AdminRoutes.routes, withCsrf(withSession(request, admin._2)))
+            raw      <- body(response)
+            after    <- orDieWithFailure(AdminService.getUser(signedUp._1.id))
+          } yield assertTrue(response.status == Status.NoContent, raw.isEmpty, after.emailVerified)
+        },
+        test("the audit log answers the entries the administrator's own actions wrote") {
+          for {
+            admin    <- adminSession("auditor-wire@example.com")
+            _        <- orDieWithFailure(
+                          AdminService.createUser(AdminActor(admin._1.id), "audited-wire@example.com", "pw12345678", false)
+                        )
+            response <- runRoutes(
+                          AdminRoutes.routes,
+                          withSession(getWithQuery("/api/admin/audit?limit=10&action=user.create"), admin._2),
+                        )
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[List[AuditEntry]].map(_.forall(_.action == "user.create")) == Right(true),
+            raw.fromJson[List[AuditEntry]].map(_.exists(_.actorEmail.contains("auditor-wire@example.com"))) ==
+              Right(true),
+          )
+        },
+        // A query parameter that does not decode is `ApiEndpoint.codecError`'s 400, which never reaches a handler —
+        // it has to come back as `ErrorResponse` like everything else, not as the library's own private shape.
+        test("an unparseable query parameter is the API's own 400") {
+          for {
+            admin    <- adminSession("bad-query@example.com")
+            response <- runRoutes(
+                          AdminRoutes.routes,
+                          withSession(getWithQuery("/api/admin/audit?limit=not-a-number"), admin._2),
+                        )
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            raw.fromJson[ErrorResponse].map(_.message) == Right("Malformed request"),
+          )
+        },
+        test("the system overview decodes, and reports no configured secret") {
+          for {
+            admin    <- adminSession("sys-wire@example.com")
+            response <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/system"), admin._2))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[SystemOverview].map(_.runtime.apiVersion).isRight,
+            raw.fromJson[SystemOverview].map(_.stats.users > 0) == Right(true),
+            // Not a blanket search for "password": `usersWithoutPassword` is a legitimate statistic. What must not
+            // appear is a *value* — the bootstrap credential and the development database password — or a field
+            // holding one. `SystemServiceSpec` checks the configuration half against the field names as well.
+            !raw.contains("changeme123"),
+            !raw.toLowerCase.contains("\"password\""),
+            !raw.toLowerCase.contains("secret"),
           )
         },
       ),

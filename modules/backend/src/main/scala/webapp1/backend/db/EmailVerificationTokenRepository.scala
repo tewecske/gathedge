@@ -15,9 +15,21 @@ trait EmailVerificationTokenRepository {
   def findByToken(token: String): Task[Option[EmailVerificationTokenRow]]
   def markConsumed(token: String, consumedAt: Long): Task[Unit]
 
+  /** Every token row an account holds, most recent first.
+    *
+    * For the administrator's account view, which reports whether a link is outstanding and when it expires. The rows
+    * carry the token itself, so a caller that puts this on the wire has to project it away; `AdminService.userDetail`
+    * does.
+    */
+  def findForUser(userId: Long): Task[List[EmailVerificationTokenRow]]
+
   /** Invalidates whatever is outstanding for an account, so a resend leaves exactly one live token. */
   def deleteForUser(userId: Long): Task[Long]
   def deleteExpired(before: Long): Task[Long]
+
+  /** Rows past `now` that the reaper has not swept yet. For the system overview's statistics. */
+  def countExpired(now: Long): Task[Long]
+  def countAll: Task[Long]
 }
 
 object EmailVerificationTokenRepository {
@@ -30,11 +42,20 @@ object EmailVerificationTokenRepository {
   def markConsumed(token: String, consumedAt: Long): RIO[EmailVerificationTokenRepository, Unit] =
     ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.markConsumed(token, consumedAt))
 
+  def findForUser(userId: Long): RIO[EmailVerificationTokenRepository, List[EmailVerificationTokenRow]] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.findForUser(userId))
+
   def deleteForUser(userId: Long): RIO[EmailVerificationTokenRepository, Long] =
     ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.deleteForUser(userId))
 
   def deleteExpired(before: Long): RIO[EmailVerificationTokenRepository, Long] =
     ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.deleteExpired(before))
+
+  def countExpired(now: Long): RIO[EmailVerificationTokenRepository, Long] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.countExpired(now))
+
+  def countAll: RIO[EmailVerificationTokenRepository, Long] =
+    ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.countAll)
 
   val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
     new EmailVerificationTokenRepositoryLive(
@@ -77,6 +98,11 @@ final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: 
     logged(run(ctx.run(q)).unit)(_ => "emailVerificationTokens.markConsumed")
   }
 
+  def findForUser(userId: Long): Task[List[EmailVerificationTokenRow]] = {
+    val q = quote(tokens.filter(_.userId == lift(userId)).sortBy(_.createdAt)(using Ord.desc))
+    logged(run(ctx.run(q)))(rows => s"emailVerificationTokens.findForUser userId=$userId rows=${rows.size}")
+  }
+
   def deleteForUser(userId: Long): Task[Long] = {
     logged(run(ctx.run(quote(tokens.filter(_.userId == lift(userId)).delete)))) { rows =>
       s"emailVerificationTokens.deleteForUser userId=$userId rows=$rows"
@@ -87,5 +113,15 @@ final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: 
     logged(run(ctx.run(quote(tokens.filter(_.expiresAt < lift(before)).delete)))) { rows =>
       s"emailVerificationTokens.deleteExpired rows=$rows"
     }
+  }
+
+  def countExpired(now: Long): Task[Long] = {
+    logged(run(ctx.run(quote(tokens.filter(_.expiresAt < lift(now)).size)))) { count =>
+      s"emailVerificationTokens.countExpired count=$count"
+    }
+  }
+
+  def countAll: Task[Long] = {
+    logged(run(ctx.run(quote(tokens.size))))(count => s"emailVerificationTokens.countAll count=$count")
   }
 }

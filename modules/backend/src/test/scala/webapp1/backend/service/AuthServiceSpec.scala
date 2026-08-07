@@ -1,7 +1,14 @@
 package webapp1.backend.service
 
 import webapp1.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestDataSource}
-import webapp1.backend.db.{EmailVerificationTokenRepository, OAuthIdentityRepository, SessionRepository, UserRepository}
+import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
+  EmailVerificationTokenRepository,
+  OAuthIdentityRepository,
+  SessionRepository,
+  UserRepository,
+}
 import webapp1.backend.security.PasswordHasher
 import webapp1.shared.domain.OAuthProvider
 import zio._
@@ -13,14 +20,10 @@ import zio.test._
   */
 object AuthServiceSpec extends ZIOSpecDefault {
 
-  private val repoLayers: ZLayer[
-    Any,
-    Throwable,
-    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository,
-  ] = {
+  private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
     )
   }
 

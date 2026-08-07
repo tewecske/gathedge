@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, GroupSubmenu}
+import webapp1.frontend.components.{Alert, AppShell, GroupSubmenu}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupMember, GroupRole}
 import webapp1.shared.dto.{InviteMemberRequest, UpdateRoleRequest}
@@ -54,8 +54,8 @@ private class GroupMembersPage(groupId: Long) {
         text <-- groupSignal.map(_.map(g => s"${g.name} — Members").getOrElse("Members")).distinct,
       ),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupMembers(groupId), g.myRole))),
-      child.maybe <-- errorSignal.map(_.map(msg => renderAlert("alert-error", msg))),
-      child.maybe <-- infoSignal.map(_.map(msg => renderAlert("alert-info", msg))),
+      Alert.maybeError(errorSignal),
+      Alert.maybeInfo(infoSignal),
       child.maybe <--
         groupSignal.map {
           case Some(g) if g.myRole.isAdmin =>
@@ -234,7 +234,4 @@ private class GroupMembersPage(groupId: Long) {
     ApiClient.updateMemberRole(groupId, userId, UpdateRoleRequest(role)).map(result => (userIdAndRole, result))
   }
 
-  private def renderAlert(kind: String, message: String): HtmlElement = {
-    div(role := "alert", cls := s"alert $kind mb-4", span(message))
-  }
 }

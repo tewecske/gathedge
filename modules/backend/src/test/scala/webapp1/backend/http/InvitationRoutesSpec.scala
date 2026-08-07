@@ -3,6 +3,8 @@ package webapp1.backend.http
 import webapp1.backend.{TestAuthLayers, TestDataSource}
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  AuditLogRepository,
+  LoginAttemptRepository,
   EmailVerificationTokenRepository,
   GroupInvitationRepository,
   GroupInvitationRow,
@@ -35,7 +37,7 @@ object InvitationRoutesSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
         GroupInvitationRepository.test ++ UserRepository.test ++ SessionRepository.test ++
-        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
     )
   }
 

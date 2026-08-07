@@ -19,10 +19,21 @@ trait SessionRepository {
     */
   def revokeAllForUser(userId: Long, revokedAt: Long): Task[Unit]
 
+  /** Every session row a user holds, live or not, most recent first.
+    *
+    * For the administrator's account view. The rows carry the session id — which *is* the bearer credential — so a
+    * caller that puts this on the wire has to project it away; `AdminService.userDetail` does.
+    */
+  def listForUser(userId: Long): Task[List[SessionRow]]
+
   /** Drops rows that can never authenticate again (expired, or revoked before `before`). Without this the table only
     * ever grows. Returns the number of rows deleted.
     */
   def deleteExpired(before: Long): Task[Long]
+
+  /** Rows that could still authenticate at `now`. For the system overview's statistics. */
+  def countActive(now: Long): Task[Long]
+  def countAll: Task[Long]
 }
 
 object SessionRepository {
@@ -38,8 +49,17 @@ object SessionRepository {
   def revokeAllForUser(userId: Long, revokedAt: Long): RIO[SessionRepository, Unit] =
     ZIO.serviceWithZIO[SessionRepository](_.revokeAllForUser(userId, revokedAt))
 
+  def listForUser(userId: Long): RIO[SessionRepository, List[SessionRow]] =
+    ZIO.serviceWithZIO[SessionRepository](_.listForUser(userId))
+
   def deleteExpired(before: Long): RIO[SessionRepository, Long] =
     ZIO.serviceWithZIO[SessionRepository](_.deleteExpired(before))
+
+  def countActive(now: Long): RIO[SessionRepository, Long] =
+    ZIO.serviceWithZIO[SessionRepository](_.countActive(now))
+
+  def countAll: RIO[SessionRepository, Long] =
+    ZIO.serviceWithZIO[SessionRepository](_.countAll)
 
   val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new SessionRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): SessionRepository
@@ -88,10 +108,24 @@ final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
     logged(run(ctx.run(q)).unit)(_ => s"sessions.revokeAllForUser userId=$userId")
   }
 
+  def listForUser(userId: Long): Task[List[SessionRow]] = {
+    val q = quote(sessions.filter(_.userId == lift(userId)).sortBy(_.createdAt)(using Ord.desc))
+    logged(run(ctx.run(q)))(rows => s"sessions.listForUser userId=$userId rows=${rows.size}")
+  }
+
   def deleteExpired(before: Long): Task[Long] = {
     val q = quote {
       sessions.filter(s => s.expiresAt < lift(before) || s.revokedAt.exists(_ < lift(before))).delete
     }
     logged(run(ctx.run(q)))(rows => s"sessions.deleteExpired rows=$rows")
+  }
+
+  def countActive(now: Long): Task[Long] = {
+    val q = quote(sessions.filter(s => s.expiresAt > lift(now) && s.revokedAt.isEmpty).size)
+    logged(run(ctx.run(q)))(count => s"sessions.countActive count=$count")
+  }
+
+  def countAll: Task[Long] = {
+    logged(run(ctx.run(quote(sessions.size))))(count => s"sessions.countAll count=$count")
   }
 }

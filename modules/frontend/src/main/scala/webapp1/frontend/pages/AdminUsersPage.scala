@@ -2,10 +2,10 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, FormField}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
-import webapp1.shared.dto.CreateUserRequest
+import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry}
 import webapp1.shared.validation.Validation
 
 object AdminUsersPage {
@@ -45,6 +45,16 @@ private class AdminUsersPage {
   private val usersVar    = Var(List.empty[User])
   private val usersSignal = usersVar.signal
 
+  /** Which addresses the rate limiter is currently holding failures against, so the list can flag a locked-out account
+    * without the list endpoint having to know about the limiter.
+    *
+    * Loaded alongside the users and joined here rather than server-side: the lock lives in a process-local `Ref`, it
+    * changes on a timescale of minutes, and keeping it out of `GET /api/admin/users` leaves that endpoint — and its
+    * entry in the OpenAPI document — exactly as it was.
+    */
+  private val lockedVar    = Var(Set.empty[String])
+  private val lockedSignal = lockedVar.signal
+
   private val formVar    = Var(CreateUserForm())
   private val formSignal = formVar.signal
 
@@ -71,7 +81,8 @@ private class AdminUsersPage {
   def render(): HtmlElement = {
     div(
       h1(cls := "text-2xl font-bold mb-4", "User management"),
-      child.maybe <-- errorSignal.map(_.map(renderError)),
+      AdminSubmenu.render(Page.Admin),
+      Alert.maybeError(errorSignal),
       renderCreateForm(),
       renderTable(),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.listUsers) -->
@@ -99,6 +110,15 @@ private class AdminUsersPage {
             Var.set(inFlightVar -> false, formVar -> CreateUserForm(), errorVar -> None)
           case Left(err)   =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+        },
+      // A failed lock lookup leaves the badges off rather than failing the page: the user list is the point, and the
+      // lock state is an annotation on it.
+      loadBus.events.flatMapSwitch(_ => AdminApiClient.rateLimits) -->
+        Observer[Either[ApiError, List[RateLimitEntry]]] {
+          case Right(entries) =>
+            lockedVar.set(lockedAddresses(entries))
+          case Left(_)        =>
+            lockedVar.set(Set.empty)
         },
       onMountCallback(_ => loadBus.emit(())),
     )
@@ -153,7 +173,7 @@ private class AdminUsersPage {
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
         cls := "table",
-        thead(tr(th("Email"), th("Admin"), th("Created"))),
+        thead(tr(th("Email"), th("Admin"), th("Email confirmed"), th("Sign-in"), th("Created"))),
         tbody(
           children <--
             usersSignal.splitSeq(_.id) { userSignal =>
@@ -187,11 +207,45 @@ private class AdminUsersPage {
                 span(cls := "badge badge-ghost", "User")
             }
       ),
-      td(text <-- userSignal.map(_.createdAt).distinct),
+      td(
+        child <--
+          userSignal
+            .map(_.emailVerified)
+            .distinct
+            .map { verified =>
+              if (verified)
+                span(cls := "badge badge-success badge-soft", "Confirmed")
+              else
+                span(cls := "badge badge-warning", "Unconfirmed")
+            }
+      ),
+      td(
+        child <--
+          userSignal
+            .map(_.email)
+            .distinct
+            .combineWith(lockedSignal)
+            .map { (email, locked) =>
+              if (locked.contains(email.trim.toLowerCase))
+                span(cls := "badge badge-error", "Locked out")
+              else
+                span(cls := "badge badge-ghost", "OK")
+            }
+      ),
+      td(text <-- userSignal.map(user => Formats.dateTimeFromString(user.createdAt)).distinct),
     )
   }
 
-  private def renderError(message: String): HtmlElement = {
-    div(role := "alert", cls := "alert alert-error", span(message))
+  /** The addresses out of the blocked keys, matching `RateLimitKey`'s `email:`/`verify:` namespaces. An `ip:` key is
+    * skipped: it blocks an origin, not an account, so there is no row it belongs on.
+    */
+  private def lockedAddresses(entries: List[RateLimitEntry]): Set[String] = {
+    entries
+      .filter(_.blocked)
+      .map(_.key)
+      .flatMap { key =>
+        List("email:", "verify:").find(key.startsWith).map(prefix => key.stripPrefix(prefix))
+      }
+      .toSet
   }
 }

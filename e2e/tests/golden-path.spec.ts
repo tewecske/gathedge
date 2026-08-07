@@ -177,9 +177,48 @@ test.describe('administrator flows', () => {
     await expect(page.getByText(newAdminUserEmail)).toBeVisible();
   });
 
-  test('editing and deleting a user, with confirmation before delete', async () => {
+  test('the user list reports whether each address is confirmed and whether sign-in is locked', async () => {
+    const row = page.locator('tr', { hasText: email });
+    await expect(row.getByText(/Confirmed|Unconfirmed/)).toBeVisible();
+    await expect(row.getByText('OK')).toBeVisible();
+  });
+
+  test('the account page shows the diagnostics an administrator answers a support ticket with', async () => {
     const row = page.locator('tr', { hasText: email });
     // The email cell is a real link (keyboard-reachable), not a click handler on the row.
+    await row.getByRole('link', { name: email }).click();
+    await expect(page.getByRole('heading', { name: 'Email confirmation' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign-in security' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sessions' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Linked social accounts' })).toBeVisible();
+    // This account has signed in during this run, so its history is not empty.
+    await expect(page.getByText('Signed in').first()).toBeVisible();
+  });
+
+  test('the system overview reports the deployment without exposing any secret', async () => {
+    await page.getByRole('link', { name: 'System' }).click();
+    await expect(page).toHaveURL(/\/admin\/system$/);
+    await expect(page.getByRole('heading', { name: 'System overview' })).toBeVisible();
+    await expect(page.getByText('Configuration')).toBeVisible();
+    await expect(page.getByText('Statistics')).toBeVisible();
+    await expect(page.getByText('Accounts', { exact: true })).toBeVisible();
+    // The dev stack runs without SMTP, which is why a confirmation link is logged rather than delivered.
+    await expect(page.getByText('logged, not sent')).toBeVisible();
+    await expect(page.getByText(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123')).not.toBeVisible();
+  });
+
+  test('the audit log lists the actions taken so far in this run', async () => {
+    await page.getByRole('link', { name: 'Audit log' }).click();
+    await expect(page).toHaveURL(/\/admin\/audit$/);
+    await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
+    // Written by the "creating a user from the admin panel" test above; the file is serial, so it has run.
+    await expect(page.getByText('user.create').first()).toBeVisible();
+    await expect(page.getByText(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com').first()).toBeVisible();
+  });
+
+  test('editing and deleting a user, with confirmation before delete', async () => {
+    await page.getByRole('link', { name: 'Users' }).click();
+    const row = page.locator('tr', { hasText: email });
     await row.getByRole('link', { name: email }).click();
     await expect(page.getByRole('button', { name: 'Delete user' })).toBeVisible();
 
@@ -187,5 +226,10 @@ test.describe('administrator flows', () => {
     await page.getByRole('button', { name: 'Delete user' }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
     await expect(page.getByText(email)).not.toBeVisible();
+  });
+
+  test('the deletion is itself in the audit log', async () => {
+    await page.getByRole('link', { name: 'Audit log' }).click();
+    await expect(page.getByText('user.delete').first()).toBeVisible();
   });
 });

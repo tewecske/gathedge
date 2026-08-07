@@ -55,6 +55,12 @@ trait GroupService {
 }
 
 object GroupService {
+
+  /** How long an invitation link stays usable. On the companion rather than inside the implementation because the
+    * system overview reports it: a limit a screen states has to be read from the one place that enforces it.
+    */
+  val invitationValidity: Duration = 7.days
+
   def createGroup(userId: Long, name: String): ZIO[GroupService, GroupFailure, Group] =
     ZIO.serviceWithZIO[GroupService](_.createGroup(userId, name))
 
@@ -117,8 +123,8 @@ final case class GroupServiceLive(
   config: AppConfig,
 ) extends GroupService {
 
-  private val secureRandom                 = new SecureRandom()
-  private val invitationValidity: Duration = 7.days
+  private val secureRandom       = new SecureRandom()
+  private val invitationValidity = GroupService.invitationValidity
 
   private def toDomain(row: GroupRow, role: String): Group = {
     Group(row.id, row.name, GroupRole.fromString(role).getOrElse(GroupRole.ReadOnly), row.createdAt.toString)

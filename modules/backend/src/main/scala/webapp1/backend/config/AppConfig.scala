@@ -121,6 +121,11 @@ object AppConfig {
   /** Must match the `db.password` default in application.conf. */
   val developmentDbPassword = "webapp1"
 
+  /** The version stamped on the generated OpenAPI document and reported by the system overview. One constant rather
+    * than a literal in each place, so the document and the screen cannot disagree about which build is running.
+    */
+  val apiVersion = "0.1.0"
+
   /** application.conf keys are kebab-case; case class fields stay idiomatic camelCase and the provider maps between the
     * two. `${?ENV_VAR}` substitution is Typesafe Config's own, so environment overrides keep working.
     */

@@ -1,6 +1,7 @@
 package webapp1.backend.http
 
 import webapp1.backend.security.SessionAuth
+import webapp1.backend.config.AppConfig
 import webapp1.shared.api.{AdminEndpoints, AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
 import zio.http.*
 import zio.http.codec.Doc
@@ -71,7 +72,8 @@ object DocsRoutes {
     * path the same way (`/api/groups/{id}`) because the same generator produced both.
     */
   private def requireSession(document: OpenAPI): OpenAPI = {
-    val publicDocument = OpenAPIGen.fromEndpoints(title = "public", version = "0.1.0", endpoints = publicEndpoints)
+    val publicDocument =
+      OpenAPIGen.fromEndpoints(title = "public", version = AppConfig.apiVersion, endpoints = publicEndpoints)
 
     def mark(operation: Option[OpenAPI.Operation], isPublic: Option[OpenAPI.Operation]): Option[OpenAPI.Operation] = {
       operation.map(op => {
@@ -113,7 +115,9 @@ object DocsRoutes {
     * of spaces.
     */
   val openApi: OpenAPI = {
-    requireSession(OpenAPIGen.fromEndpoints(title = "webapp1-api", version = "0.1.0", endpoints = allEndpoints))
+    requireSession(
+      OpenAPIGen.fromEndpoints(title = "webapp1-api", version = AppConfig.apiVersion, endpoints = allEndpoints)
+    )
   }
 
   val basePath = "api" / "docs" / "openapi"

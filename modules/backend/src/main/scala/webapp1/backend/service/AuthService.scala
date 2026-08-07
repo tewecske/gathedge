@@ -4,6 +4,8 @@ import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   EmailVerificationTokenRepository,
   EmailVerificationTokenRow,
+  LoginAttemptRepository,
+  LoginAttemptRow,
   OAuthIdentityRepository,
   OAuthIdentityRow,
   SessionRepository,
@@ -13,7 +15,7 @@ import webapp1.backend.db.{
 }
 import webapp1.backend.security.{PasswordHasher, SecurityLog, SessionAuth}
 import webapp1.shared.domain.{OAuthProvider, Theme, User}
-import webapp1.shared.dto.LinkedIdentity
+import webapp1.shared.dto.{LinkedIdentity, LoginOutcome}
 import webapp1.shared.validation.Validation
 import zio.*
 
@@ -75,6 +77,15 @@ trait AuthService {
     */
   def resendVerification(email: String, clientIp: Option[String] = None): IO[AuthFailure, Unit]
 
+  /** Issues a fresh link for a named account, unconditionally.
+    *
+    * The administrator-facing counterpart to [[resendVerification]], and deliberately not the same method: that one
+    * hides whether the address exists and spends a rate-limit budget, both of which exist to protect an *anonymous*
+    * caller's target. Neither applies to a caller the `adminOnly` aspect has already identified, and both would make
+    * the administrator's button lie about what it did.
+    */
+  def issueVerificationFor(userId: Long, email: String): UIO[Unit]
+
   /** Signs in — or registers — the person behind a verified provider identity.
     *
     * Matching is on `(provider, subject)` only. When that misses but the email is already taken, this **fails** with
@@ -124,6 +135,9 @@ object AuthService {
   def resendVerification(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.resendVerification(email, clientIp))
 
+  def issueVerificationFor(userId: Long, email: String): URIO[AuthService, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.issueVerificationFor(userId, email))
+
   def loginWithOAuth(identity: OAuthIdentity): ZIO[AuthService, AuthFailure, (User, String)] =
     ZIO.serviceWithZIO[AuthService](_.loginWithOAuth(identity))
 
@@ -166,8 +180,8 @@ object AuthService {
   val verificationValidity: Duration = 24.hours
 
   val live: URLayer[
-    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository & PasswordHasher &
-      RateLimiter & EmailSender & AppConfig,
+    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
+      LoginAttemptRepository & PasswordHasher & RateLimiter & EmailSender & AppConfig,
     AuthService,
   ] = ZLayer {
     for {
@@ -175,6 +189,7 @@ object AuthService {
       sessionRepo         <- ZIO.service[SessionRepository]
       identityRepo        <- ZIO.service[OAuthIdentityRepository]
       tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
+      attemptRepo         <- ZIO.service[LoginAttemptRepository]
       hasher              <- ZIO.service[PasswordHasher]
       rateLimiter         <- ZIO.service[RateLimiter]
       emailSender         <- ZIO.service[EmailSender]
@@ -185,6 +200,7 @@ object AuthService {
       sessionRepo,
       identityRepo,
       tokenRepo,
+      attemptRepo,
       hasher,
       rateLimiter,
       emailSender,
@@ -199,6 +215,7 @@ final case class AuthServiceLive(
   sessionRepo: SessionRepository,
   identityRepo: OAuthIdentityRepository,
   tokenRepo: EmailVerificationTokenRepository,
+  attemptRepo: LoginAttemptRepository,
   hasher: PasswordHasher,
   rateLimiter: RateLimiter,
   emailSender: EmailSender,
@@ -218,6 +235,29 @@ final case class AuthServiceLive(
 
   private def logFailedAttempt(email: String, reason: String): UIO[Unit] = {
     SecurityLog.warn(s"Failed auth attempt for '$email': $reason")
+  }
+
+  /** Records one sign-in attempt, successful or not, for the administrator's account view.
+    *
+    * The `security` log already carries these, but a log file is not queryable from a screen and the in-memory rate
+    * limiter only knows the current 15-minute window. This is the durable half.
+    *
+    * '''A failure here is swallowed.''' Recording an attempt is observability, not authentication: a full disk or a
+    * dropped connection must not turn a correct password into a failed sign-in, nor a wrong one into a server error.
+    * `logError` rather than `ignore`, so the loss is visible in the log it is meant to supplement.
+    */
+  private def recordAttempt(
+    normalizedEmail: String,
+    userId: Option[Long],
+    clientIp: Option[String],
+    outcome: String,
+  ): UIO[Unit] = {
+    (
+      for {
+        now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        _   <- attemptRepo.insert(LoginAttemptRow(0L, normalizedEmail, userId, clientIp, outcome, now))
+      } yield ()
+    ).catchAllCause(cause => ZIO.logErrorCause(s"Could not record a '$outcome' sign-in attempt", cause))
   }
 
   /** 32 bytes of `SecureRandom`, url-safe. Backs both session ids and verification tokens — both are opaque bearer
@@ -296,6 +336,10 @@ final case class AuthServiceLive(
     * A send that fails is logged rather than propagated: it must not undo an otherwise-complete signup, and the account
     * is recoverable through [[resendVerification]] either way.
     */
+  def issueVerificationFor(userId: Long, email: String): UIO[Unit] = {
+    issueVerification(userId, email)
+  }
+
   private def issueVerification(userId: Long, email: String): UIO[Unit] = {
     for {
       token <- newOpaqueToken()
@@ -343,24 +387,35 @@ final case class AuthServiceLive(
   }
 
   def login(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
-    val normalizedEmail = email.trim.toLowerCase
-    val keys            = rateLimitKeys(normalizedEmail, clientIp)
+    val normalizedEmail                                           = email.trim.toLowerCase
+    val keys                                                      = rateLimitKeys(normalizedEmail, clientIp)
+    // Every exit from this method records exactly one `login_attempts` row, including the successful one — an
+    // administrator looking at "why can this person not sign in" needs the successes to tell a forgotten password
+    // apart from an account nobody has touched in a month.
+    def attempt(userId: Option[Long], outcome: String): UIO[Unit] = {
+      recordAttempt(normalizedEmail, userId, clientIp, outcome)
+    }
+
     for {
       blocked   <- anyKeyBlocked(keys)
-      _         <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      _         <-
+        ZIO.when(blocked) {
+          attempt(None, LoginOutcome.rateLimited) *> logRateLimited(normalizedEmail) *>
+            ZIO.fail(AuthFailure.RateLimited)
+        }
       maybeRow  <- userRepo.findByEmail(normalizedEmail).orDie
       row       <-
         maybeRow match {
           case None    =>
-            equalizeTiming *> recordFailure(keys) *> logFailedAttempt(normalizedEmail, "no such account") *>
-              ZIO.fail(AuthFailure.InvalidCredentials)
+            equalizeTiming *> recordFailure(keys) *> attempt(None, LoginOutcome.unknownEmail) *>
+              logFailedAttempt(normalizedEmail, "no such account") *> ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(r) =>
             ZIO.succeed(r)
         }
       _         <-
         row.passwordHash match {
           case None       =>
-            equalizeTiming *> recordFailure(keys) *>
+            equalizeTiming *> recordFailure(keys) *> attempt(Some(row.id), LoginOutcome.noPassword) *>
               logFailedAttempt(normalizedEmail, "no password set (Google-only account)") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(hash) =>
@@ -371,8 +426,8 @@ final case class AuthServiceLive(
                 if (ok)
                   ZIO.unit
                 else {
-                  recordFailure(keys) *> logFailedAttempt(normalizedEmail, "wrong password") *>
-                    ZIO.fail(AuthFailure.InvalidCredentials)
+                  recordFailure(keys) *> attempt(Some(row.id), LoginOutcome.badPassword) *>
+                    logFailedAttempt(normalizedEmail, "wrong password") *> ZIO.fail(AuthFailure.InvalidCredentials)
                 }
               }
         }
@@ -380,10 +435,14 @@ final case class AuthServiceLive(
       // password would tell an attacker which addresses have accounts.
       _         <-
         ZIO.when(config.app.requireEmailVerification && row.emailVerifiedAt.isEmpty) {
-          logFailedAttempt(normalizedEmail, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
+          // Recorded, but still not counted against the rate limit: the credentials were right, and the account is
+          // being told to go and read its email, not being defended against.
+          attempt(Some(row.id), LoginOutcome.emailNotVerified) *>
+            logFailedAttempt(normalizedEmail, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
         }
       sessionId <- createSession(row.id)
       _         <- clearFailures(keys)
+      _         <- attempt(Some(row.id), LoginOutcome.success)
     } yield (toDomain(row), sessionId)
   }
 

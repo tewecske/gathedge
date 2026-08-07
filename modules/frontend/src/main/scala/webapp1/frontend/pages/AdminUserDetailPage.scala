@@ -3,7 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, FormField}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.UpdateUserRequest
@@ -82,19 +82,27 @@ private class AdminUserDetailPage(userId: Long) {
   private val saveBus   = new EventBus[Unit]()
   private val deleteBus = new EventBus[Unit]()
 
+  // Confirming an address or detaching a provider changes the account this form is editing, so the diagnostics ask
+  // for a re-read rather than leaving the two views disagreeing.
+  private val diagnostics = new AdminUserDiagnostics(userId, loadBus.writer)
+
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val saveStream   = saveBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
   private val deleteStream = deleteBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
+      AdminSubmenu.render(Page.AdminUserDetail(userId)),
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin), "← Back to users")),
-      child.maybe <-- errorSignal.map(_.map(msg => renderAlert("alert-error", msg))),
-      child.maybe <-- infoSignal.map(_.map(msg => renderAlert("alert-info", msg))),
+      Alert.maybeError(errorSignal),
+      Alert.maybeInfo(infoSignal),
       child.maybe <-- notFoundSignal.map(Option.when(_)(renderNotFound())),
       // Only the presence of a user decides whether the form exists; its contents live in `formVar`.
       // Without `distinct` every save would rebuild the form element and drop the user's focus.
       child.maybe <-- userSignal.map(_.isDefined).distinct.map(Option.when(_)(renderForm())),
+      // Same `distinct` for the same reason: the diagnostics own their own state and must survive a save.
+      child.maybe <--
+        userSignal.map(_.isDefined).distinct.map(Option.when(_)(diagnostics.render())),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.getUser(userId)) -->
         Observer[Either[ApiError, User]] {
           case Right(u)                       =>
@@ -154,7 +162,7 @@ private class AdminUserDetailPage(userId: Long) {
   }
 
   private def renderNotFound(): HtmlElement = {
-    div(role := "alert", cls := "alert alert-warning", span("This user no longer exists."))
+    Alert.warning("This user no longer exists.")
   }
 
   private def renderForm(): HtmlElement = {
@@ -215,7 +223,4 @@ private class AdminUserDetailPage(userId: Long) {
     )
   }
 
-  private def renderAlert(kind: String, message: String): HtmlElement = {
-    div(role := "alert", cls := s"alert $kind mb-4", span(message))
-  }
 }

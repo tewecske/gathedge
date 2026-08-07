@@ -4,6 +4,8 @@ import com.raquo.laminar.api.L._
 import webapp1.frontend.api.ApiClient
 import webapp1.frontend.pages.{
   AcceptInvitePage,
+  AdminAuditPage,
+  AdminSystemPage,
   AdminUserDetailPage,
   AdminUsersPage,
   CheckInboxPage,
@@ -132,6 +134,14 @@ object App {
       case Page.AdminUserDetail(id) if gate.isAdmin =>
         AdminUserDetailPage.render(id)
       case Page.AdminUserDetail(_)                  =>
+        ForbiddenPage.render()
+      case Page.AdminAudit if gate.isAdmin          =>
+        AdminAuditPage.render()
+      case Page.AdminAudit                          =>
+        ForbiddenPage.render()
+      case Page.AdminSystem if gate.isAdmin         =>
+        AdminSystemPage.render()
+      case Page.AdminSystem                         =>
         ForbiddenPage.render()
       case Page.Forbidden                           =>
         ForbiddenPage.render()

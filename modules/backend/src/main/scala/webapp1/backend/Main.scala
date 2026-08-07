@@ -2,6 +2,7 @@ package webapp1.backend
 
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
+  AuditLogRepository,
   DataSourceFactory,
   DbDialect,
   EmailVerificationTokenRepository,
@@ -10,6 +11,8 @@ import webapp1.backend.db.{
   GroupMemberRepository,
   GroupPairRepository,
   GroupRepository,
+  LoginAttemptRepository,
+  MetricsRepository,
   OAuthIdentityRepository,
   SessionRepository,
   TodoRepository,
@@ -28,12 +31,15 @@ import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
   AdminSeeder,
   AdminService,
+  AuditTrail,
   AuthService,
+  BackgroundJobs,
   EmailSender,
   GroupService,
   OAuthClients,
   RateLimiter,
   SessionReaper,
+  SystemService,
   TodoService,
 }
 import zio.*
@@ -89,8 +95,13 @@ object Main extends ZIOAppDefault {
     GroupInvitationRepository.live,
     OAuthIdentityRepository.live,
     EmailVerificationTokenRepository.live,
+    LoginAttemptRepository.live,
+    AuditLogRepository.live,
+    MetricsRepository.live,
     PasswordHasher.live,
     RateLimiter.live,
+    BackgroundJobs.live,
+    AuditTrail.live,
     EmailSender.live,
     AuthService.live,
     OAuthClients.live,
@@ -99,6 +110,7 @@ object Main extends ZIOAppDefault {
     TodoService.live,
     GroupService.live,
     AdminService.live,
+    SystemService.live,
     Server.customized,
     ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.binding(cfg.app.serverHost, cfg.app.serverPort))),
     ZLayer(ZIO.serviceWith[AppConfig](cfg => NettyConfig.default.maxThreads(cfg.netty.maxThreads))),
