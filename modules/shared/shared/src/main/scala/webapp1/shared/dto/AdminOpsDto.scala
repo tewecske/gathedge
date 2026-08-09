@@ -292,5 +292,6 @@ final case class SystemOverview(
 final case class PruneResult(
   sessions: Long,
   verificationTokens: Long,
+  loginAttempts: Long,
   rateLimitKeys: Long,
 ) derives JsonCodec

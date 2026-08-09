@@ -78,12 +78,56 @@ object RateLimiter {
   */
 object RateLimitKey {
   def email(value: String): String = s"email:${value.trim.toLowerCase}"
-  def ip(value: String): String    = s"ip:${value.trim}"
+
+  /** Keyed on the /64 for IPv6 and on the exact address for IPv4, which is what each of them actually costs an attacker
+    * to change.
+    *
+    * A residential IPv6 customer is routinely delegated a /64 or shorter, so limiting per address hands out 2^64 fresh
+    * budgets to anyone who can be bothered to bind a new one — the limit is enforcing nothing. A /64 is the smallest
+    * unit that is not free to move within. IPv4 has no equivalent: addresses there are scarce enough that the address
+    * itself is the unit, and aggregating to a prefix would sweep unrelated customers behind one NAT into a single
+    * budget.
+    */
+  def ip(value: String): String = s"ip:${normalizeAddress(value)}"
+
+  /** Collapses an IPv6 literal onto its /64 prefix, leaving anything else untouched.
+    *
+    * `InetAddress` does the parsing because a /64 is the first eight *bytes*, and the textual form cannot be cut at
+    * four groups: `2001:db8::1` and `2001:db8::2` share a prefix that neither string shows. It is only called for
+    * values containing a colon — a string with one can never be a hostname, so this cannot turn into a DNS lookup on
+    * the request path.
+    */
+  private def normalizeAddress(value: String): String = {
+    val trimmed = value.trim
+    if (!trimmed.contains(":")) {
+      trimmed
+    } else {
+      val prefix = {
+        scala.util
+          .Try(java.net.InetAddress.getByName(trimmed))
+          .toOption
+          .collect { case v6: java.net.Inet6Address =>
+            v6.getAddress.take(8).map(byte => f"${byte & 0xff}%02x").grouped(2).map(_.mkString).mkString(":")
+          }
+      }
+      prefix.map(p => s"$p::/64").getOrElse(trimmed.toLowerCase)
+    }
+  }
 
   /** Separate from [[email]] so asking for another verification link cannot burn an account's login budget, nor the
     * other way round.
     */
   def verification(value: String): String = s"verify:${value.trim.toLowerCase}"
+
+  /** Separate from [[email]] for a sharper reason than [[verification]]'s: signup counts a *duplicate address* as a
+    * failure, and the address it counts is one the caller chose. Sharing the namespace with [[email]] therefore let
+    * anyone lock a known account out of signing in by attempting to register it five times — the victim's login budget
+    * spent from an unauthenticated endpoint, by an attacker who only had to know the address.
+    *
+    * Signup keeps a budget of its own: answering "that address is taken" is an enumeration oracle this application
+    * accepts by design (summary.md), and it still should not be free to probe at speed.
+    */
+  def signup(value: String): String = s"signup:${value.trim.toLowerCase}"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single

@@ -1,10 +1,13 @@
 package webapp1.backend.http
 
+import webapp1.backend.config.AppConfig
 import webapp1.backend.security.{SecurityLog, SessionAuth}
 import webapp1.backend.service.AuthService
 import webapp1.shared.domain.User
 import zio.*
 import zio.http.*
+
+import java.time.Instant
 
 import JsonSupport.*
 
@@ -111,6 +114,64 @@ object RouteSupport {
       message.replaceAll("\\s*\\R\\s*", " ").trim
   }
 
+  /** The path segment a logged URL shows in place of a bearer token. */
+  private val redacted = "…"
+
+  /** The request log's version of a URL: the path, scrubbed, and never the query string.
+    *
+    * Two credentials in this API travel inside a URL rather than a body, because both are followed as links rather than
+    * sent by script: the group invitation token is a path segment (`/api/invitations/{token}`, where the token *is* the
+    * secret), and the OAuth authorization code arrives as `?code=` on the callback. `Middleware.requestLogging` logged
+    * the whole URL, so both were written to `logs/backend.log` and to `docker logs` on every request — while
+    * `QuillRepository.logged` was carefully keeping the same tokens out of the lines one layer down.
+    *
+    * The query string is dropped wholesale rather than filtered. The only endpoints that use one are the admin list
+    * filters, whose values are worth less than an allowlist that some later endpoint forgets to join.
+    */
+  private[http] def loggableUrl(request: Request): String = {
+    val segments = request.path.segments
+    val scrubbed = {
+      // `/api/invitations/{token}` and `/api/invitations/{token}/accept` — the token is always the third segment.
+      if (segments.length >= 3 && segments(0) == "api" && segments(1) == "invitations")
+        segments.updated(2, redacted)
+      else
+        segments
+    }
+    scrubbed.mkString("/", "/", "")
+  }
+
+  /** One log line per request, replacing `Middleware.requestLogging()`.
+    *
+    * It exists only because that middleware offers no hook to rewrite the URL — its one relevant parameter maps a
+    * status to a log level — and the URL is exactly what had to change (see [[loggableUrl]]). Everything else is
+    * deliberately identical to the library's version, down to the four annotation keys and their value shapes
+    * (`status.text`, not the code), so `logback.xml`'s `%kvp` rendering and the comment there explaining why it is
+    * needed both stay true, and so does anything already grepping these lines.
+    *
+    * Built with `interceptHandlerStateful` — the same combinator the library uses — because that is what carries the
+    * start instant from before the handler to after it. Timing it by calling the inner handler directly does not
+    * typecheck: `Handler.apply` returns `ZIO[Env & Scope, ...]`, and the `Scope` belongs to the response body, which
+    * may still be streaming when this line is written.
+    */
+  val requestLogging: HandlerAspect[Any, Unit] = {
+    HandlerAspect.interceptHandlerStateful(
+      Handler.fromFunctionZIO[Request] { (request: Request) =>
+        Clock.instant.map(now => ((now, request), (request, ())))
+      }
+    )(
+      Handler.fromFunctionZIO[((Instant, Request), Response)] { case ((start, request), response) =>
+        Clock.instant.flatMap { end =>
+          ZIO.logAnnotate(
+            LogAnnotation("status_code", response.status.text),
+            LogAnnotation("method", request.method.toString),
+            LogAnnotation("url", loggableUrl(request)),
+            LogAnnotation("duration_ms", java.time.Duration.between(start, end).toMillis.toString),
+          )(ZIO.logInfo("Http request served").as(response))
+        }
+      }
+    )
+  }
+
   /** Methods that a cross-site page can trigger without a CORS preflight, so requiring a custom header on them would
     * buy nothing and would break the OAuth callback, which arrives as a top-level browser navigation.
     */
@@ -145,19 +206,67 @@ object RouteSupport {
     */
   final case class RequestContext(clientIp: Option[String], sessionId: Option[String])
 
+  private val forwardedForHeader = "X-Forwarded-For"
+
+  /** Cheap sanity check on a value taken out of `X-Forwarded-For`, so a malformed hop cannot turn into an unbounded
+    * rate-limit key. Deliberately not a full address parser — anything shaped like one is fine here.
+    */
+  private val addressPattern = "^[0-9a-fA-F.:%]{1,64}$".r
+
+  /** Which address to hold this request against, given how many proxies are known to stand in front of the server.
+    *
+    * With `trustedProxyHops == 0` the header is ignored outright and the socket peer is the answer, because a client
+    * talking to us directly can put anything it likes in `X-Forwarded-For` and would otherwise be choosing its own
+    * rate-limit identity — a fresh budget per request.
+    *
+    * Above zero the header is read '''right to left''', which is the only direction that is not forgeable: each proxy
+    * *appends* the address it received the request from, so the last entry was written by the proxy nearest us and the
+    * entry `trustedProxyHops` from the right is the address seen by the outermost proxy we trust. Anything further left
+    * was supplied by the caller and is ignored, so a client sending `X-Forwarded-For: 10.0.0.1` merely has that value
+    * pushed left of the one nginx appends.
+    *
+    * A header that is missing, shorter than the claimed hop count, or carrying something that is not address-shaped
+    * falls back to the socket peer. That is the safe direction: it is the value that cannot be forged, and the cost of
+    * using it is a shared budget rather than a bypassed one.
+    *
+    * Pure, and separate from the aspect below, because every one of those branches is worth a test.
+    */
+  def clientAddress(request: Request, trustedProxyHops: Int): Option[String] = {
+    val peer = request.remoteAddress.map(_.getHostAddress)
+    if (trustedProxyHops <= 0) {
+      peer
+    } else {
+      val forwarded = {
+        request
+          .rawHeader(forwardedForHeader)
+          .toList
+          .flatMap(_.split(',').toList)
+          .map(_.trim)
+          .filter(entry => entry.nonEmpty && addressPattern.matches(entry))
+      }
+      // One hop means the last entry, two means the one before it, and so on.
+      forwarded.lift(forwarded.length - trustedProxyHops).orElse(peer)
+    }
+  }
+
   /** Supplies [[RequestContext]]. Never fails — both fields are optional, and "no session" is a legitimate state for
     * the endpoints that ask for this (signing up, signing in, and signing out with an already-dead cookie).
     *
-    * `clientIp` is the socket peer, deliberately not `X-Forwarded-For`: that header is attacker-controlled unless a
-    * trusted-proxy list is configured, and letting it pick the rate-limit key would hand out a fresh budget per
-    * request. Behind a reverse proxy this collapses to the proxy's address, leaving the per-email limit to do the work.
+    * It needs `AppConfig` only for [[clientAddress]]'s hop count. That is worth the environment requirement: the
+    * address this resolves is what the rate limiter keys on, and getting it wrong is not a degraded limit but a
+    * deployment-wide outage — behind the shipped nginx, every request shared the proxy's address, so five failed
+    * sign-ins from anyone at all blocked sign-in, sign-up and verification resends for every account, for as long as
+    * the failures kept arriving.
     */
-  val requestContext: HandlerAspect[Any, RequestContext] = {
+  val requestContext: HandlerAspect[AppConfig, RequestContext] = {
     HandlerAspect.interceptIncomingHandler(
       Handler.fromFunctionZIO[Request] { (request: Request) =>
-        ZIO.succeed(
-          (request, RequestContext(request.remoteAddress.map(_.getHostAddress), SessionAuth.sessionIdFrom(request)))
-        )
+        ZIO.serviceWith[AppConfig] { config =>
+          (
+            request,
+            RequestContext(clientAddress(request, config.app.trustedProxyHops), SessionAuth.sessionIdFrom(request)),
+          )
+        }
       }
     )
   }

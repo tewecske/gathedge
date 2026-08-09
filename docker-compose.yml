@@ -29,6 +29,12 @@ services:
       DB_USER: ${DB_USER:-webapp1}
       DB_PASSWORD: ${DB_PASSWORD:-webapp1}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      # The `web` container is the one proxy in front of this, and it sets X-Forwarded-For. Without
+      # this the backend would see every request as coming from nginx's address and rate-limit the
+      # whole deployment as one client. Raise it if you add another proxy (a CDN, an ingress) in
+      # front of `web`; that hop appends an entry too.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      LOGIN_ATTEMPT_RETENTION_DAYS: ${LOGIN_ATTEMPT_RETENTION_DAYS:-30}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-changeme123}

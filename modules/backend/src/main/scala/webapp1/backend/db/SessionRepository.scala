@@ -10,8 +10,14 @@ import javax.sql.DataSource
 trait SessionRepository {
   def insert(session: SessionRow): Task[Unit]
 
-  /** Active = not revoked and not past `now` (epoch millis). */
-  def findActive(id: String, now: Long): Task[Option[SessionRow]]
+  /** The session and its owner in one query, or `None` when the session is unknown, revoked or past `now` (epoch
+    * millis).
+    *
+    * Joined rather than two lookups because this runs on '''every authenticated request''' — it is what the
+    * `authenticated` and `adminOnly` aspects resolve a cookie with. As two calls it was two round trips and two INFO
+    * log lines per request, for a pair of rows the database can hand back together.
+    */
+  def findActiveWithUser(id: String, now: Long): Task[Option[(SessionRow, UserRow)]]
   def revoke(id: String, revokedAt: Long): Task[Unit]
 
   /** Kills every session a user holds. Used when their password changes, so a stolen session can't outlive the
@@ -40,8 +46,8 @@ object SessionRepository {
   def insert(session: SessionRow): RIO[SessionRepository, Unit] =
     ZIO.serviceWithZIO[SessionRepository](_.insert(session))
 
-  def findActive(id: String, now: Long): RIO[SessionRepository, Option[SessionRow]] =
-    ZIO.serviceWithZIO[SessionRepository](_.findActive(id, now))
+  def findActiveWithUser(id: String, now: Long): RIO[SessionRepository, Option[(SessionRow, UserRow)]] =
+    ZIO.serviceWithZIO[SessionRepository](_.findActiveWithUser(id, now))
 
   def revoke(id: String, revokedAt: Long): RIO[SessionRepository, Unit] =
     ZIO.serviceWithZIO[SessionRepository](_.revoke(id, revokedAt))
@@ -80,6 +86,7 @@ final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
   import ctx._
 
   private inline def sessions = quote(querySchema[SessionRow]("sessions"))
+  private inline def usersQ   = quote(querySchema[UserRow]("users"))
 
   def insert(session: SessionRow): Task[Unit] = {
     logged(run(ctx.run(quote(sessions.insertValue(lift(session))))).unit) { _ =>
@@ -87,10 +94,16 @@ final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
     }
   }
 
-  def findActive(id: String, now: Long): Task[Option[SessionRow]] = {
-    val q = quote(sessions.filter(s => s.id == lift(id) && s.expiresAt > lift(now) && s.revokedAt.isEmpty))
+  def findActiveWithUser(id: String, now: Long): Task[Option[(SessionRow, UserRow)]] = {
+    // An inner join: `sessions.user_id` is NOT NULL and cascades with the user, so a live session always has one.
+    val q = quote {
+      for {
+        s <- sessions.filter(s => s.id == lift(id) && s.expiresAt > lift(now) && s.revokedAt.isEmpty)
+        u <- usersQ.join(u => u.id == s.userId)
+      } yield (s, u)
+    }
     logged(run(ctx.run(q)).map(_.headOption)) { found =>
-      s"sessions.findActive found=${found.isDefined}"
+      s"sessions.findActiveWithUser found=${found.isDefined}"
     }
   }
 

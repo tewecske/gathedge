@@ -21,6 +21,12 @@ object AppEnv {
 
 /** `requireEmailVerification` is the login gate only. Verification tokens are issued, emailed and redeemable whether or
   * not it is set — switching it on is what makes an unverified account unable to sign in with a password.
+  *
+  * `trustedProxyHops` is how many reverse proxies sit in front of this server, and it is the *only* thing that makes
+  * `X-Forwarded-For` believable — see `RouteSupport.clientAddress`. It has to be configured rather than detected,
+  * because both wrong answers are a security bug: trusting the header with nothing in front means any client can choose
+  * its own rate-limit identity, and trusting nothing while a proxy *is* in front collapses every request onto the
+  * proxy's address, which is what the limiter then locks out wholesale.
   */
 final case class AppSection(
   env: String,
@@ -28,6 +34,8 @@ final case class AppSection(
   serverPort: Int,
   publicBaseUrl: String,
   requireEmailVerification: Boolean,
+  trustedProxyHops: Int,
+  loginAttemptRetentionDays: Int,
 )
 final case class DbSection(url: String, user: String, password: String)
 final case class SessionSection(cookieSecure: Boolean)

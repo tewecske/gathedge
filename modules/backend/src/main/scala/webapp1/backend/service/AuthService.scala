@@ -13,14 +13,12 @@ import webapp1.backend.db.{
   UserRepository,
   UserRow,
 }
-import webapp1.backend.security.{PasswordHasher, SecurityLog, SessionAuth}
+import webapp1.backend.security.{PasswordHasher, SecurityLog, SessionAuth, Tokens}
 import webapp1.shared.domain.{OAuthProvider, Theme, User}
 import webapp1.shared.dto.{LinkedIdentity, LoginOutcome}
 import webapp1.shared.validation.Validation
 import zio.*
 
-import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 import OAuthProvider.wire
@@ -227,8 +225,6 @@ final case class AuthServiceLive(
   timingEqualizerHash: String,
 ) extends AuthService {
 
-  private val secureRandom = new SecureRandom()
-
   private def logRateLimited(email: String): UIO[Unit] = {
     SecurityLog.warn(s"Rate limit exceeded for '$email'")
   }
@@ -260,17 +256,6 @@ final case class AuthServiceLive(
     ).catchAllCause(cause => ZIO.logErrorCause(s"Could not record a '$outcome' sign-in attempt", cause))
   }
 
-  /** 32 bytes of `SecureRandom`, url-safe. Backs both session ids and verification tokens — both are opaque bearer
-    * strings stored as-is, exactly like `group_invitations.token`.
-    */
-  private def newOpaqueToken(): UIO[String] = {
-    ZIO.succeed {
-      val bytes = new Array[Byte](32)
-      secureRandom.nextBytes(bytes)
-      Base64.getUrlEncoder.withoutPadding.encodeToString(bytes)
-    }
-  }
-
   private def toDomain(row: UserRow): User = {
     User(
       row.id,
@@ -290,7 +275,7 @@ final case class AuthServiceLive(
 
   private def createSession(userId: Long): UIO[String] = {
     for {
-      id  <- newOpaqueToken()
+      id  <- Tokens.urlSafe()
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _   <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
     } yield id
@@ -309,8 +294,17 @@ final case class AuthServiceLive(
       ZIO.unit
   }
 
-  private def rateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
+  /** The two dimensions [[login]] is limited on. Both are the un-namespaced keys, which is what makes
+    * `AdminService.lockoutKeysFor` able to reconstruct them from a stored address and a stored origin.
+    */
+  private def loginRateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
     RateLimitKey.email(normalizedEmail) :: clientIp.map(RateLimitKey.ip).toList
+  }
+
+  /** Signup's own budget, namespaced on both dimensions so neither can spend [[login]]'s — see [[RateLimitKey.signup]].
+    */
+  private def signupRateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
+    RateLimitKey.signup(normalizedEmail) :: clientIp.map(RateLimitKey.signup).toList
   }
 
   private def anyKeyBlocked(keys: List[String]): UIO[Boolean] = {
@@ -342,7 +336,7 @@ final case class AuthServiceLive(
 
   private def issueVerification(userId: Long, email: String): UIO[Unit] = {
     for {
-      token <- newOpaqueToken()
+      token <- Tokens.urlSafe()
       now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _     <- tokenRepo.deleteForUser(userId).orDie
       _     <-
@@ -365,7 +359,7 @@ final case class AuthServiceLive(
 
   def signup(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, Option[String])] = {
     val normalizedEmail = email.trim.toLowerCase
-    val keys            = rateLimitKeys(normalizedEmail, clientIp)
+    val keys            = signupRateLimitKeys(normalizedEmail, clientIp)
     for {
       _         <- validateCredentials(normalizedEmail, password)
       blocked   <- anyKeyBlocked(keys)
@@ -388,7 +382,7 @@ final case class AuthServiceLive(
 
   def login(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
     val normalizedEmail                                           = email.trim.toLowerCase
-    val keys                                                      = rateLimitKeys(normalizedEmail, clientIp)
+    val keys                                                      = loginRateLimitKeys(normalizedEmail, clientIp)
     // Every exit from this method records exactly one `login_attempts` row, including the successful one — an
     // administrator looking at "why can this person not sign in" needs the successes to tell a forgotten password
     // apart from an account nobody has touched in a month.
@@ -635,19 +629,17 @@ final case class AuthServiceLive(
     Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => sessionRepo.revoke(sessionId, now).orDie)
   }
 
+  /** One query, not two: this resolves the cookie on every authenticated request, so the join is worth having — see
+    * [[webapp1.backend.db.SessionRepository.findActiveWithUser]].
+    */
   def currentUser(sessionId: String): UIO[Option[User]] = {
     (
       for {
-        now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        maybeSession <- sessionRepo.findActive(sessionId, now)
-        maybeUser    <-
-          maybeSession match {
-            case None    =>
-              ZIO.none
-            case Some(s) =>
-              userRepo.findById(s.userId)
-          }
-      } yield maybeUser.map(toDomain)
+        now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        found <- sessionRepo.findActiveWithUser(sessionId, now)
+      } yield found.map { case (_, userRow) =>
+        toDomain(userRow)
+      }
     ).orDie
   }
 

@@ -61,7 +61,8 @@ private class AdminSystemPage {
               inFlightVar -> false,
               errorVar    -> None,
               infoVar     -> Some(
-                s"Removed ${result.sessions} session(s), ${result.verificationTokens} confirmation link(s) and " +
+                s"Removed ${result.sessions} session(s), ${result.verificationTokens} confirmation link(s), " +
+                  s"${result.loginAttempts} sign-in attempt record(s) and " +
                   s"${result.rateLimitKeys} stale rate-limit key(s)."
               ),
             )

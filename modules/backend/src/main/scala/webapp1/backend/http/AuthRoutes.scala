@@ -1,7 +1,7 @@
 package webapp1.backend.http
 
 import webapp1.backend.config.AppConfig
-import webapp1.backend.security.SessionAuth
+import webapp1.backend.security.{SessionAuth, Tokens}
 import webapp1.backend.service.{AuthFailure, AuthService, OAuthClients}
 import webapp1.shared.api.AuthEndpoints
 import webapp1.shared.domain.{OAuthProvider, User}
@@ -283,7 +283,11 @@ object AuthRoutes {
               else
                 OAuthIntent.Login
             }
-            nonce  <- Random.nextUUID.map(_.toString)
+            // `Tokens`, not `Random.nextUUID`: ZIO's live `Random` is `scala.util.Random`, a 48-bit LCG whose
+            // state is recoverable from a couple of sampled outputs. This nonce is the only thing standing
+            // between the callback and a cross-site request, since it is the one route that cannot require
+            // the CSRF header — so it has to come from a `SecureRandom` like every other bearer string here.
+            nonce  <- Tokens.urlSafe()
             url    <- ZIO
                         .fromEither(URL.decode(client.authorizationUrl(nonce)))
                         .tapErrorCause(cause =>

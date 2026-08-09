@@ -126,5 +126,44 @@ object SystemServiceSpec extends ZIOSpecDefault {
         audited.head.actorUserId.contains(user.id),
       )
     },
+    // `login_attempts` is the one table an unauthenticated caller can grow at will — a row is written at every exit
+    // from `login`, including the one the rate limiter takes before checking anything. Nothing swept it, and
+    // `deleteOlderThan` sat unused.
+    test("the sweep drops sign-in attempts past the retention window and keeps the ones inside it") {
+      for {
+        _      <- AdminService.createUser(AdminActor.system, "aged@example.com", "password123", isAdmin = false)
+        _      <- AuthService.login("aged@example.com", "nope12345").either
+        _      <- TestClock.adjust(31.days)
+        _      <- AuthService.login("aged@example.com", "nope12345").either
+        before <- SystemService.overview
+        result <- SystemService.prune(AdminActor.system)
+        after  <- SystemService.overview
+      } yield assertTrue(
+        before.stats.loginAttempts == 2L,
+        result.loginAttempts == 1L,
+        after.stats.loginAttempts == 1L,
+      )
+    },
+    // One overview is about fifteen COUNT(*) queries, two of them over the tables that grow fastest. The memo is what
+    // stops a polling page paying for that every time; dropping it on prune is what stops the button looking broken.
+    test("the counts are memoised for the cache window, and pruning drops the memo") {
+      for {
+        _      <- AdminService.createUser(AdminActor.system, "counted-once@example.com", "password123", isAdmin = false)
+        first  <- SystemService.overview
+        _      <- AdminService.createUser(AdminActor.system, "counted-later@example.com", "password123", isAdmin = false)
+        // Still inside the window, so this is the memo rather than a fresh count.
+        second <- SystemService.overview
+        _      <- TestClock.adjust(SystemService.statsCacheTtl)
+        third  <- SystemService.overview
+      } yield assertTrue(first.stats.users == 1L, second.stats.users == 1L, third.stats.users == 2L)
+    },
+    test("pruning drops the memo even when it removed nothing") {
+      for {
+        first  <- SystemService.overview
+        _      <- AdminService.createUser(AdminActor.system, "after-prune@example.com", "password123", isAdmin = false)
+        result <- SystemService.prune(AdminActor.system)
+        after  <- SystemService.overview
+      } yield assertTrue(first.stats.users == 0L, result.sessions == 0L, after.stats.users == 1L)
+    },
   ).provide(layer)
 }

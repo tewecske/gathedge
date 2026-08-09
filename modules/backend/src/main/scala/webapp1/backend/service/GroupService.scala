@@ -10,12 +10,11 @@ import webapp1.backend.db.{
   GroupRepository,
   GroupRow,
 }
+import webapp1.backend.security.Tokens
 import webapp1.shared.domain.{Group, GroupMember, GroupPair, GroupRole, InvitationInfo}
 import webapp1.shared.validation.Validation
 import zio.*
 
-import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 enum GroupFailure {
@@ -123,7 +122,6 @@ final case class GroupServiceLive(
   config: AppConfig,
 ) extends GroupService {
 
-  private val secureRandom       = new SecureRandom()
   private val invitationValidity = GroupService.invitationValidity
 
   private def toDomain(row: GroupRow, role: String): Group = {
@@ -139,12 +137,6 @@ final case class GroupServiceLive(
     */
   private def findGroupOrDie(groupId: Long): UIO[GroupRow] = {
     groupRepo.findById(groupId).orDie.someOrElseZIO(ZIO.dieMessage(s"group $groupId vanished"))
-  }
-
-  private def newToken(): String = {
-    val bytes = new Array[Byte](32)
-    secureRandom.nextBytes(bytes)
-    Base64.getUrlEncoder.withoutPadding.encodeToString(bytes)
   }
 
   def createGroup(userId: Long, name: String): IO[GroupFailure, Group] = {
@@ -278,7 +270,7 @@ final case class GroupServiceLive(
                  .mapError(err => GroupFailure.ValidationError(Map("email" -> err)))
       group <- findGroupOrDie(groupId)
       now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      token  = newToken()
+      token <- Tokens.urlSafe()
       _     <-
         invitationRepo
           .insert(

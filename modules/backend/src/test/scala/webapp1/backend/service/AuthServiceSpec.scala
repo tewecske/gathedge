@@ -86,6 +86,68 @@ object AuthServiceSpec extends ZIOSpecDefault {
         result <- AuthService.login("locked@example.com", "password123").either
       } yield assertTrue(result == Left(AuthFailure.RateLimited))
     },
+    // The origin dimension is deliberately coarse — one attacker spraying many accounts from one address should be
+    // throttled — which is exactly why resolving the origin correctly matters so much. Behind the shipped nginx every
+    // request carried the proxy's address, so this rule locked out the entire deployment; `RouteSupportSpec` covers
+    // the resolution, and these two pin what the limiter does once it has an answer.
+    test("failures from one origin do not lock out an unrelated account signing in from another") {
+      for {
+        _      <- AuthService.signup("origin-a@example.com", "password123")
+        _      <- AuthService.signup("origin-b@example.com", "password123")
+        _      <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            AuthService.login("origin-a@example.com", "nope12345", Some("198.51.100.4")).either
+          }
+        result <- AuthService.login("origin-b@example.com", "password123", Some("203.0.113.9")).either
+      } yield assertTrue(result.isRight)
+    },
+    test("failures from one origin do lock out another account attempted from that same origin") {
+      for {
+        _      <- AuthService.signup("shared-a@example.com", "password123")
+        _      <- AuthService.signup("shared-b@example.com", "password123")
+        _      <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            AuthService.login("shared-a@example.com", "nope12345", Some("192.0.2.77")).either
+          }
+        result <- AuthService.login("shared-b@example.com", "password123", Some("192.0.2.77")).either
+      } yield assertTrue(result == Left(AuthFailure.RateLimited))
+    },
+    // Signup counts a duplicate address as a failure, and the address is the caller's to choose. While both shared
+    // the `email:` namespace, five signup attempts against a known address locked its owner out of signing in —
+    // an unauthenticated account-lockout that cost the attacker nothing but the address.
+    test("repeated signups with a taken address do not lock its owner out of signing in") {
+      for {
+        _      <- AuthService.signup("targeted@example.com", "password123")
+        _      <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts + 1) { _ =>
+            AuthService.signup("targeted@example.com", "password123").either
+          }
+        result <- AuthService.login("targeted@example.com", "password123").either
+      } yield assertTrue(result.isRight)
+    },
+    // The other direction: signup keeps a budget, it is just its own.
+    test("repeated signups with a taken address still trip signup's own limiter") {
+      for {
+        _      <- AuthService.signup("probed@example.com", "password123")
+        _      <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            AuthService.signup("probed@example.com", "password123").either
+          }
+        result <- AuthService.signup("probed@example.com", "password123").either
+      } yield assertTrue(result == Left(AuthFailure.RateLimited))
+    },
+    test("failed logins do not spend the signup budget for the same address either") {
+      for {
+        _      <- AuthService.signup("crossways@example.com", "password123")
+        _      <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            AuthService.login("crossways@example.com", "nope12345").either
+          }
+        // Locked out of signing in, but a *different* address may still be registered from here.
+        locked <- AuthService.login("crossways@example.com", "password123").either
+        result <- AuthService.signup("unrelated@example.com", "password123").either
+      } yield assertTrue(locked == Left(AuthFailure.RateLimited), result.isRight)
+    },
     test("a successful login forgets earlier failures") {
       val almostLockedOut = InMemoryRateLimiter.maxAttempts - 1
       for {

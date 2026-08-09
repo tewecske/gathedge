@@ -60,7 +60,10 @@ object Main extends ZIOAppDefault {
       AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes ++
         DocsRoutes.routes
     }
-    RouteSupport.handleFailures(combined) @@ Middleware.requestLogging()
+    // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and two of this API's URLs carry a
+    // credential — the invitation token is a path segment and the OAuth authorization code a query parameter. See
+    // `RouteSupport.loggableUrl`.
+    RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging
   }
 
   private val program = {

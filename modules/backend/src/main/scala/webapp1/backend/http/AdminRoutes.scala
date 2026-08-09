@@ -1,5 +1,6 @@
 package webapp1.backend.http
 
+import webapp1.backend.config.AppConfig
 import webapp1.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService}
 import webapp1.shared.api.AdminEndpoints
 import webapp1.shared.domain.{OAuthProvider, User}
@@ -184,7 +185,9 @@ object AdminRoutes {
       .implementHandler(handler((_: Unit) => actor.flatMap(acting => SystemService.prune(acting))))
   }
 
-  val routes: Routes[AuthService & AdminService & SystemService, Response] = {
+  // `AppConfig` is here for `requestContext`, which needs the trusted-proxy hop count to decide what the client's
+  // address is — the value that lands on every `audit_log` row this file writes.
+  val routes: Routes[AuthService & AdminService & SystemService & AppConfig, Response] = {
     Routes(
       listUsersRoute,
       getUserRoute,
