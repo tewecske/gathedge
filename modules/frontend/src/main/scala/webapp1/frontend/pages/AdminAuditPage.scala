@@ -4,8 +4,9 @@ import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
 import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import webapp1.frontend.i18n.I18n
+import webapp1.frontend.listing.AuditQuery
 import webapp1.frontend.{AppRouter, Page}
-import webapp1.shared.dto.{AuditAction, AuditEntry, AuditPage, AuditSort, Paging}
+import webapp1.shared.dto.{AuditAction, AuditEntry, AuditPage, AuditSort}
 import webapp1.shared.i18n.UiKeys
 
 /** The audit trail: every administrator action, most recent first.
@@ -14,27 +15,20 @@ import webapp1.shared.i18n.UiKeys
   * through without shell access to the container.
   */
 object AdminAuditPage {
-  def render(): HtmlElement = AppShell.render(Page.AdminAudit, new AdminAuditPage().render())
+
+  /** The listing state arrives from the URL and is written back to it — see `AdminUsersPage.render`, which takes the
+    * same pair for the same reason.
+    */
+  def render(query: Signal[AuditQuery], onQuery: Observer[AuditQuery]): HtmlElement = {
+    AppShell.render(Page.AdminAudit(), new AdminAuditPage(query, onQuery).render())
+  }
 }
 
-/** Everything that decides which entries the server sends back.
-  *
-  * The two narrowings are applied on a button rather than as they are typed — an administrator id is only meaningful
-  * once it is complete — so they are held here alongside the paging rather than being read off the inputs.
-  */
-private case class AuditQuery(
-  page: Int = 0,
-  pageSize: Int = Paging.defaultPageSize,
-  sort: SortHeader.Sort = SortHeader.Sort.unsorted,
-  action: Option[String] = None,
-  actorId: Option[Long] = None,
-) {
+private class AdminAuditPage(pageQuery: Signal[AuditQuery], onQuery: Observer[AuditQuery]) {
 
-  /** Anything but turning the page starts again at the first one. */
-  def reset(change: AuditQuery => AuditQuery): AuditQuery = change(this).copy(page = 0)
-}
+  /** `.distinct` because every reader here treats an emission as "ask the server again". */
+  private val querySignal = pageQuery.distinct
 
-private class AdminAuditPage {
 
   /** The page currently on screen, and how many entries match across every page. Both come off one response: this is
     * offset paging in SQL, so the server knows the total and the buttons below are counted off it.
@@ -45,15 +39,20 @@ private class AdminAuditPage {
   private val totalVar    = Var(0L)
   private val totalSignal = totalVar.signal
 
-  private val queryVar    = Var(AuditQuery())
-  private val querySignal = queryVar.signal.distinct
-
   private val sortSignal     = querySignal.map(_.sort).distinct
   private val pageSignal     = querySignal.map(_.page).distinct
   private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
+  /** Every way this page asks for a different listing. The state lives in the URL, so a writer emits an edit rather
+    * than updating a `Var` it owns; [[render]] applies it to whatever the address bar currently says.
+    */
+  private val changeBus = new EventBus[AuditQuery => AuditQuery]()
+
+  private def change(edit: AuditQuery => AuditQuery): Unit = changeBus.emit(edit)
+
   /** What the filter inputs hold, which is not yet what has been asked for — the Apply button is what moves them into
-    * [[queryVar]].
+    * the query. They follow the query in the other direction, so a bookmarked `?action=user.create` fills the controls
+    * in, and so does the back button.
     */
   private val actionInputVar = Var("")
   private val actorInputVar  = Var("")
@@ -74,7 +73,7 @@ private class AdminAuditPage {
   def render(): HtmlElement = {
     div(
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminAuditTitle)),
-      AdminSubmenu.render(Page.AdminAudit),
+      AdminSubmenu.render(Page.AdminAudit()),
       Alert.maybeError(errorVar.signal),
       renderFilters(),
       renderTable(),
@@ -82,16 +81,20 @@ private class AdminAuditPage {
         page = pageSignal,
         total = totalSignal,
         pageSize = pageSizeSignal,
-        onPage = Observer[Int](page => queryVar.update(_.copy(page = page))),
-        onPageSize = Observer[Int](size => queryVar.update(_.reset(_.copy(pageSize = size)))),
+        onPage = Observer[Int](page => change(_.copy(page = page))),
+        onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
         summary = totalSignal.map(summaryOf).distinct,
         busy = inFlightSignal,
       ),
+      // Each edit is applied to what the URL currently says, which is the only place the listing state lives.
+      changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
+      querySignal.map(_.action.getOrElse("")).distinct --> actionInputVar.writer,
+      querySignal.map(_.actorId.fold("")(_.toString)).distinct --> actorInputVar.writer,
       // Applying a filter is a query change like any other; if it happens to change nothing, `.distinct` swallows it
       // and the reload below is what still answers the button.
       applyBus.events -->
         Observer[Unit] { _ =>
-          queryVar.update {
+          change {
             _.reset(
               _.copy(
                 action = blankToNone(actionInputVar.now()),
@@ -172,7 +175,7 @@ private class AdminAuditPage {
   }
 
   private def renderTable(): HtmlElement = {
-    val onSort = Observer[SortHeader.Sort](sort => queryVar.update(_.reset(_.copy(sort = sort))))
+    val onSort = Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort))))
 
     div(
       cls := "overflow-x-auto card bg-base-100 shadow",

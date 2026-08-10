@@ -95,7 +95,9 @@ private class AdminUserDetailPage(userId: Long) {
   def render(): HtmlElement = {
     div(
       AdminSubmenu.render(Page.AdminUserDetail(userId)),
-      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin), I18n.t(UiKeys.adminUserBack))),
+      // Back to the unfiltered list: this screen is not told which listing the reader came from, so it cannot restore
+      // one. Carrying it would mean this page holding a `UserQuery` of its own.
+      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin()), I18n.t(UiKeys.adminUserBack))),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(infoSignal),
       child.maybe <-- notFoundSignal.map(Option.when(_)(renderNotFound())),
@@ -155,7 +157,7 @@ private class AdminUserDetailPage(userId: Long) {
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             inFlightVar.set(false)
-            AppRouter.router.pushState(Page.Admin)
+            AppRouter.router.pushState(Page.Admin())
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },

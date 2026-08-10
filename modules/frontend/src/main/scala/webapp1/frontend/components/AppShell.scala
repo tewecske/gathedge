@@ -151,7 +151,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
         cls := "navbar-start gap-2",
         span(cls := "text-lg font-semibold px-2", "webapp1"),
         navLinks(),
-        child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin, I18n.t(UiKeys.navAdmin)))),
+        child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin(), I18n.t(UiKeys.navAdmin)))),
       ),
       div(
         cls := "navbar-end gap-2",

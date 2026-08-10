@@ -3,15 +3,23 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
 import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats, Pagination, SortHeader}
+import webapp1.frontend.listing.UserQuery
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
-import webapp1.shared.dto.{CreateUserRequest, Paging, RateLimitEntry, UserPage, UserSort}
+import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry, UserPage, UserSort}
 import webapp1.frontend.i18n.I18n
 import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object AdminUsersPage {
-  def render(): HtmlElement = AppShell.render(Page.Admin, new AdminUsersPage().render())
+
+  /** The listing state arrives from the URL and is written back to it, so this page holds none of it: `query` is what
+    * the address bar says, and `onQuery` is how to ask for a different address. See `App.renderers`, which keeps one
+    * mounted page across every change to the query.
+    */
+  def render(query: Signal[UserQuery], onQuery: Observer[UserQuery]): HtmlElement = {
+    AppShell.render(Page.Admin(), new AdminUsersPage(query, onQuery).render())
+  }
 }
 
 /** All of the create-user form's state, including its validity. Field errors are derived rather than stored, so they
@@ -43,26 +51,11 @@ private case class CreateUserForm(
   }
 }
 
-/** Everything that decides which rows the server sends back, in one value.
-  *
-  * One state rather than four `Var`s because they are not independent: narrowing the search or reordering the table
-  * invalidates the page index, and holding them apart means every writer has to remember to reset it. Being a case
-  * class it also compares by value, which is what lets the page ask for a reload only when something actually changed.
-  */
-private case class UserQuery(
-  page: Int = 0,
-  pageSize: Int = Paging.defaultPageSize,
-  sort: SortHeader.Sort = SortHeader.Sort.unsorted,
-  search: String = "",
-) {
+private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[UserQuery]) {
 
-  /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing
-    * about the new one.
-    */
-  def reset(change: UserQuery => UserQuery): UserQuery = change(this).copy(page = 0)
-}
+  /** `.distinct` because every reader here treats an emission as "ask the server again". */
+  private val querySignal = pageQuery.distinct
 
-private class AdminUsersPage {
   private val usersVar    = Var(List.empty[User])
   private val usersSignal = usersVar.signal
 
@@ -83,18 +76,26 @@ private class AdminUsersPage {
   private val lockedVar    = Var(Set.empty[String])
   private val lockedSignal = lockedVar.signal
 
-  /** Paging, ordering and the search box are all server-side now: this value *is* the request. `.distinct` is what
-    * makes it safe to write to on every keystroke — an unchanged query asks for nothing.
-    */
-  private val queryVar    = Var(UserQuery())
-  private val querySignal = queryVar.signal.distinct
-
   private val sortSignal     = querySignal.map(_.sort).distinct
   private val pageSignal     = querySignal.map(_.page).distinct
   private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
+  /** Every way this page asks for a different listing, as one stream of edits rather than a `Var` it owns.
+    *
+    * The state lives in the URL, so a writer cannot read the current value out of a local `Var` to change one field
+    * of it. It emits the change instead, and [[render]] applies it to whatever the address bar currently says.
+    */
+  private val changeBus = new EventBus[UserQuery => UserQuery]()
+
+  private def change(edit: UserQuery => UserQuery): Unit = changeBus.emit(edit)
+
   /** What the reader has typed, which is not yet what has been asked for — see the debounce in [[render]]. Separate
-    * from [[queryVar]] so the input stays responsive while the request it will cause waits for a pause in typing.
+    * from the query so the input stays responsive while the request it will cause waits for a pause in typing.
+    *
+    * It is seeded from the query and re-seeded whenever the query's search term changes, which is what puts `?q=bob`
+    * from a bookmark into the box, and what restores it when the back button moves through the history. That cannot
+    * fight the typing: the round trip from the debounce to the address bar and back is synchronous, so the value that
+    * arrives is the one the box holds at that instant.
     */
   private val searchInputVar = Var("")
 
@@ -144,7 +145,7 @@ private class AdminUsersPage {
   def render(): HtmlElement = {
     div(
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminUsersTitle)),
-      AdminSubmenu.render(Page.Admin),
+      AdminSubmenu.render(Page.Admin()),
       Alert.maybeError(errorSignal),
       renderCreateForm(),
       renderSearch(),
@@ -153,15 +154,28 @@ private class AdminUsersPage {
         page = pageSignal,
         total = totalSignal,
         pageSize = pageSizeSignal,
-        onPage = Observer[Int](page => queryVar.update(_.copy(page = page))),
-        onPageSize = Observer[Int](size => queryVar.update(_.reset(_.copy(pageSize = size)))),
+        onPage = Observer[Int](page => change(_.copy(page = page))),
+        onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
         summary = totalSignal.map(summaryOf).distinct,
         busy = loadingSignal,
       ),
+      // Each edit is applied to what the URL currently says, which is the only place the listing state lives.
+      changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
+      querySignal.map(_.search).distinct --> searchInputVar.writer,
       // Only the changes are debounced: the input itself stays immediate, and a page click or a column heading is not
       // affected by how recently anything was typed.
-      searchInputVar.signal.composeUpdates(_.debounce(searchDebounceMs)) -->
-        Observer[String](typed => queryVar.update(_.reset(_.copy(search = typed.trim)))),
+      //
+      // A debounced value that the URL already says is *not* a change, and the comparison is what makes that so. The
+      // box is written to from two directions — the reader types in it, and the line above fills it from the query —
+      // and without this the second one would come back 300ms later as a search the reader never asked for, resetting
+      // the page index with it. Opening `?page=3&q=bob` from a bookmark would land on page 3 and then jump to page 1.
+      searchInputVar.signal.composeUpdates(_.debounce(searchDebounceMs)).withCurrentValueOf(querySignal) -->
+        Observer[(String, UserQuery)] { case (typed, current) =>
+          val wanted = typed.trim
+          if (wanted != current.search) {
+            change(_.reset(_.copy(search = wanted)))
+          }
+        },
       listRequests --> Observer[UserQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
       listRequests.flatMapSwitch(load) -->
         Observer[Either[ApiError, UserPage]] {
@@ -186,14 +200,10 @@ private class AdminUsersPage {
           case Right(_)  =>
             // Back to the newest accounts, unfiltered: the account that was just created is then the first row,
             // whatever the administrator was looking at before. Nothing else can guarantee it is on screen — under a
-            // search or a column sort, a new row lands wherever it lands.
-            Var.set(
-              queryVar       -> UserQuery(sort = SortHeader.Sort.descending(UserSort.created)),
-              searchInputVar -> "",
-              inFlightVar    -> false,
-              formVar        -> CreateUserForm(),
-              errorVar       -> None,
-            )
+            // search or a column sort, a new row lands wherever it lands. The search box empties itself, because it
+            // follows the query.
+            onQuery.onNext(UserQuery(sort = SortHeader.Sort.descending(UserSort.created)))
+            Var.set(inFlightVar -> false, formVar -> CreateUserForm(), errorVar -> None)
             reloadBus.emit(())
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
@@ -293,7 +303,7 @@ private class AdminUsersPage {
   }
 
   private def renderTable(): HtmlElement = {
-    val onSort = Observer[SortHeader.Sort](sort => queryVar.update(_.reset(_.copy(sort = sort))))
+    val onSort = Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort))))
 
     div(
       cls := "overflow-x-auto card bg-base-100 shadow",

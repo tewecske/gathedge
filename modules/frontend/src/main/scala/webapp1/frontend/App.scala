@@ -1,6 +1,7 @@
 package webapp1.frontend
 
 import com.raquo.laminar.api.L._
+import com.raquo.waypoint.SplitRender
 import webapp1.frontend.api.ApiClient
 import webapp1.frontend.pages.{
   AcceptInvitePage,
@@ -21,6 +22,7 @@ import webapp1.frontend.pages.{
   VerifyEmailPage,
 }
 import webapp1.frontend.i18n.LocaleSync
+import webapp1.frontend.listing.{AuditQuery, UserQuery}
 import webapp1.frontend.state.AppState
 import webapp1.shared.domain.Locale
 import webapp1.shared.dto.AuthResponse
@@ -77,8 +79,46 @@ object App {
           case None         =>
             ()
         },
-      child <-- viewSignal.map(renderFor),
+      child <-- renderers(viewSignal).signal,
     )
+  }
+
+  /** The two administrator listings hold their paging, ordering and filtering in the URL, so every keystroke in a
+    * search box produces a new `Page` value. They therefore cannot be rendered by mapping the page to an element the
+    * way every other screen is: that would discard the mounted page on each change, taking the input focus, the
+    * in-flight request and the loaded rows with it.
+    *
+    * Waypoint's signal renderers are the answer — each builds its element once and feeds it the query, and drops it
+    * only when another renderer takes over. Everything else keeps the old behaviour, which is why `viewSignal` is
+    * still `.distinct`: the catch-all below re-runs on every emission.
+    */
+  private def renderers(viewSignal: Signal[(Gate, Page)]): SplitRender[(Gate, Page), HtmlElement] = {
+    SplitRender[(Gate, Page), HtmlElement](viewSignal)
+      .collectSignalPF[UserQuery] { case (gate, page: Page.Admin) if showsAdminScreen(gate) => page.query }(query =>
+        AdminUsersPage.render(query, onAdminQuery)
+      )
+      .collectSignalPF[AuditQuery] { case (gate, page: Page.AdminAudit) if showsAdminScreen(gate) => page.query }(
+        query => AdminAuditPage.render(query, onAdminAuditQuery)
+      )
+      .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
+  }
+
+  /** `loaded` as well as `isAdmin`: the session and the user land in two separate writes, so there is an instant in
+    * which the user is known to be an administrator and the gate is not open yet. The catch-all shows the spinner for
+    * it, and must be the one that answers.
+    */
+  private def showsAdminScreen(gate: Gate): Boolean = gate.loaded && gate.isAdmin
+
+  /** Writing the listing state back to the URL is what makes it bookmarkable, and `replaceState` rather than
+    * `pushState` is what keeps it usable: the search box writes on a pause in typing, so a history entry per write
+    * would leave the back button walking backwards through the reader's own words instead of leaving the screen.
+    */
+  private val onAdminQuery: Observer[UserQuery] = {
+    Observer(query => AppRouter.router.replaceState(Page.Admin(query)))
+  }
+
+  private val onAdminAuditQuery: Observer[AuditQuery] = {
+    Observer(query => AppRouter.router.replaceState(Page.AdminAudit(query)))
   }
 
   /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the
@@ -148,17 +188,13 @@ object App {
         VerifyEmailPage.render(token)
       case Page.CheckInbox                          =>
         CheckInboxPage.render()
-      case Page.Admin if gate.isAdmin               =>
-        AdminUsersPage.render()
-      case Page.Admin                               =>
+      // The two listings reach here only when the gate said no: a signed-in administrator gets them from the signal
+      // renderers above, which is the only way they keep their state across a query change.
+      case Page.Admin(_) | Page.AdminAudit(_)       =>
         ForbiddenPage.render()
       case Page.AdminUserDetail(id) if gate.isAdmin =>
         AdminUserDetailPage.render(id)
       case Page.AdminUserDetail(_)                  =>
-        ForbiddenPage.render()
-      case Page.AdminAudit if gate.isAdmin          =>
-        AdminAuditPage.render()
-      case Page.AdminAudit                          =>
         ForbiddenPage.render()
       case Page.AdminSystem if gate.isAdmin         =>
         AdminSystemPage.render()

@@ -16,17 +16,30 @@ object AdminSubmenu {
   def render(active: Page): HtmlElement = {
     div(
       cls := "tabs tabs-boxed mb-4 w-fit",
-      tabLink(Page.Admin, I18n.t(UiKeys.navAdminUsers), isUsersTab(active)),
-      tabLink(Page.AdminAudit, I18n.t(UiKeys.adminAuditTitle), active == Page.AdminAudit),
+      // Each tab links to its screen's default view — the plain path, with no listing state on it.
+      tabLink(Page.Admin(), I18n.t(UiKeys.navAdminUsers), isUsersTab(active)),
+      tabLink(Page.AdminAudit(), I18n.t(UiKeys.adminAuditTitle), isAuditTab(active)),
       tabLink(Page.AdminSystem, I18n.t(UiKeys.navAdminSystem), active == Page.AdminSystem),
     )
   }
 
+  /** The two listings are matched by type rather than by value: they carry their paging and filtering, and a tab that
+    * went dark as soon as somebody sorted a column would be answering the wrong question.
+    */
   private def isUsersTab(active: Page): Boolean = {
     active match {
-      case Page.Admin | Page.AdminUserDetail(_) =>
+      case Page.Admin(_) | Page.AdminUserDetail(_) =>
         true
-      case _                                    =>
+      case _                                       =>
+        false
+    }
+  }
+
+  private def isAuditTab(active: Page): Boolean = {
+    active match {
+      case Page.AdminAudit(_) =>
+        true
+      case _                  =>
         false
     }
   }

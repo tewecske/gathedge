@@ -3,6 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import webapp1.frontend.listing.AuditQuery
 import webapp1.shared.i18n.UiKeys
 import zio.test._
 
@@ -24,6 +25,14 @@ object AdminSystemPageSpec extends ZIOSpecDefault {
       rootNode.unmount()
       dom.document.body.removeChild(container)
     }
+  }
+
+  /** The audit page reads its listing state from the URL and writes it back. A `Var` stands in for the router here and
+    * closes the same loop, which is all the page needs to know about.
+    */
+  private def auditPage(): HtmlElement = {
+    val queryVar = Var(AuditQuery())
+    AdminAuditPage.render(queryVar.signal, queryVar.writer)
   }
 
   def spec = {
@@ -51,14 +60,14 @@ object AdminSystemPageSpec extends ZIOSpecDefault {
         assertTrue(tabs == List(UiKeys.navAdminUsers, UiKeys.adminAuditTitle, UiKeys.navAdminSystem))
       },
       test("the audit page renders its filters and its empty state with no backend") {
-        val (headings, text) = withPage(AdminAuditPage.render()) { container =>
+        val (headings, text) = withPage(auditPage()) { container =>
           (container.querySelectorAll("h1").toList.map(_.textContent), container.textContent)
         }
 
         assertTrue(headings.exists(_.contains(UiKeys.adminAuditTitle)), text.contains(UiKeys.adminAuditEmpty))
       },
       test("the audit page's action filter offers every recorded action") {
-        val options = withPage(AdminAuditPage.render()) { container =>
+        val options = withPage(auditPage()) { container =>
           container.querySelectorAll("select option").toList.map(_.textContent)
         }
 

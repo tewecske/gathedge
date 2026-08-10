@@ -1,0 +1,4 @@
+Back button removes all query params
+Page starts at 0
+Link with filter query doesn't work, the filter query is removed
+

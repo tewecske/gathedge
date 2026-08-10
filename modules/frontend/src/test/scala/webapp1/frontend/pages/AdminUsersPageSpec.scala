@@ -3,6 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import webapp1.frontend.listing.UserQuery
 import webapp1.shared.i18n.MessageKeys
 import zio.test._
 
@@ -18,10 +19,14 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
     */
   private val passwordTooShort = MessageKeys.passwordTooShort
 
+  /** The page reads its listing state from the URL and writes it back. A `Var` stands in for the router and closes the
+    * same loop, so a page turn or a search still lands where the page expects it.
+    */
   private def withPage[A](use: dom.Element => A): A = {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
-    val rootNode  = L.render(container, AdminUsersPage.render())
+    val queryVar  = Var(UserQuery())
+    val rootNode  = L.render(container, AdminUsersPage.render(queryVar.signal, queryVar.writer))
     try {
       use(container)
     } finally {
