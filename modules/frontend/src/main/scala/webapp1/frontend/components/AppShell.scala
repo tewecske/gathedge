@@ -1,9 +1,6 @@
 package webapp1.frontend.components
 
 import com.raquo.laminar.api.L._
-import com.raquo.laminar.codecs.Codec
-import org.scalajs.dom
-import scala.scalajs.js
 import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.i18n.I18n
 import webapp1.frontend.state.AppState
@@ -12,58 +9,76 @@ import webapp1.shared.domain.Theme
 import webapp1.shared.i18n.UiKeys
 import webapp1.shared.dto.AuthResponse
 
-/** Themed authenticated shell: navbar (nav links + theme toggle + account menu) wrapping page-specific content. Every
-  * authenticated page renders through this so nav/theme/logout stay consistent.
+/** Themed shell: navbar wrapping page-specific content. Every page renders through this so the wordmark, the language
+  * picker and the theme control sit in the same place whoever is looking.
+  *
+  * Two shapes, one navbar. [[render]] is the authenticated one — nav links, account menu, logout. [[renderPublic]] is
+  * what the signed-out pages (sign-in, sign-up) use: the same bar with everything requiring a session left out, so
+  * those pages need no language picker or theme toggle of their own.
   *
   * Takes no user parameter on purpose: everything user-dependent (admin link, theme label, avatar initial) is read
-  * reactively from [[AppState.currentUserSignal]], so a theme toggle updates the navbar in place instead of forcing
-  * `App` to rebuild the whole page.
+  * reactively from [[AppState]], so a theme toggle updates the navbar in place instead of forcing `App` to rebuild the
+  * whole page.
   */
 object AppShell {
-  def render(active: Page, content: HtmlElement): HtmlElement = new AppShell(active, content).render()
 
-  // Laminar 17 has no keys for the popover API, which is what the account dropdown is built on.
-  private val popoverAttr       = htmlAttr("popover", Codec.stringAsIs)
-  private val popoverTargetAttr = htmlAttr("popovertarget", Codec.stringAsIs)
+  /** The signed-in shell. `active` is the page to mark in the nav. */
+  def render(active: Page, content: HtmlElement): HtmlElement = new AppShell(Some(active), content).render()
 
-  // `child <--` can briefly hold the outgoing and incoming shell in the DOM at once, and a
-  // duplicate `id` would make `popovertarget` resolve to the wrong element.
-  private var instanceCounter = 0
-
-  private def nextInstanceId(): Int = {
-    instanceCounter += 1
-    instanceCounter
-  }
+  /** The signed-out shell: wordmark, language picker and theme control only, with the content centred rather than
+    * laid out from the top — these pages are a single card, not a screenful.
+    */
+  def renderPublic(content: HtmlElement): HtmlElement = new AppShell(None, content).render()
 }
 
-private class AppShell(active: Page, content: HtmlElement) {
+private class AppShell(active: Option[Page], content: HtmlElement) {
   private val themeToggleBus = new EventBus[Unit]()
   private val logoutBus      = new EventBus[Unit]()
 
   private val currentUserSignal = AppState.currentUserSignal
   private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
-  private val themeSignal       = currentUserSignal.map(_.map(_.theme).getOrElse(Theme.Light)).distinct
+  private val themeSignal       = AppState.themeSignal
   private val emailSignal       = currentUserSignal.map(_.map(_.email).getOrElse("")).distinct
   private val initialSignal     = emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
 
-  private val instanceId = AppShell.nextInstanceId()
-  private val menuId     = s"user-menu-$instanceId"
-  private val menuAnchor = s"--user-menu-$instanceId"
+  private val (menuId, menuAnchor) = Popover.nextIds("user-menu")
+
+  private val isAuthenticated = active.isDefined
+
+  /** The theme the click asks for, paired with whether there is an account to persist it to. Sampled rather than read
+    * off a `Var`, so the two observers below cannot disagree about which theme a single click meant.
+    */
+  private val themeRequestStream = {
+    themeToggleBus.events
+      .sample(themeSignal, AppState.isSignedInSignal)
+      .map { case (current, signedIn) =>
+        (nextTheme(current), signedIn)
+      }
+  }
 
   def render(): HtmlElement = {
     div(
-      cls := "min-h-screen bg-base-200",
+      cls := "min-h-screen flex flex-col bg-base-200",
       renderNavbar(),
-      div(cls := "p-8", content),
+      renderContent(),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
-      themeToggleBus.events.sample(themeSignal).flatMapSwitch(current => ApiClient.updateTheme(nextTheme(current))) -->
+      themeRequestStream
+        .collect { case (theme, true) =>
+          theme
+        }
+        .flatMapSwitch(theme => ApiClient.updateTheme(theme)) -->
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>
             AppState.setUser(res.user)
           case Left(_)    =>
             () // theme toggle failure is low-stakes; silently keep prior theme
         },
+      // Nobody to persist it to: the choice is the browser's, and `AppState` is what remembers it
+      // across loads. This is the whole of the theme control on the signed-out pages.
+      themeRequestStream.collect { case (theme, false) =>
+        theme
+      } --> Observer[Theme](AppState.setTheme),
       logoutBus.events.flatMapSwitch(_ => ApiClient.logout) -->
         Observer[Either[ApiError, Unit]] { _ =>
           // Whether or not the server acknowledged, drop the client-side session.
@@ -71,6 +86,17 @@ private class AppShell(active: Page, content: HtmlElement) {
           AppRouter.router.pushState(Page.SignIn)
         },
     )
+  }
+
+  /** The signed-out pages are one card, so they get centred in what is left of the viewport rather than stacked under
+    * the navbar the way a page of content is.
+    */
+  private def renderContent(): HtmlElement = {
+    if (isAuthenticated) {
+      div(cls := "p-8", content)
+    } else {
+      div(cls := "flex-1 flex items-center justify-center p-4", content)
+    }
   }
 
   private def nextTheme(theme: Theme): Theme = {
@@ -83,7 +109,7 @@ private class AppShell(active: Page, content: HtmlElement) {
   }
 
   private def navLink(page: Page, label: String): HtmlElement = {
-    val isActive = page == active
+    val isActive = active.contains(page)
     a(
       cls := "btn btn-sm " + (
         if (isActive)
@@ -96,22 +122,44 @@ private class AppShell(active: Page, content: HtmlElement) {
     )
   }
 
+  /** Empty on the signed-out shell: every one of these needs a session. The admin link is left to the signal below,
+    * which is already `false` for a visitor with no account.
+    */
+  private def navLinks(): List[HtmlElement] = {
+    if (isAuthenticated) {
+      List(navLink(Page.Home, I18n.t(UiKeys.navTodo)), navLink(Page.Groups, I18n.t(UiKeys.navGroups)))
+    } else {
+      Nil
+    }
+  }
+
+  /** The avatar and its menu are the part of the bar that means nothing without an account. Built as a pair so the
+    * trigger and the popover it names can never be rendered one without the other.
+    */
+  private def accountControls(): List[HtmlElement] = {
+    if (isAuthenticated) {
+      List(renderAccountMenuTrigger(), renderAccountMenu())
+    } else {
+      Nil
+    }
+  }
+
   private def renderNavbar(): HtmlElement = {
     div(
       cls := "navbar bg-base-100 shadow-sm gap-2",
       div(
         cls := "navbar-start gap-2",
         span(cls := "text-lg font-semibold px-2", "webapp1"),
-        navLink(Page.Home, I18n.t(UiKeys.navTodo)),
-        navLink(Page.Groups, I18n.t(UiKeys.navGroups)),
+        navLinks(),
         child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin, I18n.t(UiKeys.navAdmin)))),
       ),
       div(
         cls := "navbar-end gap-2",
+        // Both stay on the signed-out shell — a visitor who cannot read this page has to be able to
+        // reach one they can, and the theme is the browser's choice whether or not anyone is signed in.
         LanguagePicker.render(),
         renderThemeSwap(),
-        renderAccountMenuTrigger(),
-        renderAccountMenu(),
+        accountControls(),
       ),
     )
   }
@@ -119,11 +167,13 @@ private class AppShell(active: Page, content: HtmlElement) {
   /** daisyUI theme controller in a `swap`: a checked `value="dark"` checkbox themes the page straight from CSS
     * (`:root:has(input.theme-controller[value=dark]:checked)`), so the icon and the colours flip together.
     * [[AppState.applyTheme]]'s `data-theme` stays the persisted mirror of the same fact — the two agree because both
-    * come from `User.theme`, and where they momentarily wouldn't, the `:has` selector is the more specific one.
+    * come from [[AppState.themeSignal]], and where they momentarily wouldn't, the `:has` selector is the more specific
+    * one.
     *
-    * `controlled` rather than a bare `checked <--`: the request is what decides the theme, so a failed `updateTheme`
-    * has to leave the checkbox (and hence the CSS above) on the old one. Uncontrolled, the click would flip the page
-    * and nothing would ever flip it back, since a failure makes `themeSignal` emit nothing.
+    * `controlled` rather than a bare `checked <--`: for a signed-in user the *request* is what decides the theme, so a
+    * failed `updateTheme` has to leave the checkbox (and hence the CSS above) on the old one. Uncontrolled, the click
+    * would flip the page and nothing would ever flip it back, since a failure makes `themeSignal` emit nothing. Signed
+    * out there is no request and the write is local and immediate.
     *
     * The label carries no text — the two translated strings become the checkbox's accessible name.
     */
@@ -182,12 +232,12 @@ private class AppShell(active: Page, content: HtmlElement) {
     */
   private def renderAccountMenuTrigger(): HtmlElement = {
     button(
-      cls                        := "btn btn-ghost btn-circle avatar avatar-placeholder",
-      typ                        := "button",
-      aria.label                 := I18n.t(UiKeys.navAccountMenu),
+      cls                := "btn btn-ghost btn-circle avatar avatar-placeholder",
+      typ                := "button",
+      aria.label         := I18n.t(UiKeys.navAccountMenu),
       title <-- emailSignal,
-      AppShell.popoverTargetAttr := menuId,
-      styleAttr                  := s"anchor-name:$menuAnchor",
+      Popover.targetAttr := menuId,
+      styleAttr          := s"anchor-name:$menuAnchor",
       div(cls := "bg-neutral text-neutral-content w-8 rounded-full", span(cls := "text-xs", text <-- initialSignal)),
     )
   }
@@ -197,38 +247,27 @@ private class AppShell(active: Page, content: HtmlElement) {
     */
   private def renderAccountMenu(): HtmlElement = {
     ul(
-      cls                  := "dropdown dropdown-end menu w-52 rounded-box bg-base-100 shadow-sm",
-      AppShell.popoverAttr := "auto",
-      idAttr               := menuId,
-      styleAttr            := s"position-anchor:$menuAnchor",
+      cls                 := "dropdown dropdown-end menu w-52 rounded-box bg-base-100 shadow-sm",
+      Popover.popoverAttr := "auto",
+      idAttr              := menuId,
+      styleAttr           := s"position-anchor:$menuAnchor",
       li(
         a(
           cls := (
-            if (active == Page.Settings)
+            if (active.contains(Page.Settings))
               "menu-active"
             else
               ""
           ),
           AppRouter.router.navigateTo(Page.Settings),
           I18n.t(UiKeys.settingsTitle),
-          onClick.mapToUnit --> Observer[Unit](_ => closeMenu()),
+          // Choosing "Account settings" while already on /settings does not rebuild the shell, and a
+          // popover is never light-dismissed by a click on its own item.
+          onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
         )
       ),
-      // No `closeMenu` needed: logout pushes Page.SignIn, which rebuilds the shell away.
+      // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
       li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
     )
-  }
-
-  /** A popover is light-dismissed by clicks *outside* it, never by one on its own item, and choosing "Account settings"
-    * while already on `/settings` does not rebuild the shell. scalajs-dom has no binding for `hidePopover`, and jsdom
-    * (the frontend specs' DOM) may not implement it at all — hence the cast and the feature check.
-    */
-  private def closeMenu(): Unit = {
-    Option(dom.document.getElementById(menuId)).foreach { element =>
-      val dyn = element.asInstanceOf[js.Dynamic]
-      if (!js.isUndefined(dyn.hidePopover)) {
-        dyn.hidePopover()
-      }
-    }
   }
 }

@@ -46,6 +46,9 @@ test.describe('language prefix', () => {
 
   test('the picker switches language and keeps the path', async ({ page }) => {
     await page.goto('/en/sign-in');
+    // The picker is a popover dropdown: the trigger shows the current language's code, the entries
+    // live in the popover and are only clickable once it is open.
+    await page.getByRole('button', { name: 'Language' }).click();
     await page.getByRole('link', { name: 'Magyar' }).click();
     await expect(page).toHaveURL(/\/hu\/sign-in$/);
     await expect(page.locator('html')).toHaveAttribute('lang', 'hu');

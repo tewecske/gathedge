@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{LanguagePicker, OAuthButtons, OAuthMessages}
+import webapp1.frontend.components.{AppShell, OAuthButtons, OAuthMessages}
 import webapp1.frontend.i18n.I18n
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
@@ -11,7 +11,11 @@ import webapp1.shared.dto.{AuthResponse, LoginRequest, ProvidersResponse}
 import webapp1.shared.i18n.{MessageKeys, UiKeys}
 
 object SignInPage {
-  def render(): HtmlElement = new SignInPage().render()
+
+  /** The signed-out shell, so the wordmark, the language picker and the theme control are in the same corner here as
+    * they are once signed in — and so this page carries no picker of its own.
+    */
+  def render(): HtmlElement = AppShell.renderPublic(new SignInPage().render())
 }
 
 private class SignInPage {
@@ -55,13 +59,10 @@ private class SignInPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "min-h-screen flex flex-col items-center justify-center gap-4 bg-base-200 p-4",
-      // Signed-out visitors need this as much as signed-in ones: without it, someone who cannot
-      // read this page has no way to reach one they can.
-      LanguagePicker.render(),
+      cls := "w-full max-w-sm",
       // A real form element, so Enter in either field submits.
       form(
-        cls := "card w-full max-w-sm bg-base-100 shadow-xl",
+        cls := "card w-full bg-base-100 shadow-xl",
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",

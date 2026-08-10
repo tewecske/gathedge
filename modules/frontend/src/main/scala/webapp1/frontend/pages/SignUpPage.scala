@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{LanguagePicker, OAuthButtons}
+import webapp1.frontend.components.{AppShell, OAuthButtons}
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.OAuthProvider
@@ -12,7 +12,9 @@ import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object SignUpPage {
-  def render(): HtmlElement = new SignUpPage().render()
+
+  /** Same signed-out shell as [[SignInPage]] — the two pages are one flow and must not differ in their chrome. */
+  def render(): HtmlElement = AppShell.renderPublic(new SignUpPage().render())
 }
 
 private class SignUpPage {
@@ -43,13 +45,10 @@ private class SignUpPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "min-h-screen flex flex-col items-center justify-center gap-4 bg-base-200 p-4",
-      // Signed-out visitors need this as much as signed-in ones: without it, someone who cannot
-      // read this page has no way to reach one they can.
-      LanguagePicker.render(),
+      cls := "w-full max-w-sm",
       // A real form element, so Enter in either field submits.
       form(
-        cls := "card w-full max-w-sm bg-base-100 shadow-xl",
+        cls := "card w-full bg-base-100 shadow-xl",
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",
