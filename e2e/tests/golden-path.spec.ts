@@ -76,7 +76,10 @@ test('todo item survives a page refresh (list is re-fetched, not just held in me
 test('theme toggle switches the page theme immediately', async () => {
   const html = page.locator('html');
   const before = await html.getAttribute('data-theme');
-  await page.getByRole('button', { name: /Switch to/ }).click();
+  // The daisyUI swap stacks its icons on top of the checkbox in one grid cell, so clicking the
+  // input directly fails Playwright's hit-target check — click the label, which is what a user hits.
+  await expect(page.getByRole('checkbox', { name: /Switch to/ })).toBeAttached();
+  await page.locator('label.swap').click();
   await expect(html).not.toHaveAttribute('data-theme', before ?? '');
 });
 
