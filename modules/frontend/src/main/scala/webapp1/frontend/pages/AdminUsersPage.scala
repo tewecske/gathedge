@@ -2,10 +2,10 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats, Pagination}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats, Pagination, SortHeader}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
-import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry}
+import webapp1.shared.dto.{CreateUserRequest, Paging, RateLimitEntry, UserPage, UserSort}
 import webapp1.frontend.i18n.I18n
 import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
@@ -43,39 +43,60 @@ private case class CreateUserForm(
   }
 }
 
+/** Everything that decides which rows the server sends back, in one value.
+  *
+  * One state rather than four `Var`s because they are not independent: narrowing the search or reordering the table
+  * invalidates the page index, and holding them apart means every writer has to remember to reset it. Being a case
+  * class it also compares by value, which is what lets the page ask for a reload only when something actually changed.
+  */
+private case class UserQuery(
+  page: Int = 0,
+  pageSize: Int = Paging.defaultPageSize,
+  sort: SortHeader.Sort = SortHeader.Sort.unsorted,
+  search: String = "",
+) {
+
+  /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing
+    * about the new one.
+    */
+  def reset(change: UserQuery => UserQuery): UserQuery = change(this).copy(page = 0)
+}
+
 private class AdminUsersPage {
   private val usersVar    = Var(List.empty[User])
   private val usersSignal = usersVar.signal
+
+  /** How many accounts match the current search, across every page — the server counts it, and the page control draws
+    * its buttons off it.
+    */
+  private val totalVar    = Var(0L)
+  private val totalSignal = totalVar.signal
 
   /** Which addresses the rate limiter is currently holding failures against, so the list can flag a locked-out account
     * without the list endpoint having to know about the limiter.
     *
     * Loaded alongside the users and joined here rather than server-side: the lock lives in a process-local `Ref`, it
     * changes on a timescale of minutes, and keeping it out of `GET /api/admin/users` leaves that endpoint — and its
-    * entry in the OpenAPI document — exactly as it was.
+    * entry in the OpenAPI document — exactly as it was. It is also why the sign-in column is the one column that
+    * cannot be sorted: there is no `ORDER BY` that could produce it.
     */
   private val lockedVar    = Var(Set.empty[String])
   private val lockedSignal = lockedVar.signal
 
-  /** Paging is client-side: `GET /api/admin/users` answers with the whole list, so a page is a slice of what is already
-    * here rather than a request. The page index is left alone when the list changes — `Pagination.clampPage` keeps a
-    * stale one harmless — except after a create, which jumps to wherever the new account landed so the administrator
-    * can see that it worked.
+  /** Paging, ordering and the search box are all server-side now: this value *is* the request. `.distinct` is what
+    * makes it safe to write to on every keystroke — an unchanged query asks for nothing.
     */
-  private val pageVar        = Var(0)
-  private val pageSignal     = pageVar.signal
-  private val pageSizeVar    = Var(Pagination.defaultPageSize)
-  private val pageSizeSignal = pageSizeVar.signal
+  private val queryVar    = Var(UserQuery())
+  private val querySignal = queryVar.signal.distinct
 
-  private val pageCountSignal = {
-    usersSignal.combineWithFn(pageSizeSignal)((users, size) => Pagination.pageCount(users.size, size))
-  }
+  private val sortSignal     = querySignal.map(_.sort).distinct
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
-  private val visibleSignal = {
-    usersSignal
-      .combineWith(pageSignal, pageSizeSignal)
-      .map((users, page, size) => Pagination.slice(users, page, size))
-  }
+  /** What the reader has typed, which is not yet what has been asked for — see the debounce in [[render]]. Separate
+    * from [[queryVar]] so the input stays responsive while the request it will cause waits for a pause in typing.
+    */
+  private val searchInputVar = Var("")
 
   private val formVar    = Var(CreateUserForm())
   private val formSignal = formVar.signal
@@ -91,11 +112,31 @@ private class AdminUsersPage {
   // Server-side failures only; field-level problems render next to their input.
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal                   = errorVar.signal
-  private val inFlightVar                   = Var(false)
-  private val inFlightSignal                = inFlightVar.signal
 
-  private val loadBus   = new EventBus[Unit]()
+  /** Whether a *create* is in flight. It gates the submit, so it must not also mean "the table is loading": the two
+    * requests are independent, and one flag for both means a page turn, a debounced search or a slow list query
+    * silently drops the submit the administrator just made — the form would answer a click with nothing at all.
+    */
+  private val inFlightVar    = Var(false)
+  private val inFlightSignal = inFlightVar.signal
+
+  /** Whether the listing is being fetched. Only the paging control reads it, to grey its buttons out between pages. */
+  private val loadingVar    = Var(false)
+  private val loadingSignal = loadingVar.signal
+
+  /** Asks for the current query again without changing it — after a create, and once on mount. */
+  private val reloadBus = new EventBus[Unit]()
   private val createBus = new EventBus[Unit]()
+
+  /** Every reason to call the list endpoint, as one stream: the query changed, or somebody asked for it again. One
+    * stream rather than two subscriptions so a reload cancels an in-flight request instead of racing it.
+    */
+  private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
+
+  /** How long typing has to stop before the search is sent, in milliseconds — Airstream's `debounce` takes a plain
+    * `Int`. Long enough that a typed word is one request, short enough that the list feels like it is following along.
+    */
+  private val searchDebounceMs = 300
 
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val createStream = createBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
@@ -106,21 +147,28 @@ private class AdminUsersPage {
       AdminSubmenu.render(Page.Admin),
       Alert.maybeError(errorSignal),
       renderCreateForm(),
+      renderSearch(),
       renderTable(),
       Pagination.render(
         page = pageSignal,
-        pageCount = pageCountSignal,
-        onPage = pageVar.writer,
+        total = totalSignal,
         pageSize = pageSizeSignal,
-        // A different page size makes the current index meaningless, so the reader goes back to the top.
-        onPageSize = Observer[Int](size => Var.set(pageSizeVar -> size, pageVar -> 0)),
+        onPage = Observer[Int](page => queryVar.update(_.copy(page = page))),
+        onPageSize = Observer[Int](size => queryVar.update(_.reset(_.copy(pageSize = size)))),
+        summary = totalSignal.map(summaryOf).distinct,
+        busy = loadingSignal,
       ),
-      loadBus.events.flatMapSwitch(_ => AdminApiClient.listUsers) -->
-        Observer[Either[ApiError, List[User]]] {
-          case Right(users) =>
-            Var.set(usersVar -> users, errorVar -> None)
-          case Left(err)    =>
-            errorVar.set(Some(err.message))
+      // Only the changes are debounced: the input itself stays immediate, and a page click or a column heading is not
+      // affected by how recently anything was typed.
+      searchInputVar.signal.composeUpdates(_.debounce(searchDebounceMs)) -->
+        Observer[String](typed => queryVar.update(_.reset(_.copy(search = typed.trim)))),
+      listRequests --> Observer[UserQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
+      listRequests.flatMapSwitch(load) -->
+        Observer[Either[ApiError, UserPage]] {
+          case Right(result) =>
+            Var.set(usersVar -> result.items, totalVar -> result.total, loadingVar -> false, errorVar -> None)
+          case Left(err)     =>
+            Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
       createStream -->
         Observer[Option[CreateUserRequest]] {
@@ -135,28 +183,68 @@ private class AdminUsersPage {
         }
         .flatMapSwitch(request => AdminApiClient.createUser(request)) -->
         Observer[Either[ApiError, User]] {
-          case Right(user) =>
-            val users = usersVar.now() :+ user
+          case Right(_)  =>
+            // Back to the newest accounts, unfiltered: the account that was just created is then the first row,
+            // whatever the administrator was looking at before. Nothing else can guarantee it is on screen — under a
+            // search or a column sort, a new row lands wherever it lands.
             Var.set(
-              usersVar    -> users,
-              pageVar     -> Pagination.lastPage(users.size, pageSizeVar.now()),
-              inFlightVar -> false,
-              formVar     -> CreateUserForm(),
-              errorVar    -> None,
+              queryVar       -> UserQuery(sort = SortHeader.Sort.descending(UserSort.created)),
+              searchInputVar -> "",
+              inFlightVar    -> false,
+              formVar        -> CreateUserForm(),
+              errorVar       -> None,
             )
-          case Left(err)   =>
+            reloadBus.emit(())
+          case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       // A failed lock lookup leaves the badges off rather than failing the page: the user list is the point, and the
       // lock state is an annotation on it.
-      loadBus.events.flatMapSwitch(_ => AdminApiClient.rateLimits) -->
+      reloadBus.events.flatMapSwitch(_ => AdminApiClient.rateLimits) -->
         Observer[Either[ApiError, List[RateLimitEntry]]] {
           case Right(entries) =>
             lockedVar.set(lockedAddresses(entries))
           case Left(_)        =>
             lockedVar.set(Set.empty)
         },
-      onMountCallback(_ => loadBus.emit(())),
+      onMountCallback(_ => reloadBus.emit(())),
+    )
+  }
+
+  private def load(query: UserQuery): EventStream[Either[ApiError, UserPage]] = {
+    AdminApiClient.listUsers(
+      page = Some(query.page),
+      pageSize = Some(query.pageSize),
+      sort = query.sort.column,
+      dir = query.sort.wire,
+      search = Option(query.search).filter(_.nonEmpty),
+    )
+  }
+
+  /** What the paging control says the listing holds. Zero is worded as its own sentence rather than "0 accounts",
+    * because with a search box above the table it is an answer rather than a count.
+    */
+  private def summaryOf(total: Long): String = {
+    if (total <= 0L)
+      I18n.t(UiKeys.adminUsersEmpty)
+    else
+      I18n.plural(UiKeys.adminUsersCount, total)
+  }
+
+  private def renderSearch(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-end gap-2 mb-4",
+      label(
+        cls           := "form-control",
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.adminUsersFilterLabel)),
+        input(
+          // `search` rather than `text`, so the browser offers its own clear button on the platforms that have one.
+          cls         := "input input-sm",
+          typ         := "search",
+          placeholder := I18n.t(UiKeys.adminUsersFilterPlaceholder),
+          controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
+        ),
+      ),
     )
   }
 
@@ -205,22 +293,25 @@ private class AdminUsersPage {
   }
 
   private def renderTable(): HtmlElement = {
+    val onSort = Observer[SortHeader.Sort](sort => queryVar.update(_.reset(_.copy(sort = sort))))
+
     div(
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
         cls := "table",
         thead(
           tr(
-            th(I18n.t(MessageKeys.fieldEmail)),
-            th(I18n.t(UiKeys.adminUsersColAdmin)),
-            th(I18n.t(UiKeys.adminUsersColConfirmed)),
+            SortHeader.render(I18n.t(MessageKeys.fieldEmail), UserSort.email, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.adminUsersColAdmin), UserSort.admin, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.adminUsersColConfirmed), UserSort.confirmed, sortSignal, onSort),
+            // The one column with nothing behind it to order by; see `lockedVar`.
             th(I18n.t(UiKeys.adminUsersColSignIn)),
-            th(I18n.t(UiKeys.adminUsersColCreated)),
+            SortHeader.render(I18n.t(UiKeys.adminUsersColCreated), UserSort.created, sortSignal, onSort),
           )
         ),
         tbody(
           children <--
-            visibleSignal.splitSeq(_.id) { userSignal =>
+            usersSignal.splitSeq(_.id) { userSignal =>
               renderRow(userSignal.key, userSignal)
             }
         ),

@@ -19,6 +19,7 @@ import webapp1.shared.dto.{
   AdminUserDetail,
   AdminVerificationTokenInfo,
   AuditEntry,
+  AuditPage,
   AuthResponse,
   ClearRateLimitRequest,
   ConfigSummary,
@@ -49,6 +50,7 @@ import webapp1.shared.dto.{
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
   UpdateUserRequest,
+  UserPage,
   VerifyEmailRequest,
 }
 import zio.schema.{DeriveSchema, Schema}
@@ -112,6 +114,12 @@ object ApiSchemas {
   given Schema[AdminUserDetail]            = DeriveSchema.gen[AdminUserDetail]
   given Schema[AuditEntry]                 = DeriveSchema.gen[AuditEntry]
   given Schema[RateLimitEntry]             = DeriveSchema.gen[RateLimitEntry]
+
+  // The two paged listings. Concrete rather than one generic `Page[A]`, which would need a `given [A: Schema]` and buys
+  // a shared field name in exchange for a derivation that only ever has two instantiations.
+  given Schema[UserPage]  = DeriveSchema.gen[UserPage]
+  given Schema[AuditPage] = DeriveSchema.gen[AuditPage]
+
   given Schema[ClearRateLimitRequest]      = DeriveSchema.gen[ClearRateLimitRequest]
 
   given Schema[ConfigSummary]  = DeriveSchema.gen[ConfigSummary]

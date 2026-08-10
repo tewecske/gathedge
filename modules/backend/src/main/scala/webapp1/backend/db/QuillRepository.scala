@@ -1,6 +1,6 @@
 package webapp1.backend.db
 
-import io.getquill.NamingStrategy
+import io.getquill.{NamingStrategy, Ord}
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
@@ -24,6 +24,19 @@ abstract class QuillRepository[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   protected def run[T](query: ZIO[DataSource, Throwable, T]): Task[T] = {
     query.provideEnvironment(ZEnvironment(dataSource))
+  }
+
+  /** `ASC` or `DESC` decided at runtime, for a `sortBy` whose direction arrives as a query parameter.
+    *
+    * Quill's own `implicitOrd` would supply `ascNullsFirst` for a `sortBy` with no explicit ordering, so this has to be
+    * passed with `using` at the call site rather than left to implicit search. Where the sorted column is nullable the
+    * two dialects disagree about where the nulls land — neither of them is asked, and neither answer is wrong.
+    */
+  protected def ordering[R](descending: Boolean): Ord[R] = {
+    if (descending)
+      Ord.desc[R]
+    else
+      Ord.asc[R]
   }
 
   /** Runs several queries of *this* repository as one unit of work; any failure rolls the lot back. */

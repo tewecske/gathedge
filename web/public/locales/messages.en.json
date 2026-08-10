@@ -81,6 +81,7 @@
   "ui.common.rowsPerPage": "Rows per page",
   "ui.common.previousPage": "Previous page",
   "ui.common.nextPage": "Next page",
+  "ui.common.pageOf": "Page {0} of {1}",
 
   "ui.nav.todo": "Todo",
   "ui.nav.groups": "Groups",
@@ -195,6 +196,12 @@
   "ui.admin.users.badgeLocked": "Locked out",
   "ui.admin.users.badgeOk": "OK",
 
+  "ui.admin.users.filterLabel": "Filter",
+  "ui.admin.users.filterPlaceholder": "Email contains…",
+  "ui.admin.users.empty": "No matching accounts.",
+  "ui.admin.users.count.one": "{0} account",
+  "ui.admin.users.count.other": "{0} accounts",
+
   "ui.admin.user.back": "← Back to users",
   "ui.admin.user.gone": "This user no longer exists.",
   "ui.admin.user.passwordPlaceholder": "Leave blank to keep the current password",
@@ -259,10 +266,8 @@
   "ui.admin.audit.systemActor": "the system",
   "ui.admin.audit.targetUser": "user {0}",
   "ui.admin.audit.empty": "No entries.",
-  "ui.admin.audit.countAll.one": "{0} entry — that is all of them.",
-  "ui.admin.audit.countAll.other": "{0} entries — that is all of them.",
-  "ui.admin.audit.countShown.one": "{0} entry shown.",
-  "ui.admin.audit.countShown.other": "{0} entries shown.",
+  "ui.admin.audit.count.one": "{0} entry",
+  "ui.admin.audit.count.other": "{0} entries",
 
   "ui.auditaction.user.create": "Create user",
   "ui.auditaction.user.update": "Update user",

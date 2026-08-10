@@ -73,13 +73,17 @@ object UiKeys {
     */
   val commonNone: String = key("ui.common.none")
 
-  // The paging control under a long table. The numbered buttons carry the number itself, so only the two arrows and
-  // the page-size control need words — and the arrows' words are read out rather than shown, being `aria-label`s on a
-  // glyph.
+  // The paging control under a long table. The numbered buttons carry the number itself, so only the two arrows, the
+  // page-size control and the "which of how many" indicator need words — and the arrows' words are read out rather
+  // than shown, being `aria-label`s on a glyph. What the *rows* are called is each listing's own key, since "137
+  // accounts" and "137 entries" are different sentences.
 
   val commonRowsPerPage: String  = key("ui.common.rowsPerPage")
   val commonPreviousPage: String = key("ui.common.previousPage")
   val commonNextPage: String     = key("ui.common.nextPage")
+
+  /** `{0}` is the page being read, one-based; `{1}` how many there are. */
+  val commonPageOf: String = key("ui.common.pageOf")
 
   /** `{0}` is `Validation.minPasswordLength`. */
   val commonPasswordHint: String = key("ui.common.passwordHint")
@@ -241,6 +245,15 @@ object UiKeys {
   val adminUsersBadgeLocked: String      = key("ui.admin.users.badgeLocked")
   val adminUsersBadgeOk: String          = key("ui.admin.users.badgeOk")
 
+  val adminUsersFilterLabel: String       = key("ui.admin.users.filterLabel")
+  val adminUsersFilterPlaceholder: String = key("ui.admin.users.filterPlaceholder")
+
+  /** What the paging control says the list holds. `adminUsersEmpty` covers the count of zero, which under a search is
+    * an answer rather than a number.
+    */
+  val adminUsersEmpty: String = key("ui.admin.users.empty")
+  val adminUsersCount: String = pluralKey("ui.admin.users.count")
+
   // -- Administration: one account -------------------------------------------------------------
 
   val adminUserBack: String                = key("ui.admin.user.back")
@@ -323,9 +336,12 @@ object UiKeys {
   val adminAuditTargetUser: String  = key("ui.admin.audit.targetUser")
   val adminAuditEmpty: String       = key("ui.admin.audit.empty")
 
-  /** `.one`/`.other`, `{0}` being the number of rows currently held. */
-  val adminAuditCountAll: String   = pluralKey("ui.admin.audit.countAll")
-  val adminAuditCountShown: String = pluralKey("ui.admin.audit.countShown")
+  /** `.one`/`.other`, `{0}` being how many entries match — the server's count, not the size of the page on screen.
+    *
+    * One key rather than the pair this used to have. While the trail was read through a cursor the page could only say
+    * how many rows it had *fetched*, and whether that was all of them was a second sentence; a counted listing knows.
+    */
+  val adminAuditCount: String = pluralKey("ui.admin.audit.count")
 
   /** Every value `dto.AuditAction` can hold, resolved by suffix like [[loginOutcomePrefix]]. The filter `<select>`
     * still submits the stored code — only the label is translated.

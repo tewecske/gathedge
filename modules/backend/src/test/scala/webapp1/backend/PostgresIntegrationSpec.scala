@@ -166,22 +166,24 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           _              <- AuthService.login("pgaudited@example.com", "wrong").either
           _              <- AdminService.clearLockout(AdminActor(target.id), target.id)
           attemptsBefore <- AdminService.loginAttempts(50, None).map(_.count(_.userId.contains(target.id)))
-          auditBefore    <- AdminService.auditLog(50, None, None, None, Some(target.id.toString))
+          auditBefore    <- AdminService.auditLog(0, 50, None, false, None, None, Some(target.id.toString))
           _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone           <- AdminService.getUser(target.id).either
           attemptsAfter  <- AdminService.loginAttempts(50, None).map(_.filter(_.email == "pgaudited@example.com"))
-          auditAfter     <- AdminService.auditLog(50, None, None, None, Some(target.id.toString))
+          auditAfter     <- AdminService.auditLog(0, 50, None, false, None, None, Some(target.id.toString))
         } yield assertTrue(
           gone == Left(webapp1.backend.service.AdminFailure.NotFound),
           attemptsBefore == 2,
-          auditBefore.nonEmpty,
+          auditBefore.items.nonEmpty,
           // The rows survive; only the foreign keys are cleared.
           attemptsAfter.size == 2,
           attemptsAfter.forall(_.userId.isEmpty),
-          auditAfter.size >= auditBefore.size,
-          auditAfter.exists(_.actorEmail.contains("pgaudit@example.com")),
+          auditAfter.items.size >= auditBefore.items.size,
+          auditAfter.items.exists(_.actorEmail.contains("pgaudit@example.com")),
           // The entry the deleted account wrote itself keeps the address it had, and loses only the id.
-          auditAfter.exists(entry => entry.actorEmail.contains("pgaudited@example.com") && entry.actorUserId.isEmpty),
+          auditAfter.items.exists(entry =>
+            entry.actorEmail.contains("pgaudited@example.com") && entry.actorUserId.isEmpty
+          ),
         )
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential

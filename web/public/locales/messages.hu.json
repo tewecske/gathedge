@@ -81,6 +81,7 @@
   "ui.common.rowsPerPage": "Sor oldalanként",
   "ui.common.previousPage": "Előző oldal",
   "ui.common.nextPage": "Következő oldal",
+  "ui.common.pageOf": "{0} / {1}. oldal",
 
   "ui.nav.todo": "Teendők",
   "ui.nav.groups": "Csoportok",
@@ -195,6 +196,12 @@
   "ui.admin.users.badgeLocked": "Kizárva",
   "ui.admin.users.badgeOk": "Rendben",
 
+  "ui.admin.users.filterLabel": "Szűrés",
+  "ui.admin.users.filterPlaceholder": "Az e-mail tartalmazza…",
+  "ui.admin.users.empty": "Nincs találat.",
+  "ui.admin.users.count.one": "{0} fiók",
+  "ui.admin.users.count.other": "{0} fiók",
+
   "ui.admin.user.back": "← Vissza a felhasználókhoz",
   "ui.admin.user.gone": "Ez a felhasználó már nem létezik.",
   "ui.admin.user.passwordPlaceholder": "Hagyd üresen a jelenlegi jelszó megtartásához",
@@ -259,10 +266,8 @@
   "ui.admin.audit.systemActor": "a rendszer",
   "ui.admin.audit.targetUser": "felhasználó: {0}",
   "ui.admin.audit.empty": "Nincs bejegyzés.",
-  "ui.admin.audit.countAll.one": "{0} bejegyzés — ennyi van összesen.",
-  "ui.admin.audit.countAll.other": "{0} bejegyzés — ennyi van összesen.",
-  "ui.admin.audit.countShown.one": "{0} bejegyzés látható.",
-  "ui.admin.audit.countShown.other": "{0} bejegyzés látható.",
+  "ui.admin.audit.count.one": "{0} bejegyzés",
+  "ui.admin.audit.count.other": "{0} bejegyzés",
 
   "ui.auditaction.user.create": "Felhasználó létrehozása",
   "ui.auditaction.user.update": "Felhasználó módosítása",

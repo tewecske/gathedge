@@ -5,7 +5,7 @@ import webapp1.shared.api.AdminEndpoints
 import webapp1.shared.domain.{OAuthProvider, User}
 import webapp1.shared.dto.{
   AdminUserDetail,
-  AuditEntry,
+  AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
   LoginAttemptEntry,
@@ -13,6 +13,7 @@ import webapp1.shared.dto.{
   RateLimitEntry,
   SystemOverview,
   UpdateUserRequest,
+  UserPage,
 }
 
 import EndpointClient.{executor, run}
@@ -22,8 +23,18 @@ import EndpointClient.{executor, run}
   */
 object AdminApiClient {
 
-  def listUsers: EventStream[Either[ApiError, List[User]]] = {
-    run(executor(AdminEndpoints.listUsers(())))
+  /** One page of accounts. Every parameter is optional and omitting all of them is the first page of everything, in the
+    * listing's own order — the server fills the defaults in from `dto.Paging`, which is the same object the page-size
+    * dropdown is built from.
+    */
+  def listUsers(
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+    search: Option[String] = None,
+  ): EventStream[Either[ApiError, UserPage]] = {
+    run(executor(AdminEndpoints.listUsers(page, pageSize, sort, dir, search)))
   }
 
   def getUser(id: Long): EventStream[Either[ApiError, User]] = {
@@ -66,15 +77,17 @@ object AdminApiClient {
     run(executor(AdminEndpoints.clearUserLockout(id)))
   }
 
-  /** The query parameters are all optional, so a page that wants the default page of everything passes nothing. */
+  /** The query parameters are all optional, so a page that wants the first page of everything passes nothing. */
   def auditLog(
-    limit: Option[Int] = None,
-    before: Option[Long] = None,
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
     action: Option[String] = None,
     actorId: Option[Long] = None,
     targetId: Option[String] = None,
-  ): EventStream[Either[ApiError, List[AuditEntry]]] = {
-    run(executor(AdminEndpoints.auditLog(limit, before, action, actorId, targetId)))
+  ): EventStream[Either[ApiError, AuditPage]] = {
+    run(executor(AdminEndpoints.auditLog(page, pageSize, sort, dir, action, actorId, targetId)))
   }
 
   def loginAttempts(

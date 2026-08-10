@@ -5,45 +5,28 @@ import zio.test._
 /** The arithmetic behind the page buttons, which is the part of paging that can be wrong without looking wrong.
   *
   * All of it is pure by design: the component reads signals and writes observers but decides nothing, so every rule
-  * about which rows a page holds and which buttons it offers can be stated here rather than driven through jsdom.
+  * about which buttons a page offers can be stated here rather than driven through jsdom. How many pages there *are*
+  * is `shared`'s `Paging`, tested next to it — both ends have to agree on that one.
   */
 object PaginationSpec extends ZIOSpecDefault {
 
-  private val rows = (1 to 45).toList
-
   def spec = {
     suite("Pagination")(
-      test("a partial last page still counts as a page") {
-        assertTrue(
-          Pagination.pageCount(0, 20) == 0,
-          Pagination.pageCount(1, 20) == 1,
-          Pagination.pageCount(20, 20) == 1,
-          Pagination.pageCount(21, 20) == 2,
-          Pagination.pageCount(45, 20) == 3,
-        )
-      },
       test("an empty listing has no last page to jump to") {
         assertTrue(
-          Pagination.lastPage(0, 20) == 0,
-          Pagination.lastPage(45, 20) == 2,
-          Pagination.lastPage(45, 100) == 0,
+          Pagination.lastPage(0L, 20) == 0,
+          Pagination.lastPage(45L, 20) == 2,
+          Pagination.lastPage(45L, 100) == 0,
         )
       },
-      // The reason paging needs no correcting write-back when a list shrinks under it.
+      // The reason no page needs a correcting write-back when its listing shrinks underneath it — a narrowed search
+      // leaves the stored index pointing past the end, and the next response is simply read at the last page.
       test("a page index past the end clamps to the last page rather than showing nothing") {
         assertTrue(
           Pagination.clampPage(9, 3) == 2,
           Pagination.clampPage(-1, 3) == 0,
           Pagination.clampPage(5, 0) == 0,
-          Pagination.slice(rows, page = 9, pageSize = 20) == (41 to 45).toList,
-        )
-      },
-      test("consecutive pages partition the rows, last one short") {
-        val pages = (0 until Pagination.pageCount(rows.size, 20)).toList.map(Pagination.slice(rows, _, 20))
-
-        assertTrue(
-          pages.map(_.size) == List(20, 20, 5),
-          pages.flatten == rows,
+          Pagination.clampPage(1, 3) == 1,
         )
       },
       test("a short listing offers every page and elides nothing") {

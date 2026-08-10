@@ -186,7 +186,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/invitations/{token}")                       -> Set(Ok, BadRequest, Forbidden, NotFound, Conflict),
               ("POST", "/api/invitations/{token}/accept")               ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              ("GET", "/api/admin/users")                               -> Set(Ok, Unauthorized),
+              ("GET", "/api/admin/users")                               -> Set(Ok, BadRequest, Unauthorized),
               ("POST", "/api/admin/users")                              -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
               ("GET", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("PUT", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
@@ -206,9 +206,10 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/admin/users/{id}/lockout")               ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
-              // The four read-only operations declare only what they can actually answer: a 400 where a query
+              // The read-only operations declare only what they can actually answer: a 400 where a query
               // parameter can fail to decode (`ApiEndpoint.codecError`), and the aspect's 401. `rateLimits`,
-              // `systemOverview` and `systemPrune` take no input at all, so they have no 400 to declare.
+              // `systemOverview` and `systemPrune` take no input at all, so they have no 400 to declare — which is
+              // what the user list used to be, before paging gave it query parameters of its own.
               ("GET", "/api/admin/audit")                               -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/admin/login-attempts")                      -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/admin/rate-limits")                         -> Set(Ok, Unauthorized),
@@ -225,6 +226,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       // Email verification took it to 100, and the twelve administrator diagnostics operations add 33: four apiece for
       // the six that go through `ApiFailures.admin`, two apiece for the three that only have a query or body codec to
       // fail, and one apiece for the three that take no input at all.
+      // Paging the user list added the 136th: `GET /api/admin/users` grew query parameters, so it grew a 400.
       // Nothing enforces the arithmetic; it is here so a change that quietly re-widens the descriptions shows up as a
       // number going back up. The three assertions under it are the rule itself, stated where it can be checked.
       test("no operation documents a status only some other endpoint can answer with") {
@@ -238,7 +240,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 135,
+          declared == 136,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `GroupService` on the two resources it
           // backs, plus `AuthService`'s unverified-email refusal on login.

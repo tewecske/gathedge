@@ -2,54 +2,40 @@ package webapp1.frontend.components
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.i18n.I18n
+import webapp1.shared.dto.Paging
 import webapp1.shared.i18n.UiKeys
 
-/** The page selector under a long table, plus the control that says how many rows a page holds.
+/** The page selector under a long table: how many rows a page holds, which page is being read, and how many there are.
   *
-  * Purely presentational, in the shape the laminar skill asks for: it reads the current page and the page size as
-  * `Signal`s and writes requests back through `Observer`s, so it owns none of the state and neither caller has to model
-  * its state the same way. That matters here because the two callers are not alike — the user list holds every row it
-  * will ever show and knows its page count exactly, while the audit log pages backwards through a cursor and only ever
-  * knows how many pages it has *fetched*. [[render]]'s `hasMore` is the seam between those two: it says the next arrow
-  * may point one past the last known page, and it is then the caller's business to make that page exist.
+  * Purely presentational, in the shape the laminar skill asks for — it reads the listing's state as `Signal`s and
+  * writes requests back through `Observer`s, so it owns none of the state and neither caller has to model it the same
+  * way. Both callers now page server-side, so the only thing this knows about the rows is how many of them exist:
+  * `total` comes off the response, and every button below is arithmetic on it.
+  *
+  * `Paging` — the page sizes on offer, the default, the page-count arithmetic — lives in `shared` so the dropdown
+  * cannot offer a size the server would clamp, and so the button count cannot disagree with the `LIMIT`/`OFFSET` that
+  * produced the rows.
   */
 object Pagination {
-
-  /** What a page holds until somebody says otherwise, and what they may say instead. */
-  val defaultPageSize: Int = 20
-  val pageSizes: List[Int] = List(20, 50, 100)
 
   /** How many numbered buttons the row may hold, ellipses included. Beyond this the middle is elided rather than let a
     * table with a hundred pages push its own controls off the side of the screen.
     */
   private val maxButtons = 7
 
-  def pageCount(total: Int, pageSize: Int): Int = {
-    if (total <= 0)
-      0
-    else
-      (total + pageSize - 1) / pageSize
-  }
-
-  /** The index of the last page, or `0` when there is nothing to show. What a caller jumps to when it has just added
-    * rows at the end and wants them on screen.
-    */
-  def lastPage(total: Int, pageSize: Int): Int = {
-    math.max(0, pageCount(total, pageSize) - 1)
-  }
-
-  /** A page index the caller can safely use, whatever it was holding. A list that shrinks — a filter narrowing, a row
-    * deleted — leaves the stored index pointing past the end, and clamping on read means no page has to watch for that
-    * and write a corrected index back.
+  /** A page index the caller can safely use, whatever it was holding. A listing that shrinks — a filter narrowing, a
+    * row deleted — leaves the stored index pointing past the end, and clamping on read means no page has to watch for
+    * that and write a corrected index back.
     */
   def clampPage(page: Int, pageCount: Int): Int = {
     math.max(0, math.min(page, pageCount - 1))
   }
 
-  /** The rows page `page` shows, clamped the same way. */
-  def slice[A](items: List[A], page: Int, pageSize: Int): List[A] = {
-    val bounded = clampPage(page, pageCount(items.size, pageSize))
-    items.slice(bounded * pageSize, bounded * pageSize + pageSize)
+  /** The index of the last page, or `0` when there is nothing to show. What a caller jumps to when it has just added a
+    * row at the end and wants it on screen.
+    */
+  def lastPage(total: Long, pageSize: Int): Int = {
+    math.max(0, Paging.pageCount(total, pageSize) - 1)
   }
 
   /** The buttons to draw, left to right: `Some(index)` is a page, `None` an elision. The first and last page are always
@@ -78,31 +64,32 @@ object Pagination {
 
   /** @param page
     *   the current page, zero-based.
-    * @param pageCount
-    *   how many pages can be numbered. For a cursor-paged caller this is what it has fetched, not what exists.
-    * @param onPage
-    *   the page the reader asked for. With `hasMore` set this can be `pageCount` itself — one past the last numbered
-    *   button — which is the caller's cue to fetch.
-    * @param hasMore
-    *   whether the next arrow stays live on the last numbered page.
+    * @param total
+    *   how many rows match, across every page. The server counts it; everything on screen is derived from it.
+    * @param summary
+    *   what the listing calls its rows — "137 accounts", "8 entries". Supplied by the caller rather than worded here,
+    *   because a count of accounts and a count of audit entries are different sentences in a language with no generic
+    *   plural noun to fall back on.
     * @param busy
     *   disables the whole control while a request is out, so a second click cannot race the first.
     */
   def render(
     page: Signal[Int],
-    pageCount: Signal[Int],
-    onPage: Observer[Int],
+    total: Signal[Long],
     pageSize: Signal[Int],
+    onPage: Observer[Int],
     onPageSize: Observer[Int],
-    hasMore: Signal[Boolean] = Val(false),
+    summary: Signal[String],
     busy: Signal[Boolean] = Val(false),
   ): HtmlElement = {
-    val current = page.combineWithFn(pageCount)(clampPage).distinct
+    val pageCount = total.combineWithFn(pageSize)(Paging.pageCount).distinct
+    val current   = page.combineWithFn(pageCount)(clampPage).distinct
 
     div(
       cls := "flex flex-wrap items-center justify-between gap-4 mt-4",
       renderPageSize(pageSize, onPageSize, busy),
-      renderPages(current, pageCount, onPage, hasMore, busy),
+      renderSummary(current, pageCount, summary),
+      renderPages(current, pageCount, onPage, busy),
     )
   }
 
@@ -113,12 +100,33 @@ object Pagination {
       select(
         cls := "select select-sm w-auto",
         disabled <-- busy,
-        pageSizes.map(size => option(value := size.toString, size.toString)),
+        Paging.pageSizes.map(size => option(value := size.toString, size.toString)),
         controlled(
           value <-- pageSize.map(_.toString).distinct,
           // A value this `select` did not offer cannot arrive, so anything unparseable is a bug rather than input.
-          onChange.mapToValue.map(_.toIntOption.getOrElse(defaultPageSize)) --> onPageSize,
+          onChange.mapToValue.map(_.toIntOption.getOrElse(Paging.defaultPageSize)) --> onPageSize,
         ),
+      ),
+    )
+  }
+
+  /** The two figures the numbered buttons only imply: how many rows there are, and how many pages they fill. The page
+    * indicator is one-based, unlike everything else here, because it is read rather than indexed with.
+    */
+  private def renderSummary(current: Signal[Int], pageCount: Signal[Int], summary: Signal[String]): HtmlElement = {
+    div(
+      cls := "text-sm opacity-60 flex flex-wrap items-center gap-x-2",
+      span(text <-- summary),
+      span(
+        text <--
+          current
+            .combineWithFn(pageCount) { (page, count) =>
+              if (count <= 0)
+                ""
+              else
+                I18n.t(UiKeys.commonPageOf, page + 1, count)
+            }
+            .distinct
       ),
     )
   }
@@ -127,16 +135,10 @@ object Pagination {
     current: Signal[Int],
     pageCount: Signal[Int],
     onPage: Observer[Int],
-    hasMore: Signal[Boolean],
     busy: Signal[Boolean],
   ): HtmlElement = {
     val atFirst = current.map(_ <= 0).distinct
-    val atLast  = {
-      current
-        .combineWith(pageCount, hasMore)
-        .map((page, count, more) => !more && page >= count - 1)
-        .distinct
-    }
+    val atLast  = current.combineWithFn(pageCount)((page, count) => page >= count - 1).distinct
 
     div(
       cls := "join",

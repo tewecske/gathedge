@@ -25,9 +25,12 @@ import webapp1.shared.dto.{
   AdminVerificationTokenInfo,
   AuditAction,
   AuditEntry,
+  AuditPage,
   LockoutStatus,
   LoginAttemptEntry,
+  Paging,
   RateLimitEntry,
+  UserPage,
 }
 import webapp1.shared.validation.Validation
 import zio.*
@@ -68,7 +71,20 @@ object AdminActor {
 }
 
 trait AdminService {
-  def listUsers: UIO[List[User]]
+
+  /** One page of accounts, narrowed to addresses containing `search` and ordered by `sort` (a `dto.UserSort` value).
+    *
+    * `page` and `pageSize` are expected already bounded — `AdminRoutes` applies `dto.Paging` on the way in, the same
+    * place every other limit is capped.
+    */
+  def listUsers(
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[UserPage]
+
   def getUser(id: Long): IO[AdminFailure, User]
   def createUser(actor: AdminActor, email: String, password: String, isAdmin: Boolean): IO[AdminFailure, User]
   def updateUser(
@@ -100,13 +116,16 @@ trait AdminService {
   /** Lets a locked-out account sign in again, clearing both dimensions of the lock. */
   def clearLockout(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
 
+  /** One page of the audit trail, with the total the same three filters match. */
   def auditLog(
-    limit: Int,
-    before: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
     action: Option[String],
     actorId: Option[Long],
     targetId: Option[String],
-  ): UIO[List[AuditEntry]]
+  ): UIO[AuditPage]
 
   def loginAttempts(limit: Int, outcome: Option[String]): UIO[List[LoginAttemptEntry]]
 
@@ -118,8 +137,14 @@ trait AdminService {
 }
 
 object AdminService {
-  def listUsers: URIO[AdminService, List[User]] =
-    ZIO.serviceWithZIO[AdminService](_.listUsers)
+  def listUsers(
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): URIO[AdminService, UserPage] =
+    ZIO.serviceWithZIO[AdminService](_.listUsers(page, pageSize, search, sort, descending))
 
   def getUser(id: Long): ZIO[AdminService, AdminFailure, User] =
     ZIO.serviceWithZIO[AdminService](_.getUser(id))
@@ -163,13 +188,15 @@ object AdminService {
     ZIO.serviceWithZIO[AdminService](_.clearLockout(actor, id))
 
   def auditLog(
-    limit: Int,
-    before: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
     action: Option[String],
     actorId: Option[Long],
     targetId: Option[String],
-  ): URIO[AdminService, List[AuditEntry]] =
-    ZIO.serviceWithZIO[AdminService](_.auditLog(limit, before, action, actorId, targetId))
+  ): URIO[AdminService, AuditPage] =
+    ZIO.serviceWithZIO[AdminService](_.auditLog(page, pageSize, sort, descending, action, actorId, targetId))
 
   def loginAttempts(limit: Int, outcome: Option[String]): URIO[AdminService, List[LoginAttemptEntry]] =
     ZIO.serviceWithZIO[AdminService](_.loginAttempts(limit, outcome))
@@ -235,7 +262,22 @@ final case class AdminServiceLive(
     userRepo.findById(id).orDie.flatMap(ZIO.fromOption(_).orElseFail(AdminFailure.NotFound))
   }
 
-  def listUsers: UIO[List[User]] = userRepo.listAll.orDie.map(_.map(toDomain))
+  /** Two queries rather than one: the page and the count of everything the same filter matches. There is no windowed
+    * `COUNT(*) OVER ()` here because it would have to be expressed per dialect, and the page that reads this is one
+    * screen an administrator opens, not a hot path.
+    */
+  def listUsers(
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[UserPage] = {
+    for {
+      rows  <- userRepo.listPage(Paging.offset(page, pageSize), pageSize, search, sort, descending).orDie
+      total <- userRepo.countMatching(search).orDie
+    } yield UserPage(rows.map(toDomain), total)
+  }
 
   def getUser(id: Long): IO[AdminFailure, User] = requireUser(id).map(toDomain)
 
@@ -529,13 +571,20 @@ final case class AdminServiceLive(
   }
 
   def auditLog(
-    limit: Int,
-    before: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
     action: Option[String],
     actorId: Option[Long],
     targetId: Option[String],
-  ): UIO[List[AuditEntry]] = {
-    auditRepo.list(limit, before, action, actorId, targetId).orDie.map(_.map(toAuditEntry))
+  ): UIO[AuditPage] = {
+    for {
+      rows  <- auditRepo
+                 .list(Paging.offset(page, pageSize), pageSize, sort, descending, action, actorId, targetId)
+                 .orDie
+      total <- auditRepo.count(action, actorId, targetId).orDie
+    } yield AuditPage(rows.map(toAuditEntry), total)
   }
 
   def loginAttempts(limit: Int, outcome: Option[String]): UIO[List[LoginAttemptEntry]] = {

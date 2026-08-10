@@ -2,95 +2,74 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels, Pagination}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
-import webapp1.shared.dto.{AuditAction, AuditEntry}
+import webapp1.shared.dto.{AuditAction, AuditEntry, AuditPage, AuditSort, Paging}
 import webapp1.shared.i18n.UiKeys
 
 /** The audit trail: every administrator action, most recent first.
   *
-  * The `security` log has always carried these; this is the same events in a form a person can filter and page through
-  * without shell access to the container.
+  * The `security` log has always carried these; this is the same events in a form a person can filter, order and page
+  * through without shell access to the container.
   */
 object AdminAuditPage {
   def render(): HtmlElement = AppShell.render(Page.AdminAudit, new AdminAuditPage().render())
 }
 
+/** Everything that decides which entries the server sends back.
+  *
+  * The two narrowings are applied on a button rather than as they are typed — an administrator id is only meaningful
+  * once it is complete — so they are held here alongside the paging rather than being read off the inputs.
+  */
+private case class AuditQuery(
+  page: Int = 0,
+  pageSize: Int = Paging.defaultPageSize,
+  sort: SortHeader.Sort = SortHeader.Sort.unsorted,
+  action: Option[String] = None,
+  actorId: Option[Long] = None,
+) {
+
+  /** Anything but turning the page starts again at the first one. */
+  def reset(change: AuditQuery => AuditQuery): AuditQuery = change(this).copy(page = 0)
+}
+
 private class AdminAuditPage {
 
-  /** How many rows a page shows *and* how many one request asks for, which is what lets the numbered buttons line up
-    * with what has been fetched: every fetch adds exactly one page at the end.
-    *
-    * Changing it does not refetch. The entries already held are re-sliced under the new size, and the next fetch simply
-    * asks for that many — the cursor is the oldest row on hand either way, so a chunk of 20 followed by one of 100 is
-    * as well-formed as any other sequence.
-    */
-  private val pageSizeVar    = Var(Pagination.defaultPageSize)
-  private val pageSizeSignal = pageSizeVar.signal
-
-  /** Every row fetched so far, oldest last. This is a *cursor*-paged listing, so the page numbers can only ever cover
-    * what has been fetched; `hasMore` is what lets the next arrow reach past the last of them.
+  /** The page currently on screen, and how many entries match across every page. Both come off one response: this is
+    * offset paging in SQL, so the server knows the total and the buttons below are counted off it.
     */
   private val entriesVar    = Var(List.empty[AuditEntry])
   private val entriesSignal = entriesVar.signal
 
-  private val pageVar    = Var(0)
-  private val pageSignal = pageVar.signal
+  private val totalVar    = Var(0L)
+  private val totalSignal = totalVar.signal
 
-  private val pageCountSignal = {
-    entriesSignal.combineWithFn(pageSizeSignal)((entries, size) => Pagination.pageCount(entries.size, size))
-  }
+  private val queryVar    = Var(AuditQuery())
+  private val querySignal = queryVar.signal.distinct
 
-  private val visibleSignal = {
-    entriesSignal
-      .combineWith(pageSignal, pageSizeSignal)
-      .map((entries, page, size) => Pagination.slice(entries, page, size))
-  }
+  private val sortSignal     = querySignal.map(_.sort).distinct
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
-  /** Empty means "every action". Held separately from the entries so changing it can restart the listing from the top
-    * rather than paging into a differently-filtered set.
+  /** What the filter inputs hold, which is not yet what has been asked for — the Apply button is what moves them into
+    * [[queryVar]].
     */
-  private val actionVar = Var("")
-  private val actorVar  = Var("")
+  private val actionInputVar = Var("")
+  private val actorInputVar  = Var("")
 
   private val errorVar: Var[Option[String]] = Var(None)
   private val inFlightVar                   = Var(false)
   private val inFlightSignal                = inFlightVar.signal
 
-  /** True once a request came back with fewer rows than it asked for: there is nothing older to fetch. */
-  private val exhaustedVar = Var(false)
+  private val reloadBus = new EventBus[Unit]()
+  private val applyBus  = new EventBus[Unit]()
 
-  /** Whether the next arrow may point one past the last numbered page. */
-  private val hasMoreSignal = {
-    entriesSignal.combineWithFn(exhaustedVar.signal)((entries, exhausted) => entries.nonEmpty && !exhausted).distinct
-  }
-
-  private val loadBus = new EventBus[Option[Long]]()
+  /** Every reason to call the endpoint, as one stream, so a reload cancels an in-flight request rather than racing it.
+    */
+  private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
   private def blankToNone(value: String): Option[String] = Some(value.trim).filter(_.nonEmpty)
-
-  private def request(limit: Int, before: Option[Long]): EventStream[Either[ApiError, List[AuditEntry]]] = {
-    AdminApiClient.auditLog(
-      limit = Some(limit),
-      before = before,
-      action = blankToNone(actionVar.now()),
-      actorId = blankToNone(actorVar.now()).flatMap(_.toLongOption),
-    )
-  }
-
-  /** A page the reader asked for. Anything already fetched is a re-slice; one past the end is a request for rows older
-    * than the oldest on hand, and [[loadBus]]'s observer moves the page once they arrive.
-    */
-  private val pageRequests = {
-    Observer[Int] { requested =>
-      val entries = entriesVar.now()
-      if (requested * pageSizeVar.now() < entries.size)
-        pageVar.set(requested)
-      else
-        loadBus.emit(entries.lastOption.map(_.occurredAt))
-    }
-  }
 
   def render(): HtmlElement = {
     div(
@@ -101,50 +80,58 @@ private class AdminAuditPage {
       renderTable(),
       Pagination.render(
         page = pageSignal,
-        pageCount = pageCountSignal,
-        onPage = pageRequests,
+        total = totalSignal,
         pageSize = pageSizeSignal,
-        // No refetch: the rows on hand are re-sliced, and the next fetch asks for the new size.
-        onPageSize = Observer[Int](size => Var.set(pageSizeVar -> size, pageVar -> 0)),
-        hasMore = hasMoreSignal,
+        onPage = Observer[Int](page => queryVar.update(_.copy(page = page))),
+        onPageSize = Observer[Int](size => queryVar.update(_.reset(_.copy(pageSize = size)))),
+        summary = totalSignal.map(summaryOf).distinct,
         busy = inFlightSignal,
       ),
-      renderFooter(),
-      loadBus.events --> Observer[Option[Long]](_ => Var.set(inFlightVar -> true, errorVar -> None)),
-      // The limit is carried through with the answer rather than re-read from the Var: it is what decides whether the
-      // listing is exhausted, and the reader may well have changed the page size while the request was out.
-      loadBus.events.flatMapSwitch { before =>
-        val limit = pageSizeVar.now()
-        request(limit, before).map(result => (before, limit, result))
-      } -->
-        Observer[(Option[Long], Int, Either[ApiError, List[AuditEntry]])] {
-          case (before, limit, Right(rows)) =>
-            // `before` empty means this was a fresh listing, so it replaces and returns to the first page; otherwise it
-            // is the next page down, which is the one the reader was asking to see.
-            val entries = {
-              if (before.isEmpty)
-                rows
-              else
-                entriesVar.now() ++ rows
-            }
-            val page    = {
-              if (before.isEmpty)
-                0
-              else
-                Pagination.lastPage(entries.size, pageSizeVar.now())
-            }
-            Var.set(
-              entriesVar   -> entries,
-              pageVar      -> page,
-              inFlightVar  -> false,
-              exhaustedVar -> (rows.sizeIs < limit),
-              errorVar     -> None,
+      // Applying a filter is a query change like any other; if it happens to change nothing, `.distinct` swallows it
+      // and the reload below is what still answers the button.
+      applyBus.events -->
+        Observer[Unit] { _ =>
+          queryVar.update {
+            _.reset(
+              _.copy(
+                action = blankToNone(actionInputVar.now()),
+                actorId = blankToNone(actorInputVar.now()).flatMap(_.toLongOption),
+              )
             )
-          case (_, _, Left(err))            =>
+          }
+          reloadBus.emit(())
+        },
+      listRequests --> Observer[AuditQuery](_ => Var.set(inFlightVar -> true, errorVar -> None)),
+      listRequests.flatMapSwitch(load) -->
+        Observer[Either[ApiError, AuditPage]] {
+          case Right(result) =>
+            Var.set(entriesVar -> result.items, totalVar -> result.total, inFlightVar -> false, errorVar -> None)
+          case Left(err)     =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
-      onMountCallback(_ => loadBus.emit(None)),
+      onMountCallback(_ => reloadBus.emit(())),
     )
+  }
+
+  private def load(query: AuditQuery): EventStream[Either[ApiError, AuditPage]] = {
+    AdminApiClient.auditLog(
+      page = Some(query.page),
+      pageSize = Some(query.pageSize),
+      sort = query.sort.column,
+      dir = query.sort.wire,
+      action = query.action,
+      actorId = query.actorId,
+    )
+  }
+
+  /** What the paging control says the trail holds — the count of what *matches*, which under a filter is not the count
+    * of what exists.
+    */
+  private def summaryOf(total: Long): String = {
+    if (total <= 0L)
+      I18n.t(UiKeys.adminAuditEmpty)
+    else
+      I18n.plural(UiKeys.adminAuditCount, total)
   }
 
   private def renderFilters(): HtmlElement = {
@@ -160,7 +147,7 @@ private class AdminAuditPage {
             option(value := "", I18n.t(UiKeys.adminAuditEveryAction)),
             // The `value` stays the stored code — it is what the filter sends to the API.
             AuditAction.all.map(action => option(value := action, Labels.auditAction(action))),
-            controlled(value <-- actionVar.signal, onChange.mapToValue --> actionVar.writer),
+            controlled(value <-- actionInputVar.signal, onChange.mapToValue --> actionInputVar.writer),
           ),
         ),
         label(
@@ -170,7 +157,7 @@ private class AdminAuditPage {
             cls         := "input input-sm",
             typ         := "text",
             placeholder := I18n.t(UiKeys.adminAuditActorAny),
-            controlled(value <-- actorVar.signal, onInput.mapToValue --> actorVar.writer),
+            controlled(value <-- actorInputVar.signal, onInput.mapToValue --> actorInputVar.writer),
           ),
         ),
         button(
@@ -178,30 +165,33 @@ private class AdminAuditPage {
           typ := "button",
           disabled <-- inFlightSignal,
           I18n.t(UiKeys.commonApply),
-          onClick.mapTo(None) --> loadBus.writer,
+          onClick.mapToUnit --> applyBus.writer,
         ),
       ),
     )
   }
 
   private def renderTable(): HtmlElement = {
+    val onSort = Observer[SortHeader.Sort](sort => queryVar.update(_.reset(_.copy(sort = sort))))
+
     div(
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
         cls := "table table-sm",
         thead(
           tr(
-            th(I18n.t(UiKeys.commonWhen)),
-            th(I18n.t(UiKeys.adminAuditColActor)),
-            th(I18n.t(UiKeys.adminAuditColAction)),
+            SortHeader.render(I18n.t(UiKeys.commonWhen), AuditSort.occurredAt, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.adminAuditColActor), AuditSort.actor, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.adminAuditColAction), AuditSort.action, sortSignal, onSort),
+            // Target is two fields rendered as one and detail is prose; neither has an order anybody would ask for.
             th(I18n.t(UiKeys.adminAuditColTarget)),
             th(I18n.t(UiKeys.adminAuditColDetail)),
-            th(I18n.t(UiKeys.commonFrom)),
+            SortHeader.render(I18n.t(UiKeys.commonFrom), AuditSort.ip, sortSignal, onSort),
           )
         ),
         tbody(
           children <--
-            visibleSignal.splitSeq(_.id) { entrySignal =>
+            entriesSignal.splitSeq(_.id) { entrySignal =>
               renderRow(entrySignal.now())
             }
         ),
@@ -234,28 +224,5 @@ private class AdminAuditPage {
       case _                        =>
         span(entry.targetType.getOrElse(I18n.t(UiKeys.commonNone)))
     }
-  }
-
-  /** The count of what has been fetched, which is not the same as the count of what exists — the wording distinguishes
-    * the two, and the next arrow is now the only way to fetch more.
-    */
-  private def renderFooter(): HtmlElement = {
-    div(
-      cls := "mt-2 flex items-center gap-4",
-      span(
-        cls := "text-sm opacity-60",
-        text <--
-          entriesSignal
-            .combineWith(exhaustedVar.signal)
-            .map { (entries, exhausted) =>
-              if (entries.isEmpty)
-                I18n.t(UiKeys.adminAuditEmpty)
-              else if (exhausted)
-                I18n.plural(UiKeys.adminAuditCountAll, entries.size.toLong)
-              else
-                I18n.plural(UiKeys.adminAuditCountShown, entries.size.toLong)
-            },
-      ),
-    )
   }
 }

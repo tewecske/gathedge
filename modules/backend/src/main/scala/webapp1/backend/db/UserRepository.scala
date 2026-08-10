@@ -3,6 +3,7 @@ package webapp1.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
+import webapp1.shared.dto.UserSort
 import zio.*
 
 import javax.sql.DataSource
@@ -29,7 +30,20 @@ trait UserRepository {
   /** Idempotent: re-verifying an already-verified account just rewrites the timestamp. */
   def markEmailVerified(userId: Long, verifiedAt: Long): Task[Unit]
   def existsAdmin: Task[Boolean]
-  def listAll: Task[List[UserRow]]
+
+  /** One page of accounts, ordered by `sort` (a `dto.UserSort` value; anything else falls back to newest first) and
+    * narrowed to addresses containing `emailContains`. Paged in SQL — see [[countMatching]] for the other half.
+    */
+  def listPage(
+    offset: Int,
+    limit: Int,
+    emailContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[UserRow]]
+
+  /** How many accounts [[listPage]] would return across every page, which is what the page buttons are counted off. */
+  def countMatching(emailContains: Option[String]): Task[Long]
 
   /** Updates email/admin flag only if the row exists. Returns rows affected. */
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long]
@@ -79,8 +93,17 @@ object UserRepository {
   def existsAdmin: RIO[UserRepository, Boolean] =
     ZIO.serviceWithZIO[UserRepository](_.existsAdmin)
 
-  def listAll: RIO[UserRepository, List[UserRow]] =
-    ZIO.serviceWithZIO[UserRepository](_.listAll)
+  def listPage(
+    offset: Int,
+    limit: Int,
+    emailContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): RIO[UserRepository, List[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.listPage(offset, limit, emailContains, sort, descending))
+
+  def countMatching(emailContains: Option[String]): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.countMatching(emailContains))
 
   def updateProfile(id: Long, email: String, isAdmin: Boolean): RIO[UserRepository, Long] =
     ZIO.serviceWithZIO[UserRepository](_.updateProfile(id, email, isAdmin))
@@ -174,8 +197,68 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def listAll: Task[List[UserRow]] = {
-    logged(run(ctx.run(quote(users.sortBy(_.createdAt)))))(rows => s"users.listAll count=${rows.size}")
+  /** The `LIKE` pattern behind the user list's search box, or `None` when it is empty.
+    *
+    * Addresses are stored lowercased — every path that writes one normalises first — so lowercasing the needle is the
+    * whole of the case-insensitivity, with no `lower()` in the SQL for the two dialects to disagree about. A `%` or `_`
+    * typed into the box is still a wildcard: escaping them needs an `ESCAPE` clause the dialects spell differently, and
+    * a wider match is a harmless answer to a rare input.
+    */
+  private def emailPattern(emailContains: Option[String]): Option[String] = {
+    emailContains.map(_.trim.toLowerCase).filter(_.nonEmpty).map(needle => s"%$needle%")
+  }
+
+  /** The rows a page is cut from, before ordering: the narrowing [[listPage]] and [[countMatching]] have to share, or
+    * the total would count a different set than the page shows.
+    */
+  private def matching(emailContains: Option[String]): DynamicQuery[UserRow] = {
+    dynamicQuerySchema[UserRow]("users")
+      .filterOpt(emailPattern(emailContains))((user, pattern) => quote(user.email.like(unquote(pattern))))
+  }
+
+  /** The `dto.UserSort` vocabulary translated to an `ORDER BY`. The mapping lives here rather than in the service
+    * because this is the only layer that knows a column exists; an unknown name is not an error but simply the
+    * listing's own order, which is what lets a client stop sending a sort without coordinating a deploy.
+    *
+    * That default order is newest first. Once a listing is paged, the default decides which rows are on the *first
+    * page* rather than merely which end they are read from, and the account somebody has just created is the one they
+    * are looking for.
+    */
+  private def ordered(
+    query: DynamicQuery[UserRow],
+    sort: Option[String],
+    descending: Boolean,
+  ): DynamicQuery[UserRow] = {
+    sort match {
+      case Some(UserSort.email)     =>
+        query.sortBy(_.email)(using ordering(descending))
+      case Some(UserSort.admin)     =>
+        query.sortBy(_.isAdmin)(using ordering(descending))
+      case Some(UserSort.confirmed) =>
+        query.sortBy(_.emailVerifiedAt)(using ordering(descending))
+      case Some(UserSort.created)   =>
+        query.sortBy(_.createdAt)(using ordering(descending))
+      case _                        =>
+        query.sortBy(_.createdAt)(using Ord.desc)
+    }
+  }
+
+  def listPage(
+    offset: Int,
+    limit: Int,
+    emailContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[UserRow]] = {
+    val page = ordered(matching(emailContains), sort, descending).drop(offset).take(limit)
+    // The search term is a fragment of somebody's address, so it stays out of the message like every other address.
+    logged(run(ctx.run(page))) { rows =>
+      s"users.listPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} desc=$descending rows=${rows.size}"
+    }
+  }
+
+  def countMatching(emailContains: Option[String]): Task[Long] = {
+    logged(run(ctx.run(matching(emailContains).size)))(count => s"users.countMatching count=$count")
   }
 
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long] = {

@@ -118,13 +118,13 @@ object SystemServiceSpec extends ZIOSpecDefault {
         before  <- SystemService.overview
         result  <- SystemService.prune(AdminActor(user.id))
         after   <- SystemService.overview
-        audited <- AdminService.auditLog(50, None, Some(AuditAction.systemPrune), None, None)
+        audited <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.systemPrune), None, None)
       } yield assertTrue(
         before.stats.sessions == 1L,
         result.sessions == 1L,
         after.stats.sessions == 0L,
-        audited.size == 1,
-        audited.head.actorUserId.contains(user.id),
+        audited.items.size == 1,
+        audited.items.head.actorUserId.contains(user.id),
       )
     },
     // `login_attempts` is the one table an unauthenticated caller can grow at will — a row is written at every exit

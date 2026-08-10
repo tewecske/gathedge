@@ -35,7 +35,7 @@ import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.domain.{Group, GroupMember, Theme, TodoItem, User}
 import webapp1.shared.dto.{
   AdminUserDetail,
-  AuditEntry,
+  AuditPage,
   AuthResponse,
   CreateTodoRequest,
   CreateUserRequest,
@@ -46,6 +46,7 @@ import webapp1.shared.dto.{
   SignupResponse,
   SystemOverview,
   UpdateUserRequest,
+  UserPage,
   VerifyEmailRequest,
 }
 import zio.*
@@ -291,7 +292,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Ok,
-            raw.fromJson[List[User]].map(_.map(_.email)) == Right(List("list@example.com")),
+            // A page, not a bare list: the count is what lets the browser number its buttons, so it is part of the
+            // body the client decodes rather than a header the codecs would not describe.
+            raw.fromJson[UserPage].map(_.items.map(_.email)) == Right(List("list@example.com")),
+            raw.fromJson[UserPage].map(_.total) == Right(1L),
           )
         },
         test("creating a user answers 201 with the created user") {
@@ -388,11 +392,11 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                            withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
                          )
             raw       <- body(response)
-            remaining <- AdminService.listUsers
+            remaining <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
           } yield assertTrue(
             response.status == Status.NoContent,
             raw.isEmpty,
-            !remaining.exists(_.email == "doomed@example.com"),
+            !remaining.items.exists(_.email == "doomed@example.com"),
           )
         },
         test("an administrator still cannot delete their own account") {
@@ -451,14 +455,16 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                         )
             response <- runRoutes(
                           AdminRoutes.routes,
-                          withSession(getWithQuery("/api/admin/audit?limit=10&action=user.create"), admin._2),
+                          withSession(getWithQuery("/api/admin/audit?pageSize=10&action=user.create"), admin._2),
                         )
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Ok,
-            raw.fromJson[List[AuditEntry]].map(_.forall(_.action == "user.create")) == Right(true),
-            raw.fromJson[List[AuditEntry]].map(_.exists(_.actorEmail.contains("auditor-wire@example.com"))) ==
+            raw.fromJson[AuditPage].map(_.items.forall(_.action == "user.create")) == Right(true),
+            raw.fromJson[AuditPage].map(_.items.exists(_.actorEmail.contains("auditor-wire@example.com"))) ==
               Right(true),
+            // The total is the count of what the filter matches, which is the whole point of paging server-side.
+            raw.fromJson[AuditPage].map(_.total > 0L) == Right(true),
           )
         },
         // A query parameter that does not decode is `ApiEndpoint.codecError`'s 400, which never reaches a handler —
@@ -468,7 +474,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             admin    <- adminSession("bad-query@example.com")
             response <- runRoutes(
                           AdminRoutes.routes,
-                          withSession(getWithQuery("/api/admin/audit?limit=not-a-number"), admin._2),
+                          withSession(getWithQuery("/api/admin/audit?page=not-a-number"), admin._2),
                         )
             raw      <- body(response)
           } yield assertTrue(

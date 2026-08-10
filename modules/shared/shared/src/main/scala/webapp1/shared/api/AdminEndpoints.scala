@@ -3,7 +3,7 @@ package webapp1.shared.api
 import webapp1.shared.domain.User
 import webapp1.shared.dto.{
   AdminUserDetail,
-  AuditEntry,
+  AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
   LoginAttemptEntry,
@@ -11,6 +11,7 @@ import webapp1.shared.dto.{
   RateLimitEntry,
   SystemOverview,
   UpdateUserRequest,
+  UserPage,
 }
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -38,20 +39,41 @@ object AdminEndpoints {
   /** See [[deleteUser]] for why an empty 204 is described as a status codec and never as `.out[Unit]`. */
   private val noContent = HttpCodec.status(Status.NoContent)
 
-  /** The list endpoints page and narrow through query parameters, all optional; a caller that sends none gets the most
-    * recent page of everything. Optional rather than defaulted because a defaulted query codec would put the default
-    * into the OpenAPI document as if the client had to send it.
+  /** The list endpoints page and narrow through query parameters, all optional; a caller that sends none gets the first
+    * page of everything, in the listing's own order. Optional rather than defaulted because a defaulted query codec
+    * would put the default into the OpenAPI document as if the client had to send it — `dto.Paging` is where the
+    * defaults actually live, and both ends read them from there.
+    *
+    * `page` is zero-based. `sort` names a column out of `dto.UserSort`/`dto.AuditSort` and `dir` is a
+    * `dto.SortDirection`; neither is validated, because an unrecognised value means "the listing's own order" rather
+    * than a malformed request — a client is free to stop sending a sort it no longer offers.
     */
-  private val limitQuery   = HttpCodec.query[Int]("limit").optional
-  private val beforeQuery  = HttpCodec.query[Long]("before").optional
-  private val actionQuery  = HttpCodec.query[String]("action").optional
-  private val actorQuery   = HttpCodec.query[Long]("actorId").optional
-  private val targetQuery  = HttpCodec.query[String]("targetId").optional
-  private val outcomeQuery = HttpCodec.query[String]("outcome").optional
+  private val pageQuery     = HttpCodec.query[Int]("page").optional
+  private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional
+  private val sortQuery     = HttpCodec.query[String]("sort").optional
+  private val dirQuery      = HttpCodec.query[String]("dir").optional
+  private val searchQuery   = HttpCodec.query[String]("q").optional
+  private val limitQuery    = HttpCodec.query[Int]("limit").optional
+  private val actionQuery   = HttpCodec.query[String]("action").optional
+  private val actorQuery    = HttpCodec.query[Long]("actorId").optional
+  private val targetQuery   = HttpCodec.query[String]("targetId").optional
+  private val outcomeQuery  = HttpCodec.query[String]("outcome").optional
 
-  /** `AdminService.listUsers` is a `UIO`, so only the aspect and a defect can fail this. */
+  /** One page of accounts, narrowed by `q` — a case-insensitive substring of the address.
+    *
+    * `AdminService.listUsers` is still a `UIO`, so the 400 is `withCodecError`'s: a `page` or `pageSize` that is not a
+    * number never reaches the handler.
+    */
   val listUsers = {
-    Endpoint(Method.GET / "api" / "admin" / "users").out[List[User]].outFailure(failure.unauthorized)
+    Endpoint(Method.GET / "api" / "admin" / "users")
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .query(searchQuery)
+      .withCodecError
+      .out[UserPage]
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   val getUser = {
@@ -146,16 +168,24 @@ object AdminEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
-  /** The audit trail, most recent first. `before` pages backwards through `occurredAt`. */
+  /** One page of the audit trail, most recent first unless `sort` says otherwise.
+    *
+    * Offset paging, not the cursor this used to take. A cursor (`before=<oldest occurredAt shown>`) is the stabler of
+    * the two under concurrent writes — offsets shift when a row is inserted above the page being read — but it can only
+    * ever walk backwards from where the reader already is, so it cannot number pages, cannot jump, and has nothing to
+    * count a total against. Numbered pages and a row count were the point; this is what they cost.
+    */
   val auditLog = {
     Endpoint(Method.GET / "api" / "admin" / "audit")
-      .query(limitQuery)
-      .query(beforeQuery)
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
       .query(actionQuery)
       .query(actorQuery)
       .query(targetQuery)
       .withCodecError
-      .out[List[AuditEntry]]
+      .out[AuditPage]
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 

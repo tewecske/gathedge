@@ -4,7 +4,7 @@ import webapp1.backend.config.AppConfig
 import webapp1.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService}
 import webapp1.shared.api.AdminEndpoints
 import webapp1.shared.domain.{OAuthProvider, User}
-import webapp1.shared.dto.{ClearRateLimitRequest, CreateUserRequest, UpdateUserRequest}
+import webapp1.shared.dto.{ClearRateLimitRequest, CreateUserRequest, Paging, SortDirection, UpdateUserRequest}
 import zio.*
 import zio.http.*
 
@@ -29,8 +29,10 @@ object AdminRoutes {
     } yield AdminActor(user.id, context.clientIp)
   }
 
-  /** How many rows a list endpoint returns when the caller names no limit, and the most it will return however large a
-    * `limit` it is asked for. The cap is the real protection: the parameter reaches the SQL `LIMIT` directly.
+  /** How many rows the un-paged list endpoint returns when the caller names no limit, and the most it will return
+    * however large a `limit` it is asked for. The cap is the real protection: the parameter reaches the SQL `LIMIT`
+    * directly. The two *paged* listings are bounded by `Paging` instead, which is shared with the browser so the
+    * dropdown cannot offer a size the server would clamp.
     */
   private val defaultLimit = 50
   private val maxLimit     = 500
@@ -39,8 +41,25 @@ object AdminRoutes {
     requested.getOrElse(defaultLimit).max(1).min(maxLimit)
   }
 
+  /** An empty `q=` is the search box after the administrator has cleared it, which is not a filter. */
+  private def searchTerm(requested: Option[String]): Option[String] = {
+    requested.map(_.trim).filter(_.nonEmpty)
+  }
+
   private val listUsersRoute = {
-    AdminEndpoints.listUsers.implementHandler(handler((_: Unit) => AdminService.listUsers))
+    AdminEndpoints.listUsers
+      .implementHandler(
+        handler {
+          (page: Option[Int], pageSize: Option[Int], sort: Option[String], dir: Option[String], q: Option[String]) =>
+            AdminService.listUsers(
+              Paging.boundedPage(page),
+              Paging.boundedPageSize(pageSize),
+              searchTerm(q),
+              sort,
+              SortDirection.isDescending(dir),
+            )
+        }
+      )
   }
 
   private val getUserRoute = {
@@ -143,13 +162,23 @@ object AdminRoutes {
       .implementHandler(
         handler {
           (
-            limit: Option[Int],
-            before: Option[Long],
+            page: Option[Int],
+            pageSize: Option[Int],
+            sort: Option[String],
+            dir: Option[String],
             action: Option[String],
             actorId: Option[Long],
             targetId: Option[String],
           ) =>
-            AdminService.auditLog(boundedLimit(limit), before, action, actorId, targetId)
+            AdminService.auditLog(
+              Paging.boundedPage(page),
+              Paging.boundedPageSize(pageSize),
+              sort,
+              SortDirection.isDescending(dir),
+              action,
+              actorId,
+              targetId,
+            )
         }
       )
   }

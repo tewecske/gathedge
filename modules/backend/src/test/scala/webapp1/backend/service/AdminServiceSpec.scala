@@ -47,8 +47,13 @@ object AdminServiceSpec extends ZIOSpecDefault {
     test("creates a user and lists it") {
       for {
         created <- AdminService.createUser(AdminActor.system, "new@example.com", "password123", isAdmin = false)
-        listed  <- AdminService.listUsers
-      } yield assertTrue(created.email == "new@example.com", !created.isAdmin, listed.exists(_.id == created.id))
+        listed  <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
+      } yield assertTrue(
+        created.email == "new@example.com",
+        !created.isAdmin,
+        listed.items.exists(_.id == created.id),
+        listed.total == listed.items.size.toLong,
+      )
     },
     test("rejects a duplicate email on create") {
       for {
@@ -125,13 +130,13 @@ object AdminServiceSpec extends ZIOSpecDefault {
           before   <- AdminService.userDetail(signedUp._1.id)
           _        <- AdminService.verifyEmailFor(AdminActor(admin.id), signedUp._1.id)
           after    <- AdminService.userDetail(signedUp._1.id)
-          audited  <- AdminService.auditLog(50, None, Some(AuditAction.userVerifyEmail), None, None)
+          audited  <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.userVerifyEmail), None, None)
         } yield assertTrue(
           before.emailVerifiedAt.isEmpty,
           !before.user.emailVerified,
           after.emailVerifiedAt.isDefined,
           after.user.emailVerified,
-          audited.exists(entry =>
+          audited.items.exists(entry =>
             entry.actorUserId.contains(admin.id) && entry.targetId.contains(signedUp._1.id.toString)
           ),
         )
@@ -244,17 +249,19 @@ object AdminServiceSpec extends ZIOSpecDefault {
           _      <- AdminService.revokeSessions(AdminActor(admin.id, Some("10.0.0.9")), target.id)
           _      <- AdminService.clearLockout(AdminActor(admin.id), target.id)
           _      <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          byUser <- AdminService.auditLog(50, None, None, Some(admin.id), Some(target.id.toString))
+          byUser <- AdminService.auditLog(0, 50, None, false, None, Some(admin.id), Some(target.id.toString))
         } yield assertTrue(
-          byUser.map(_.action).toSet ==
+          byUser.items.map(_.action).toSet ==
             Set(
               AuditAction.userCreate,
               AuditAction.userSessionsRevoked,
               AuditAction.userLockoutCleared,
               AuditAction.userDelete,
             ),
-          byUser.forall(_.actorEmail.contains("auditor@example.com")),
-          byUser.exists(_.ip.contains("10.0.0.9")),
+          // The total counts what the same filter matches, not what one page holds — here they coincide.
+          byUser.total == byUser.items.size.toLong,
+          byUser.items.forall(_.actorEmail.contains("auditor@example.com")),
+          byUser.items.exists(_.ip.contains("10.0.0.9")),
         )
       },
       test("an audit entry outlives the account it names") {
@@ -262,8 +269,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
           admin  <- AdminService.createUser(AdminActor.system, "vanishing@example.com", "password123", isAdmin = true)
           victim <- AdminService.createUser(AdminActor(admin.id), "gone@example.com", "password123", isAdmin = false)
           _      <- AdminService.deleteUser(AdminActor(admin.id), victim.id)
-          after  <- AdminService.auditLog(50, None, Some(AuditAction.userDelete), None, Some(victim.id.toString))
-        } yield assertTrue(after.exists(_.actorEmail.contains("vanishing@example.com")))
+          after  <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.userDelete), None, Some(victim.id.toString))
+        } yield assertTrue(after.items.exists(_.actorEmail.contains("vanishing@example.com")))
       },
     ),
     test("deleting a user removes them from the list") {
@@ -271,8 +278,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
         admin  <- AdminService.createUser(AdminActor.system, "admin4@example.com", "password123", isAdmin = true)
         victim <- AdminService.createUser(AdminActor.system, "victim@example.com", "password123", isAdmin = false)
         _      <- AdminService.deleteUser(AdminActor(admin.id), victim.id)
-        listed <- AdminService.listUsers
-      } yield assertTrue(!listed.exists(_.id == victim.id))
+        listed <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
+      } yield assertTrue(!listed.items.exists(_.id == victim.id))
     },
   ).provide(layer)
 }
