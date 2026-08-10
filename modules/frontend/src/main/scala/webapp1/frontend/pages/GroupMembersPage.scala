@@ -6,6 +6,7 @@ import webapp1.frontend.components.{Alert, AppShell, GroupSubmenu}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupMember, GroupRole}
 import webapp1.shared.dto.{InviteMemberRequest, UpdateRoleRequest}
+import webapp1.frontend.i18n.I18n
 import webapp1.shared.validation.Validation
 
 object GroupMembersPage {
@@ -220,7 +221,11 @@ private class GroupMembersPage(groupId: Long) {
   }
 
   private def validateInvite(): Either[String, InviteMemberRequest] = {
-    Validation.validateEmail(inviteEmailVar.now()).map(email => InviteMemberRequest(email, inviteRoleVar.now()))
+    Validation
+      .validateEmail(inviteEmailVar.now())
+      .left
+      .map(I18n.resolve)
+      .map(email => InviteMemberRequest(email, inviteRoleVar.now()))
   }
 
   // The key travels with the response so the observer can patch the right row without

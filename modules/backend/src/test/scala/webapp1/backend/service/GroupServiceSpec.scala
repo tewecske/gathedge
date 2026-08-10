@@ -10,6 +10,7 @@ import webapp1.backend.db.{
   GroupRepository,
   UserRepository,
 }
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.domain.GroupRole
 import zio._
 import zio.test._
@@ -59,7 +60,12 @@ object GroupServiceSpec extends ZIOSpecDefault {
         pair.target == "tgt",
         pair.createdByEmail == "owner@example.com",
         pairs.map(_.id) == List(pair.id),
-        blankResult == Left(GroupFailure.ValidationError(Map("source" -> "Source is required"))),
+        blankResult ==
+          Left(
+            GroupFailure.ValidationError(
+              Map("source" -> MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(MessageKeys.fieldSource))))
+            )
+          ),
       )
     },
     test("accessing a nonexistent group fails with NotFound") {
@@ -109,9 +115,9 @@ object GroupServiceSpec extends ZIOSpecDefault {
       for {
         now0         <- Clock.currentTime(TimeUnit.MILLISECONDS)
         admin1       <-
-          UserRepository.insert("admin1@twoadmins.example.com", None, isAdmin = false, "light", now0, Some(now0))
+          UserRepository.insert("admin1@twoadmins.example.com", None, isAdmin = false, "light", "en", now0, Some(now0))
         admin2       <-
-          UserRepository.insert("admin2@twoadmins.example.com", None, isAdmin = false, "light", now0, Some(now0))
+          UserRepository.insert("admin2@twoadmins.example.com", None, isAdmin = false, "light", "en", now0, Some(now0))
         group        <- GroupService.createGroup(admin1.id, "Two Admins Co")
         now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
         invite       <- GroupInvitationRepository.insert(

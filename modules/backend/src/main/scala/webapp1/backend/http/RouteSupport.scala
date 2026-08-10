@@ -3,7 +3,8 @@ package webapp1.backend.http
 import webapp1.backend.config.AppConfig
 import webapp1.backend.security.{SecurityLog, SessionAuth}
 import webapp1.backend.service.AuthService
-import webapp1.shared.domain.User
+import webapp1.shared.domain.{Locale, User}
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import zio.*
 import zio.http.*
 
@@ -47,7 +48,13 @@ object RouteSupport {
             ZIO
               .logErrorCause(s"Unhandled failure serving ${request.method} ${request.path}: ${describe(cause)}", cause)
               .unless(cause.isInterruptedOnly)
-              .as(errorResponse(Status.InternalServerError, "Internal server error"))
+              .as(
+                errorResponse(
+                  Status.InternalServerError,
+                  MessageRef(MessageKeys.internalError),
+                  "Internal server error",
+                )
+              )
         }
       }
     }
@@ -66,7 +73,8 @@ object RouteSupport {
     // cannot affect this method's `Routes[Env, Nothing]` result — that comes from `handleErrorRequestCauseZIO` above.
     // `handled` is a fresh value built one line up, and the combinators that follow (`@@ requestLogging` in `Main`)
     // carry the replacement along.
-    handled.notFound = Handler.fromFunction[Request](_ => errorResponse(Status.NotFound, "Not found"))
+    handled.notFound =
+      Handler.fromFunction[Request](_ => errorResponse(Status.NotFound, MessageRef(MessageKeys.notFound), "Not found"))
     handled
   }
 
@@ -186,8 +194,11 @@ object RouteSupport {
         Handler.fromFunctionZIO[Request] { (request: Request) =>
           if (SessionAuth.hasValidCsrfHeader(request))
             ZIO.succeed((request, ()))
-          else
-            ZIO.fail(errorResponse(Status.Forbidden, "Missing required header"))
+          else {
+            ZIO.fail(
+              errorResponse(Status.Forbidden, MessageRef(MessageKeys.missingCsrfHeader), "Missing required header")
+            )
+          }
         }
       )
       .when(request => !safeMethods.contains(request.method))
@@ -196,15 +207,20 @@ object RouteSupport {
   /** The parts of the raw `Request` that the described endpoints need but deliberately do not describe.
     *
     * A handler implemented against an `Endpoint` receives its declared inputs and nothing else — there is no `Request`
-    * to reach into. For these two that is the right outcome and not a limitation to work around: neither belongs in a
-    * description, because neither can be supplied by a client. The peer address is not a header at all, and the session
-    * cookie is a forbidden request header that a browser sets itself and page script cannot. Declaring either as an
-    * input would produce a client that has to fabricate a value it does not have.
+    * to reach into. For the first two that is the right outcome and not a limitation to work around: neither belongs in
+    * a description, because neither can be supplied by a client. The peer address is not a header at all, and the
+    * session cookie is a forbidden request header that a browser sets itself and page script cannot. Declaring either
+    * as an input would produce a client that has to fabricate a value it does not have.
     *
     * So they arrive the same way the authenticated `User` does: resolved once by an aspect and handed to the handler
     * through the environment.
+    *
+    * [[locale]] is the odd one out and is here for a different reason: it *could* be described, as a header codec on
+    * every endpoint that needs it. It is not, because it would have to go on the three that send mail and then be kept
+    * in step by hand forever, and because it is a property of the request rather than of any one operation — the same
+    * argument that puts the client address here. See [[localeOf]] for where the value comes from.
     */
-  final case class RequestContext(clientIp: Option[String], sessionId: Option[String])
+  final case class RequestContext(clientIp: Option[String], sessionId: Option[String], locale: Locale)
 
   private val forwardedForHeader = "X-Forwarded-For"
 
@@ -249,8 +265,30 @@ object RouteSupport {
     }
   }
 
-  /** Supplies [[RequestContext]]. Never fails — both fields are optional, and "no session" is a legitimate state for
-    * the endpoints that ask for this (signing up, signing in, and signing out with an already-dead cookie).
+  private val localeHeader = "X-Locale"
+
+  /** Which language this request is being made in.
+    *
+    * `X-Locale` is what the generated client sends on every call, carrying the locale from the URL prefix the SPA is
+    * running under — so it is the language the person is actually looking at, which is the one an email triggered by
+    * this request should be written in.
+    *
+    * `Accept-Language` is the fallback for anything that is not this SPA: a `curl`, a future mobile client, a link
+    * checker. It is only ever a hint here, never an override, because a browser's language list has nothing to do with
+    * which prefix the user chose to open.
+    *
+    * Pure and separate from the aspect for the same reason [[clientAddress]] is: each branch is worth a test.
+    */
+  def localeOf(request: Request): Locale = {
+    request
+      .rawHeader(localeHeader)
+      .flatMap(Locale.fromString)
+      .orElse(request.rawHeader("Accept-Language").flatMap(Locale.fromAcceptLanguage))
+      .getOrElse(Locale.default)
+  }
+
+  /** Supplies [[RequestContext]]. Never fails — the optional fields are optional, and "no session" is a legitimate
+    * state for the endpoints that ask for this (signing up, signing in, and signing out with an already-dead cookie).
     *
     * It needs `AppConfig` only for [[clientAddress]]'s hop count. That is worth the environment requirement: the
     * address this resolves is what the rate limiter keys on, and getting it wrong is not a degraded limit but a
@@ -264,7 +302,11 @@ object RouteSupport {
         ZIO.serviceWith[AppConfig] { config =>
           (
             request,
-            RequestContext(clientAddress(request, config.app.trustedProxyHops), SessionAuth.sessionIdFrom(request)),
+            RequestContext(
+              clientAddress(request, config.app.trustedProxyHops),
+              SessionAuth.sessionIdFrom(request),
+              localeOf(request),
+            ),
           )
         }
       }
@@ -280,7 +322,11 @@ object RouteSupport {
           case Some(sid) =>
             AuthService.currentUser(sid)
         }
-      user      <- ZIO.fromOption(maybeUser).orElseFail(errorResponse(Status.Unauthorized, "Not authenticated"))
+      user      <- ZIO
+                     .fromOption(maybeUser)
+                     .orElseFail(
+                       errorResponse(Status.Unauthorized, MessageRef(MessageKeys.notAuthenticated), "Not authenticated")
+                     )
     } yield user
   }
 
@@ -302,7 +348,13 @@ object RouteSupport {
             ZIO.succeed((request, user))
           else {
             SecurityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}") *>
-              ZIO.fail(errorResponse(Status.Forbidden, "You are signed in but do not have administrator rights"))
+              ZIO.fail(
+                errorResponse(
+                  Status.Forbidden,
+                  MessageRef(MessageKeys.notAdministrator),
+                  "You are signed in but do not have administrator rights",
+                )
+              )
           }
         }
       }

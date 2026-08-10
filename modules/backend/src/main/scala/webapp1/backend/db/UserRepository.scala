@@ -17,12 +17,14 @@ trait UserRepository {
     passwordHash: Option[String],
     isAdmin: Boolean,
     theme: String,
+    locale: String,
     createdAt: Long,
     emailVerifiedAt: Option[Long],
   ): Task[UserRow]
   def findByEmail(email: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
   def updateTheme(userId: Long, theme: String): Task[Unit]
+  def updateLocale(userId: Long, locale: String): Task[Unit]
 
   /** Idempotent: re-verifying an already-verified account just rewrites the timestamp. */
   def markEmailVerified(userId: Long, verifiedAt: Long): Task[Unit]
@@ -50,10 +52,14 @@ object UserRepository {
     passwordHash: Option[String],
     isAdmin: Boolean,
     theme: String,
+    locale: String,
     createdAt: Long,
     emailVerifiedAt: Option[Long],
-  ): RIO[UserRepository, UserRow] =
-    ZIO.serviceWithZIO[UserRepository](_.insert(email, passwordHash, isAdmin, theme, createdAt, emailVerifiedAt))
+  ): RIO[UserRepository, UserRow] = {
+    ZIO.serviceWithZIO[UserRepository](
+      _.insert(email, passwordHash, isAdmin, theme, locale, createdAt, emailVerifiedAt)
+    )
+  }
 
   def findByEmail(email: String): RIO[UserRepository, Option[UserRow]] =
     ZIO.serviceWithZIO[UserRepository](_.findByEmail(email))
@@ -63,6 +69,9 @@ object UserRepository {
 
   def updateTheme(userId: Long, theme: String): RIO[UserRepository, Unit] =
     ZIO.serviceWithZIO[UserRepository](_.updateTheme(userId, theme))
+
+  def updateLocale(userId: Long, locale: String): RIO[UserRepository, Unit] =
+    ZIO.serviceWithZIO[UserRepository](_.updateLocale(userId, locale))
 
   def markEmailVerified(userId: Long, verifiedAt: Long): RIO[UserRepository, Unit] =
     ZIO.serviceWithZIO[UserRepository](_.markEmailVerified(userId, verifiedAt))
@@ -119,10 +128,11 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     passwordHash: Option[String],
     isAdmin: Boolean,
     theme: String,
+    locale: String,
     createdAt: Long,
     emailVerifiedAt: Option[Long],
   ): Task[UserRow] = {
-    val row = UserRow(0L, email, passwordHash, isAdmin, theme, createdAt, emailVerifiedAt)
+    val row = UserRow(0L, email, passwordHash, isAdmin, theme, locale, createdAt, emailVerifiedAt)
     logged(run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))) {
       user =>
         s"users.insert id=${user.id} admin=$isAdmin verified=${emailVerifiedAt.isDefined}"
@@ -144,6 +154,12 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def updateTheme(userId: Long, theme: String): Task[Unit] = {
     logged(run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.theme -> lift(theme))))).unit) { _ =>
       s"users.updateTheme id=$userId theme=$theme"
+    }
+  }
+
+  def updateLocale(userId: Long, locale: String): Task[Unit] = {
+    logged(run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.locale -> lift(locale))))).unit) { _ =>
+      s"users.updateLocale id=$userId locale=$locale"
     }
   }
 

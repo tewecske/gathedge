@@ -1,0 +1,65 @@
+{
+  "validation.failed": "Validation failed",
+  "validation.email.required": "Email is required",
+  "validation.email.tooLong": "Email must be at most {0} characters",
+  "validation.email.invalid": "Invalid email format",
+  "validation.password.required": "Password is required",
+  "validation.password.tooShort": "Password must be at least {0} characters",
+  "validation.password.tooLong": "Password is too long",
+  "validation.field.required": "{0} is required",
+  "validation.field.tooLong": "{0} must be at most {1} characters",
+  "validation.currentPassword.required": "Enter your current password",
+  "validation.currentPassword.incorrect": "Incorrect password",
+
+  "nav.language": "Language",
+
+  "field.email": "Email",
+  "field.password": "Password",
+  "field.groupName": "Group name",
+  "field.todoText": "To-do text",
+  "field.source": "Source",
+  "field.target": "Target",
+
+  "auth.invalidCredentials": "Invalid email or password",
+  "auth.emailAlreadyRegistered": "Email already registered",
+  "auth.rateLimited": "Too many attempts. Try again later.",
+  "auth.emailNotVerified": "Verify your email address before signing in",
+  "auth.verificationTokenInvalid": "This verification link is invalid, expired, or already used",
+  "auth.verificationSendFailed": "Could not send a verification link",
+  "auth.lastCredential": "Set a password first — this is the only way left to sign in to this account",
+
+  "oauth.failed": "Sign-in failed: {0}",
+  "oauth.accountExists": "An account with this email already exists. Sign in with your password, then link {0} from Settings.",
+  "oauth.alreadyLinked": "That account is already linked",
+  "oauth.unknownProvider": "Unknown sign-in provider",
+  "oauth.unavailable": "Sign-in is unavailable",
+
+  "todo.notFound": "Todo item not found",
+
+  "group.notFound": "Group not found",
+  "group.notMember": "You are not a member of this group",
+  "group.readOnlyMember": "Your role in this group is read-only",
+  "group.adminOnly": "Only a group administrator can do this",
+  "group.lastAdmin": "A group must always have at least one administrator; promote another member first",
+  "invitation.invalid": "This invitation is invalid, expired, or already used",
+
+  "admin.userNotFound": "User not found",
+  "admin.selfDemote": "You cannot remove your own administrator privileges",
+  "admin.selfDelete": "You cannot delete your own account",
+  "admin.lastCredential": "That is the account's only way to sign in; give it a password first",
+
+  "error.internal": "Internal server error",
+  "error.notFound": "Not found",
+  "error.malformedRequest": "Malformed request",
+  "error.missingCsrfHeader": "Missing required header",
+  "error.notAuthenticated": "Not authenticated",
+  "error.notAdministrator": "You are signed in but do not have administrator rights",
+  "error.invalidRedirect": "Invalid redirect target",
+
+  "error.requestFailed": "Could not reach the server. Check your connection and try again.",
+
+  "email.verify.subject": "Confirm your email address",
+  "email.verify.body": "Confirm your email address by following this link: {0}\n\nThe link stops working in {1} hours.",
+  "email.invite.subject": "You're invited to join {0}",
+  "email.invite.body": "Join the group here: {0}"
+}

@@ -4,7 +4,9 @@ import webapp1.backend.config.AppConfig
 import webapp1.backend.security.{SessionAuth, Tokens}
 import webapp1.backend.service.{AuthFailure, AuthService, OAuthClients}
 import webapp1.shared.api.AuthEndpoints
-import webapp1.shared.domain.{OAuthProvider, User}
+import webapp1.shared.domain.{Locale, OAuthProvider, User}
+import webapp1.shared.domain.Locale.{code, urlPrefix}
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.dto.{
   AuthResponse,
   IdentitiesResponse,
@@ -14,6 +16,7 @@ import webapp1.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateLocaleRequest,
   UpdateThemeRequest,
   VerifyEmailRequest,
 }
@@ -54,7 +57,7 @@ object AuthRoutes {
         handler { (body: SignupRequest) =>
           withContext { (context: RequestContext, cfg: AppConfig) =>
             AuthService
-              .signup(body.email, body.password, context.clientIp)
+              .signup(body.email, body.password, context.clientIp, context.locale)
               .mapError(ApiFailures.auth)
               // No session id means verification is mandatory here: the account exists but stays
               // signed out until the emailed link is followed, so there is no cookie to set.
@@ -124,6 +127,19 @@ object AuthRoutes {
             // A failure here is a bug or a dead database, not something the caller can act on:
             // die and let Main's route-level handler log the cause and answer a generic 500.
             AuthService.updateTheme(user.id, body.theme).orDie.map(AuthResponse(_))
+          }
+        }
+      )
+  }
+
+  private val updateLocaleRoute = {
+    AuthEndpoints.updateLocale
+      .implementHandler(
+        handler { (body: UpdateLocaleRequest) =>
+          withContext { (user: User) =>
+            // Persisting only. The page the caller is looking at is already in some language, chosen
+            // by its URL prefix; the picker navigates to the other prefix separately.
+            AuthService.updateLocale(user.id, body.locale).orDie.map(AuthResponse(_))
           }
         }
       )
@@ -210,11 +226,16 @@ object AuthRoutes {
     }
   }
 
-  /** The cookie holds `nonce|intent`; the `state` query parameter the provider echoes back holds the bare nonce.
+  /** The cookie holds `nonce|intent|locale`; the `state` query parameter the provider echoes back holds the bare nonce.
     *
     * Splitting them keeps `state` opaque — it stays a value with no meaning to anyone who intercepts it — while the
-    * half that actually decides what the callback does never leaves the browser's cookie jar, where it is `HttpOnly`
+    * halves that actually decide what the callback does never leave the browser's cookie jar, where they are `HttpOnly`
     * and cannot be rewritten by script or by the provider.
+    *
+    * The locale rides along for the same reason the intent does: every exit from the callback is a redirect into the
+    * SPA, and the SPA's language is decided by the URL prefix that redirect targets. Nothing else survives the round
+    * trip through the provider — the callback carries no `X-Locale` header, since it is a top-level navigation the
+    * browser makes rather than a call the client builds.
     */
   private def oauthStateCookie(state: String, secure: Boolean, maxAge: Duration): Cookie.Response = {
     Cookie.Response(
@@ -231,17 +252,21 @@ object AuthRoutes {
   private def redirectResponse(target: String): Response = {
     URL
       .decode(target)
-      .fold(_ => errorResponse(Status.InternalServerError, "Invalid redirect target"), Response.redirect(_))
+      .fold(
+        _ =>
+          errorResponse(Status.InternalServerError, MessageRef(MessageKeys.invalidRedirect), "Invalid redirect target"),
+        Response.redirect(_),
+      )
   }
 
   /** The reason a social sign-in failed travels as a short opaque code rather than an exception message. The page it
     * lands on depends on where the user started: a failed login belongs on the sign-in form, a failed link belongs back
     * on the settings page they clicked from.
     */
-  private def oauthErrorRedirect(cfg: AppConfig, intent: OAuthIntent, code: String): Response = {
-    // These must match `AppRouter`'s patterns: the callback is a browser navigation, so the SPA has to
-    // have a route for wherever it lands. (`/login` was the previous target and matched nothing —
-    // harmless only because no page ever started the flow.)
+  private def oauthErrorRedirect(cfg: AppConfig, intent: OAuthIntent, locale: Locale, code: String): Response = {
+    // These must match `AppRouter`'s patterns, locale prefix included: the callback is a browser
+    // navigation, so the SPA has to have a route for wherever it lands. (`/login` was an earlier
+    // target and matched nothing — harmless only because no page ever started the flow.)
     val page = {
       intent match {
         case OAuthIntent.Login =>
@@ -250,7 +275,7 @@ object AuthRoutes {
           "/settings"
       }
     }
-    redirectResponse(s"${cfg.app.publicBaseUrl}$page?error=$code")
+    redirectResponse(s"${cfg.app.publicBaseUrl}${locale.urlPrefix}$page?error=$code")
   }
 
   /** Resolves the `{provider}` segment against what this deployment has credentials for. A provider that is unknown and
@@ -259,13 +284,23 @@ object AuthRoutes {
     */
   private def resolveClient(segment: String) = {
     for {
-      provider    <- ZIO
-                       .fromOption(OAuthProvider.fromString(segment))
-                       .orElseFail(errorResponse(Status.NotFound, "Unknown sign-in provider"))
+      provider    <-
+        ZIO
+          .fromOption(OAuthProvider.fromString(segment))
+          .orElseFail(
+            errorResponse(Status.NotFound, MessageRef(MessageKeys.oauthUnknownProvider), "Unknown sign-in provider")
+          )
       maybeClient <- OAuthClients.forProvider(provider)
       client      <- ZIO
                        .fromOption(maybeClient)
-                       .orElseFail(errorResponse(Status.NotFound, s"${provider.display} sign-in is not configured"))
+                       .orElseFail(
+                         // Same 404 as an unknown provider, so a half-configured deployment stays unreported.
+                         errorResponse(
+                           Status.NotFound,
+                           MessageRef(MessageKeys.oauthUnknownProvider),
+                           s"${provider.display} sign-in is not configured",
+                         )
+                       )
     } yield client
   }
 
@@ -283,6 +318,10 @@ object AuthRoutes {
               else
                 OAuthIntent.Login
             }
+            // A `?locale=` query parameter, because this route is reached by the document navigating
+            // rather than by the generated client, so there is no `X-Locale` header to read. The SPA
+            // puts the prefix it is running under here; `localeOf` falls back to `Accept-Language`.
+            locale  = request.queryParam("locale").flatMap(Locale.fromString).getOrElse(RouteSupport.localeOf(request))
             // `Tokens`, not `Random.nextUUID`: ZIO's live `Random` is `scala.util.Random`, a 48-bit LCG whose
             // state is recoverable from a couple of sampled outputs. This nonce is the only thing standing
             // between the callback and a cross-site request, since it is the one route that cannot require
@@ -293,9 +332,15 @@ object AuthRoutes {
                         .tapErrorCause(cause =>
                           ZIO.logErrorCause(s"Could not build the ${client.provider.wire} authorization URL", cause)
                         )
-                        .mapError(_ => errorResponse(Status.InternalServerError, "Sign-in is unavailable"))
+                        .mapError(_ => {
+                          errorResponse(
+                            Status.InternalServerError,
+                            MessageRef(MessageKeys.oauthUnavailable),
+                            "Sign-in is unavailable",
+                          )
+                     })
           } yield {
-            val cookieValue = s"$nonce|${OAuthIntent.wire(intent)}"
+            val cookieValue = s"$nonce|${OAuthIntent.wire(intent)}|${locale.code}"
             Response.redirect(url).addCookie(oauthStateCookie(cookieValue, cfg.session.cookieSecure, 10.minutes))
           }
         }
@@ -312,41 +357,46 @@ object AuthRoutes {
             // to know which page to land the user on.
             cookieValue <- ZIO
                              .fromOption(request.cookie(oauthStateCookieName).map(_.content))
-                             .orElseFail(oauthErrorRedirect(cfg, OAuthIntent.Login, "missing_state"))
+                             .orElseFail(oauthErrorRedirect(cfg, OAuthIntent.Login, Locale.default, "missing_state"))
             cookieParts  = cookieValue.split('|')
             intent       = cookieParts.lift(1).flatMap(OAuthIntent.parse).getOrElse(OAuthIntent.Login)
+            // A cookie written by an older build has no third part; falling back to the default just
+            // means an English landing page for a flow that was already in flight across a deploy.
+            locale       = cookieParts.lift(2).flatMap(Locale.fromString).getOrElse(Locale.default)
             nonce        = cookieParts.headOption.getOrElse("")
             state       <- ZIO
                              .fromOption(request.queryParam("state"))
-                             .orElseFail(oauthErrorRedirect(cfg, intent, "missing_state"))
+                             .orElseFail(oauthErrorRedirect(cfg, intent, locale, "missing_state"))
             _           <- ZIO.unless(nonce.nonEmpty && state == nonce)(
-                             ZIO.fail(oauthErrorRedirect(cfg, intent, "state_mismatch"))
+                             ZIO.fail(oauthErrorRedirect(cfg, intent, locale, "state_mismatch"))
                            )
             code        <-
-              ZIO.fromOption(request.queryParam("code")).orElseFail(oauthErrorRedirect(cfg, intent, "missing_code"))
+              ZIO
+                .fromOption(request.queryParam("code"))
+                .orElseFail(oauthErrorRedirect(cfg, intent, locale, "missing_code"))
             identity    <-
               client
                 .exchangeAndVerify(code)
                 .tapErrorCause(cause =>
                   ZIO.logErrorCause(s"${client.provider.wire} code exchange or id_token verification failed", cause)
                 )
-                .mapError(_ => oauthErrorRedirect(cfg, intent, "failed"))
+                .mapError(_ => oauthErrorRedirect(cfg, intent, locale, "failed"))
             response    <-
               intent match {
                 case OAuthIntent.Login =>
                   AuthService
-                    .loginWithOAuth(identity)
+                    .loginWithOAuth(identity, locale)
                     .mapBoth(
                       {
                         // The one failure the user can actually act on, and the entire reason the settings
                         // page exists: their email is taken by an account that has never linked this provider.
                         case AuthFailure.OAuthAccountExists(_) =>
-                          oauthErrorRedirect(cfg, intent, "account_exists")
+                          oauthErrorRedirect(cfg, intent, locale, "account_exists")
                         case _                                 =>
-                          oauthErrorRedirect(cfg, intent, "failed")
+                          oauthErrorRedirect(cfg, intent, locale, "failed")
                       },
                       { case (_, sessionId) =>
-                        redirectResponse(cfg.app.publicBaseUrl).addCookie(
+                        redirectResponse(s"${cfg.app.publicBaseUrl}${locale.urlPrefix}/").addCookie(
                           SessionAuth.buildSessionCookie(sessionId, cfg.session.cookieSecure)
                         )
                       },
@@ -357,19 +407,21 @@ object AuthRoutes {
                     // exit from a top-level navigation has to be a redirect. So the session is resolved here.
                     sessionId <- ZIO
                                    .fromOption(SessionAuth.sessionIdFrom(request))
-                                   .orElseFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
+                                   .orElseFail(oauthErrorRedirect(cfg, intent, locale, "link_requires_session"))
                     user      <- AuthService
                                    .currentUser(sessionId)
-                                   .someOrFail(oauthErrorRedirect(cfg, intent, "link_requires_session"))
+                                   .someOrFail(oauthErrorRedirect(cfg, intent, locale, "link_requires_session"))
                     _         <- AuthService
                                    .linkOAuth(user.id, identity)
                                    .mapError {
                                      case AuthFailure.OAuthAlreadyLinked =>
-                                       oauthErrorRedirect(cfg, intent, "already_linked")
+                                       oauthErrorRedirect(cfg, intent, locale, "already_linked")
                                      case _                              =>
-                                       oauthErrorRedirect(cfg, intent, "failed")
+                                       oauthErrorRedirect(cfg, intent, locale, "failed")
                                    }
-                  } yield redirectResponse(s"${cfg.app.publicBaseUrl}/settings?linked=${identity.provider.wire}")
+                  } yield redirectResponse(
+                    s"${cfg.app.publicBaseUrl}${locale.urlPrefix}/settings?linked=${identity.provider.wire}"
+                  )
               }
           } yield {
             response.addCookie(oauthStateCookie("", cfg.session.cookieSecure, Duration.Zero))
@@ -395,7 +447,7 @@ object AuthRoutes {
   }
 
   private val sessionRoutes = {
-    Routes(meRoute, updateThemeRoute, identitiesRoute, unlinkIdentityRoute, setPasswordRoute) @@
+    Routes(meRoute, updateThemeRoute, updateLocaleRoute, identitiesRoute, unlinkIdentityRoute, setPasswordRoute) @@
       RouteSupport.authenticated
   }
 

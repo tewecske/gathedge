@@ -2,13 +2,14 @@ package webapp1.backend.service
 
 import webapp1.backend.db.{TodoItemRow, TodoRepository}
 import webapp1.shared.domain.{TodoItem, TodoStatus}
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.validation.Validation
 import zio.*
 
 import java.util.concurrent.TimeUnit
 
 enum TodoFailure {
-  case ValidationError(message: String)
+  case ValidationError(error: MessageRef)
   case NotFound
 }
 
@@ -38,7 +39,7 @@ final case class TodoServiceLive(repo: TodoRepository) extends TodoService {
   }
 
   def addTodo(userId: Long, text: String): IO[TodoFailure, TodoItem] = {
-    Validation.validateNonBlank(text, "Text") match {
+    Validation.validateNonBlank(text, MessageKeys.fieldTodoText) match {
       case Left(err)        =>
         ZIO.fail(TodoFailure.ValidationError(err))
       case Right(validText) =>

@@ -32,16 +32,17 @@ test.afterAll(async () => {
 });
 
 test('unauthenticated visitor is redirected to sign-in', async () => {
+  // Deliberately bare: this is the one place the boot script's prefix redirect is exercised.
   await page.goto('/');
-  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page).toHaveURL(/\/en\/sign-in$/);
 });
 
 test('sign up creates an account and lands on the Todo board', async () => {
-  await page.goto('/sign-up');
+  await page.goto('/en/sign-up');
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/en\/$/);
   await expect(page.getByRole('heading', { name: 'TODO' })).toBeVisible();
 });
 
@@ -82,7 +83,7 @@ test('theme toggle switches the page theme immediately', async () => {
 test('creating a group makes the creator its admin', async () => {
   groupName = `E2E Group ${unique}`;
   await page.getByRole('link', { name: 'Groups' }).click();
-  await expect(page).toHaveURL(/\/groups$/);
+  await expect(page).toHaveURL(/\/en\/groups$/);
   await page.locator('input[placeholder="New group name"]').fill(groupName);
   await page.getByRole('button', { name: 'Create group' }).click();
   const row = page.locator('.list-row').filter({ hasText: groupName });
@@ -93,7 +94,7 @@ test('creating a group makes the creator its admin', async () => {
 });
 
 test('group list survives a page refresh (list is re-fetched, not just held in memory)', async () => {
-  await page.goto('/groups');
+  await page.goto('/en/groups');
   const row = page.locator('.list-row').filter({ hasText: groupName });
   await expect(row).toBeVisible();
   await row.getByRole('link', { name: groupName }).click();
@@ -136,18 +137,18 @@ test('log out returns to sign-in', async () => {
   // Log out lives in the avatar dropdown (a popover), so the menu has to be opened first.
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Log out' }).click();
-  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page).toHaveURL(/\/en\/sign-in$/);
 });
 
 test('log back in with the same credentials', async () => {
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/en\/$/);
 });
 
 test('a non-admin is denied access to the admin area', async () => {
-  await page.goto('/admin/users');
+  await page.goto('/en/admin/users');
   await expect(page.getByText(/administrator rights/)).toBeVisible();
 });
 
@@ -160,7 +161,7 @@ test.describe('administrator flows', () => {
       .click()
       .then(() => page.getByRole('button', { name: 'Log out' }).click())
       .catch(() => {});
-    await page.goto('/sign-in');
+    await page.goto('/en/sign-in');
     await page.locator('input[type=email]').fill(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com');
     await page.locator('input[type=password]').fill(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123');
     await page.getByRole('button', { name: 'Sign in' }).click();
@@ -197,7 +198,7 @@ test.describe('administrator flows', () => {
 
   test('the system overview reports the deployment without exposing any secret', async () => {
     await page.getByRole('link', { name: 'System' }).click();
-    await expect(page).toHaveURL(/\/admin\/system$/);
+    await expect(page).toHaveURL(/\/en\/admin\/system$/);
     await expect(page.getByRole('heading', { name: 'System overview' })).toBeVisible();
     await expect(page.getByText('Configuration')).toBeVisible();
     await expect(page.getByText('Statistics')).toBeVisible();
@@ -209,7 +210,7 @@ test.describe('administrator flows', () => {
 
   test('the audit log lists the actions taken so far in this run', async () => {
     await page.getByRole('link', { name: 'Audit log' }).click();
-    await expect(page).toHaveURL(/\/admin\/audit$/);
+    await expect(page).toHaveURL(/\/en\/admin\/audit$/);
     await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
     // Written by the "creating a user from the admin panel" test above; the file is serial, so it has run.
     await expect(page.getByText('user.create').first()).toBeVisible();
@@ -224,7 +225,7 @@ test.describe('administrator flows', () => {
 
     page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: 'Delete user' }).click();
-    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page).toHaveURL(/\/en\/admin\/users$/);
     await expect(page.getByText(email)).not.toBeVisible();
   });
 

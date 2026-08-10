@@ -15,7 +15,9 @@ import webapp1.backend.db.{
   UserRow,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.shared.domain.{OAuthProvider, Theme, User}
+import webapp1.shared.domain.{Locale, OAuthProvider, Theme, User}
+import webapp1.shared.domain.Locale.code
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.dto.{
   AdminIdentityInfo,
   AdminSessionInfo,
@@ -33,7 +35,7 @@ import zio.*
 import java.util.concurrent.TimeUnit
 
 enum AdminFailure {
-  case ValidationError(fieldErrors: Map[String, String])
+  case ValidationError(fieldErrors: Map[String, MessageRef])
   case DuplicateEmail
   case NotFound
 
@@ -223,6 +225,7 @@ final case class AdminServiceLive(
       row.email,
       row.isAdmin,
       Theme.fromString(row.theme).getOrElse(Theme.Light),
+      Locale.fromString(row.locale).getOrElse(Locale.default),
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
     )
@@ -252,7 +255,20 @@ final case class AdminServiceLive(
       now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
       // An administrator creating an account vouches for the address, so it starts verified — the
       // person never sees a signup form to trigger a verification mail from.
-      row      <- userRepo.insert(normalizedEmail, Some(hash), isAdmin, "light", now, emailVerifiedAt = Some(now)).orDie
+      // The default language, not the acting administrator's: this account belongs to someone else,
+      // and nothing about an admin creating it says what language they read. They can change it on
+      // first sign-in, and no email goes out here to get wrong in the meantime.
+      row      <- userRepo
+                    .insert(
+                      normalizedEmail,
+                      Some(hash),
+                      isAdmin,
+                      "light",
+                      Locale.default.code,
+                      now,
+                      emailVerifiedAt = Some(now),
+                    )
+                    .orDie
       _        <- auditTrail.recordUser(
                     actor,
                     AuditAction.userCreate,
@@ -454,7 +470,7 @@ final case class AdminServiceLive(
   def resendVerificationFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
     for {
       row <- requireUser(id)
-      _   <- authService.issueVerificationFor(id, row.email)
+      _   <- authService.issueVerificationFor(id, row.email, Locale.fromString(row.locale).getOrElse(Locale.default))
       _   <- auditTrail.recordUser(
                actor,
                AuditAction.userVerificationResend,

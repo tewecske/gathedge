@@ -1,11 +1,18 @@
 package webapp1.shared.dto
 
 import zio.json.*
-import webapp1.shared.domain.{OAuthProvider, Theme, User}
+import webapp1.shared.domain.{Locale, OAuthProvider, Theme, User}
+import webapp1.shared.i18n.MessageRef
 
 final case class SignupRequest(email: String, password: String) derives JsonCodec
 final case class LoginRequest(email: String, password: String) derives JsonCodec
 final case class UpdateThemeRequest(theme: Theme) derives JsonCodec
+
+/** Records the language the account has chosen. Note this does *not* change what the caller sees: the language of a
+  * page is decided by the URL prefix it was loaded under, and switching languages is a navigation to the other prefix.
+  * This persists the choice so it survives to a new browser, and so email can be written in it.
+  */
+final case class UpdateLocaleRequest(locale: Locale) derives JsonCodec
 
 final case class AuthResponse(user: User) derives JsonCodec
 
@@ -50,5 +57,14 @@ final case class SetPasswordRequest(currentPassword: Option[String], newPassword
   */
 final case class ProvidersResponse(providers: List[OAuthProvider]) derives JsonCodec
 
-/** RFC-7807-flavored problem response for validation/auth errors. */
-final case class ErrorResponse(message: String, fieldErrors: Map[String, String] = Map.empty) derives JsonCodec
+/** RFC-7807-flavored problem response for validation/auth errors.
+  *
+  * Field-for-field identical to every `api.ApiFailure` case, because the aspects in `RouteSupport` and the two OAuth
+  * routes build their bodies from this by hand rather than through an endpoint's codecs, and the two must be
+  * indistinguishable on the wire. `ApiEndpointsSpec` pins that on real bytes.
+  */
+final case class ErrorResponse(
+  error: MessageRef,
+  message: String,
+  fieldErrors: Map[String, MessageRef] = Map.empty,
+) derives JsonCodec

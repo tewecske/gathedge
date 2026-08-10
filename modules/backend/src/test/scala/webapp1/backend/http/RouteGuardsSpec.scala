@@ -187,7 +187,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           body     <- response.body.asString
         } yield assertTrue(
           response.status == Status.InternalServerError,
-          body == """{"message":"Internal server error","fieldErrors":{}}""",
+          body ==
+            """{"error":{"key":"error.internal","args":[]},"message":"Internal server error","fieldErrors":{}}""",
           !body.contains("relation"),
         )
       },
@@ -199,7 +200,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           body     <- response.body.asString
         } yield assertTrue(
           response.status == Status.NotFound,
-          body == """{"message":"Not found","fieldErrors":{}}""",
+          body == """{"error":{"key":"error.notFound","args":[]},"message":"Not found","fieldErrors":{}}""",
           !body.contains("no-such-thing"),
         )
       },

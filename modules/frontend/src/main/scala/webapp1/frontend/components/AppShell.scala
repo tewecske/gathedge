@@ -106,6 +106,7 @@ private class AppShell(active: Page, content: HtmlElement) {
       ),
       div(
         cls := "navbar-end gap-2",
+        LanguagePicker.render(),
         button(
           cls := "btn btn-ghost btn-sm",
           typ := "button",

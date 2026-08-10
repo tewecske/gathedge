@@ -2,11 +2,12 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.OAuthButtons
+import webapp1.frontend.components.{LanguagePicker, OAuthButtons}
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{ProvidersResponse, SignupRequest, SignupResponse}
+import webapp1.frontend.i18n.I18n
 import webapp1.shared.validation.Validation
 
 object SignUpPage {
@@ -41,7 +42,10 @@ private class SignUpPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "min-h-screen flex items-center justify-center bg-base-200 p-4",
+      cls := "min-h-screen flex flex-col items-center justify-center gap-4 bg-base-200 p-4",
+      // Signed-out visitors need this as much as signed-in ones: without it, someone who cannot
+      // read this page has no way to reach one they can.
+      LanguagePicker.render(),
       // A real form element, so Enter in either field submits.
       form(
         cls := "card w-full max-w-sm bg-base-100 shadow-xl",
@@ -119,10 +123,12 @@ private class SignUpPage {
   private def validate(): Either[String, SignupRequest] = {
     val email    = emailVar.now()
     val password = passwordVar.now()
-    for {
+    // The message is worded here rather than carried on: the caller renders it directly, and the
+    // whole point of `Validation` failing with a key is that both sides word it the same way.
+    (for {
       validEmail    <- Validation.validateEmail(email)
       validPassword <- Validation.validatePassword(password)
-    } yield SignupRequest(validEmail, validPassword)
+    } yield SignupRequest(validEmail, validPassword)).left.map(I18n.resolve)
   }
 
   private def renderError(message: String): HtmlElement = {

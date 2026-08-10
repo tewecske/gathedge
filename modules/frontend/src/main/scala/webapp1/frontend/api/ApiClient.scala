@@ -2,7 +2,9 @@ package webapp1.frontend.api
 
 import com.raquo.laminar.api.L._
 import webapp1.shared.api.{AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
-import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, OAuthProvider, Theme, TodoItem}
+import webapp1.frontend.i18n.CurrentLocale
+import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, Locale, OAuthProvider, Theme, TodoItem}
+import webapp1.shared.domain.Locale.code
 import webapp1.shared.dto.{
   AuthResponse,
   CreateGroupRequest,
@@ -16,6 +18,7 @@ import webapp1.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateLocaleRequest,
   UpdateRoleRequest,
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
@@ -71,6 +74,13 @@ object ApiClient {
     run(executor(AuthEndpoints.updateTheme(UpdateThemeRequest(theme))))
   }
 
+  /** Records the choice; it does not change the current page's language. The picker navigates to the other prefix,
+    * which is what actually switches languages — see `CurrentLocale`.
+    */
+  def updateLocale(locale: Locale): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.updateLocale(UpdateLocaleRequest(locale))))
+  }
+
   // --- Account settings ---------------------------------------------------------------------------------------
 
   /** Public, and read by the sign-in and sign-up forms before any session exists — which is why it is separate from
@@ -100,13 +110,14 @@ object ApiClient {
     * spells out an API path.
     */
   def oauthStartUrl(provider: OAuthProvider, link: Boolean = false): String = {
-    val suffix = {
-      if (link)
-        "?link=1"
-      else
-        ""
+    // `locale` rides in the query string because this URL is followed by the *document* navigating,
+    // not by the generated client, so it carries none of the client's headers — `X-Locale` included.
+    // The server tucks it into the `oauth_state` cookie so it survives the trip through the provider
+    // and the callback knows which language's page to redirect back into.
+    val params = {
+      List(Option.when(link)("link=1"), Some(s"locale=${CurrentLocale.value.code}")).flatten
     }
-    s"/api/auth/${provider.wire}/start$suffix"
+    s"/api/auth/${provider.wire}/start?${params.mkString("&")}"
   }
 
   // --- Todos --------------------------------------------------------------------------------------------------

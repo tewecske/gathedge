@@ -10,15 +10,19 @@ import webapp1.backend.db.{
   GroupRepository,
   GroupRow,
 }
+import webapp1.backend.i18n.Messages
 import webapp1.backend.security.Tokens
-import webapp1.shared.domain.{Group, GroupMember, GroupPair, GroupRole, InvitationInfo}
+import webapp1.shared.domain.{Group, GroupMember, GroupPair, GroupRole, InvitationInfo, Locale}
+import webapp1.shared.domain.Locale.urlPrefix
+import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.MessageRef
 import webapp1.shared.validation.Validation
 import zio.*
 
 import java.util.concurrent.TimeUnit
 
 enum GroupFailure {
-  case ValidationError(fieldErrors: Map[String, String])
+  case ValidationError(fieldErrors: Map[String, MessageRef])
   case NotFound
   case NotMember
   case ReadOnlyMember
@@ -48,7 +52,19 @@ trait GroupService {
   def listMembers(userId: Long, groupId: Long): IO[GroupFailure, List[GroupMember]]
   def removeMember(userId: Long, groupId: Long, targetUserId: Long): IO[GroupFailure, Unit]
   def updateMemberRole(userId: Long, groupId: Long, targetUserId: Long, newRole: GroupRole): IO[GroupFailure, Unit]
-  def inviteMember(userId: Long, groupId: Long, email: String, role: GroupRole): IO[GroupFailure, Unit]
+
+  /** `locale` is the language the inviting administrator is using right now, and the language the invitation email is
+    * written in. The invitee has no account yet, so there is no stored preference to read — the person choosing to send
+    * the invitation is the only signal available, and the language they are actively working in is a better one than
+    * anything stored, since it is what they saw when they typed the address.
+    */
+  def inviteMember(
+    userId: Long,
+    groupId: Long,
+    email: String,
+    role: GroupRole,
+    locale: Locale = Locale.default,
+  ): IO[GroupFailure, Unit]
   def getInvitationInfo(token: String): IO[GroupFailure, InvitationInfo]
   def acceptInvitation(userId: Long, userEmail: String, token: String): IO[GroupFailure, Group]
 }
@@ -98,8 +114,14 @@ object GroupService {
   ): ZIO[GroupService, GroupFailure, Unit] =
     ZIO.serviceWithZIO[GroupService](_.updateMemberRole(userId, groupId, targetUserId, newRole))
 
-  def inviteMember(userId: Long, groupId: Long, email: String, role: GroupRole): ZIO[GroupService, GroupFailure, Unit] =
-    ZIO.serviceWithZIO[GroupService](_.inviteMember(userId, groupId, email, role))
+  def inviteMember(
+    userId: Long,
+    groupId: Long,
+    email: String,
+    role: GroupRole,
+    locale: Locale = Locale.default,
+  ): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.inviteMember(userId, groupId, email, role, locale))
 
   def getInvitationInfo(token: String): ZIO[GroupService, GroupFailure, InvitationInfo] =
     ZIO.serviceWithZIO[GroupService](_.getInvitationInfo(token))
@@ -108,7 +130,8 @@ object GroupService {
     ZIO.serviceWithZIO[GroupService](_.acceptInvitation(userId, userEmail, token))
 
   val live: URLayer[
-    GroupRepository & GroupMemberRepository & GroupPairRepository & GroupInvitationRepository & EmailSender & AppConfig,
+    GroupRepository & GroupMemberRepository & GroupPairRepository & GroupInvitationRepository & EmailSender & Messages &
+      AppConfig,
     GroupService,
   ] = ZLayer.fromFunction(GroupServiceLive.apply)
 }
@@ -119,6 +142,7 @@ final case class GroupServiceLive(
   pairRepo: GroupPairRepository,
   invitationRepo: GroupInvitationRepository,
   emailSender: EmailSender,
+  messages: Messages,
   config: AppConfig,
 ) extends GroupService {
 
@@ -140,7 +164,7 @@ final case class GroupServiceLive(
   }
 
   def createGroup(userId: Long, name: String): IO[GroupFailure, Group] = {
-    Validation.validateNonBlank(name, "Name", Validation.maxNameLength) match {
+    Validation.validateNonBlank(name, MessageKeys.fieldGroupName, Validation.maxNameLength) match {
       case Left(err)        =>
         ZIO.fail(GroupFailure.ValidationError(Map("name" -> err)))
       case Right(validName) =>
@@ -216,8 +240,8 @@ final case class GroupServiceLive(
   ): IO[GroupFailure, GroupPair] = {
     val fieldErrors = {
       List(
-        Validation.validateNonBlank(source, "Source").left.toOption.map("source" -> _),
-        Validation.validateNonBlank(target, "Target").left.toOption.map("target" -> _),
+        Validation.validateNonBlank(source, MessageKeys.fieldSource).left.toOption.map("source" -> _),
+        Validation.validateNonBlank(target, MessageKeys.fieldTarget).left.toOption.map("target" -> _),
       ).flatten.toMap
     }
     for {
@@ -261,8 +285,15 @@ final case class GroupServiceLive(
     } yield ()
   }
 
-  def inviteMember(userId: Long, groupId: Long, email: String, role: GroupRole): IO[GroupFailure, Unit] = {
+  def inviteMember(
+    userId: Long,
+    groupId: Long,
+    email: String,
+    role: GroupRole,
+    locale: Locale,
+  ): IO[GroupFailure, Unit] = {
     val normalizedEmail = email.trim.toLowerCase
+    val catalog         = messages.catalog(locale)
     for {
       _     <- requireAdmin(userId, groupId)
       _     <- ZIO
@@ -287,9 +318,17 @@ final case class GroupServiceLive(
             )
           )
           .orDie
-      link   = s"${config.app.publicBaseUrl}/invitations/$token"
+      // Locale-prefixed like the verification link, and for the same reason: following it is a full
+      // page load, so the prefix is the only thing telling the SPA which language to render.
+      link   = s"${config.app.publicBaseUrl}${locale.urlPrefix}/invitations/$token"
       _     <-
-        emailSender.send(normalizedEmail, s"You're invited to join ${group.name}", s"Join the group here: $link").orDie
+        emailSender
+          .send(
+            normalizedEmail,
+            catalog(MessageKeys.emailInviteSubject, group.name),
+            catalog(MessageKeys.emailInviteBody, link),
+          )
+          .orDie
     } yield ()
   }
 

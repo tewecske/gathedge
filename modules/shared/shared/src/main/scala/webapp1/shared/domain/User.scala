@@ -13,6 +13,7 @@ final case class User(
   email: String,
   isAdmin: Boolean,
   theme: Theme,
+  locale: Locale,
   createdAt: String,
   emailVerified: Boolean,
 ) derives JsonCodec

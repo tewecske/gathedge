@@ -7,6 +7,8 @@ import webapp1.frontend.components.{Alert, AppShell, FormField, GroupSubmenu}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupPair}
 import webapp1.shared.dto.CreatePairRequest
+import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.MessageKeys
 import webapp1.shared.validation.Validation
 
 object GroupDetailPage {
@@ -20,9 +22,9 @@ object GroupDetailPage {
   * the first submit attempt.
   */
 private case class AddPairForm(source: String = "", target: String = "", showErrors: Boolean = false) {
-  def sourceError: Option[String] = Validation.validateNonBlank(source, "Source").left.toOption
+  def sourceError: Option[String] = I18n.errorOf(Validation.validateNonBlank(source, MessageKeys.fieldSource))
 
-  def targetError: Option[String] = Validation.validateNonBlank(target, "Target").left.toOption
+  def targetError: Option[String] = I18n.errorOf(Validation.validateNonBlank(target, MessageKeys.fieldTarget))
 
   def displayError(error: AddPairForm => Option[String]): Option[String] = {
     if (showErrors)
@@ -34,8 +36,8 @@ private case class AddPairForm(source: String = "", target: String = "", showErr
   /** `Some` exactly when the form is valid, so it doubles as the validity check. */
   def toRequest: Option[CreatePairRequest] = {
     for {
-      validSource <- Validation.validateNonBlank(source, "Source").toOption
-      validTarget <- Validation.validateNonBlank(target, "Target").toOption
+      validSource <- Validation.validateNonBlank(source, MessageKeys.fieldSource).toOption
+      validTarget <- Validation.validateNonBlank(target, MessageKeys.fieldTarget).toOption
     } yield CreatePairRequest(validSource, validTarget)
   }
 }

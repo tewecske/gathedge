@@ -31,6 +31,7 @@ import webapp1.backend.service.{
   TodoService,
 }
 import webapp1.shared.api.ApiFailure
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import webapp1.shared.domain.{Group, GroupMember, Theme, TodoItem, User}
 import webapp1.shared.dto.{
   AdminUserDetail,
@@ -323,7 +324,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.Conflict,
             !raw.contains("fieldErrors"),
-            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Email already registered", Map.empty)),
+            raw.fromJson[ErrorResponse] ==
+              Right(
+                ErrorResponse(MessageRef(MessageKeys.emailAlreadyRegistered), "Email already registered", Map.empty)
+              ),
           )
         },
         test("a short password is a 400 carrying the service's per-field messages") {
@@ -514,8 +518,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             noCsrf              <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
             noCsrfBody          <- noCsrf.body.asChunk.orDie
           } yield assertTrue(
-            unauthorizedCodec.decode(unauthenticatedBody) == Right(ApiFailure.Unauthorized("Not authenticated")),
-            forbiddenCodec.decode(noCsrfBody) == Right(ApiFailure.Forbidden("Missing required header")),
+            unauthorizedCodec.decode(unauthenticatedBody) ==
+              Right(ApiFailure.Unauthorized(MessageRef(MessageKeys.notAuthenticated), "Not authenticated")),
+            forbiddenCodec.decode(noCsrfBody) ==
+              Right(ApiFailure.Forbidden(MessageRef(MessageKeys.missingCsrfHeader), "Missing required header")),
           )
         },
         // ...and the same for the generic 500 `handleFailures` produces around a defect — also undeclared, since a
@@ -530,7 +536,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             chunk    <- response.body.asChunk.orDie
           } yield assertTrue(
             response.status == Status.InternalServerError,
-            internalCodec.decode(chunk) == Right(ApiFailure.InternalError("Internal server error")),
+            internalCodec.decode(chunk) ==
+              Right(ApiFailure.InternalError(MessageRef(MessageKeys.internalError), "Internal server error")),
           )
         },
         // A body the request codec rejects is the one failure that reaches neither `ApiFailures` nor `handleFailures`:
@@ -549,8 +556,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.BadRequest,
-            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Malformed request", Map.empty)),
-            badRequestCodec.decode(Chunk.fromArray(raw.getBytes)) == Right(ApiFailure.BadRequest("Malformed request")),
+            raw.fromJson[ErrorResponse] ==
+              Right(ErrorResponse(MessageRef(MessageKeys.malformedRequest), "Malformed request", Map.empty)),
+            badRequestCodec.decode(Chunk.fromArray(raw.getBytes)) ==
+              Right(ApiFailure.BadRequest(MessageRef(MessageKeys.malformedRequest), "Malformed request")),
             // The discarded `HttpCodecError` names the schema path it failed on. None of it reaches the caller.
             !raw.contains("MalformedBody"),
           )
@@ -570,7 +579,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.BadRequest,
             response.header(Header.ContentType).map(_.mediaType) == Some(MediaType.application.json),
-            raw.fromJson[ErrorResponse] == Right(ErrorResponse("Malformed request", Map.empty)),
+            raw.fromJson[ErrorResponse] ==
+              Right(ErrorResponse(MessageRef(MessageKeys.malformedRequest), "Malformed request", Map.empty)),
           )
         },
       ),

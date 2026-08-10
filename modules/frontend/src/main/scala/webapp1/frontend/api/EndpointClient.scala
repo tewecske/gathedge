@@ -2,7 +2,10 @@ package webapp1.frontend.api
 
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import webapp1.frontend.i18n.{CurrentLocale, I18n}
 import webapp1.shared.api.ApiFailure
+import webapp1.shared.domain.Locale.code
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 import zio._
 import zio.http.{Client, URL}
 import zio.http.endpoint.EndpointExecutor
@@ -31,13 +34,26 @@ object EndpointClient {
     Unsafe.unsafe { implicit unsafe =>
       val client = runtime.unsafe.run(ZIO.service[Client]).getOrThrow()
       val base   = URL.decode(dom.window.location.origin).toOption.get
-      // CSRF is not part of any endpoint description (it is a HandlerAspect on the server), so the header still has
-      // to be set here — once, on the client, rather than per call.
-      EndpointExecutor(client.addHeader("X-Requested-With", "XMLHttpRequest"), base)
+      // Neither of these is part of any endpoint description, so both are set here — once, on the
+      // client, rather than per call. CSRF is a HandlerAspect on the server; `X-Locale` is read by
+      // `RouteSupport.requestContext` and tells the server which language this page is running in,
+      // which is what the two transactional emails are written in. Describing it would mean a header
+      // codec on every endpoint that might send mail, kept in step by hand.
+      EndpointExecutor(
+        client
+          .addHeader("X-Requested-With", "XMLHttpRequest")
+          .addHeader("X-Locale", CurrentLocale.value.code),
+        base,
+      )
     }
   }
 
-  /** Flattens the typed failure back to a status number, which is what pages branch on.
+  /** Flattens the typed failure back to a status number, which is what pages branch on, and words it.
+    *
+    * '''This is where server messages become the reader's language.''' Every `ApiFailure` arrives as a catalog key plus
+    * arguments — the server chooses the key and never a language — and it is resolved here rather than in the pages, so
+    * a page keeps rendering `err.message` and needs to know nothing about i18n. The English `message` the server sends
+    * alongside the key is for callers with no catalog and is deliberately ignored.
     *
     * Only `BadRequest` carries `fieldErrors`; for the rest the map is empty because the failure is about the request as
     * a whole rather than about one of its inputs.
@@ -47,21 +63,25 @@ object EndpointClient {
     * instead — see `ApiEndpoint.failure` for why they are left out of the descriptions.
     */
   private def toApiError(failure: ApiFailure): ApiError = {
+    def worded(status: Int, error: MessageRef, fieldErrors: Map[String, MessageRef] = Map.empty): ApiError = {
+      ApiError(status, I18n.resolve(error), fieldErrors.view.mapValues(I18n.resolve).toMap)
+    }
+
     failure match {
-      case ApiFailure.BadRequest(message, fieldErrors) =>
-        ApiError(400, message, fieldErrors)
-      case ApiFailure.Unauthorized(message)            =>
-        ApiError(401, message, Map.empty)
-      case ApiFailure.Forbidden(message)               =>
-        ApiError(403, message, Map.empty)
-      case ApiFailure.NotFound(message)                =>
-        ApiError(404, message, Map.empty)
-      case ApiFailure.Conflict(message)                =>
-        ApiError(409, message, Map.empty)
-      case ApiFailure.TooManyRequests(message)         =>
-        ApiError(429, message, Map.empty)
-      case ApiFailure.InternalError(message)           =>
-        ApiError(500, message, Map.empty)
+      case ApiFailure.BadRequest(error, _, fieldErrors) =>
+        worded(400, error, fieldErrors)
+      case ApiFailure.Unauthorized(error, _)            =>
+        worded(401, error)
+      case ApiFailure.Forbidden(error, _)               =>
+        worded(403, error)
+      case ApiFailure.NotFound(error, _)                =>
+        worded(404, error)
+      case ApiFailure.Conflict(error, _)                =>
+        worded(409, error)
+      case ApiFailure.TooManyRequests(error, _)         =>
+        worded(429, error)
+      case ApiFailure.InternalError(error, _)           =>
+        worded(500, error)
     }
   }
 
@@ -83,9 +103,15 @@ object EndpointClient {
             .scoped(effect)
             .either
             .map(_.left.map(toApiError))
-            .catchAllCause(cause =>
-              ZIO.succeed(Left(ApiError(0, s"Request failed: ${cause.squash.getMessage}", Map.empty)))
-            )
+            .catchAllCause(cause => {
+              // No answer at all: offline, a dead socket, an undeclared status. The console keeps the
+              // detail; the user gets something they can read, because the underlying message is a
+              // stack-trace fragment in whatever language the runtime happens to speak.
+              ZIO.succeed {
+                dom.console.warn(s"Request failed: ${cause.squash.getMessage}")
+                Left(ApiError(0, I18n.t(MessageKeys.requestFailed), Map.empty))
+              }
+            })
         )
     }
     EventStream.fromFuture(future)

@@ -10,6 +10,7 @@ final case class UserRow(
   passwordHash: Option[String],
   isAdmin: Boolean,
   theme: String,
+  locale: String,
   createdAt: Long,
   emailVerifiedAt: Option[Long],
 )

@@ -2,6 +2,7 @@ package webapp1.backend.service
 
 import webapp1.backend.{RecordingEmailSender, TestDataSource}
 import webapp1.backend.config.AppConfig
+import webapp1.backend.i18n.Messages
 import webapp1.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
@@ -33,7 +34,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
   private val layer = {
     (
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ AppConfig.live ++
-        RecordingEmailSender.live >+> (AuthService.live ++ AuditTrail.live)
+        RecordingEmailSender.live ++ Messages.live >+> (AuthService.live ++ AuditTrail.live)
     ) >+> (AdminService.live ++ SystemService.live)
   }
 

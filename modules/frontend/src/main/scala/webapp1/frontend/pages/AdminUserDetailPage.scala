@@ -7,6 +7,8 @@ import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.UpdateUserRequest
+import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.MessageRef
 import webapp1.shared.validation.Validation
 
 object AdminUserDetailPage {
@@ -25,11 +27,11 @@ private case class EditUserForm(
   isAdmin: Boolean = false,
   showErrors: Boolean = false,
 ) {
-  def emailError: Option[String] = Validation.validateEmail(email).left.toOption
+  def emailError: Option[String] = I18n.errorOf(Validation.validateEmail(email))
 
   /** A blank password field means "keep the current password", so it is only validated when filled in. */
   def passwordError: Option[String] = {
-    validatedPassword.left.toOption
+    I18n.errorOf(validatedPassword)
   }
 
   def displayError(error: EditUserForm => Option[String]): Option[String] = {
@@ -47,7 +49,7 @@ private case class EditUserForm(
     } yield UpdateUserRequest(validEmail, isAdmin, validPassword)
   }
 
-  private def validatedPassword: Either[String, Option[String]] = {
+  private def validatedPassword: Either[MessageRef, Option[String]] = {
     Some(password).filter(_.nonEmpty) match {
       case None          =>
         Right(None)

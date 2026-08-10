@@ -3,6 +3,8 @@ package webapp1.backend.service
 import webapp1.backend.config.AppConfig
 import webapp1.backend.db.UserRepository
 import webapp1.backend.security.PasswordHasher
+import webapp1.shared.domain.Locale
+import webapp1.shared.domain.Locale.code
 import zio.*
 
 import java.util.concurrent.TimeUnit
@@ -35,6 +37,7 @@ object AdminSeeder {
                             Some(hash),
                             isAdmin = true,
                             theme = "light",
+                            locale = Locale.default.code,
                             createdAt = now,
                             emailVerifiedAt = Some(now),
                           )

@@ -6,6 +6,8 @@ import webapp1.frontend.components.AppShell
 import webapp1.frontend.Page
 import webapp1.shared.domain.{TodoItem, TodoStatus}
 import webapp1.shared.dto.UpdateTodoStatusRequest
+import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.MessageKeys
 import webapp1.shared.validation.Validation
 
 object TodoPage {
@@ -29,7 +31,7 @@ private class TodoPage {
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val addStream = addBus.events
     .filterWith(inFlightSignal.not)
-    .map(_ => Validation.validateNonBlank(textVar.now(), "To-do text"))
+    .map(_ => Validation.validateNonBlank(textVar.now(), MessageKeys.fieldTodoText).left.map(I18n.resolve))
 
   def render(): HtmlElement = {
     div(

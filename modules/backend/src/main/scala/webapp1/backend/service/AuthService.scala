@@ -13,9 +13,13 @@ import webapp1.backend.db.{
   UserRepository,
   UserRow,
 }
+import webapp1.backend.i18n.Messages
 import webapp1.backend.security.{PasswordHasher, SecurityLog, SessionAuth, Tokens}
-import webapp1.shared.domain.{OAuthProvider, Theme, User}
+import webapp1.shared.domain.{Locale, OAuthProvider, Theme, User}
+import webapp1.shared.domain.Locale.{code, urlPrefix}
 import webapp1.shared.dto.{LinkedIdentity, LoginOutcome}
+import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.MessageRef
 import webapp1.shared.validation.Validation
 import zio.*
 
@@ -26,7 +30,7 @@ import OAuthProvider.wire
 enum AuthFailure {
   case InvalidCredentials
   case EmailAlreadyRegistered
-  case ValidationError(fieldErrors: Map[String, String])
+  case ValidationError(fieldErrors: Map[String, MessageRef])
   case RateLimited
   case OAuthFailed(reason: String)
 
@@ -58,8 +62,17 @@ trait AuthService {
     *
     * The session id is `None` when `app.require-email-verification` is on: the account exists but may not act until the
     * emailed link is followed, so there is nothing to hand the browser.
+    *
+    * `locale` is the language the signup form was in, and is stored on the account. It decides the language of the
+    * verification email this issues — the only chance to get that right, since nothing else about a brand-new account
+    * says what language its owner reads.
     */
-  def signup(email: String, password: String, clientIp: Option[String] = None): IO[AuthFailure, (User, Option[String])]
+  def signup(
+    email: String,
+    password: String,
+    clientIp: Option[String] = None,
+    locale: Locale = Locale.default,
+  ): IO[AuthFailure, (User, Option[String])]
   def login(email: String, password: String, clientIp: Option[String] = None): IO[AuthFailure, (User, String)]
 
   /** Redeems a verification link. Single-use: the token is marked consumed whether or not the account was already
@@ -82,7 +95,7 @@ trait AuthService {
     * caller's target. Neither applies to a caller the `adminOnly` aspect has already identified, and both would make
     * the administrator's button lie about what it did.
     */
-  def issueVerificationFor(userId: Long, email: String): UIO[Unit]
+  def issueVerificationFor(userId: Long, email: String, locale: Locale): UIO[Unit]
 
   /** Signs in — or registers — the person behind a verified provider identity.
     *
@@ -92,7 +105,7 @@ trait AuthService {
     * `email_verified` checking generalises safely across providers. The recovery route is to sign in normally and link
     * the provider from the settings page, which is what [[linkOAuth]] is for.
     */
-  def loginWithOAuth(identity: OAuthIdentity): IO[AuthFailure, (User, String)]
+  def loginWithOAuth(identity: OAuthIdentity, locale: Locale = Locale.default): IO[AuthFailure, (User, String)]
 
   /** Attaches a provider identity to an already-authenticated user. */
   def linkOAuth(userId: Long, identity: OAuthIdentity): IO[AuthFailure, Unit]
@@ -110,6 +123,11 @@ trait AuthService {
   /** None both when there's no session and when it's expired/revoked. */
   def currentUser(sessionId: String): UIO[Option[User]]
   def updateTheme(userId: Long, theme: Theme): Task[User]
+
+  /** Records the language the account chose. Which language a *page* renders in is decided by its URL prefix, not by
+    * this — see `V8__user_locale.sql` for what the stored value is actually for.
+    */
+  def updateLocale(userId: Long, locale: Locale): Task[User]
 }
 
 object AuthService {
@@ -117,8 +135,9 @@ object AuthService {
     email: String,
     password: String,
     clientIp: Option[String] = None,
+    locale: Locale = Locale.default,
   ): ZIO[AuthService, AuthFailure, (User, Option[String])] =
-    ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp))
+    ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp, locale))
 
   def login(
     email: String,
@@ -133,11 +152,14 @@ object AuthService {
   def resendVerification(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.resendVerification(email, clientIp))
 
-  def issueVerificationFor(userId: Long, email: String): URIO[AuthService, Unit] =
-    ZIO.serviceWithZIO[AuthService](_.issueVerificationFor(userId, email))
+  def issueVerificationFor(userId: Long, email: String, locale: Locale): URIO[AuthService, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.issueVerificationFor(userId, email, locale))
 
-  def loginWithOAuth(identity: OAuthIdentity): ZIO[AuthService, AuthFailure, (User, String)] =
-    ZIO.serviceWithZIO[AuthService](_.loginWithOAuth(identity))
+  def loginWithOAuth(
+    identity: OAuthIdentity,
+    locale: Locale = Locale.default,
+  ): ZIO[AuthService, AuthFailure, (User, String)] =
+    ZIO.serviceWithZIO[AuthService](_.loginWithOAuth(identity, locale))
 
   def linkOAuth(userId: Long, identity: OAuthIdentity): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.linkOAuth(userId, identity))
@@ -167,6 +189,9 @@ object AuthService {
   def updateTheme(userId: Long, theme: Theme): RIO[AuthService, User] =
     ZIO.serviceWithZIO[AuthService](_.updateTheme(userId, theme))
 
+  def updateLocale(userId: Long, locale: Locale): RIO[AuthService, User] =
+    ZIO.serviceWithZIO[AuthService](_.updateLocale(userId, locale))
+
   /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
     * [[webapp1.backend.security.PasswordHasher]] is configured with.
     */
@@ -179,7 +204,7 @@ object AuthService {
 
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      LoginAttemptRepository & PasswordHasher & RateLimiter & EmailSender & AppConfig,
+      LoginAttemptRepository & PasswordHasher & RateLimiter & EmailSender & Messages & AppConfig,
     AuthService,
   ] = ZLayer {
     for {
@@ -191,6 +216,7 @@ object AuthService {
       hasher              <- ZIO.service[PasswordHasher]
       rateLimiter         <- ZIO.service[RateLimiter]
       emailSender         <- ZIO.service[EmailSender]
+      messages            <- ZIO.service[Messages]
       config              <- ZIO.service[AppConfig]
       timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
     } yield AuthServiceLive(
@@ -202,6 +228,7 @@ object AuthService {
       hasher,
       rateLimiter,
       emailSender,
+      messages,
       config,
       timingEqualizerHash,
     ): AuthService
@@ -217,6 +244,7 @@ final case class AuthServiceLive(
   hasher: PasswordHasher,
   rateLimiter: RateLimiter,
   emailSender: EmailSender,
+  messages: Messages,
   config: AppConfig,
   /** Hash of a fixed throwaway string, verified against on the login paths that have no real hash to check, so that "no
     * such account" costs the same as "wrong password". Skipping the bcrypt work there made response time a reliable
@@ -262,6 +290,7 @@ final case class AuthServiceLive(
       row.email,
       row.isAdmin,
       Theme.fromString(row.theme).getOrElse(Theme.Light),
+      Locale.fromString(row.locale).getOrElse(Locale.default),
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
     )
@@ -330,11 +359,17 @@ final case class AuthServiceLive(
     * A send that fails is logged rather than propagated: it must not undo an otherwise-complete signup, and the account
     * is recoverable through [[resendVerification]] either way.
     */
-  def issueVerificationFor(userId: Long, email: String): UIO[Unit] = {
-    issueVerification(userId, email)
+  def issueVerificationFor(userId: Long, email: String, locale: Locale): UIO[Unit] = {
+    issueVerification(userId, email, locale)
   }
 
-  private def issueVerification(userId: Long, email: String): UIO[Unit] = {
+  /** The account's stored language, for the two places that have a row in hand and need to write to its owner. */
+  private def localeOf(row: UserRow): Locale = {
+    Locale.fromString(row.locale).getOrElse(Locale.default)
+  }
+
+  private def issueVerification(userId: Long, email: String, locale: Locale): UIO[Unit] = {
+    val catalog = messages.catalog(locale)
     for {
       token <- Tokens.urlSafe()
       now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
@@ -345,19 +380,29 @@ final case class AuthServiceLive(
             EmailVerificationTokenRow(0L, userId, token, now, now + AuthService.verificationValidity.toMillis, None)
           )
           .orDie
-      link   = s"${config.app.publicBaseUrl}/verify-email/$token"
+      // The link carries the locale prefix so the page it lands on is in the language the mail was
+      // written in — it is a full page load, so nothing else would tell the SPA which to render.
+      link   = s"${config.app.publicBaseUrl}${locale.urlPrefix}/verify-email/$token"
       _     <- emailSender
                  .send(
                    email,
-                   "Confirm your email address",
-                   s"Confirm your email address by following this link: $link\n\n" +
-                     s"The link stops working in ${AuthService.verificationValidity.toHours} hours.",
+                   catalog(MessageKeys.emailVerifySubject),
+                   catalog(
+                     MessageKeys.emailVerifyBody,
+                     link,
+                     AuthService.verificationValidity.toHours.toString,
+                   ),
                  )
                  .catchAllCause(cause => ZIO.logErrorCause(s"Could not send verification email to '$email'", cause))
     } yield ()
   }
 
-  def signup(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, Option[String])] = {
+  def signup(
+    email: String,
+    password: String,
+    clientIp: Option[String],
+    locale: Locale,
+  ): IO[AuthFailure, (User, Option[String])] = {
     val normalizedEmail = email.trim.toLowerCase
     val keys            = signupRateLimitKeys(normalizedEmail, clientIp)
     for {
@@ -371,8 +416,10 @@ final case class AuthServiceLive(
         }
       hash      <- hasher.hash(password).orDie
       now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row       <- userRepo.insert(normalizedEmail, Some(hash), isAdmin = false, "light", now, emailVerifiedAt = None).orDie
-      _         <- issueVerification(row.id, normalizedEmail)
+      row       <- userRepo
+                     .insert(normalizedEmail, Some(hash), isAdmin = false, "light", locale.code, now, emailVerifiedAt = None)
+                     .orDie
+      _         <- issueVerification(row.id, normalizedEmail, locale)
       // With verification mandatory the account cannot act until the link is followed, so it gets
       // no session at all rather than one that every guarded route would refuse.
       sessionId <- ZIO.unless(config.app.requireEmailVerification)(createSession(row.id))
@@ -465,7 +512,11 @@ final case class AuthServiceLive(
       maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
       // Silence for an unknown or already-verified address: the caller gets the same 204 either
       // way, so this endpoint says nothing about which addresses have accounts.
-      _        <- ZIO.foreachDiscard(maybeRow.filter(_.emailVerifiedAt.isEmpty))(row => issueVerification(row.id, row.email))
+      _        <- ZIO.foreachDiscard(maybeRow.filter(_.emailVerifiedAt.isEmpty)) { row =>
+                    // The account's own language, not the language of the browser asking. A resend can be
+                    // requested from the sign-in page in either one, and the mail belongs to the account.
+                    issueVerification(row.id, row.email, localeOf(row))
+                  }
     } yield ()
   }
 
@@ -479,7 +530,7 @@ final case class AuthServiceLive(
     } yield ()
   }
 
-  def loginWithOAuth(identity: OAuthIdentity): IO[AuthFailure, (User, String)] = {
+  def loginWithOAuth(identity: OAuthIdentity, locale: Locale): IO[AuthFailure, (User, String)] = {
     val normalizedEmail = identity.email.trim.toLowerCase
     for {
       existingLink <- identityRepo.findByProviderAndSubject(identity.provider.wire, identity.subject).orDie
@@ -517,6 +568,7 @@ final case class AuthServiceLive(
                           None,
                           isAdmin = false,
                           "light",
+                          locale.code,
                           now,
                           emailVerifiedAt = Option.when(identity.emailVerified)(now),
                         )
@@ -597,7 +649,9 @@ final case class AuthServiceLive(
           case Some(existing) =>
             currentPassword match {
               case None           =>
-                ZIO.fail(AuthFailure.ValidationError(Map("currentPassword" -> "Enter your current password")))
+                ZIO.fail(
+                  AuthFailure.ValidationError(Map("currentPassword" -> MessageRef(MessageKeys.currentPasswordRequired)))
+                )
               case Some(supplied) =>
                 hasher
                   .verify(supplied, existing)
@@ -607,7 +661,11 @@ final case class AuthServiceLive(
                       ZIO.unit
                     else {
                       logFailedAttempt(row.email, "wrong current password on password change") *>
-                        ZIO.fail(AuthFailure.ValidationError(Map("currentPassword" -> "Incorrect password")))
+                        ZIO.fail(
+                          AuthFailure.ValidationError(
+                            Map("currentPassword" -> MessageRef(MessageKeys.currentPasswordIncorrect))
+                          )
+                        )
                     }
                   }
             }
@@ -646,6 +704,13 @@ final case class AuthServiceLive(
   def updateTheme(userId: Long, theme: Theme): Task[User] = {
     for {
       _   <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
+      row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
+    } yield toDomain(row)
+  }
+
+  def updateLocale(userId: Long, locale: Locale): Task[User] = {
+    for {
+      _   <- userRepo.updateLocale(userId, locale.code)
       row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
     } yield toDomain(row)
   }

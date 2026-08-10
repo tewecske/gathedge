@@ -6,6 +6,7 @@ import webapp1.shared.domain.{
   GroupPair,
   GroupRole,
   InvitationInfo,
+  Locale,
   OAuthProvider,
   Theme,
   TodoItem,
@@ -43,6 +44,7 @@ import webapp1.shared.dto.{
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  UpdateLocaleRequest,
   UpdateRoleRequest,
   UpdateThemeRequest,
   UpdateTodoStatusRequest,
@@ -66,6 +68,7 @@ import zio.schema.{DeriveSchema, Schema}
 object ApiSchemas {
 
   given Schema[Theme]         = DeriveSchema.gen[Theme]
+  given Schema[Locale]        = DeriveSchema.gen[Locale]
   given Schema[TodoStatus]    = DeriveSchema.gen[TodoStatus]
   given Schema[GroupRole]     = DeriveSchema.gen[GroupRole]
   given Schema[OAuthProvider] = DeriveSchema.gen[OAuthProvider]
@@ -84,6 +87,7 @@ object ApiSchemas {
   given Schema[ResendVerificationRequest] = DeriveSchema.gen[ResendVerificationRequest]
   given Schema[LoginRequest]              = DeriveSchema.gen[LoginRequest]
   given Schema[UpdateThemeRequest]        = DeriveSchema.gen[UpdateThemeRequest]
+  given Schema[UpdateLocaleRequest]       = DeriveSchema.gen[UpdateLocaleRequest]
   given Schema[LinkedIdentity]            = DeriveSchema.gen[LinkedIdentity]
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]

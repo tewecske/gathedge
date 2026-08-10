@@ -1,6 +1,7 @@
 package webapp1.backend.http
 
 import webapp1.backend.service.RateLimitKey
+import webapp1.shared.domain.Locale
 import zio.http.*
 import zio.test.*
 
@@ -27,7 +28,7 @@ object RouteSupportSpec extends ZIOSpecDefault {
     forwardedFor.fold(base)(value => base.addHeader("X-Forwarded-For", value))
   }
 
-  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite)
+  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, localeSuite)
 
   /** The request log used to write the whole URL, and two of this API's URLs carry a credential. Every case below is
     * one that reached `logs/backend.log` and `docker logs` on every request.
@@ -141,4 +142,41 @@ object RouteSupportSpec extends ZIOSpecDefault {
       },
     )
   }
+
+  /** Which language a request is being made in. `X-Locale` is authoritative because it carries the URL prefix the SPA
+    * is actually running under; `Accept-Language` is only ever a hint, since a browser's language list says nothing
+    * about which prefix the user chose to open.
+    */
+  private val localeSuite = {
+    suite("localeOf")(
+      test("X-Locale decides it") {
+        val request = Request.get("/api/auth/signup").addHeader("X-Locale", "hu")
+        assertTrue(RouteSupport.localeOf(request) == Locale.Hu)
+      },
+      test("X-Locale wins over Accept-Language") {
+        val request = Request
+          .get("/api/auth/signup")
+          .addHeader("X-Locale", "en")
+          .addHeader("Accept-Language", "hu-HU,hu;q=0.9")
+        assertTrue(RouteSupport.localeOf(request) == Locale.En)
+      },
+      // For anything that is not this SPA: a curl, a future mobile client.
+      test("Accept-Language is the fallback, region subtag and all") {
+        val request = Request.get("/api/auth/signup").addHeader("Accept-Language", "hu-HU,hu;q=0.9,en;q=0.8")
+        assertTrue(RouteSupport.localeOf(request) == Locale.Hu)
+      },
+      test("the first understood language wins, not the first listed") {
+        val request = Request.get("/api/auth/signup").addHeader("Accept-Language", "de-DE,fr;q=0.9,hu;q=0.8")
+        assertTrue(RouteSupport.localeOf(request) == Locale.Hu)
+      },
+      test("neither header, or one naming a language we do not have, falls back to the default") {
+        assertTrue(
+          RouteSupport.localeOf(Request.get("/api/auth/signup")) == Locale.default,
+          RouteSupport.localeOf(Request.get("/api/auth/signup").addHeader("X-Locale", "kl")) == Locale.default,
+          RouteSupport.localeOf(Request.get("/api/auth/signup").addHeader("Accept-Language", "de,fr")) == Locale.default,
+        )
+      },
+    )
+  }
+
 }

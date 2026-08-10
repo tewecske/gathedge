@@ -75,6 +75,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/verification/resend",
               "/api/me",
               "/api/me/theme",
+              "/api/me/locale",
               "/api/me/identities",
               "/api/me/identities/{provider}",
               "/api/me/password",
@@ -133,7 +134,8 @@ object OpenApiSpec extends ZIOSpecDefault {
       //
       // Reading the table: 401 is on everything behind `authenticated`/`adminOnly`, so only `GET
       // /api/invitations/{token}` and the three anonymous auth routes lack it. 400 is a handler's validation failure
-      // everywhere except `PUT /api/me/theme`, whose service call is `.orDie`'d: there it is only reachable through
+      // everywhere except `PUT /api/me/theme` and `PUT /api/me/locale`, whose service calls are `.orDie`'d: there it
+      // is only reachable through
       // `ApiEndpoint.codecError`, and declared so the client decodes it instead of dying. 404 is a resource the request
       // named and could not be found — a request whose path matches no route at all is answered by `RouteSupport`'s
       // `notFound` replacement, never reaches an endpoint, and so is documented on none of them. 403 appears only on
@@ -158,6 +160,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/verification/resend")                 -> Set(NoContent, BadRequest, TooManyRequests),
               ("GET", "/api/me")                                        -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                  -> Set(Ok, BadRequest, Unauthorized),
+              ("PUT", "/api/me/locale")                                 -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/me/identities")                             -> Set(Ok, Unauthorized),
               // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
@@ -235,7 +238,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 133,
+          declared == 135,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `GroupService` on the two resources it
           // backs, plus `AuthService`'s unverified-email refusal on login.

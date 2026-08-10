@@ -9,8 +9,11 @@ import webapp1.backend.db.{
   SessionRepository,
   UserRepository,
 }
+import webapp1.backend.i18n.Messages
 import webapp1.backend.security.PasswordHasher
 import webapp1.shared.domain.OAuthProvider
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
+import webapp1.shared.validation.Validation
 import zio._
 import zio.test._
 
@@ -32,7 +35,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
     */
   private def authServiceLayer(requireEmailVerification: Boolean): ZLayer[Any, Throwable, AuthService & SentEmails] = {
     val support = {
-      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++
+      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
         TestAuthLayers.configWith(requireEmailVerification)
     }
     val built   = repoLayers ++ support
@@ -73,7 +76,12 @@ object AuthServiceSpec extends ZIOSpecDefault {
       for {
         result <- AuthService.signup("short@example.com", "short1").either
       } yield assertTrue(
-        result == Left(AuthFailure.ValidationError(Map("password" -> "Password must be at least 8 characters")))
+        result ==
+          Left(
+            AuthFailure.ValidationError(
+              Map("password" -> MessageRef(MessageKeys.passwordTooShort, List(Validation.minPasswordLength.toString)))
+            )
+          )
       )
     },
     test("repeated wrong passwords trip the rate limiter") {
@@ -247,8 +255,14 @@ object AuthServiceSpec extends ZIOSpecDefault {
         loggedIn <- AuthService.login("changer@example.com", "newpassword123").either
       } yield {
         assertTrue(
-          missing == Left(AuthFailure.ValidationError(Map("currentPassword" -> "Enter your current password"))),
-          wrong == Left(AuthFailure.ValidationError(Map("currentPassword" -> "Incorrect password"))),
+          missing ==
+            Left(
+              AuthFailure.ValidationError(Map("currentPassword" -> MessageRef(MessageKeys.currentPasswordRequired)))
+            ),
+          wrong ==
+            Left(
+              AuthFailure.ValidationError(Map("currentPassword" -> MessageRef(MessageKeys.currentPasswordIncorrect)))
+            ),
           loggedIn.isRight,
         )
       }

@@ -3,6 +3,7 @@ package webapp1.backend.http
 import webapp1.backend.service.{AdminFailure, AuthFailure, GroupFailure, TodoFailure}
 import webapp1.shared.api.ApiFailure
 import webapp1.shared.domain.OAuthProvider.display
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
 
 /** One `Failure -> ApiFailure` mapping per service failure enum.
   *
@@ -19,21 +20,48 @@ import webapp1.shared.domain.OAuthProvider.display
   * these to the endpoint descriptions: a handler's `mapError(ApiFailures.todo)` only compiles if every status in this
   * union is one the endpoint declares, so adding a case here that an endpoint does not describe is a compile error at
   * the route rather than a failure to encode the response at request time.
+  *
+  * '''This is the one place a message *key* is chosen, and no signature here takes a locale.''' That is the whole
+  * bargain of putting codes on the wire: the server stays language-free and the browser does the wording, so
+  * translating an error never means threading a `Locale` through every route. The English text alongside each key is a
+  * fallback for callers with no catalog (a `curl`, the OpenAPI examples) and is never what the SPA renders — the two
+  * are kept in step by `MessagesSpec`, which fails if a key here is missing from either catalog.
   */
 object ApiFailures {
 
   // Shared between the self-service signup path and admin user creation: same condition, same wire shape.
   private val emailAlreadyRegistered: ApiFailure.Conflict = {
-    ApiFailure.Conflict("Email already registered")
+    ApiFailure.Conflict(MessageRef(MessageKeys.emailAlreadyRegistered), "Email already registered")
   }
 
   private val invitationInvalid: ApiFailure.BadRequest = {
-    ApiFailure.BadRequest("This invitation is invalid, expired, or already used")
+    ApiFailure.BadRequest(
+      MessageRef(MessageKeys.invitationInvalid),
+      "This invitation is invalid, expired, or already used",
+    )
   }
 
   // One message for unknown, expired and already-redeemed alike, so a caller cannot tell them apart.
   private val verificationTokenInvalid: ApiFailure.BadRequest = {
-    ApiFailure.BadRequest("This verification link is invalid, expired, or already used")
+    ApiFailure.BadRequest(
+      MessageRef(MessageKeys.verificationTokenInvalid),
+      "This verification link is invalid, expired, or already used",
+    )
+  }
+
+  private val rateLimited: ApiFailure.TooManyRequests = {
+    ApiFailure.TooManyRequests(MessageRef(MessageKeys.rateLimited), "Too many attempts. Try again later.")
+  }
+
+  private val invalidCredentials: ApiFailure.Unauthorized = {
+    ApiFailure.Unauthorized(MessageRef(MessageKeys.invalidCredentials), "Invalid email or password")
+  }
+
+  /** The shape every `ValidationError` takes: a generic top-level message, with the real content in `fieldErrors` so a
+    * form can show each problem under the input that caused it.
+    */
+  private def validationFailed(fieldErrors: Map[String, MessageRef]): ApiFailure.BadRequest = {
+    ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed", fieldErrors)
   }
 
   def auth(
@@ -41,29 +69,33 @@ object ApiFailures {
   ): ApiFailure.BadRequest | ApiFailure.Unauthorized | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
     failure match {
       case AuthFailure.InvalidCredentials           =>
-        ApiFailure.Unauthorized("Invalid email or password")
+        invalidCredentials
       case AuthFailure.EmailAlreadyRegistered       =>
         emailAlreadyRegistered
       case AuthFailure.ValidationError(fieldErrors) =>
-        ApiFailure.BadRequest("Validation failed", fieldErrors)
+        validationFailed(fieldErrors)
       case AuthFailure.RateLimited                  =>
-        ApiFailure.TooManyRequests("Too many attempts. Try again later.")
+        rateLimited
       case AuthFailure.OAuthFailed(reason)          =>
-        ApiFailure.BadRequest(s"Sign-in failed: $reason")
+        ApiFailure.BadRequest(MessageRef(MessageKeys.oauthFailed, List(reason)), s"Sign-in failed: $reason")
       case AuthFailure.OAuthAccountExists(provider) =>
         ApiFailure.Conflict(
+          MessageRef(MessageKeys.oauthAccountExists, List(provider.display)),
           s"An account with this email already exists. Sign in with your password, " +
-            s"then link ${provider.display} from Settings."
+            s"then link ${provider.display} from Settings.",
         )
       case AuthFailure.OAuthAlreadyLinked           =>
-        ApiFailure.Conflict("That account is already linked")
+        ApiFailure.Conflict(MessageRef(MessageKeys.oauthAlreadyLinked), "That account is already linked")
       case AuthFailure.LastCredential               =>
-        ApiFailure.Conflict("Set a password first — this is the only way left to sign in to this account")
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.lastCredential),
+          "Set a password first — this is the only way left to sign in to this account",
+        )
       case AuthFailure.EmailNotVerified             =>
         // Unreachable through this mapping: only `login` can raise it, and `login` uses
         // `authLogin` below to answer 403 instead. Mapped anyway because the match is exhaustive,
         // and to 401 because that is the only status every endpoint on this mapping declares.
-        ApiFailure.Unauthorized("Invalid email or password")
+        invalidCredentials
       case AuthFailure.InvalidVerificationToken     =>
         verificationTokenInvalid
     }
@@ -78,7 +110,10 @@ object ApiFailures {
     ApiFailure.Conflict | ApiFailure.TooManyRequests = {
     failure match {
       case AuthFailure.EmailNotVerified =>
-        ApiFailure.Forbidden("Verify your email address before signing in")
+        ApiFailure.Forbidden(
+          MessageRef(MessageKeys.emailNotVerified),
+          "Verify your email address before signing in",
+        )
       case other                        =>
         auth(other)
     }
@@ -92,7 +127,7 @@ object ApiFailures {
   def verifyEmail(failure: AuthFailure): ApiFailure.BadRequest = {
     failure match {
       case AuthFailure.ValidationError(fieldErrors) =>
-        ApiFailure.BadRequest("Validation failed", fieldErrors)
+        validationFailed(fieldErrors)
       case _                                        =>
         verificationTokenInvalid
     }
@@ -104,20 +139,25 @@ object ApiFailures {
   def resendVerification(failure: AuthFailure): ApiFailure.BadRequest | ApiFailure.TooManyRequests = {
     failure match {
       case AuthFailure.RateLimited                  =>
-        ApiFailure.TooManyRequests("Too many attempts. Try again later.")
+        rateLimited
       case AuthFailure.ValidationError(fieldErrors) =>
-        ApiFailure.BadRequest("Validation failed", fieldErrors)
+        validationFailed(fieldErrors)
       case _                                        =>
-        ApiFailure.BadRequest("Could not send a verification link")
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.verificationSendFailed),
+          "Could not send a verification link",
+        )
     }
   }
 
   def todo(failure: TodoFailure): ApiFailure.BadRequest | ApiFailure.NotFound = {
     failure match {
-      case TodoFailure.ValidationError(message) =>
-        ApiFailure.BadRequest(message, Map("text" -> message))
-      case TodoFailure.NotFound                 =>
-        ApiFailure.NotFound("Todo item not found")
+      case TodoFailure.ValidationError(error) =>
+        // The one validation failure that is also the top-level message: a todo has a single input,
+        // so "what is wrong with the request" and "what is wrong with the field" are the same thing.
+        ApiFailure.BadRequest(error, "Validation failed", Map("text" -> error))
+      case TodoFailure.NotFound               =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.todoNotFound), "Todo item not found")
     }
   }
 
@@ -126,17 +166,20 @@ object ApiFailures {
   ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case GroupFailure.ValidationError(fieldErrors) =>
-        ApiFailure.BadRequest("Validation failed", fieldErrors)
+        validationFailed(fieldErrors)
       case GroupFailure.NotFound                     =>
-        ApiFailure.NotFound("Group not found")
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "Group not found")
       case GroupFailure.NotMember                    =>
-        ApiFailure.Forbidden("You are not a member of this group")
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotMember), "You are not a member of this group")
       case GroupFailure.ReadOnlyMember               =>
-        ApiFailure.Forbidden("Your role in this group is read-only")
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupReadOnlyMember), "Your role in this group is read-only")
       case GroupFailure.AdminOnly                    =>
-        ApiFailure.Forbidden("Only a group administrator can do this")
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupAdminOnly), "Only a group administrator can do this")
       case GroupFailure.LastAdmin                    =>
-        ApiFailure.Conflict("A group must always have at least one administrator; promote another member first")
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.groupLastAdmin),
+          "A group must always have at least one administrator; promote another member first",
+        )
       case GroupFailure.InvitationInvalid            =>
         invitationInvalid
     }
@@ -145,17 +188,23 @@ object ApiFailures {
   def admin(failure: AdminFailure): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case AdminFailure.ValidationError(fieldErrors) =>
-        ApiFailure.BadRequest("Validation failed", fieldErrors)
+        validationFailed(fieldErrors)
       case AdminFailure.DuplicateEmail               =>
         emailAlreadyRegistered
       case AdminFailure.NotFound                     =>
-        ApiFailure.NotFound("User not found")
+        ApiFailure.NotFound(MessageRef(MessageKeys.adminUserNotFound), "User not found")
       case AdminFailure.SelfDemote                   =>
-        ApiFailure.BadRequest("You cannot remove your own administrator privileges")
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.adminSelfDemote),
+          "You cannot remove your own administrator privileges",
+        )
       case AdminFailure.SelfDelete                   =>
-        ApiFailure.BadRequest("You cannot delete your own account")
+        ApiFailure.BadRequest(MessageRef(MessageKeys.adminSelfDelete), "You cannot delete your own account")
       case AdminFailure.LastCredential               =>
-        ApiFailure.Conflict("That is the account's only way to sign in; give it a password first")
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.adminLastCredential),
+          "That is the account's only way to sign in; give it a password first",
+        )
     }
   }
 }

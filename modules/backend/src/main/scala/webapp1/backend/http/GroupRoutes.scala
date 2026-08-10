@@ -1,5 +1,6 @@
 package webapp1.backend.http
 
+import webapp1.backend.config.AppConfig
 import webapp1.backend.service.{AuthService, GroupService}
 import webapp1.shared.api.GroupEndpoints
 import webapp1.shared.domain.User
@@ -108,14 +109,18 @@ object GroupRoutes {
     GroupEndpoints.inviteMember
       .implementHandler(
         handler { (groupId: Long, body: InviteMemberRequest) =>
-          withContext { (user: User) =>
-            GroupService.inviteMember(user.id, groupId, body.email, body.role).mapError(ApiFailures.group)
+          withContext { (user: User, context: RouteSupport.RequestContext) =>
+            // The inviting administrator's current language decides the language of the invitation
+            // email — there is no account behind the invited address yet to hold a preference.
+            GroupService
+              .inviteMember(user.id, groupId, body.email, body.role, context.locale)
+              .mapError(ApiFailures.group)
           }
         }
       )
   }
 
-  val routes: Routes[AuthService & GroupService, Response] = {
+  val routes: Routes[AuthService & GroupService & AppConfig, Response] = {
     Routes(
       createGroupRoute,
       listGroupsRoute,
@@ -127,6 +132,10 @@ object GroupRoutes {
       removeMemberRoute,
       updateRoleRoute,
       inviteMemberRoute,
-    ) @@ RouteSupport.authenticated @@ RouteSupport.csrf
+      // `requestContext` is here for one endpoint: the invitation email needs the inviter's language.
+      // On the `Routes` value, never on a handler — `inviteMemberRoute` takes a path parameter, and a
+      // context aspect attached to such a handler compiles and then throws ClassCastException at
+      // request time. `RouteGuardsSpec` drives that combination through the real stack.
+    ) @@ RouteSupport.authenticated @@ RouteSupport.requestContext @@ RouteSupport.csrf
   }
 }

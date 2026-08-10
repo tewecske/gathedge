@@ -1,6 +1,7 @@
 package webapp1.backend.http
 
 import webapp1.shared.dto.ErrorResponse
+import webapp1.shared.i18n.MessageRef
 import zio.http.*
 import zio.json.*
 
@@ -18,7 +19,16 @@ object JsonSupport {
     Response.json(enc.encodeJson(value, None)).status(status)
   }
 
-  def errorResponse(status: Status, message: String, fieldErrors: Map[String, String] = Map.empty): Response = {
-    jsonResponse(status, ErrorResponse(message, fieldErrors))
+  /** `error` is the catalog key the SPA words; `message` is the English fallback that goes with it, exactly as on every
+    * `api.ApiFailure` case. Both are required rather than one being derived from the other, because these bodies bypass
+    * the endpoint codecs and there is nothing else to keep the two halves together.
+    */
+  def errorResponse(
+    status: Status,
+    error: MessageRef,
+    message: String,
+    fieldErrors: Map[String, MessageRef] = Map.empty,
+  ): Response = {
+    jsonResponse(status, ErrorResponse(error, message, fieldErrors))
   }
 }

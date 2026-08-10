@@ -138,6 +138,17 @@ lazy val backend = project
         "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
       ),
     Compile / mainClass := Some("webapp1.backend.Main"),
+    // The message catalogs are one JSON file per language, canonically under `web/public/locales`,
+    // where Vite serves them to the SPA in dev and nginx serves them out of the built image — both
+    // with no configuration at all. The backend needs the same catalogs, because it renders the two
+    // transactional emails, and it reads them off its classpath from *here* rather than from a copy:
+    // a translator edits exactly one file per language, and there is no generated duplicate to go
+    // stale. Landing them on the classpath root also puts them where `MessagesSpec` can check every
+    // MessageKeys constant against both files.
+    //
+    // Docker is fine with the reach across module boundaries: the `base` stage does `COPY . .`, so
+    // the whole repo is present when `backend/stage` runs.
+    Compile / unmanagedResourceDirectories += (ThisBuild / baseDirectory).value / "web" / "public" / "locales",
     Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
     reStart / baseDirectory := (ThisBuild / baseDirectory).value,
     // A real environment variable wins over the file, so `GOOGLE_CLIENT_ID=… sbt "~backend/reStart"`

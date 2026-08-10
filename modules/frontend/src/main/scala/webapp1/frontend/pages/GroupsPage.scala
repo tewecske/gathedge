@@ -6,6 +6,8 @@ import webapp1.frontend.components.{AppShell, FormField}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.Group
 import webapp1.shared.dto.CreateGroupRequest
+import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.MessageKeys
 import webapp1.shared.validation.Validation
 
 object GroupsPage {
@@ -16,7 +18,7 @@ object GroupsPage {
   * first submit attempt.
   */
 private case class CreateGroupForm(name: String = "", showErrors: Boolean = false) {
-  def nameError: Option[String] = Validation.validateNonBlank(name, "Group name").left.toOption
+  def nameError: Option[String] = I18n.errorOf(Validation.validateNonBlank(name, MessageKeys.fieldGroupName))
 
   def displayError(error: CreateGroupForm => Option[String]): Option[String] = {
     if (showErrors)
@@ -27,7 +29,7 @@ private case class CreateGroupForm(name: String = "", showErrors: Boolean = fals
 
   /** `Some` exactly when the form is valid, so it doubles as the validity check. */
   def toRequest: Option[CreateGroupRequest] = {
-    Validation.validateNonBlank(name, "Group name").toOption.map(CreateGroupRequest(_))
+    Validation.validateNonBlank(name, MessageKeys.fieldGroupName).toOption.map(CreateGroupRequest(_))
   }
 }
 

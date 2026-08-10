@@ -1,0 +1,65 @@
+{
+  "validation.failed": "Az ellenőrzés sikertelen",
+  "validation.email.required": "Az e-mail cím megadása kötelező",
+  "validation.email.tooLong": "Az e-mail cím legfeljebb {0} karakter lehet",
+  "validation.email.invalid": "Érvénytelen e-mail cím",
+  "validation.password.required": "A jelszó megadása kötelező",
+  "validation.password.tooShort": "A jelszónak legalább {0} karakter hosszúnak kell lennie",
+  "validation.password.tooLong": "A jelszó túl hosszú",
+  "validation.field.required": "Kötelező mező: {0}",
+  "validation.field.tooLong": "Legfeljebb {1} karakter lehet: {0}",
+  "validation.currentPassword.required": "Add meg a jelenlegi jelszavadat",
+  "validation.currentPassword.incorrect": "Helytelen jelszó",
+
+  "nav.language": "Nyelv",
+
+  "field.email": "E-mail cím",
+  "field.password": "Jelszó",
+  "field.groupName": "Csoportnév",
+  "field.todoText": "Teendő szövege",
+  "field.source": "Forrás",
+  "field.target": "Cél",
+
+  "auth.invalidCredentials": "Hibás e-mail cím vagy jelszó",
+  "auth.emailAlreadyRegistered": "Ez az e-mail cím már regisztrálva van",
+  "auth.rateLimited": "Túl sok próbálkozás. Próbáld újra később.",
+  "auth.emailNotVerified": "A bejelentkezés előtt erősítsd meg az e-mail címedet",
+  "auth.verificationTokenInvalid": "Ez a megerősítő link érvénytelen, lejárt, vagy már felhasználták",
+  "auth.verificationSendFailed": "Nem sikerült elküldeni a megerősítő linket",
+  "auth.lastCredential": "Előbb állíts be jelszót — jelenleg ez az egyetlen módja, hogy belépj ebbe a fiókba",
+
+  "oauth.failed": "A bejelentkezés sikertelen: {0}",
+  "oauth.accountExists": "Ezzel az e-mail címmel már létezik fiók. Jelentkezz be a jelszavaddal, majd a Beállításokban kapcsold össze a következővel: {0}.",
+  "oauth.alreadyLinked": "Ez a fiók már össze van kapcsolva",
+  "oauth.unknownProvider": "Ismeretlen bejelentkezési szolgáltató",
+  "oauth.unavailable": "A bejelentkezés nem érhető el",
+
+  "todo.notFound": "A teendő nem található",
+
+  "group.notFound": "A csoport nem található",
+  "group.notMember": "Nem vagy tagja ennek a csoportnak",
+  "group.readOnlyMember": "A szerepköröd ebben a csoportban csak olvasási jogot ad",
+  "group.adminOnly": "Ezt csak a csoport adminisztrátora teheti meg",
+  "group.lastAdmin": "Egy csoportnak mindig legalább egy adminisztrátorral kell rendelkeznie; előbb léptess elő egy másik tagot",
+  "invitation.invalid": "Ez a meghívó érvénytelen, lejárt, vagy már felhasználták",
+
+  "admin.userNotFound": "A felhasználó nem található",
+  "admin.selfDemote": "A saját adminisztrátori jogosultságodat nem vonhatod vissza",
+  "admin.selfDelete": "A saját fiókodat nem törölheted",
+  "admin.lastCredential": "Jelenleg ez az egyetlen módja, hogy belépjenek ebbe a fiókba; előbb állíts be hozzá jelszót",
+
+  "error.internal": "Szerverhiba",
+  "error.notFound": "Nem található",
+  "error.malformedRequest": "Hibás kérés",
+  "error.missingCsrfHeader": "Hiányzó kötelező fejléc",
+  "error.notAuthenticated": "Nem vagy bejelentkezve",
+  "error.notAdministrator": "Be vagy jelentkezve, de nincs adminisztrátori jogosultságod",
+  "error.invalidRedirect": "Érvénytelen átirányítási cél",
+
+  "error.requestFailed": "A szerver nem érhető el. Ellenőrizd a kapcsolatot, és próbáld újra.",
+
+  "email.verify.subject": "Erősítsd meg az e-mail címedet",
+  "email.verify.body": "Erősítsd meg az e-mail címedet ezen a linken: {0}\n\nA link {1} óra múlva lejár.",
+  "email.invite.subject": "Meghívtak a következő csoportba: {0}",
+  "email.invite.body": "Csatlakozz a csoporthoz itt: {0}"
+}

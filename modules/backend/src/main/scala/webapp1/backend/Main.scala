@@ -27,6 +27,7 @@ import webapp1.backend.http.{
   RouteSupport,
   TodoRoutes,
 }
+import webapp1.backend.i18n.Messages
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
   AdminSeeder,
@@ -106,6 +107,8 @@ object Main extends ZIOAppDefault {
     BackgroundJobs.live,
     AuditTrail.live,
     EmailSender.live,
+    // Fails the boot if a catalog is missing from the image, before the server binds.
+    Messages.live,
     AuthService.live,
     OAuthClients.live,
     // The outbound half of zio-http: the providers' token and tokeninfo endpoints are the only calls this server makes.

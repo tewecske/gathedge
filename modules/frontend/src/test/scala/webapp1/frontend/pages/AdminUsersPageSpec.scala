@@ -3,12 +3,20 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import webapp1.shared.i18n.MessageKeys
 import zio.test._
 
 /** Covers the form-state shape of the create-user form: field errors stay hidden until the first submit attempt, then
   * track the inputs live.
   */
 object AdminUsersPageSpec extends ZIOSpecDefault {
+
+  /** The specs run with no catalog loaded — jsdom has no server to fetch one from — so a message resolves to its own
+    * key. Asserting on the key is the stronger statement anyway: it says the form routed the *right message* to the
+    * right field, which is the page's job. That the key has real copy behind it in both languages is `MessagesSpec`'s
+    * job, and it can read the catalogs, which this cannot.
+    */
+  private val passwordTooShort = MessageKeys.passwordTooShort
 
   private def withPage[A](use: dom.Element => A): A = {
     val container = dom.document.createElement("div")
@@ -57,8 +65,8 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
         }
 
         assertTrue(
-          errors.exists(_.contains("Invalid email format")),
-          errors.exists(_.contains("at least 8 characters")),
+          errors.exists(_.contains(MessageKeys.emailInvalid)),
+          errors.exists(_.contains(passwordTooShort)),
         )
       },
       test("after a failed submit, fixing a field clears only that field's error") {
@@ -70,7 +78,7 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
           fieldErrors(container)
         }
 
-        assertTrue(!errors.exists(_.contains("email")), errors.exists(_.contains("at least 8 characters")))
+        assertTrue(!errors.exists(_.contains("email")), errors.exists(_.contains(passwordTooShort)))
       },
     )
   }

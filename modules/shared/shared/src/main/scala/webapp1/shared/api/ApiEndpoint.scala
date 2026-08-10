@@ -1,5 +1,7 @@
 package webapp1.shared.api
 
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
+
 import scala.reflect.ClassTag
 
 import zio.ZNothing
@@ -82,7 +84,7 @@ object ApiEndpoint {
   private val codecError: HttpCodec[HttpCodecType.ResponseType, HttpCodecError] = {
     failure.badRequest
       .transformOrFail[HttpCodecError](bad => Right(HttpCodecError.CustomError("BadRequest", bad.message)))(_ =>
-        Right(ApiFailure.BadRequest("Malformed request"))
+        Right(ApiFailure.BadRequest(MessageRef(MessageKeys.malformedRequest), "Malformed request"))
       )
   }
 

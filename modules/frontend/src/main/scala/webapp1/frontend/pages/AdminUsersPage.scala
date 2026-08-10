@@ -6,6 +6,7 @@ import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Fo
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry}
+import webapp1.frontend.i18n.I18n
 import webapp1.shared.validation.Validation
 
 object AdminUsersPage {
@@ -21,9 +22,9 @@ private case class CreateUserForm(
   isAdmin: Boolean = false,
   showErrors: Boolean = false,
 ) {
-  def emailError: Option[String] = Validation.validateEmail(email).left.toOption
+  def emailError: Option[String] = I18n.errorOf(Validation.validateEmail(email))
 
-  def passwordError: Option[String] = Validation.validatePassword(password).left.toOption
+  def passwordError: Option[String] = I18n.errorOf(Validation.validatePassword(password))
 
   def displayError(error: CreateUserForm => Option[String]): Option[String] = {
     if (showErrors)

@@ -5,6 +5,60 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>webapp1</title>
     <link rel="stylesheet" href="/main.css" />
+    <!--
+      Every SPA route is served under a language prefix (/en/..., /hu/...), and this is what puts one
+      there. It runs before the module below so that the bundle can read the locale straight off the
+      URL, synchronously, and fetch its catalog before the first render.
+
+      Deliberately inline and dependency-free rather than an nginx rule or a Vite plugin: dev and
+      production then behave identically, and `navigator.languages` is only available here anyway.
+
+      The precedence it implements — localStorage (mirrored from the account on the last sign-in),
+      then the browser's languages, then English — is the tail of the rule in `LocaleSync`. The head
+      of that rule is the early return: a prefix already in the URL is the visitor's explicit choice
+      and nothing here or later may override it.
+    -->
+    <script>
+      (function () {
+        var supported = ['en', 'hu'];
+        var path = window.location.pathname;
+        var first = path.split('/')[1];
+
+        if (supported.indexOf(first) !== -1) {
+          document.documentElement.lang = first;
+          // The URL said so explicitly; make sure a flag left by an earlier load in this tab cannot
+          // let the account's stored language override it.
+          try { window.sessionStorage.removeItem('localeImplicit'); } catch (e) {}
+          return;
+        }
+
+        var chosen = null;
+        try {
+          var stored = window.localStorage.getItem('locale');
+          if (supported.indexOf(stored) !== -1) chosen = stored;
+        } catch (e) {}
+
+        if (!chosen) {
+          var langs = navigator.languages || [navigator.language || 'en'];
+          for (var i = 0; i < langs.length && !chosen; i++) {
+            var base = String(langs[i]).toLowerCase().split('-')[0];
+            if (supported.indexOf(base) !== -1) chosen = base;
+          }
+        }
+        chosen = chosen || 'en';
+
+        // Records that this locale was *guessed*. `LocaleSync` reads it once /api/me answers: only a
+        // guessed locale gives way to the one stored on the account.
+        try { window.sessionStorage.setItem('localeImplicit', '1'); } catch (e) {}
+
+        // The root keeps its trailing slash: `/hu/` is the form Waypoint builds for the home route,
+        // and a bare `/hu` leaves it matching an empty path — a gamble not worth taking on the one
+        // URL every visitor hits first. Any other path drops a trailing slash so `/groups/` and
+        // `/groups` land on the same place.
+        var rest = path === '/' ? '/' : path.replace(/\/$/, '');
+        window.location.replace('/' + chosen + rest + window.location.search + window.location.hash);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

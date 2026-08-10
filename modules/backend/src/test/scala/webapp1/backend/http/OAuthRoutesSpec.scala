@@ -118,7 +118,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
           response <- runRoutes(AuthRoutes.routes, Request.get("/api/auth/microsoft/start"))
         } yield assertTrue(response.status == Status.NotFound)
       },
-      test("start redirects to the provider and sets an HttpOnly state cookie holding nonce and intent") {
+      test("start redirects to the provider and sets an HttpOnly state cookie holding nonce, intent and locale") {
         for {
           response <- runRoutes(AuthRoutes.routes, Request.get("/api/auth/google/start"))
           cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
@@ -127,7 +127,8 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
             response.status.isRedirection,
             locationOf(response).startsWith("https://provider.example.com/authorize"),
             cookie.exists(_.isHttpOnly),
-            cookie.exists(_.content.endsWith("|login")),
+            // nonce|intent|locale, and the nonce is the only part the provider ever echoes back.
+            cookie.exists(_.content.split('|').toList.drop(1) == List("login", "en")),
           )
         }
       },
@@ -135,7 +136,34 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
         for {
           response <- runRoutes(AuthRoutes.routes, Request.get(urlOf("/api/auth/google/start?link=1")))
           cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
-        } yield assertTrue(cookie.exists(_.content.endsWith("|link")))
+        } yield assertTrue(cookie.exists(_.content.split('|').lift(1).contains("link")))
+      },
+      // The locale has to survive the round trip through the provider for the same reason the intent
+      // does: every exit is a redirect into the SPA, and the SPA's language is its URL prefix. Nothing
+      // else carries it — a top-level navigation sends no `X-Locale`.
+      test("?locale= is recorded in the state cookie") {
+        for {
+          response <- runRoutes(AuthRoutes.routes, Request.get(urlOf("/api/auth/google/start?locale=hu")))
+          cookie    = response.headers(Header.SetCookie).map(_.value).find(_.name == stateCookieName)
+        } yield assertTrue(cookie.exists(_.content.split('|').lift(2).contains("hu")))
+      },
+      test("a failure on a flow started in Hungarian lands on the Hungarian sign-in page") {
+        for {
+          response <- runRoutes(
+                        AuthRoutes.routes,
+                        callback("google", "code=c&state=attacker-nonce", Some("real-nonce|login|hu")),
+                      )
+        } yield assertTrue(locationOf(response).endsWith("/hu/sign-in?error=state_mismatch"))
+      },
+      // A cookie written before this build has no third part; the flow was already in flight across a
+      // deploy, and an English landing page is the right amount of wrong for that.
+      test("a state cookie with no locale part falls back to the default") {
+        for {
+          response <- runRoutes(
+                        AuthRoutes.routes,
+                        callback("google", "code=c&state=attacker-nonce", Some("real-nonce|login")),
+                      )
+        } yield assertTrue(locationOf(response).endsWith("/en/sign-in?error=state_mismatch"))
       },
       // The state cookie is the only thing standing in for the CSRF header on this route, so a callback
       // whose `state` does not match it must not be allowed to mint a session.

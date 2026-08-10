@@ -42,12 +42,15 @@ object GroupRoutesSpec extends ZIOSpecDefault {
     )
   }
 
-  private val layer: ZLayer[Any, Throwable, AuthService & GroupService & GroupInvitationRepository] = {
+  private val layer: ZLayer[Any, Throwable, AuthService & GroupService & GroupInvitationRepository & AppConfig] = {
     repoLayer ++ (
       (repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
         AuthService.live
     ) ++
-      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
+      ((repoLayer ++ TestAuthLayers.emailAndConfig) >>> GroupService.live) ++
+      // `GroupRoutes.routes` carries `requestContext` now (the invitation email needs the inviter's
+      // language), and that aspect reads the trusted-proxy hop count out of the config.
+      AppConfig.live
   }
 
   /** Signs a user up and returns both halves the routes need: the user id the services key on, and the session id that

@@ -1,7 +1,14 @@
 package webapp1.shared.validation
 
+import webapp1.shared.i18n.{MessageKeys, MessageRef}
+
 /** Validation shared between the signup form (frontend) and the signup/create-user endpoints (backend), so the same
   * rules apply in both places per summary.md.
+  *
+  * Failures are [[MessageRef]]s rather than rendered strings, so the same check produces the same message in whatever
+  * language the caller is reading — whether it ran in the browser before submitting or on the server afterwards. It
+  * also means a field's *label* is a catalog key chosen by the caller, which is what finally stopped the two sides
+  * disagreeing about what a field is called (the sign-up form said "Group name" where `GroupService` said "Name").
   */
 object Validation {
 
@@ -61,36 +68,41 @@ object Validation {
     password.length >= minPasswordLength && utf8Length(password) <= maxPasswordLength
   }
 
-  def validateEmail(email: String): Either[String, String] = {
+  def validateEmail(email: String): Either[MessageRef, String] = {
     if (email.trim.isEmpty)
-      Left("Email is required")
+      Left(MessageRef(MessageKeys.emailRequired))
     else if (email.trim.length > maxEmailLength)
-      Left(s"Email must be at most $maxEmailLength characters")
+      Left(MessageRef(MessageKeys.emailTooLong, List(maxEmailLength.toString)))
     else if (!isValidEmail(email))
-      Left("Invalid email format")
+      Left(MessageRef(MessageKeys.emailInvalid))
     else
       Right(email.trim)
   }
 
-  def validatePassword(password: String): Either[String, String] = {
+  def validatePassword(password: String): Either[MessageRef, String] = {
     if (password.isEmpty)
-      Left("Password is required")
+      Left(MessageRef(MessageKeys.passwordRequired))
     else if (password.length < minPasswordLength)
-      Left(s"Password must be at least $minPasswordLength characters")
+      Left(MessageRef(MessageKeys.passwordTooShort, List(minPasswordLength.toString)))
     else if (utf8Length(password) > maxPasswordLength) {
       // Not "at most 72 characters": the limit is 72 bytes, so a password of accented or non-Latin
       // characters trips it well before its 72nd character, and quoting a number would misdescribe it.
-      Left("Password is too long")
+      // The catalog entry carries no number for the same reason.
+      Left(MessageRef(MessageKeys.passwordTooLong))
     } else
       Right(password)
   }
 
-  def validateNonBlank(value: String, fieldName: String, maxLength: Int = maxTextLength): Either[String, String] = {
+  /** @param fieldKey
+    *   the *catalog key* of the field's label (e.g. `MessageKeys.fieldGroupName`), not the label itself. It is passed
+    *   as a `MessageRef.keyArg` so the label is translated before being spliced into the sentence around it.
+    */
+  def validateNonBlank(value: String, fieldKey: String, maxLength: Int = maxTextLength): Either[MessageRef, String] = {
     val trimmed = value.trim
     if (trimmed.isEmpty)
-      Left(s"$fieldName is required")
+      Left(MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(fieldKey))))
     else if (trimmed.length > maxLength)
-      Left(s"$fieldName must be at most $maxLength characters")
+      Left(MessageRef(MessageKeys.fieldTooLong, List(MessageRef.keyArg(fieldKey), maxLength.toString)))
     else
       Right(trimmed)
   }

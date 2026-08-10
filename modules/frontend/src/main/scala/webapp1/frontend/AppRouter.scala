@@ -1,6 +1,7 @@
 package webapp1.frontend
 
 import com.raquo.waypoint._
+import webapp1.frontend.i18n.CurrentLocale
 
 sealed trait Page
 
@@ -55,41 +56,58 @@ object Page {
 object AppRouter {
   import Page._
 
-  private val signInRoute          = Route.static(SignIn, root / "sign-in")
-  private val signUpRoute          = Route.static(SignUp, root / "sign-up")
-  private val homeRoute            = Route.static(Home, root)
-  private val groupsRoute          = Route.static(Groups, root / "groups")
-  private val settingsRoute        = Route.static(Settings, root / "settings")
+  /** Every route is mounted under the language prefix this page load is in — `/en/groups`, `/hu/groups`.
+    *
+    * Waypoint's `basePath` does all of the work: it is prepended when a URL is *built* (`Route.relativeUrlForPage` is
+    * `basePath + createRelativeUrl(args)`) and stripped when one is *matched*. So every internal link and every
+    * `pushState` picks up the prefix with no further help, and `Page` stays exactly what it was — no locale field, no
+    * new serialization tag, no change to any call site.
+    *
+    * The value is fixed for the lifetime of the document, which is why switching language is a full navigation to the
+    * other prefix rather than something the router can do.
+    */
+  private val basePath = CurrentLocale.prefix
+
+  private val signInRoute          = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute          = Route.static(SignUp, root / "sign-up", basePath)
+  private val homeRoute            = Route.static(Home, root, basePath)
+  private val groupsRoute          = Route.static(Groups, root / "groups", basePath)
+  private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
   private val groupDetailRoute     = Route(
     encode = (p: GroupDetail) => p.id,
     decode = (id: Long) => GroupDetail(id),
     pattern = root / "groups" / segment[Long],
+    basePath = basePath,
   )
   private val groupMembersRoute    = Route(
     encode = (p: GroupMembers) => p.id,
     decode = (id: Long) => GroupMembers(id),
     pattern = root / "groups" / segment[Long] / "members",
+    basePath = basePath,
   )
   private val acceptInviteRoute    = Route(
     encode = (p: AcceptInvite) => p.token,
     decode = (token: String) => AcceptInvite(token),
     pattern = root / "invitations" / segment[String],
+    basePath = basePath,
   )
   private val verifyEmailRoute     = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
     pattern = root / "verify-email" / segment[String],
+    basePath = basePath,
   )
-  private val checkInboxRoute      = Route.static(CheckInbox, root / "check-inbox")
-  private val adminRoute           = Route.static(Admin, root / "admin" / "users")
+  private val checkInboxRoute      = Route.static(CheckInbox, root / "check-inbox", basePath)
+  private val adminRoute           = Route.static(Admin, root / "admin" / "users", basePath)
   private val adminUserDetailRoute = Route(
     encode = (p: AdminUserDetail) => p.id,
     decode = (id: Long) => AdminUserDetail(id),
     pattern = root / "admin" / "users" / segment[Long],
+    basePath = basePath,
   )
-  private val adminAuditRoute      = Route.static(AdminAudit, root / "admin" / "audit")
-  private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system")
-  private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden")
+  private val adminAuditRoute      = Route.static(AdminAudit, root / "admin" / "audit", basePath)
+  private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
+  private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
   // All pages are derivable from the URL alone, so serialization (used only for
   // browser-history state) is just a tag — no JSON library needed.

@@ -9,6 +9,7 @@ import webapp1.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateLocaleRequest,
   UpdateThemeRequest,
   VerifyEmailRequest,
 }
@@ -120,6 +121,17 @@ object AuthEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** Persists the account's chosen language. Same failure shape and same reasoning as [[updateTheme]], which this is
+    * modelled on: the service call is `.orDie`'d, so the 400 exists only for a body the codec rejects.
+    */
+  val updateLocale = {
+    Endpoint(Method.PUT / "api" / "me" / "locale")
+      .in[UpdateLocaleRequest]
+      .withCodecError
+      .out[AuthResponse]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   /** Which social providers this deployment has credentials for, so the sign-in form only offers buttons whose flow can
     * actually complete.
     *
@@ -177,6 +189,7 @@ object AuthEndpoints {
       logout,
       me,
       updateTheme,
+      updateLocale,
       providers,
       identities,
       unlinkIdentity,

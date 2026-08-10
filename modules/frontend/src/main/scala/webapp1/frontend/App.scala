@@ -20,7 +20,9 @@ import webapp1.frontend.pages.{
   TodoPage,
   VerifyEmailPage,
 }
+import webapp1.frontend.i18n.LocaleSync
 import webapp1.frontend.state.AppState
+import webapp1.shared.domain.Locale
 import webapp1.shared.dto.AuthResponse
 
 /** Root component: loads the current session once, then renders + guards pages. Any page requiring a session redirects
@@ -58,6 +60,7 @@ object App {
           .foreach {
             case Right(res) =>
               AppState.setUser(res.user)
+              reconcileLocale(res.user.locale)(using ctx.owner)
               sessionLoadedVar.set(true)
             case Left(_)    =>
               AppState.clearUser()
@@ -76,6 +79,24 @@ object App {
         },
       child <-- viewSignal.map(renderFor),
     )
+  }
+
+  /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the
+    * navigating; the one thing it cannot do is talk to the API, so the write-back lives here where there is an owner to
+    * subscribe with.
+    *
+    * The write-back fires only when the visitor arrived on an explicit prefix that disagrees with the account, which is
+    * the case that means "they have changed their mind about the language" — so it happens once, and the next load
+    * agrees. A failure is ignored on purpose: the page is already in the right language, and nagging about a preference
+    * that did not save would be worse than saving it next time.
+    */
+  private def reconcileLocale(accountLocale: Locale)(using owner: Owner): Unit = {
+    LocaleSync.reconcile(accountLocale) match {
+      case LocaleSync.Action.Persist(chosen) =>
+        ApiClient.updateLocale(chosen).foreach(_ => ())
+      case _                                 =>
+        ()
+    }
   }
 
   /** Pure: the page a guard violation should send the visitor to, if any. */
