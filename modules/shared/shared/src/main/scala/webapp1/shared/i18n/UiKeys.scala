@@ -73,6 +73,14 @@ object UiKeys {
     */
   val commonNone: String = key("ui.common.none")
 
+  // The paging control under a long table. The numbered buttons carry the number itself, so only the two arrows and
+  // the page-size control need words — and the arrows' words are read out rather than shown, being `aria-label`s on a
+  // glyph.
+
+  val commonRowsPerPage: String  = key("ui.common.rowsPerPage")
+  val commonPreviousPage: String = key("ui.common.previousPage")
+  val commonNextPage: String     = key("ui.common.nextPage")
+
   /** `{0}` is `Validation.minPasswordLength`. */
   val commonPasswordHint: String = key("ui.common.passwordHint")
 
@@ -313,7 +321,6 @@ object UiKeys {
   val adminAuditColDetail: String   = key("ui.admin.audit.colDetail")
   val adminAuditSystemActor: String = key("ui.admin.audit.systemActor")
   val adminAuditTargetUser: String  = key("ui.admin.audit.targetUser")
-  val adminAuditLoadOlder: String   = key("ui.admin.audit.loadOlder")
   val adminAuditEmpty: String       = key("ui.admin.audit.empty")
 
   /** `.one`/`.other`, `{0}` being the number of rows currently held. */

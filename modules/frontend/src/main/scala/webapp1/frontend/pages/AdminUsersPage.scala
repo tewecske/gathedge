@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, Formats, Pagination}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry}
@@ -57,6 +57,26 @@ private class AdminUsersPage {
   private val lockedVar    = Var(Set.empty[String])
   private val lockedSignal = lockedVar.signal
 
+  /** Paging is client-side: `GET /api/admin/users` answers with the whole list, so a page is a slice of what is already
+    * here rather than a request. The page index is left alone when the list changes — `Pagination.clampPage` keeps a
+    * stale one harmless — except after a create, which jumps to wherever the new account landed so the administrator
+    * can see that it worked.
+    */
+  private val pageVar        = Var(0)
+  private val pageSignal     = pageVar.signal
+  private val pageSizeVar    = Var(Pagination.defaultPageSize)
+  private val pageSizeSignal = pageSizeVar.signal
+
+  private val pageCountSignal = {
+    usersSignal.combineWithFn(pageSizeSignal)((users, size) => Pagination.pageCount(users.size, size))
+  }
+
+  private val visibleSignal = {
+    usersSignal
+      .combineWith(pageSignal, pageSizeSignal)
+      .map((users, page, size) => Pagination.slice(users, page, size))
+  }
+
   private val formVar    = Var(CreateUserForm())
   private val formSignal = formVar.signal
 
@@ -87,6 +107,14 @@ private class AdminUsersPage {
       Alert.maybeError(errorSignal),
       renderCreateForm(),
       renderTable(),
+      Pagination.render(
+        page = pageSignal,
+        pageCount = pageCountSignal,
+        onPage = pageVar.writer,
+        pageSize = pageSizeSignal,
+        // A different page size makes the current index meaningless, so the reader goes back to the top.
+        onPageSize = Observer[Int](size => Var.set(pageSizeVar -> size, pageVar -> 0)),
+      ),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.listUsers) -->
         Observer[Either[ApiError, List[User]]] {
           case Right(users) =>
@@ -108,8 +136,14 @@ private class AdminUsersPage {
         .flatMapSwitch(request => AdminApiClient.createUser(request)) -->
         Observer[Either[ApiError, User]] {
           case Right(user) =>
-            usersVar.update(_ :+ user)
-            Var.set(inFlightVar -> false, formVar -> CreateUserForm(), errorVar -> None)
+            val users = usersVar.now() :+ user
+            Var.set(
+              usersVar    -> users,
+              pageVar     -> Pagination.lastPage(users.size, pageSizeVar.now()),
+              inFlightVar -> false,
+              formVar     -> CreateUserForm(),
+              errorVar    -> None,
+            )
           case Left(err)   =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
@@ -186,7 +220,7 @@ private class AdminUsersPage {
         ),
         tbody(
           children <--
-            usersSignal.splitSeq(_.id) { userSignal =>
+            visibleSignal.splitSeq(_.id) { userSignal =>
               renderRow(userSignal.key, userSignal)
             }
         ),

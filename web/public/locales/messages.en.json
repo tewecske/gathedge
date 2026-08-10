@@ -78,6 +78,9 @@
   "ui.common.from": "From",
   "ui.common.none": "—",
   "ui.common.passwordHint": "At least {0} characters",
+  "ui.common.rowsPerPage": "Rows per page",
+  "ui.common.previousPage": "Previous page",
+  "ui.common.nextPage": "Next page",
 
   "ui.nav.todo": "Todo",
   "ui.nav.groups": "Groups",
@@ -255,7 +258,6 @@
   "ui.admin.audit.colDetail": "Detail",
   "ui.admin.audit.systemActor": "the system",
   "ui.admin.audit.targetUser": "user {0}",
-  "ui.admin.audit.loadOlder": "Load older",
   "ui.admin.audit.empty": "No entries.",
   "ui.admin.audit.countAll.one": "{0} entry — that is all of them.",
   "ui.admin.audit.countAll.other": "{0} entries — that is all of them.",

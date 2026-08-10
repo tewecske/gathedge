@@ -2,7 +2,7 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels}
+import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels, Pagination}
 import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.dto.{AuditAction, AuditEntry}
@@ -19,11 +19,34 @@ object AdminAuditPage {
 
 private class AdminAuditPage {
 
-  /** One request's worth. Paging appends rather than replaces, so this is also how much "Load older" fetches. */
-  private val pageSize = 50
+  /** How many rows a page shows *and* how many one request asks for, which is what lets the numbered buttons line up
+    * with what has been fetched: every fetch adds exactly one page at the end.
+    *
+    * Changing it does not refetch. The entries already held are re-sliced under the new size, and the next fetch simply
+    * asks for that many — the cursor is the oldest row on hand either way, so a chunk of 20 followed by one of 100 is
+    * as well-formed as any other sequence.
+    */
+  private val pageSizeVar    = Var(Pagination.defaultPageSize)
+  private val pageSizeSignal = pageSizeVar.signal
 
+  /** Every row fetched so far, oldest last. This is a *cursor*-paged listing, so the page numbers can only ever cover
+    * what has been fetched; `hasMore` is what lets the next arrow reach past the last of them.
+    */
   private val entriesVar    = Var(List.empty[AuditEntry])
   private val entriesSignal = entriesVar.signal
+
+  private val pageVar    = Var(0)
+  private val pageSignal = pageVar.signal
+
+  private val pageCountSignal = {
+    entriesSignal.combineWithFn(pageSizeSignal)((entries, size) => Pagination.pageCount(entries.size, size))
+  }
+
+  private val visibleSignal = {
+    entriesSignal
+      .combineWith(pageSignal, pageSizeSignal)
+      .map((entries, page, size) => Pagination.slice(entries, page, size))
+  }
 
   /** Empty means "every action". Held separately from the entries so changing it can restart the listing from the top
     * rather than paging into a differently-filtered set.
@@ -38,17 +61,35 @@ private class AdminAuditPage {
   /** True once a request came back with fewer rows than it asked for: there is nothing older to fetch. */
   private val exhaustedVar = Var(false)
 
+  /** Whether the next arrow may point one past the last numbered page. */
+  private val hasMoreSignal = {
+    entriesSignal.combineWithFn(exhaustedVar.signal)((entries, exhausted) => entries.nonEmpty && !exhausted).distinct
+  }
+
   private val loadBus = new EventBus[Option[Long]]()
 
   private def blankToNone(value: String): Option[String] = Some(value.trim).filter(_.nonEmpty)
 
-  private def request(before: Option[Long]): EventStream[Either[ApiError, List[AuditEntry]]] = {
+  private def request(limit: Int, before: Option[Long]): EventStream[Either[ApiError, List[AuditEntry]]] = {
     AdminApiClient.auditLog(
-      limit = Some(pageSize),
+      limit = Some(limit),
       before = before,
       action = blankToNone(actionVar.now()),
       actorId = blankToNone(actorVar.now()).flatMap(_.toLongOption),
     )
+  }
+
+  /** A page the reader asked for. Anything already fetched is a re-slice; one past the end is a request for rows older
+    * than the oldest on hand, and [[loadBus]]'s observer moves the page once they arrive.
+    */
+  private val pageRequests = {
+    Observer[Int] { requested =>
+      val entries = entriesVar.now()
+      if (requested * pageSizeVar.now() < entries.size)
+        pageVar.set(requested)
+      else
+        loadBus.emit(entries.lastOption.map(_.occurredAt))
+    }
   }
 
   def render(): HtmlElement = {
@@ -58,20 +99,48 @@ private class AdminAuditPage {
       Alert.maybeError(errorVar.signal),
       renderFilters(),
       renderTable(),
+      Pagination.render(
+        page = pageSignal,
+        pageCount = pageCountSignal,
+        onPage = pageRequests,
+        pageSize = pageSizeSignal,
+        // No refetch: the rows on hand are re-sliced, and the next fetch asks for the new size.
+        onPageSize = Observer[Int](size => Var.set(pageSizeVar -> size, pageVar -> 0)),
+        hasMore = hasMoreSignal,
+        busy = inFlightSignal,
+      ),
       renderFooter(),
       loadBus.events --> Observer[Option[Long]](_ => Var.set(inFlightVar -> true, errorVar -> None)),
+      // The limit is carried through with the answer rather than re-read from the Var: it is what decides whether the
+      // listing is exhausted, and the reader may well have changed the page size while the request was out.
       loadBus.events.flatMapSwitch { before =>
-        request(before).map(result => (before, result))
+        val limit = pageSizeVar.now()
+        request(limit, before).map(result => (before, limit, result))
       } -->
-        Observer[(Option[Long], Either[ApiError, List[AuditEntry]])] {
-          case (before, Right(rows)) =>
-            // `before` empty means this was a fresh listing, so it replaces; otherwise it is the next page down.
-            if (before.isEmpty)
-              entriesVar.set(rows)
-            else
-              entriesVar.update(_ ++ rows)
-            Var.set(inFlightVar -> false, exhaustedVar -> (rows.sizeIs < pageSize), errorVar -> None)
-          case (_, Left(err))        =>
+        Observer[(Option[Long], Int, Either[ApiError, List[AuditEntry]])] {
+          case (before, limit, Right(rows)) =>
+            // `before` empty means this was a fresh listing, so it replaces and returns to the first page; otherwise it
+            // is the next page down, which is the one the reader was asking to see.
+            val entries = {
+              if (before.isEmpty)
+                rows
+              else
+                entriesVar.now() ++ rows
+            }
+            val page    = {
+              if (before.isEmpty)
+                0
+              else
+                Pagination.lastPage(entries.size, pageSizeVar.now())
+            }
+            Var.set(
+              entriesVar   -> entries,
+              pageVar      -> page,
+              inFlightVar  -> false,
+              exhaustedVar -> (rows.sizeIs < limit),
+              errorVar     -> None,
+            )
+          case (_, _, Left(err))            =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => loadBus.emit(None)),
@@ -132,7 +201,7 @@ private class AdminAuditPage {
         ),
         tbody(
           children <--
-            entriesSignal.splitSeq(_.id) { entrySignal =>
+            visibleSignal.splitSeq(_.id) { entrySignal =>
               renderRow(entrySignal.now())
             }
         ),
@@ -167,23 +236,12 @@ private class AdminAuditPage {
     }
   }
 
+  /** The count of what has been fetched, which is not the same as the count of what exists — the wording distinguishes
+    * the two, and the next arrow is now the only way to fetch more.
+    */
   private def renderFooter(): HtmlElement = {
     div(
-      cls := "mt-4 flex items-center gap-4",
-      child.maybe <--
-        entriesSignal
-          .combineWith(exhaustedVar.signal)
-          .map { (entries, exhausted) =>
-            Option.when(entries.nonEmpty && !exhausted) {
-              button(
-                cls := "btn btn-sm btn-outline",
-                typ := "button",
-                disabled <-- inFlightSignal,
-                I18n.t(UiKeys.adminAuditLoadOlder),
-                onClick.mapToUnit --> Observer[Unit](_ => loadBus.emit(entriesVar.now().lastOption.map(_.occurredAt))),
-              )
-            }
-          },
+      cls := "mt-2 flex items-center gap-4",
       span(
         cls := "text-sm opacity-60",
         text <--

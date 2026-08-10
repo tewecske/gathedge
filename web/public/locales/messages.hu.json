@@ -78,6 +78,9 @@
   "ui.common.from": "Honnan",
   "ui.common.none": "—",
   "ui.common.passwordHint": "Legalább {0} karakter",
+  "ui.common.rowsPerPage": "Sor oldalanként",
+  "ui.common.previousPage": "Előző oldal",
+  "ui.common.nextPage": "Következő oldal",
 
   "ui.nav.todo": "Teendők",
   "ui.nav.groups": "Csoportok",
@@ -255,7 +258,6 @@
   "ui.admin.audit.colDetail": "Részletek",
   "ui.admin.audit.systemActor": "a rendszer",
   "ui.admin.audit.targetUser": "felhasználó: {0}",
-  "ui.admin.audit.loadOlder": "Régebbiek betöltése",
   "ui.admin.audit.empty": "Nincs bejegyzés.",
   "ui.admin.audit.countAll.one": "{0} bejegyzés — ennyi van összesen.",
   "ui.admin.audit.countAll.other": "{0} bejegyzés — ennyi van összesen.",
