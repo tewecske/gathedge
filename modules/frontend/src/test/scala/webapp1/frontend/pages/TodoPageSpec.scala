@@ -3,6 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import webapp1.shared.i18n.UiKeys
 import zio.test._
 
 object TodoPageSpec extends ZIOSpecDefault {
@@ -18,7 +19,14 @@ object TodoPageSpec extends ZIOSpecDefault {
 
         val text          = container.textContent
         val hasAddInput   = container.querySelector("input") != null
-        val hasAllColumns = text.contains("To Do") && text.contains("In Progress") && text.contains("Done")
+        // Keys, not copy: no catalog is loaded under jsdom, so `I18n.t` renders the key itself.
+        // That is the stronger assertion anyway — it says the column asked for the right message,
+        // and `MessagesSpec` separately proves the key has real text behind it in both languages.
+        val hasAllColumns = {
+          text.contains(UiKeys.todoStatusToDo) &&
+          text.contains(UiKeys.todoStatusInProgress) &&
+          text.contains(UiKeys.todoStatusDone)
+        }
 
         rootNode.unmount()
         dom.document.body.removeChild(container)

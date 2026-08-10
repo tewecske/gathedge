@@ -1,22 +1,29 @@
 package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
+import webapp1.shared.i18n.UiKeys
 
 object ForbiddenPage {
   def render(): HtmlElement = {
     centeredMessage(
-      "Access denied",
-      "You're signed in, but this page requires administrator rights.",
+      I18n.t(UiKeys.forbiddenTitle),
+      I18n.t(UiKeys.forbiddenBody),
       Page.Home,
-      "Back home",
+      I18n.t(UiKeys.statusBackHome),
     )
   }
 }
 
 object NotFoundPage {
   def render(): HtmlElement = {
-    centeredMessage("Page not found", "That page doesn't exist.", Page.Home, "Back home")
+    centeredMessage(
+      I18n.t(UiKeys.notFoundTitle),
+      I18n.t(UiKeys.notFoundBody),
+      Page.Home,
+      I18n.t(UiKeys.statusBackHome),
+    )
   }
 }
 

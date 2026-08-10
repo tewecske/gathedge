@@ -2,11 +2,12 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{Alert, AppShell, GroupSubmenu}
+import webapp1.frontend.components.{Alert, AppShell, GroupSubmenu, Labels}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupMember, GroupRole}
 import webapp1.shared.dto.{InviteMemberRequest, UpdateRoleRequest}
 import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object GroupMembersPage {
@@ -49,10 +50,16 @@ private class GroupMembersPage(groupId: Long) {
 
   def render(): HtmlElement = {
     div(
-      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.GroupDetail(groupId)), "← Back to group")),
+      div(
+        cls := "mb-4",
+        a(cls := "link", AppRouter.router.navigateTo(Page.GroupDetail(groupId)), I18n.t(UiKeys.membersBackToGroup)),
+      ),
       h1(
-        cls   := "text-2xl font-bold mb-4",
-        text <-- groupSignal.map(_.map(g => s"${g.name} — Members").getOrElse("Members")).distinct,
+        cls := "text-2xl font-bold mb-4",
+        text <--
+          groupSignal
+            .map(_.map(g => I18n.t(UiKeys.membersTitleFor, g.name)).getOrElse(I18n.t(UiKeys.membersTitle)))
+            .distinct,
       ),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupMembers(groupId), g.myRole))),
       Alert.maybeError(errorSignal),
@@ -101,7 +108,7 @@ private class GroupMembersPage(groupId: Long) {
               inFlightVar    -> false,
               inviteEmailVar -> "",
               errorVar       -> None,
-              infoVar        -> Some(s"Invited ${request.email}"),
+              infoVar        -> Some(I18n.t(UiKeys.membersInvited, request.email)),
             )
           case (_, Left(err))      =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
@@ -140,7 +147,7 @@ private class GroupMembersPage(groupId: Long) {
   }
 
   private def renderForbidden(): HtmlElement = {
-    div(role := "alert", cls := "alert alert-error", span("Only group admins can manage members."))
+    div(role := "alert", cls := "alert alert-error", span(I18n.t(UiKeys.membersForbidden)))
   }
 
   private def renderMembersSection(): HtmlElement = {
@@ -152,7 +159,7 @@ private class GroupMembersPage(groupId: Long) {
           cls := "overflow-x-auto",
           table(
             cls := "table",
-            thead(tr(th("Email"), th("Role"), th(""))),
+            thead(tr(th(I18n.t(MessageKeys.fieldEmail)), th(I18n.t(UiKeys.membersColRole)), th(""))),
             tbody(
               children <--
                 membersSignal.splitSeq(_.userId) { memberSignal =>
@@ -174,7 +181,7 @@ private class GroupMembersPage(groupId: Long) {
         button(
           cls := "btn btn-ghost btn-xs",
           typ := "button",
-          "Remove",
+          I18n.t(UiKeys.commonRemove),
           onClick.mapToUnit --> Observer[Unit](_ => removeMemberBus.emit(userId)),
         )
       ),
@@ -184,7 +191,9 @@ private class GroupMembersPage(groupId: Long) {
   private def renderRoleSelect(userId: Long, memberSignal: Signal[GroupMember]): HtmlElement = {
     select(
       cls := "select select-sm",
-      GroupRole.all.map(role => option(value := role.toString, role.toString)),
+      // The `value` stays the enum's `toString`: it is what `controlled` round-trips and what the
+      // lookup below matches on. Only the label is worded.
+      GroupRole.all.map(role => option(value := role.toString, Labels.role(role))),
       controlled(
         value <-- memberSignal.map(_.role.toString).distinct,
         onChange.mapToValue -->
@@ -202,12 +211,12 @@ private class GroupMembersPage(groupId: Long) {
       input(
         cls         := "input flex-1",
         typ         := "email",
-        placeholder := "Email to invite",
+        placeholder := I18n.t(UiKeys.membersInvitePlaceholder),
         controlled(value <-- inviteEmailSignal, onInput.mapToValue --> inviteEmailVar.writer),
       ),
       select(
         cls         := "select",
-        GroupRole.all.map(role => option(value := role.toString, role.toString)),
+        GroupRole.all.map(role => option(value := role.toString, Labels.role(role))),
         controlled(
           value <-- inviteRoleSignal.map(_.toString).distinct,
           onChange.mapToValue -->
@@ -216,7 +225,7 @@ private class GroupMembersPage(groupId: Long) {
             },
         ),
       ),
-      button(cls    := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Invite"),
+      button(cls    := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.membersInvite)),
     )
   }
 

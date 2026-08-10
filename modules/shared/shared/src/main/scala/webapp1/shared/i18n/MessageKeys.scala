@@ -4,11 +4,12 @@ import scala.collection.mutable
 
 /** Every catalog key the *server* can put on the wire, as a constant.
   *
-  * The frontend's own copy keys are not here — those are written at the point they are rendered and are covered by the
-  * en/hu key-set comparison. What this object exists for is the other direction: a key minted by `ApiFailures`,
-  * `RouteSupport` or [[webapp1.shared.validation.Validation]] and then missing from the catalogs would degrade to the
-  * key itself showing up in the UI, and nothing would notice. `MessagesSpec` walks [[all]] and fails if any key is
-  * absent from either catalog, which is what makes the stringly-typed catalog safe to rely on.
+  * The frontend's own copy lives in the sibling [[UiKeys]], under the `ui.` prefix and with the same guarantee; the
+  * split is by who mints the message, not by who renders it. What both objects exist for is the direction the en/hu
+  * key-set comparison cannot see: a key minted by `ApiFailures`, `RouteSupport` or
+  * [[webapp1.shared.validation.Validation]] and then missing from the catalogs would degrade to the key itself showing
+  * up in the UI, and nothing would notice. `MessagesSpec` walks [[all]] and fails if any key is absent from either
+  * catalog, which is what makes the stringly-typed catalog safe to rely on.
   *
   * Keys are registered as they are declared rather than re-listed in [[all]] by hand, because a hand-maintained list is
   * exactly the thing that goes stale and takes the guarantee with it.

@@ -7,6 +7,8 @@ import webapp1.frontend.components.{AppShell, OAuthButtons, OAuthMessages}
 import webapp1.frontend.state.AppState
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{IdentitiesResponse, LinkedIdentity, SetPasswordRequest}
+import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.UiKeys
 import webapp1.shared.validation.Validation
 
 import OAuthProvider.display
@@ -70,7 +72,7 @@ private class SettingsPage {
   def render(): HtmlElement = {
     div(
       cls := "max-w-2xl mx-auto flex flex-col gap-6",
-      h1(cls := "text-2xl font-bold", "Account settings"),
+      h1(cls := "text-2xl font-bold", I18n.t(UiKeys.settingsTitle)),
       child.maybe <-- noticeVar.signal.map(_.map(renderNotice)),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderEmail(),
@@ -90,7 +92,7 @@ private class SettingsPage {
       unlinkBus.events.flatMapSwitch(ApiClient.unlinkIdentity) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            Var.set(errorVar -> None, noticeVar -> Some("Account unlinked."))
+            Var.set(errorVar -> None, noticeVar -> Some(I18n.t(UiKeys.settingsUnlinked)))
             reloadBus.emit(())
           case Left(err) =>
             Var.set(errorVar -> Some(err.message), noticeVar -> None)
@@ -103,7 +105,7 @@ private class SettingsPage {
               inFlightVar        -> false,
               currentPasswordVar -> "",
               newPasswordVar     -> "",
-              noticeVar          -> Some("Password saved."),
+              noticeVar          -> Some(I18n.t(UiKeys.settingsPasswordSaved)),
             )
             reloadBus.emit(())
           case Left(err) =>
@@ -117,7 +119,7 @@ private class SettingsPage {
         .flatMapSwitch(ApiClient.resendVerification) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            Var.set(errorVar -> None, noticeVar -> Some("Verification link sent — check your inbox."))
+            Var.set(errorVar -> None, noticeVar -> Some(I18n.t(UiKeys.settingsVerificationSent)))
           case Left(err) =>
             Var.set(errorVar -> Some(err.message), noticeVar -> None)
         },
@@ -132,7 +134,7 @@ private class SettingsPage {
       cls := "card bg-base-100 shadow",
       div(
         cls := "card-body",
-        h2(cls := "card-title text-lg", "Email address"),
+        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsEmailCard)),
         child.maybe <--
           emailStatusSignal.map(
             _.map { case (email, verified) =>
@@ -154,17 +156,22 @@ private class SettingsPage {
       cls := "flex items-center justify-between gap-4",
       span(email),
       if (verified)
-        span(cls := "badge badge-success", "Verified")
+        span(cls := "badge badge-success", I18n.t(UiKeys.settingsVerified))
       else
-        span(cls := "badge badge-warning", "Not verified"),
+        span(cls := "badge badge-warning", I18n.t(UiKeys.settingsNotVerified)),
     )
   }
 
   private def renderResend(): HtmlElement = {
     div(
       cls := "flex items-center justify-between gap-4 mt-2",
-      p(cls      := "text-sm opacity-70", "Click the link we emailed you, or send yourself a new one."),
-      button(cls := "btn btn-sm", typ := "button", onClick.mapToUnit --> resendBus.writer, "Resend verification email"),
+      p(cls := "text-sm opacity-70", I18n.t(UiKeys.settingsResendHint)),
+      button(
+        cls := "btn btn-sm",
+        typ := "button",
+        onClick.mapToUnit --> resendBus.writer,
+        I18n.t(UiKeys.verificationResendButton),
+      ),
     )
   }
 
@@ -173,11 +180,11 @@ private class SettingsPage {
       cls := "card bg-base-100 shadow",
       div(
         cls := "card-body",
-        h2(cls := "card-title text-lg", "Linked accounts"),
-        p(cls  := "text-sm opacity-70", "Sign in with any of these instead of your password."),
+        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsLinkedCard)),
+        p(cls  := "text-sm opacity-70", I18n.t(UiKeys.settingsLinkedHint)),
         child.maybe <--
           identitiesSignal.map(identities =>
-            Option.when(identities.isEmpty)(p(cls := "text-sm", "Nothing linked yet."))
+            Option.when(identities.isEmpty)(p(cls := "text-sm", I18n.t(UiKeys.settingsNothingLinked)))
           ),
         ul(
           cls  := "flex flex-col divide-y divide-base-300",
@@ -218,10 +225,12 @@ private class SettingsPage {
           typ := "button",
           disabled <-- isLastCredentialSignal,
           onClick.mapTo(provider) --> unlinkBus.writer,
-          "Unlink",
+          I18n.t(UiKeys.settingsUnlink),
         ),
         child.maybe <--
-          isLastCredentialSignal.map(Option.when(_)(span(cls := "text-xs opacity-70", "Set a password first"))),
+          isLastCredentialSignal.map(
+            Option.when(_)(span(cls := "text-xs opacity-70", I18n.t(UiKeys.settingsSetPasswordFirst)))
+          ),
       ),
     )
   }
@@ -244,7 +253,7 @@ private class SettingsPage {
             hasPasswordSignal.map(
               Option.when(_)(
                 div(
-                  label(cls := "fieldset-legend", "Current password"),
+                  label(cls := "fieldset-legend", I18n.t(UiKeys.settingsCurrentPassword)),
                   input(
                     cls     := "input w-full",
                     typ     := "password",
@@ -253,13 +262,13 @@ private class SettingsPage {
                 )
               )
             ),
-          label(cls := "fieldset-legend", "New password"),
+          label(cls := "fieldset-legend", I18n.t(UiKeys.settingsNewPassword)),
           input(
             cls     := "input w-full",
             typ     := "password",
             controlled(value <-- newPasswordVar.signal, onInput.mapToValue --> newPasswordVar.writer),
           ),
-          p(cls     := "label", s"At least ${Validation.minPasswordLength} characters"),
+          p(cls     := "label", I18n.t(UiKeys.commonPasswordHint, Validation.minPasswordLength)),
         ),
         div(
           cls  := "card-actions justify-end mt-4",
@@ -276,9 +285,9 @@ private class SettingsPage {
 
   private def passwordFormTitle(hasPassword: Boolean): String = {
     if (hasPassword)
-      "Change password"
+      I18n.t(UiKeys.settingsChangePassword)
     else
-      "Set a password"
+      I18n.t(UiKeys.settingsSetPassword)
   }
 
   private def submitPassword(): EventStream[Either[ApiError, Unit]] = {

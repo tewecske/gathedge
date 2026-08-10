@@ -2,12 +2,12 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.AppShell
+import webapp1.frontend.components.{AppShell, Labels}
 import webapp1.frontend.Page
 import webapp1.shared.domain.{TodoItem, TodoStatus}
 import webapp1.shared.dto.UpdateTodoStatusRequest
 import webapp1.frontend.i18n.I18n
-import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object TodoPage {
@@ -35,14 +35,14 @@ private class TodoPage {
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", "TODO"),
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.todoTitle)),
       child.maybe <-- errorSignal.map(_.map(renderError)),
       renderAddForm(),
       div(
         cls  := "grid grid-cols-1 md:grid-cols-3 gap-4 mt-4",
-        renderColumn("To Do", TodoStatus.ToDo),
-        renderColumn("In Progress", TodoStatus.InProgress),
-        renderColumn("Done", TodoStatus.Done),
+        renderColumn(TodoStatus.ToDo),
+        renderColumn(TodoStatus.InProgress),
+        renderColumn(TodoStatus.Done),
       ),
       loadBus.events.flatMapSwitch(_ => ApiClient.listTodos) -->
         Observer[Either[ApiError, List[TodoItem]]] {
@@ -95,19 +95,19 @@ private class TodoPage {
       onSubmit.preventDefault.mapToUnit --> addBus.writer,
       input(
         cls         := "input flex-1",
-        placeholder := "New to-do item",
+        placeholder := I18n.t(UiKeys.todoPlaceholder),
         controlled(value <-- textSignal, onInput.mapToValue --> textVar.writer),
       ),
-      button(cls    := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Add"),
+      button(cls    := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonAdd)),
     )
   }
 
-  private def renderColumn(title: String, status: TodoStatus): HtmlElement = {
+  private def renderColumn(status: TodoStatus): HtmlElement = {
     div(
       cls := "card bg-base-100 shadow",
       div(
         cls := "card-body",
-        h2(cls := "card-title", title),
+        h2(cls := "card-title", Labels.todoStatus(status)),
         ul(
           cls  := "list",
           children <--

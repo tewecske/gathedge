@@ -2,7 +2,7 @@ package webapp1.backend.i18n
 
 import webapp1.shared.domain.Locale
 import webapp1.shared.domain.Locale.code
-import webapp1.shared.i18n.{MessageCatalog, MessageKeys, MessageRef}
+import webapp1.shared.i18n.{MessageCatalog, MessageKeys, MessageRef, UiKeys}
 import zio.test.*
 
 /** What makes the stringly-typed catalog safe to build on.
@@ -62,6 +62,26 @@ object MessagesSpec extends ZIOSpecDefault {
           locale.code -> MessageKeys.all.filterNot(catalog.contains)
         }
         assertTrue(missing.forall(_._2.isEmpty)) ?? s"keys missing from a catalog: $missing"
+      },
+      // The same guarantee for the other half of the catalog: the page copy. Nothing on the JVM
+      // renders these, which is exactly why the check has to be here — the frontend has no test
+      // that loads a catalog, so without this a mistyped `ui.` key would reach a screen as itself.
+      test("every key a page renders exists in every catalog") {
+        val missing = catalogs.map { case (locale, catalog) =>
+          locale.code -> UiKeys.all.filterNot(catalog.contains)
+        }
+        assertTrue(missing.forall(_._2.isEmpty)) ?? s"UI keys missing from a catalog: $missing"
+      },
+      // The reverse, and only for the `ui.` namespace: a key the catalogs carry that no constant
+      // claims is copy nothing renders any more, and it would otherwise sit there being translated.
+      // `MessageKeys` gets no such check — the server's half is also read by `curl` and the OpenAPI
+      // examples, so an unreferenced key there is not necessarily dead.
+      test("no ui. key in the catalogs is unregistered") {
+        val known   = UiKeys.all
+        val orphans = catalogs(Locale.default).entries.keySet
+          .filter(_.startsWith("ui."))
+          .filterNot(known)
+        assertTrue(orphans.isEmpty) ?? s"catalog keys no UiKeys constant registers: $orphans"
       },
       // A translation that drops or invents a placeholder renders either a stray `{1}` or silently
       // loses the number/name the sentence was about.

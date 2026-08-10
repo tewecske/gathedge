@@ -1,7 +1,9 @@
 package webapp1.frontend.components
 
 import com.raquo.laminar.api.L._
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
+import webapp1.shared.i18n.UiKeys
 import webapp1.shared.domain.GroupRole
 
 /** Sub-navigation shown on group-scoped pages (overview / members). The "Members" tab (and the page it links to) is
@@ -10,9 +12,9 @@ import webapp1.shared.domain.GroupRole
 object GroupSubmenu {
   def render(groupId: Long, active: Page, myRole: GroupRole): HtmlElement = {
     val tabs = {
-      List(tabLink(Page.GroupDetail(groupId), active, "Overview")) ++ (
+      List(tabLink(Page.GroupDetail(groupId), active, I18n.t(UiKeys.navGroupOverview))) ++ (
         if (myRole.isAdmin)
-          List(tabLink(Page.GroupMembers(groupId), active, "Members"))
+          List(tabLink(Page.GroupMembers(groupId), active, I18n.t(UiKeys.navGroupMembers)))
         else
           Nil
       )

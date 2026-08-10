@@ -3,7 +3,7 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
-import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import zio.test._
 
 object GroupsPageSpec extends ZIOSpecDefault {
@@ -20,7 +20,7 @@ object GroupsPageSpec extends ZIOSpecDefault {
         dom.document.body.appendChild(container)
         val rootNode  = L.render(container, GroupsPage.render())
 
-        val hasHeading = container.textContent.contains("Groups")
+        val hasHeading = container.textContent.contains(UiKeys.groupsTitle)
         val hasInput   = container.querySelector("input") != null
         val hasButton  = container.querySelector("button") != null
 

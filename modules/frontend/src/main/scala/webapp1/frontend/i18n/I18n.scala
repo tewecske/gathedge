@@ -68,6 +68,14 @@ object I18n {
     catalog(key, args.map(_.toString)*)
   }
 
+  /** Looks up `key` without warning when it is absent.
+    *
+    * For the one shape where a miss is expected rather than a bug: a label derived from a stored code (a
+    * `login_attempts.outcome`, an `audit_log.action`) that a newer build may have written and this catalog has never
+    * heard of. Everything else should go through [[t]], whose warning is the safety net.
+    */
+  def get(key: String): Option[String] = catalog.get(key)
+
   /** A count-sensitive message; see `MessageCatalog.plural` for why the choice is per-language. */
   def plural(baseKey: String, count: Long, args: Any*): String = {
     catalog.plural(baseKey, count, args.map(_.toString)*)

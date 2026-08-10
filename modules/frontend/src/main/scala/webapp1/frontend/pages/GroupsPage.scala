@@ -2,12 +2,12 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
-import webapp1.frontend.components.{AppShell, FormField}
+import webapp1.frontend.components.{AppShell, FormField, Labels}
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.Group
 import webapp1.shared.dto.CreateGroupRequest
 import webapp1.frontend.i18n.I18n
-import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object GroupsPage {
@@ -55,7 +55,7 @@ private class GroupsPage {
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", "Groups"),
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.groupsTitle)),
       child.maybe <-- errorSignal.map(_.map(renderError)),
       renderCreateForm(),
       div(
@@ -110,11 +110,11 @@ private class GroupsPage {
         input(
           cls         := "input w-full",
           cls("input-error") <-- nameErrorSignal.map(_.nonEmpty),
-          placeholder := "New group name",
+          placeholder := I18n.t(UiKeys.groupsPlaceholder),
           controlled(value <-- nameVar.signal, onInput.mapToValue --> nameVar.writer),
         ),
       ),
-      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Create group"),
+      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.groupsCreate)),
     )
   }
 
@@ -126,7 +126,7 @@ private class GroupsPage {
         AppRouter.router.navigateTo(Page.GroupDetail(id)),
         text <-- groupSignal.map(_.name).distinct,
       ),
-      span(cls := "badge badge-ghost", text <-- groupSignal.map(_.myRole.toString).distinct),
+      span(cls := "badge badge-ghost", text <-- groupSignal.map(group => Labels.role(group.myRole)).distinct),
     )
   }
 

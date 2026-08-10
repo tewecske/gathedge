@@ -8,7 +8,7 @@ import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.UpdateUserRequest
 import webapp1.frontend.i18n.I18n
-import webapp1.shared.i18n.MessageRef
+import webapp1.shared.i18n.{MessageKeys, MessageRef, UiKeys}
 import webapp1.shared.validation.Validation
 
 object AdminUserDetailPage {
@@ -95,7 +95,7 @@ private class AdminUserDetailPage(userId: Long) {
   def render(): HtmlElement = {
     div(
       AdminSubmenu.render(Page.AdminUserDetail(userId)),
-      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin), "← Back to users")),
+      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin), I18n.t(UiKeys.adminUserBack))),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(infoSignal),
       child.maybe <-- notFoundSignal.map(Option.when(_)(renderNotFound())),
@@ -141,7 +141,7 @@ private class AdminUserDetailPage(userId: Long) {
               userVar     -> Some(u),
               passwordVar -> "",
               errorVar    -> None,
-              infoVar     -> Some("Saved"),
+              infoVar     -> Some(I18n.t(UiKeys.adminUserSaved)),
             )
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message), infoVar -> None)
@@ -164,7 +164,7 @@ private class AdminUserDetailPage(userId: Long) {
   }
 
   private def renderNotFound(): HtmlElement = {
-    Alert.warning("This user no longer exists.")
+    Alert.warning(I18n.t(UiKeys.adminUserGone))
   }
 
   private def renderForm(): HtmlElement = {
@@ -177,7 +177,7 @@ private class AdminUserDetailPage(userId: Long) {
         cls := "card-body",
         fieldSet(
           cls := "fieldset",
-          legend(cls := "fieldset-legend", "Email"),
+          legend(cls := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
           FormField.render(emailErrorSignal)(
             input(
               cls := "input w-full",
@@ -186,13 +186,13 @@ private class AdminUserDetailPage(userId: Long) {
               controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
             )
           ),
-          legend(cls := "fieldset-legend", "New password"),
+          legend(cls := "fieldset-legend", I18n.t(UiKeys.settingsNewPassword)),
           FormField.render(passwordErrorSignal)(
             input(
               cls         := "input w-full",
               cls("input-error") <-- passwordErrorSignal.map(_.nonEmpty),
               typ         := "password",
-              placeholder := "Leave blank to keep the current password",
+              placeholder := I18n.t(UiKeys.adminUserPasswordPlaceholder),
               controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
             )
           ),
@@ -203,7 +203,7 @@ private class AdminUserDetailPage(userId: Long) {
               cls := "checkbox",
               controlled(checked <-- isAdminVar.signal, onClick.mapToChecked --> isAdminVar.writer),
             ),
-            "Administrator",
+            I18n.t(UiKeys.commonAdministrator),
           ),
         ),
         div(
@@ -212,14 +212,14 @@ private class AdminUserDetailPage(userId: Long) {
             cls      := "btn btn-error btn-outline",
             typ      := "button",
             disabled <-- inFlightSignal,
-            "Delete user",
+            I18n.t(UiKeys.adminUserDelete),
             onClick.mapToUnit -->
               Observer[Unit] { _ =>
-                if (dom.window.confirm("Delete this user? This cannot be undone."))
+                if (dom.window.confirm(I18n.t(UiKeys.adminUserDeleteConfirm)))
                   deleteBus.emit(())
               },
           ),
-          button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Save"),
+          button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSave)),
         ),
       ),
     )

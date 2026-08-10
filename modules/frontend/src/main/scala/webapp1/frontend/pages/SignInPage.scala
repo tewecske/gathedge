@@ -3,10 +3,12 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.components.{LanguagePicker, OAuthButtons, OAuthMessages}
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{AuthResponse, LoginRequest, ProvidersResponse}
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 
 object SignInPage {
   def render(): HtmlElement = new SignInPage().render()
@@ -26,7 +28,7 @@ private class SignInPage {
 
   /** Seeded the same way from `?verified=1`, which is where [[VerifyEmailPage]] sends a freshly verified account. */
   private val noticeVar: Var[Option[String]] = {
-    Var(OAuthMessages.queryParam("verified").map(_ => "Your email address is verified. Sign in to continue."))
+    Var(OAuthMessages.queryParam("verified").map(_ => I18n.t(UiKeys.signInVerified)))
   }
   private val noticeSignal                   = noticeVar.signal
 
@@ -42,7 +44,7 @@ private class SignInPage {
   private val hasProvidersSignal                     = providersSignal.map(_.nonEmpty).distinct
 
   private lazy val socialBlock: HtmlElement = {
-    div(div(cls := "divider text-xs", "or"), OAuthButtons.render(providersSignal))
+    div(div(cls := "divider text-xs", I18n.t(UiKeys.commonOr)), OAuthButtons.render(providersSignal))
   }
 
   private val submitBus = new EventBus[Unit]()
@@ -63,20 +65,20 @@ private class SignInPage {
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",
-          h1(cls := "card-title", "Sign in"),
+          h1(cls := "card-title", I18n.t(UiKeys.commonSignIn)),
           child.maybe <-- noticeSignal.map(_.map(renderNotice)),
           child.maybe <-- errorSignal.map(_.map(renderError)),
           child.maybe <-- canResendVar.signal.map(Option.when(_)(resendBlock)),
           fieldSet(
             cls  := "fieldset",
-            legend(cls    := "fieldset-legend", "Email"),
+            legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
             input(
               cls         := "input w-full",
               typ         := "email",
               placeholder := "you@example.com",
               controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
             ),
-            legend(cls    := "fieldset-legend", "Password"),
+            legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldPassword)),
             input(
               cls         := "input w-full",
               typ         := "password",
@@ -85,15 +87,15 @@ private class SignInPage {
           ),
           div(
             cls  := "card-actions justify-end mt-4",
-            button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Sign in"),
+            button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignIn)),
           ),
           // Hidden entirely when no provider is configured, rather than leaving a stray divider
           // above nothing. Built once and shown or hidden, not rebuilt per signal change.
           child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           p(
             cls  := "text-sm mt-2",
-            "No account? ",
-            a(cls := "link", AppRouter.router.navigateTo(Page.SignUp), "Sign up"),
+            I18n.t(UiKeys.signInNoAccount),
+            a(cls := "link", AppRouter.router.navigateTo(Page.SignUp), I18n.t(UiKeys.commonSignUp)),
           ),
         ),
       ),
@@ -131,7 +133,7 @@ private class SignInPage {
             Var.set(
               canResendVar -> false,
               errorVar     -> None,
-              noticeVar    -> Some("If that address needs verifying, a new link is on its way."),
+              noticeVar    -> Some(I18n.t(UiKeys.verificationResent)),
             )
           case Left(err) =>
             errorVar.set(Some(err.message))
@@ -149,7 +151,7 @@ private class SignInPage {
         cls := "btn btn-outline btn-sm w-full",
         typ := "button",
         onClick.mapToUnit --> resendBus.writer,
-        "Resend verification email",
+        I18n.t(UiKeys.verificationResendButton),
       ),
     )
   }

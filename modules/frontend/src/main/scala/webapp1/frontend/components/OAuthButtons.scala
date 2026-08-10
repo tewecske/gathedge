@@ -3,7 +3,9 @@ package webapp1.frontend.components
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.ApiClient
+import webapp1.frontend.i18n.I18n
 import webapp1.shared.domain.OAuthProvider
+import webapp1.shared.i18n.UiKeys
 
 import OAuthProvider.display
 
@@ -26,9 +28,9 @@ object OAuthButtons {
   private def button(provider: OAuthProvider, link: Boolean): HtmlElement = {
     val label = {
       if (link)
-        s"Link ${provider.display}"
+        I18n.t(UiKeys.oauthLink, provider.display)
       else
-        s"Continue with ${provider.display}"
+        I18n.t(UiKeys.oauthContinueWith, provider.display)
     }
     a(cls := "btn btn-outline w-full", href := ApiClient.oauthStartUrl(provider, link), label)
   }
@@ -52,22 +54,24 @@ object OAuthMessages {
   def errorMessage(code: String): String = {
     code match {
       case "account_exists"                   =>
-        "An account with this email already exists. Sign in with your password, then link the provider from Settings."
+        I18n.t(UiKeys.oauthErrorAccountExists)
       case "already_linked"                   =>
-        "That account is already linked — to this login or to another one."
+        I18n.t(UiKeys.oauthErrorAlreadyLinked)
       case "link_requires_session"            =>
-        "Your session expired before the link completed. Sign in again and retry."
+        I18n.t(UiKeys.oauthErrorLinkRequiresSession)
       case "state_mismatch" | "missing_state" =>
-        "That sign-in attempt could not be verified. Please start again."
+        I18n.t(UiKeys.oauthErrorStateMismatch)
       case "missing_code" | "failed"          =>
-        "Sign-in failed. Please try again."
+        I18n.t(UiKeys.oauthErrorFailed)
       case _                                  =>
-        "Sign-in failed. Please try again."
+        I18n.t(UiKeys.oauthErrorFailed)
     }
   }
 
   def linkedMessage(providerWireName: String): String = {
-    val name = OAuthProvider.fromString(providerWireName).map(_.display).getOrElse("That account")
-    s"$name is now linked to your account."
+    val name = {
+      OAuthProvider.fromString(providerWireName).map(_.display).getOrElse(I18n.t(UiKeys.oauthLinkedFallback))
+    }
+    I18n.t(UiKeys.oauthLinked, name)
   }
 }

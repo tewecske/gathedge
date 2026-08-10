@@ -3,8 +3,10 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{AdminApiClient, ApiError}
-import webapp1.frontend.components.{Alert, Formats}
+import webapp1.frontend.components.{Alert, Formats, Labels}
+import webapp1.frontend.i18n.I18n
 import webapp1.shared.domain.OAuthProvider
+import webapp1.shared.i18n.UiKeys
 import webapp1.shared.dto.{
   AdminIdentityInfo,
   AdminSessionInfo,
@@ -86,23 +88,23 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
         },
       verifyBus.events.filterWith(inFlightSignal.not) --> started,
       verifyBus.events.filterWith(inFlightSignal.not).flatMapSwitch(_ => AdminApiClient.verifyUserEmail(userId)) -->
-        completed("Email address confirmed.", accountChanged = true),
+        completed(I18n.t(UiKeys.adminDiagEmailConfirmed), accountChanged = true),
       resendBus.events.filterWith(inFlightSignal.not) --> started,
       resendBus.events
         .filterWith(inFlightSignal.not)
         .flatMapSwitch(_ => AdminApiClient.resendUserVerification(userId)) -->
-        completed("Confirmation link sent.", accountChanged = false),
+        completed(I18n.t(UiKeys.adminDiagLinkSent), accountChanged = false),
       revokeBus.events.filterWith(inFlightSignal.not) --> started,
       revokeBus.events.filterWith(inFlightSignal.not).flatMapSwitch(_ => AdminApiClient.revokeUserSessions(userId)) -->
-        completed("Signed the user out everywhere.", accountChanged = false),
+        completed(I18n.t(UiKeys.adminDiagSignedOut), accountChanged = false),
       lockoutBus.events.filterWith(inFlightSignal.not) --> started,
       lockoutBus.events.filterWith(inFlightSignal.not).flatMapSwitch(_ => AdminApiClient.clearUserLockout(userId)) -->
-        completed("Sign-in lockout cleared.", accountChanged = false),
+        completed(I18n.t(UiKeys.adminDiagLockoutCleared), accountChanged = false),
       unlinkBus.events.filterWith(inFlightSignal.not) --> started,
       unlinkBus.events
         .filterWith(inFlightSignal.not)
         .flatMapSwitch(provider => AdminApiClient.unlinkUserIdentity(userId, provider)) -->
-        completed("Social account detached.", accountChanged = true),
+        completed(I18n.t(UiKeys.adminDiagDetached), accountChanged = true),
       onMountCallback(_ => loadBus.emit(())),
     )
   }
@@ -127,14 +129,14 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
 
   private def renderVerificationCard(detail: AdminUserDetail): HtmlElement = {
     card(
-      "Email confirmation",
+      I18n.t(UiKeys.adminDiagVerificationCard),
       p(
         cls := "text-sm",
         detail.emailVerifiedAt match {
           case Some(at) =>
-            s"Confirmed on ${Formats.dateTime(at)}."
+            I18n.t(UiKeys.adminDiagConfirmedOn, Formats.dateTime(at))
           case None     =>
-            "This address has never been confirmed."
+            I18n.t(UiKeys.adminDiagNeverConfirmed)
         },
       ),
       renderTokens(detail.verificationTokens),
@@ -143,10 +145,10 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
         // Only offered while it would do something; confirming an already-confirmed address is a no-op server-side
         // too, but a button that does nothing is a button that gets clicked to find out.
         if (detail.emailVerifiedAt.isEmpty)
-          actionButton("Mark confirmed", "btn-primary", None, verifyBus)
+          actionButton(I18n.t(UiKeys.adminDiagMarkConfirmed), "btn-primary", None, verifyBus)
         else
           emptyNode,
-        actionButton("Send a confirmation link", "btn-outline", None, resendBus),
+        actionButton(I18n.t(UiKeys.adminDiagSendLink), "btn-outline", None, resendBus),
       ),
     )
   }
@@ -154,29 +156,29 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
   private def renderTokens(tokens: List[AdminVerificationTokenInfo]): HtmlElement = {
     tokens.headOption match {
       case None        =>
-        p(cls := "text-sm opacity-60", "No confirmation link has been issued.")
+        p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminDiagNoToken))
       case Some(token) =>
         val state = {
           if (token.consumed)
-            "already used"
+            I18n.t(UiKeys.adminDiagTokenUsed)
           else if (token.expired)
-            "expired"
+            I18n.t(UiKeys.adminDiagTokenExpired)
           else
-            s"valid until ${Formats.dateTime(token.expiresAt)}"
+            I18n.t(UiKeys.adminDiagTokenValid, Formats.dateTime(token.expiresAt))
         }
-        p(cls := "text-sm opacity-60", s"Last link issued ${Formats.dateTime(token.createdAt)} — $state.")
+        p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminDiagLastToken, Formats.dateTime(token.createdAt), state))
     }
   }
 
   private def renderSecurityCard(detail: AdminUserDetail): HtmlElement = {
     card(
-      "Sign-in security",
+      I18n.t(UiKeys.adminDiagSecurityCard),
       renderLockout(detail.lockout),
       renderAttempts(detail.recentLoginAttempts),
       div(
         cls := "card-actions mt-2",
         if (detail.lockout.blocked)
-          actionButton("Clear lockout", "btn-primary", None, lockoutBus)
+          actionButton(I18n.t(UiKeys.adminDiagClearLockout), "btn-primary", None, lockoutBus)
         else
           emptyNode,
       ),
@@ -186,33 +188,39 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
   private def renderLockout(lockout: LockoutStatus): HtmlElement = {
     if (lockout.blocked) {
       Alert.error(
-        s"Locked out: ${lockout.attempts} of ${lockout.maxAttempts} failed attempts in the last " +
-          s"${lockout.windowMinutes} minutes. Unblocks itself in ${Formats.minutes(lockout.retryAfterMillis)}."
+        I18n.t(
+          UiKeys.adminDiagLockedOut,
+          lockout.attempts,
+          lockout.maxAttempts,
+          lockout.windowMinutes,
+          Formats.minutes(lockout.retryAfterMillis),
+        )
       )
     } else {
       p(
         cls := "text-sm",
-        s"Not locked out — ${lockout.attempts} of ${lockout.maxAttempts} failed attempts in the last " +
-          s"${lockout.windowMinutes} minutes.",
+        I18n.t(UiKeys.adminDiagNotLockedOut, lockout.attempts, lockout.maxAttempts, lockout.windowMinutes),
       )
     }
   }
 
   private def renderAttempts(attempts: List[LoginAttemptEntry]): HtmlElement = {
     if (attempts.isEmpty) {
-      p(cls := "text-sm opacity-60", "No recorded sign-in attempts.")
+      p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminDiagNoAttempts))
     } else {
       div(
         cls := "overflow-x-auto mt-2",
         table(
           cls := "table table-sm",
-          thead(tr(th("When"), th("Outcome"), th("From"))),
+          thead(
+            tr(th(I18n.t(UiKeys.commonWhen)), th(I18n.t(UiKeys.adminDiagColOutcome)), th(I18n.t(UiKeys.commonFrom)))
+          ),
           tbody(
             attempts.map { attempt =>
               tr(
                 td(Formats.dateTime(attempt.occurredAt)),
                 td(renderOutcome(attempt.outcome)),
-                td(cls := "font-mono text-xs", attempt.ip.getOrElse("—")),
+                td(cls := "font-mono text-xs", attempt.ip.getOrElse(I18n.t(UiKeys.commonNone))),
               )
             }
           ),
@@ -230,24 +238,24 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
       else
         "badge-warning badge-soft"
     }
-    span(cls := s"badge $style", LoginOutcome.display(outcome))
+    span(cls := s"badge $style", Labels.loginOutcome(outcome))
   }
 
   private def renderSessionsCard(detail: AdminUserDetail): HtmlElement = {
     card(
-      "Sessions",
+      I18n.t(UiKeys.adminDiagSessionsCard),
       p(
         cls := "text-sm",
-        s"${detail.activeSessions} active session(s), ${detail.sessions.size} recorded in total.",
+        I18n.plural(UiKeys.adminDiagSessionsCount, detail.activeSessions.toLong, detail.sessions.size),
       ),
       renderSessions(detail.sessions.filter(_.active)),
       div(
         cls := "card-actions mt-2",
         if (detail.activeSessions > 0) {
           actionButton(
-            "Sign out everywhere",
+            I18n.t(UiKeys.adminDiagSignOutEverywhere),
             "btn-error btn-outline",
-            Some("End every session this user holds? They will have to sign in again."),
+            Some(I18n.t(UiKeys.adminDiagSignOutConfirm)),
             revokeBus,
           )
         } else
@@ -258,7 +266,7 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
 
   private def renderSessions(sessions: List[AdminSessionInfo]): HtmlElement = {
     if (sessions.isEmpty) {
-      p(cls := "text-sm opacity-60", "No active sessions.")
+      p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminDiagNoSessions))
     } else {
       div(
         cls := "overflow-x-auto mt-2",
@@ -266,7 +274,7 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
           cls := "table table-sm",
           // No session identifier of any kind: the sessions table's primary key *is* the bearer token, so there is
           // nothing safe to show. This is also why there is no per-session revoke button.
-          thead(tr(th("Signed in"), th("Expires"))),
+          thead(tr(th(I18n.t(UiKeys.adminDiagColSignedIn)), th(I18n.t(UiKeys.adminDiagColExpires)))),
           tbody(
             sessions.map { session =>
               tr(td(Formats.dateTime(session.createdAt)), td(Formats.dateTime(session.expiresAt)))
@@ -279,24 +287,31 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
 
   private def renderIdentitiesCard(detail: AdminUserDetail): HtmlElement = {
     card(
-      "Linked social accounts",
+      I18n.t(UiKeys.adminDiagIdentitiesCard),
       if (detail.identities.isEmpty)
-        p(cls := "text-sm opacity-60", "None linked.")
+        p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminDiagNoneLinked))
       else
         div(
           cls := "overflow-x-auto",
           table(
             cls := "table table-sm",
-            thead(tr(th("Provider"), th("Reported address"), th("Linked"), th())),
+            thead(
+              tr(
+                th(I18n.t(UiKeys.adminDiagColProvider)),
+                th(I18n.t(UiKeys.adminDiagColReportedAddress)),
+                th(I18n.t(UiKeys.adminDiagColLinked)),
+                th(),
+              )
+            ),
             tbody(detail.identities.map(renderIdentity)),
           ),
         ),
       p(
         cls := "text-sm opacity-60 mt-2",
         if (detail.hasPassword)
-          "This account also has a password."
+          I18n.t(UiKeys.adminDiagHasPassword)
         else
-          "This account has no password, so its last linked provider cannot be detached.",
+          I18n.t(UiKeys.adminDiagNoPassword),
       ),
     )
   }
@@ -304,21 +319,20 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
   private def renderIdentity(identity: AdminIdentityInfo): HtmlElement = {
     tr(
       td(OAuthProvider.displayName(identity.provider)),
-      td(identity.email.getOrElse("—")),
+      td(identity.email.getOrElse(I18n.t(UiKeys.commonNone))),
       td(Formats.dateTime(identity.createdAt)),
       td(
         button(
           cls := "btn btn-xs btn-error btn-outline",
           typ := "button",
           disabled <-- inFlightSignal,
-          "Detach",
+          I18n.t(UiKeys.adminDiagDetach),
           onClick.mapToUnit -->
             Observer[Unit] { _ =>
               // The server refuses to remove an account's last credential (409); this only asks first.
               if (
                 dom.window.confirm(
-                  s"Detach the ${OAuthProvider.displayName(identity.provider)} account? " +
-                    "The user will no longer be able to sign in with it."
+                  I18n.t(UiKeys.adminDiagDetachConfirm, OAuthProvider.displayName(identity.provider))
                 )
               )
                 unlinkBus.emit(identity.provider)

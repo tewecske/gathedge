@@ -8,7 +8,7 @@ import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.{Group, GroupPair}
 import webapp1.shared.dto.CreatePairRequest
 import webapp1.frontend.i18n.I18n
-import webapp1.shared.i18n.MessageKeys
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object GroupDetailPage {
@@ -71,8 +71,11 @@ private class GroupDetailPage(groupId: Long) {
 
   def render(): HtmlElement = {
     div(
-      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), "← Back to groups")),
-      h1(cls  := "text-2xl font-bold mb-4", text <-- groupSignal.map(_.map(_.name).getOrElse("Group")).distinct),
+      div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Groups), I18n.t(UiKeys.groupBackToGroups))),
+      h1(
+        cls   := "text-2xl font-bold mb-4",
+        text <-- groupSignal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.groupFallbackName))).distinct,
+      ),
       child.maybe <-- groupSignal.map(_.map(g => GroupSubmenu.render(groupId, Page.GroupDetail(groupId), g.myRole))),
       Alert.maybeError(errorSignal),
       child.maybe <-- groupSignal.map(_.filter(_.myRole.canWrite).map(_ => renderAddPairForm())),
@@ -136,7 +139,7 @@ private class GroupDetailPage(groupId: Long) {
         input(
           cls         := "input w-full",
           cls("input-error") <-- sourceErrorSignal.map(_.nonEmpty),
-          placeholder := "Source",
+          placeholder := I18n.t(MessageKeys.fieldSource),
           controlled(value <-- sourceVar.signal, onInput.mapToValue --> sourceVar.writer),
         ),
       ),
@@ -145,11 +148,11 @@ private class GroupDetailPage(groupId: Long) {
         input(
           cls         := "input w-full",
           cls("input-error") <-- targetErrorSignal.map(_.nonEmpty),
-          placeholder := "Target",
+          placeholder := I18n.t(MessageKeys.fieldTarget),
           controlled(value <-- targetVar.signal, onInput.mapToValue --> targetVar.writer),
         ),
       ),
-      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Add"),
+      button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonAdd)),
     )
   }
 
@@ -158,7 +161,13 @@ private class GroupDetailPage(groupId: Long) {
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
         cls := "table",
-        thead(tr(th("Source"), th("Target"), th("Added by"))),
+        thead(
+          tr(
+            th(I18n.t(MessageKeys.fieldSource)),
+            th(I18n.t(MessageKeys.fieldTarget)),
+            th(I18n.t(UiKeys.groupPairAddedBy)),
+          )
+        ),
         tbody(
           children <--
             pairsSignal.splitSeq(_.id) { pairSignal =>
@@ -184,10 +193,10 @@ private class GroupDetailPage(groupId: Long) {
         cls := "btn btn-error btn-outline btn-sm",
         typ := "button",
         disabled <-- inFlightSignal,
-        "Delete group",
+        I18n.t(UiKeys.groupDelete),
         onClick.mapToUnit -->
           Observer[Unit] { _ =>
-            if (dom.window.confirm("Delete this group? This cannot be undone."))
+            if (dom.window.confirm(I18n.t(UiKeys.groupDeleteConfirm)))
               deleteGroupBus.emit(())
           },
       ),

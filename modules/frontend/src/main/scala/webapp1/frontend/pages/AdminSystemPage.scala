@@ -4,9 +4,11 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{AdminApiClient, ApiError}
 import webapp1.frontend.components.{AdminSubmenu, Alert, AppShell, Formats}
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.Page
 import webapp1.shared.domain.OAuthProvider
-import webapp1.shared.dto.{ConfigSummary, DbStats, JobStatus, RuntimeInfo, SystemOverview}
+import webapp1.shared.dto.{ConfigSummary, DbStats, JobStatus, PruneResult, RuntimeInfo, SystemOverview}
+import webapp1.shared.i18n.UiKeys
 
 /** What this deployment is configured to do, what it is currently doing, and how much it is holding.
   *
@@ -34,11 +36,11 @@ private class AdminSystemPage {
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", "System overview"),
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminSystemTitle)),
       AdminSubmenu.render(Page.AdminSystem),
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(infoVar.signal),
-      child.maybe <-- overviewSignal.map(_.map(_.config).map(renderIssues)),
+      child.maybe <-- overviewSignal.map(_.map(_.config).flatMap(renderIssues)),
       div(
         cls  := "grid gap-4 lg:grid-cols-3",
         child.maybe <-- overviewSignal.map(_.map(overview => renderConfig(overview.config))),
@@ -55,16 +57,12 @@ private class AdminSystemPage {
         },
       pruneBus.events.filterWith(inFlightSignal.not) --> Observer[Unit](_ => started()),
       pruneBus.events.filterWith(inFlightSignal.not).flatMapSwitch(_ => AdminApiClient.systemPrune) -->
-        Observer[Either[ApiError, webapp1.shared.dto.PruneResult]] {
+        Observer[Either[ApiError, PruneResult]] {
           case Right(result) =>
             Var.set(
               inFlightVar -> false,
               errorVar    -> None,
-              infoVar     -> Some(
-                s"Removed ${result.sessions} session(s), ${result.verificationTokens} confirmation link(s), " +
-                  s"${result.loginAttempts} sign-in attempt record(s) and " +
-                  s"${result.rateLimitKeys} stale rate-limit key(s)."
-              ),
+              infoVar     -> Some(pruneMessage(result)),
             )
             loadBus.emit(())
           case Left(err)     =>
@@ -76,12 +74,26 @@ private class AdminSystemPage {
         .flatMapSwitch(_ => AdminApiClient.clearRateLimits(None)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            Var.set(inFlightVar -> false, errorVar -> None, infoVar -> Some("Every rate-limit lock was cleared."))
+            Var.set(inFlightVar -> false, errorVar -> None, infoVar -> Some(I18n.t(UiKeys.adminSystemLocksCleared)))
             loadBus.emit(())
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message), infoVar -> None)
         },
       onMountCallback(_ => loadBus.emit(())),
+    )
+  }
+
+  /** The four counts are pluralised one at a time and spliced into a frame, rather than written as a single sentence
+    * with four numbers in it: only English needs the plural forms, and building it this way also keeps the Hungarian
+    * frame clear of the definite article that no placeholder can carry.
+    */
+  private def pruneMessage(result: PruneResult): String = {
+    I18n.t(
+      UiKeys.adminSystemPruneDone,
+      I18n.plural(UiKeys.adminSystemPruneSessions, result.sessions.toLong),
+      I18n.plural(UiKeys.adminSystemPruneTokens, result.verificationTokens.toLong),
+      I18n.plural(UiKeys.adminSystemPruneAttempts, result.loginAttempts.toLong),
+      I18n.plural(UiKeys.adminSystemPruneKeys, result.rateLimitKeys.toLong),
     )
   }
 
@@ -109,96 +121,115 @@ private class AdminSystemPage {
 
   private def yesNo(value: Boolean): String = {
     if (value)
-      "yes"
+      I18n.t(UiKeys.commonYes)
     else
-      "no"
+      I18n.t(UiKeys.commonNo)
   }
 
   /** `AppConfig.productionIssues` is empty unless the deployment is in production *and* misconfigured, in which case
     * the process refuses to boot — so this banner is unreachable on a running server today. It is here because the
     * check is the one piece of configuration whose whole point is to be read, and a future issue that only warns would
     * otherwise appear nowhere.
+    *
+    * Answers `Option`, not an `emptyNode` cast: `emptyNode` is a `CommentNode`, so `asInstanceOf[HtmlElement]` threw a
+    * `ClassCastException` on every load — and because the three cards below read the same signal, that one exception
+    * aborted the Airstream transaction and left them unrendered too.
     */
-  private def renderIssues(config: ConfigSummary): HtmlElement = {
+  private def renderIssues(config: ConfigSummary): Option[HtmlElement] = {
     if (config.productionIssues.isEmpty)
-      emptyNode.asInstanceOf[HtmlElement]
+      None
     else {
-      div(
-        role := "alert",
-        cls  := "alert alert-error mb-4 flex-col items-start",
-        span(cls := "font-semibold", "This configuration is unsafe for production:"),
-        ul(cls   := "list-disc ml-6", config.productionIssues.map(issue => li(issue))),
+      Some(
+        div(
+          role := "alert",
+          cls  := "alert alert-error mb-4 flex-col items-start",
+          span(cls := "font-semibold", I18n.t(UiKeys.adminSystemUnsafeConfig)),
+          ul(cls   := "list-disc ml-6", config.productionIssues.map(issue => li(issue))),
+        )
       )
     }
   }
 
   private def renderConfig(config: ConfigSummary): HtmlElement = {
     card(
-      "Configuration",
-      row("Environment", config.env),
-      row("Public base URL", config.publicBaseUrl),
-      row("Listening on", s"${config.serverHost}:${config.serverPort}"),
-      row("Email confirmation required", yesNo(config.requireEmailVerification)),
+      I18n.t(UiKeys.adminSystemConfigCard),
+      row(I18n.t(UiKeys.adminSystemConfigEnv), config.env),
+      row(I18n.t(UiKeys.adminSystemConfigBaseUrl), config.publicBaseUrl),
+      row(I18n.t(UiKeys.adminSystemConfigListening), s"${config.serverHost}:${config.serverPort}"),
+      row(I18n.t(UiKeys.adminSystemConfigRequireVerify), yesNo(config.requireEmailVerification)),
       row(
-        "Secure session cookie",
+        I18n.t(UiKeys.adminSystemConfigSecureCookie),
         yesNo(config.sessionCookieSecure),
         warn = config.production && !config.sessionCookieSecure,
       ),
       row(
-        "Social sign-in",
+        I18n.t(UiKeys.adminSystemConfigSocial),
         if (config.configuredOAuthProviders.isEmpty)
-          "none configured"
+          I18n.t(UiKeys.adminSystemConfigSocialNone)
         else
           config.configuredOAuthProviders.map(OAuthProvider.displayName).mkString(", "),
       ),
       row(
-        "Outgoing mail",
+        I18n.t(UiKeys.adminSystemConfigMail),
         // The distinction that matters in development: with no SMTP host the link is logged rather than sent, which
         // is why a confirmation email that "never arrives" is usually this line.
         if (config.mailConfigured)
           s"${config.mailSmtpHost.getOrElse("")}:${config.mailSmtpPort}"
         else
-          "logged, not sent",
+          I18n.t(UiKeys.adminSystemConfigMailLogged),
       ),
-      row("Mail from", config.mailFrom),
-      row("STARTTLS", yesNo(config.mailStartTls)),
-      row("Database", config.databaseUrl),
-      row("Database user", config.databaseUser),
-      row("Session lifetime", s"${config.sessionValidityHours} hour(s)"),
-      row("Invitation lifetime", s"${config.invitationValidityHours} hour(s)"),
-      row("Confirmation link lifetime", s"${config.verificationValidityHours} hour(s)"),
+      row(I18n.t(UiKeys.adminSystemConfigMailFrom), config.mailFrom),
+      row(I18n.t(UiKeys.adminSystemConfigStartTls), yesNo(config.mailStartTls)),
+      row(I18n.t(UiKeys.adminSystemConfigDatabase), config.databaseUrl),
+      row(I18n.t(UiKeys.adminSystemConfigDatabaseUser), config.databaseUser),
+      row(I18n.t(UiKeys.adminSystemConfigSessionLife), hours(config.sessionValidityHours)),
+      row(I18n.t(UiKeys.adminSystemConfigInviteLife), hours(config.invitationValidityHours)),
+      row(I18n.t(UiKeys.adminSystemConfigVerifyLife), hours(config.verificationValidityHours)),
       row(
-        "Sign-in rate limit",
-        s"${config.rateLimitMaxAttempts} attempts / ${config.rateLimitWindowMinutes} minutes",
+        I18n.t(UiKeys.adminSystemConfigRateLimit),
+        I18n.t(UiKeys.adminSystemConfigRateLimitValue, config.rateLimitMaxAttempts, config.rateLimitWindowMinutes),
       ),
       row(
-        "Netty threads",
+        I18n.t(UiKeys.adminSystemConfigNettyThreads),
         if (config.nettyMaxThreads == 0)
-          "automatic"
+          I18n.t(UiKeys.adminSystemConfigNettyAuto)
         else
           config.nettyMaxThreads.toString,
       ),
     )
   }
 
+  private def hours(value: Long): String = I18n.plural(UiKeys.adminSystemConfigHours, value)
+
   private def renderRuntime(runtime: RuntimeInfo, jobs: List[JobStatus]): HtmlElement = {
     card(
-      "Runtime",
-      row("API version", runtime.apiVersion),
-      row("Started", Formats.dateTime(runtime.startedAt)),
-      row("Uptime", Formats.duration(runtime.uptimeMillis)),
-      row("JVM", runtime.jvmVersion),
-      row("Processors", runtime.availableProcessors.toString),
-      row("Heap", s"${Formats.bytes(runtime.heapUsedBytes)} of ${Formats.bytes(runtime.heapMaxBytes)}"),
-      row("Live threads", runtime.liveThreads.toString),
+      I18n.t(UiKeys.adminSystemRuntimeCard),
+      row(I18n.t(UiKeys.adminSystemRuntimeApiVersion), runtime.apiVersion),
+      row(I18n.t(UiKeys.adminSystemRuntimeStarted), Formats.dateTime(runtime.startedAt)),
+      row(I18n.t(UiKeys.adminSystemRuntimeUptime), Formats.duration(runtime.uptimeMillis)),
+      row(I18n.t(UiKeys.adminSystemRuntimeJvm), runtime.jvmVersion),
+      row(I18n.t(UiKeys.adminSystemRuntimeProcessors), runtime.availableProcessors.toString),
       row(
-        "Schema",
-        runtime.migrations.flatMap(_.version).lastOption.map(version => s"V$version").getOrElse("unknown"),
+        I18n.t(UiKeys.adminSystemRuntimeHeap),
+        I18n.t(
+          UiKeys.adminSystemRuntimeHeapValue,
+          Formats.bytes(runtime.heapUsedBytes),
+          Formats.bytes(runtime.heapMaxBytes),
+        ),
       ),
-      row("Migrations applied", runtime.migrations.size.toString),
-      h3(cls := "font-semibold text-sm mt-3", "Background jobs"),
+      row(I18n.t(UiKeys.adminSystemRuntimeThreads), runtime.liveThreads.toString),
+      row(
+        I18n.t(UiKeys.adminSystemRuntimeSchema),
+        runtime.migrations
+          .flatMap(_.version)
+          .lastOption
+          .map(version => s"V$version")
+          .getOrElse(I18n.t(UiKeys.adminSystemRuntimeSchemaUnknown)),
+      ),
+      row(I18n.t(UiKeys.adminSystemRuntimeMigrations), runtime.migrations.size.toString),
+      h3(cls := "font-semibold text-sm mt-3", I18n.t(UiKeys.adminSystemJobsHeading)),
       if (jobs.isEmpty)
-        p(cls := "text-sm opacity-60", "None reporting.")
+        p(cls := "text-sm opacity-60", I18n.t(UiKeys.adminSystemJobsNone))
       else
         div(jobs.map(renderJob)),
     )
@@ -208,15 +239,19 @@ private class AdminSystemPage {
     val description = {
       job.lastError match {
         case Some(error) =>
-          s"failed: $error"
+          I18n.t(UiKeys.adminSystemJobFailed, error)
         case None        =>
           job.lastRunAt match {
             case Some(at) =>
-              s"${Formats.dateTime(at)} — ${job.lastOutcome.getOrElse("ran")}"
+              I18n.t(
+                UiKeys.adminSystemJobRan,
+                Formats.dateTime(at),
+                job.lastOutcome.getOrElse(I18n.t(UiKeys.adminSystemJobOutcome)),
+              )
             // A job registers itself before its first pass, so "not yet" is normal right after a restart and a
             // symptom an interval later.
             case None     =>
-              s"not run yet (every ${job.intervalMinutes} minutes)"
+              I18n.t(UiKeys.adminSystemJobNotRun, job.intervalMinutes)
           }
       }
     }
@@ -225,30 +260,51 @@ private class AdminSystemPage {
 
   private def renderStats(stats: DbStats): HtmlElement = {
     card(
-      "Statistics",
-      row("Accounts", stats.users.toString),
-      row("Administrators", stats.admins.toString),
-      row("Unconfirmed addresses", stats.unverifiedUsers.toString, warn = stats.unverifiedUsers > 0),
-      row("Accounts without a password", stats.usersWithoutPassword.toString),
-      row("Linked social accounts", stats.oauthIdentities.toString),
-      row("Sessions", s"${stats.activeSessions} active of ${stats.sessions}"),
-      row("Confirmation links", stats.verificationTokens.toString),
+      I18n.t(UiKeys.adminSystemStatsCard),
+      row(I18n.t(UiKeys.adminSystemStatsUsers), stats.users.toString),
+      row(I18n.t(UiKeys.adminSystemStatsAdmins), stats.admins.toString),
+      row(
+        I18n.t(UiKeys.adminSystemStatsUnconfirmed),
+        stats.unverifiedUsers.toString,
+        warn = stats.unverifiedUsers > 0,
+      ),
+      row(I18n.t(UiKeys.adminSystemStatsNoPassword), stats.usersWithoutPassword.toString),
+      row(I18n.t(UiKeys.adminSystemStatsIdentities), stats.oauthIdentities.toString),
+      row(
+        I18n.t(UiKeys.adminSystemStatsSessions),
+        I18n.t(UiKeys.adminSystemStatsSessionsValue, stats.activeSessions, stats.sessions),
+      ),
+      row(I18n.t(UiKeys.adminSystemStatsTokens), stats.verificationTokens.toString),
       // Both of these mean the reaper has not run, or has been failing: they are the numbers that turn "the job says
       // it ran" into "the job actually did something".
       row(
-        "…expired, not yet pruned",
+        I18n.t(UiKeys.adminSystemStatsTokensExpired),
         stats.expiredVerificationTokens.toString,
         warn = stats.expiredVerificationTokens > 0,
       ),
-      row("Groups", s"${stats.groups} with ${stats.groupMembers} member(s)"),
-      row("Invitations", s"${stats.pendingInvitations} pending, ${stats.acceptedInvitations} accepted"),
+      row(
+        I18n.t(UiKeys.adminSystemStatsGroups),
+        I18n.plural(UiKeys.adminSystemStatsGroupMembers, stats.groupMembers, stats.groups),
+      ),
+      row(
+        I18n.t(UiKeys.adminSystemStatsInvitations),
+        I18n.t(UiKeys.adminSystemStatsInvitationsValue, stats.pendingInvitations, stats.acceptedInvitations),
+      ),
       // Counts only: no administrator may read a task board or a group's entries.
-      row("Task items", stats.todoItems.toString),
-      row("Group entries", stats.groupPairs.toString),
-      row("Recorded sign-in attempts", stats.loginAttempts.toString),
-      row("Failed sign-ins (24h)", stats.failedLoginsLast24h.toString, warn = stats.failedLoginsLast24h > 0),
-      row("Accounts locked out now", stats.blockedRateLimitKeys.toString, warn = stats.blockedRateLimitKeys > 0),
-      row("Audit entries", stats.auditEntries.toString),
+      row(I18n.t(UiKeys.adminSystemStatsTodoItems), stats.todoItems.toString),
+      row(I18n.t(UiKeys.adminSystemStatsGroupPairs), stats.groupPairs.toString),
+      row(I18n.t(UiKeys.adminSystemStatsLoginAttempts), stats.loginAttempts.toString),
+      row(
+        I18n.t(UiKeys.adminSystemStatsFailedLogins),
+        stats.failedLoginsLast24h.toString,
+        warn = stats.failedLoginsLast24h > 0,
+      ),
+      row(
+        I18n.t(UiKeys.adminSystemStatsLockedOut),
+        stats.blockedRateLimitKeys.toString,
+        warn = stats.blockedRateLimitKeys > 0,
+      ),
+      row(I18n.t(UiKeys.adminSystemStatsAuditEntries), stats.auditEntries.toString),
     )
   }
 
@@ -257,34 +313,25 @@ private class AdminSystemPage {
       cls := "card bg-base-100 shadow mt-4",
       div(
         cls := "card-body",
-        h2(cls := "card-title text-base", "Maintenance"),
-        p(
-          cls  := "text-sm opacity-60",
-          "Pruning is the hourly sweep, run now. Clearing locks lets every currently blocked address try again, " +
-            "including one that is being brute-forced.",
-        ),
+        h2(cls := "card-title text-base", I18n.t(UiKeys.adminSystemMaintenanceCard)),
+        p(cls  := "text-sm opacity-60", I18n.t(UiKeys.adminSystemMaintenanceHint)),
         div(
           cls  := "card-actions gap-2",
           button(
             cls := "btn btn-sm btn-outline",
             typ := "button",
             disabled <-- inFlightSignal,
-            "Prune expired sessions and links",
+            I18n.t(UiKeys.adminSystemMaintenancePrune),
             onClick.mapToUnit --> Observer[Unit](_ => pruneBus.emit(())),
           ),
           button(
             cls := "btn btn-sm btn-error btn-outline",
             typ := "button",
             disabled <-- inFlightSignal,
-            "Clear every rate-limit lock",
+            I18n.t(UiKeys.adminSystemMaintenanceClear),
             onClick.mapToUnit -->
               Observer[Unit] { _ =>
-                if (
-                  dom.window.confirm(
-                    "Let every currently locked-out address sign in again? " +
-                      "Use the account's own page to unlock one person."
-                  )
-                )
+                if (dom.window.confirm(I18n.t(UiKeys.adminSystemMaintenanceClearConfirm)))
                   clearLocksBus.emit(())
               },
           ),

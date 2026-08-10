@@ -3,7 +3,9 @@ package webapp1.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.i18n.{CurrentLocale, I18n}
 import webapp1.frontend.{AppRouter, Page}
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 
 /** Where a verification link lands.
   *
@@ -31,7 +33,7 @@ private class VerifyEmailPage(token: String) {
         cls := "card w-full max-w-sm bg-base-100 shadow-xl",
         div(
           cls := "card-body",
-          h1(cls := "card-title", "Verifying your email"),
+          h1(cls := "card-title", I18n.t(UiKeys.verifyTitle)),
           child <--
             errorVar.signal
               .map {
@@ -48,15 +50,17 @@ private class VerifyEmailPage(token: String) {
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             // A full navigation rather than pushState: the sign-in form seeds its notice from
-            // `location.search`, which a Waypoint push would not repopulate.
-            dom.window.location.href = "/sign-in?verified=1"
+            // `location.search`, which a Waypoint push would not repopulate. The prefix has to be
+            // carried over by hand for the same reason — this is not a router-built URL, and a bare
+            // `/sign-in` would send a Hungarian reader back through the boot script's guess.
+            dom.window.location.href = s"${CurrentLocale.prefix}/sign-in?verified=1"
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
       resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(resendEmailVar.now())) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            Var.set(errorVar -> None, noticeVar -> Some("If that address needs verifying, a new link is on its way."))
+            Var.set(errorVar -> None, noticeVar -> Some(I18n.t(UiKeys.verificationResent)))
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
@@ -68,8 +72,8 @@ private class VerifyEmailPage(token: String) {
     form(
       onSubmit.preventDefault.mapToUnit --> resendBus.writer,
       fieldSet(
-        cls   := "fieldset",
-        legend(cls    := "fieldset-legend", "Email"),
+        cls := "fieldset",
+        legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
         input(
           cls         := "input w-full",
           typ         := "email",
@@ -77,8 +81,14 @@ private class VerifyEmailPage(token: String) {
           controlled(value <-- resendEmailVar.signal, onInput.mapToValue --> resendEmailVar.writer),
         ),
       ),
-      div(cls := "card-actions justify-end mt-4", button(cls := "btn btn-primary", typ := "submit", "Send a new link")),
-      p(cls   := "text-sm mt-2", a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Back to sign in")),
+      div(
+        cls := "card-actions justify-end mt-4",
+        button(cls := "btn btn-primary", typ := "submit", I18n.t(UiKeys.verifyResend)),
+      ),
+      p(
+        cls := "text-sm mt-2",
+        a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.verifyBackToSignIn)),
+      ),
     )
   }
 

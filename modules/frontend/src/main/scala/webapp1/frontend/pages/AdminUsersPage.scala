@@ -7,6 +7,7 @@ import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.User
 import webapp1.shared.dto.{CreateUserRequest, RateLimitEntry}
 import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object AdminUsersPage {
@@ -81,7 +82,7 @@ private class AdminUsersPage {
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", "User management"),
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminUsersTitle)),
       AdminSubmenu.render(Page.Admin),
       Alert.maybeError(errorSignal),
       renderCreateForm(),
@@ -130,7 +131,7 @@ private class AdminUsersPage {
       cls := "card bg-base-100 shadow mb-4",
       div(
         cls := "card-body",
-        h2(cls       := "card-title", "Create user"),
+        h2(cls       := "card-title", I18n.t(UiKeys.adminUsersCreateCard)),
         form(
           cls        := "flex flex-wrap gap-2 items-start",
           // Browser validation would pre-empt our own messages, and they differ from the server's rules.
@@ -141,7 +142,7 @@ private class AdminUsersPage {
               cls         := "input",
               cls("input-error") <-- emailErrorSignal.map(_.nonEmpty),
               typ         := "email",
-              placeholder := "Email",
+              placeholder := I18n.t(MessageKeys.fieldEmail),
               controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
             )
           ),
@@ -150,7 +151,7 @@ private class AdminUsersPage {
               cls         := "input",
               cls("input-error") <-- passwordErrorSignal.map(_.nonEmpty),
               typ         := "password",
-              placeholder := s"Password (min ${Validation.minPasswordLength} characters)",
+              placeholder := I18n.t(UiKeys.adminUsersPasswordPlaceholder, Validation.minPasswordLength),
               controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
             )
           ),
@@ -161,9 +162,9 @@ private class AdminUsersPage {
               cls := "checkbox",
               controlled(checked <-- isAdminVar.signal, onClick.mapToChecked --> isAdminVar.writer),
             ),
-            "Administrator",
+            I18n.t(UiKeys.commonAdministrator),
           ),
-          button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Create"),
+          button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonCreate)),
         ),
       ),
     )
@@ -174,7 +175,15 @@ private class AdminUsersPage {
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
         cls := "table",
-        thead(tr(th("Email"), th("Admin"), th("Email confirmed"), th("Sign-in"), th("Created"))),
+        thead(
+          tr(
+            th(I18n.t(MessageKeys.fieldEmail)),
+            th(I18n.t(UiKeys.adminUsersColAdmin)),
+            th(I18n.t(UiKeys.adminUsersColConfirmed)),
+            th(I18n.t(UiKeys.adminUsersColSignIn)),
+            th(I18n.t(UiKeys.adminUsersColCreated)),
+          )
+        ),
         tbody(
           children <--
             usersSignal.splitSeq(_.id) { userSignal =>
@@ -203,9 +212,9 @@ private class AdminUsersPage {
             .distinct
             .map { isAdmin =>
               if (isAdmin)
-                span(cls := "badge badge-primary", "Admin")
+                span(cls := "badge badge-primary", I18n.t(UiKeys.adminUsersBadgeAdmin))
               else
-                span(cls := "badge badge-ghost", "User")
+                span(cls := "badge badge-ghost", I18n.t(UiKeys.adminUsersBadgeUser))
             }
       ),
       td(
@@ -215,9 +224,9 @@ private class AdminUsersPage {
             .distinct
             .map { verified =>
               if (verified)
-                span(cls := "badge badge-success badge-soft", "Confirmed")
+                span(cls := "badge badge-success badge-soft", I18n.t(UiKeys.adminUsersBadgeConfirmed))
               else
-                span(cls := "badge badge-warning", "Unconfirmed")
+                span(cls := "badge badge-warning", I18n.t(UiKeys.adminUsersBadgeUnconfirmed))
             }
       ),
       td(
@@ -228,9 +237,9 @@ private class AdminUsersPage {
             .combineWith(lockedSignal)
             .map { (email, locked) =>
               if (locked.contains(email.trim.toLowerCase))
-                span(cls := "badge badge-error", "Locked out")
+                span(cls := "badge badge-error", I18n.t(UiKeys.adminUsersBadgeLocked))
               else
-                span(cls := "badge badge-ghost", "OK")
+                span(cls := "badge badge-ghost", I18n.t(UiKeys.adminUsersBadgeOk))
             }
       ),
       td(text <-- userSignal.map(user => Formats.dateTimeFromString(user.createdAt)).distinct),

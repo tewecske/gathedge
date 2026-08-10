@@ -102,9 +102,6 @@ test('group list survives a page refresh (list is re-fetched, not just held in m
 });
 
 test('adding a source/target pair requires both fields and then appears in the table', async () => {
-  // Scoped to the pairs table specifically: the page also has a members table
-  // (which always has at least 1 row, the creator), so an unscoped `table tbody
-  // tr` locator would false-positive on that.
   const pairsTable = page.locator('table').filter({ has: page.locator('th', { hasText: 'Source' }) });
 
   await page.getByRole('button', { name: 'Add' }).click(); // blank submit: no-op
@@ -117,20 +114,29 @@ test('adding a source/target pair requires both fields and then appears in the t
   await expect(pairsTable.locator('tbody tr', { hasText: 'source-value' })).toBeVisible();
 });
 
+// Members (the list and the invite form) live on their own route, reached from the
+// group submenu — they were split out of the group overview and are not on it.
 test('inviting a member is accepted by the server (link delivery is out of e2e reach)', async () => {
+  await page.getByRole('link', { name: 'Members' }).click();
+  await expect(page).toHaveURL(/\/en\/groups\/\d+\/members$/);
   await page.locator('input[placeholder="Email to invite"]').fill(`invitee-${unique}@example.com`);
   await page.getByRole('button', { name: 'Invite' }).click();
   await expect(page.getByText(/Invited /)).toBeVisible();
 });
 
-test('group detail (pairs, members, add-pair form) survives a page refresh', async () => {
+test('the members list survives a page refresh', async () => {
+  await page.reload();
+  // Must include the creator (self) — this is the "empty members" bug.
+  await expect(page.getByText(email)).toBeVisible();
+});
+
+test('group detail (pairs, add-pair form) survives a page refresh', async () => {
+  await page.getByRole('link', { name: 'Overview' }).click();
   await page.reload();
   // Add-pair form is only rendered once the group (with myRole) has loaded.
   await expect(page.locator('input[placeholder="Source"]')).toBeVisible();
   await expect(page.locator('input[placeholder="Target"]')).toBeVisible();
   await expect(page.locator('table tbody tr', { hasText: 'source-value' })).toBeVisible();
-  // Members list must include the creator (self) — this is the "empty members" bug.
-  await expect(page.getByText(email)).toBeVisible();
 });
 
 test('log out returns to sign-in', async () => {
@@ -156,12 +162,14 @@ test.describe('administrator flows', () => {
   test.describe.configure({ mode: 'serial' });
 
   test('the bootstrap admin can sign in and manage users', async () => {
-    await page
-      .getByRole('button', { name: 'Account menu' })
-      .click()
-      .then(() => page.getByRole('button', { name: 'Log out' }).click())
-      .catch(() => {});
-    await page.goto('/en/sign-in');
+    // The forbidden page the previous test lands on renders outside the app shell, so
+    // there is no navbar on it to reach the account menu through: go somewhere there is
+    // one first. Signing out has to happen before /en/sign-in, which is RequireAnon and
+    // would bounce a still-signed-in visitor straight back to the board.
+    await page.goto('/en/');
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('button', { name: 'Log out' }).click();
+    await expect(page).toHaveURL(/\/en\/sign-in$/);
     await page.locator('input[type=email]').fill(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com');
     await page.locator('input[type=password]').fill(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123');
     await page.getByRole('button', { name: 'Sign in' }).click();
@@ -213,8 +221,13 @@ test.describe('administrator flows', () => {
     await expect(page).toHaveURL(/\/en\/admin\/audit$/);
     await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
     // Written by the "creating a user from the admin panel" test above; the file is serial, so it has run.
-    await expect(page.getByText('user.create').first()).toBeVisible();
-    await expect(page.getByText(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com').first()).toBeVisible();
+    // Scoped to the table: the same wording is an `<option>` in the action filter above it, and an
+    // option inside a closed `<select>` is hidden. The badge shows the worded label rather than the
+    // stored `user.create` code — only the option's `value` stays the code, since that is what the
+    // filter request carries.
+    const rows = page.locator('table tbody');
+    await expect(rows.getByText('Create user').first()).toBeVisible();
+    await expect(rows.getByText(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com').first()).toBeVisible();
   });
 
   test('editing and deleting a user, with confirmation before delete', async () => {
@@ -231,6 +244,6 @@ test.describe('administrator flows', () => {
 
   test('the deletion is itself in the audit log', async () => {
     await page.getByRole('link', { name: 'Audit log' }).click();
-    await expect(page.getByText('user.delete').first()).toBeVisible();
+    await expect(page.locator('table tbody').getByText('Delete user').first()).toBeVisible();
   });
 });

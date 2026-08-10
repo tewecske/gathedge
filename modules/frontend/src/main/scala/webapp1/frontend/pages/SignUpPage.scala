@@ -8,6 +8,7 @@ import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.OAuthProvider
 import webapp1.shared.dto.{ProvidersResponse, SignupRequest, SignupResponse}
 import webapp1.frontend.i18n.I18n
+import webapp1.shared.i18n.{MessageKeys, UiKeys}
 import webapp1.shared.validation.Validation
 
 object SignUpPage {
@@ -31,7 +32,7 @@ private class SignUpPage {
     * account when there is none and signs in when there is, so "sign up with" and "sign in with" are one button.
     */
   private lazy val socialBlock: HtmlElement = {
-    div(div(cls := "divider text-xs", "or"), OAuthButtons.render(providersSignal))
+    div(div(cls := "divider text-xs", I18n.t(UiKeys.commonOr)), OAuthButtons.render(providersSignal))
   }
 
   private val submitBus = new EventBus[Unit]()
@@ -52,34 +53,34 @@ private class SignUpPage {
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",
-          h1(cls := "card-title", "Create account"),
+          h1(cls := "card-title", I18n.t(UiKeys.signUpTitle)),
           child.maybe <-- errorSignal.map(_.map(renderError)),
           fieldSet(
             cls  := "fieldset",
-            legend(cls    := "fieldset-legend", "Email"),
+            legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
             input(
               cls         := "input w-full",
               typ         := "email",
               placeholder := "you@example.com",
               controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
             ),
-            legend(cls    := "fieldset-legend", "Password"),
+            legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldPassword)),
             input(
               cls         := "input w-full",
               typ         := "password",
               controlled(value <-- passwordSignal, onInput.mapToValue --> passwordVar.writer),
             ),
-            p(cls         := "label", s"At least ${Validation.minPasswordLength} characters"),
+            p(cls         := "label", I18n.t(UiKeys.commonPasswordHint, Validation.minPasswordLength)),
           ),
           div(
             cls  := "card-actions justify-end mt-4",
-            button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Sign up"),
+            button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignUp)),
           ),
           child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           p(
             cls  := "text-sm mt-2",
-            "Already have an account? ",
-            a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Sign in"),
+            I18n.t(UiKeys.signUpHaveAccount),
+            a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.commonSignIn)),
           ),
         ),
       ),

@@ -2,7 +2,9 @@ package webapp1.frontend.pages
 
 import com.raquo.laminar.api.L._
 import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
+import webapp1.shared.i18n.UiKeys
 
 /** Where signup lands when the deployment requires a verified address: the account exists, but there is no session yet.
   *
@@ -31,16 +33,16 @@ private class CheckInboxPage {
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",
-          h1(cls := "card-title", "Check your inbox"),
+          h1(cls := "card-title", I18n.t(UiKeys.checkInboxTitle)),
           p(
             cls  := "text-sm",
-            "We sent you a link to confirm your email address. Follow it to finish setting up your account.",
+            I18n.t(UiKeys.checkInboxBody),
           ),
           child.maybe <-- noticeVar.signal.map(_.map(renderNotice)),
           child.maybe <-- errorVar.signal.map(_.map(renderError)),
           fieldSet(
             cls  := "fieldset",
-            legend(cls    := "fieldset-legend", "Didn't get it? Enter your email to resend"),
+            legend(cls    := "fieldset-legend", I18n.t(UiKeys.checkInboxPrompt)),
             input(
               cls         := "input w-full",
               typ         := "email",
@@ -50,12 +52,17 @@ private class CheckInboxPage {
           ),
           div(
             cls  := "card-actions justify-end mt-4",
-            button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, "Resend link"),
+            button(
+              cls := "btn btn-primary",
+              typ := "submit",
+              disabled <-- inFlightSignal,
+              I18n.t(UiKeys.checkInboxSubmit),
+            ),
           ),
           p(
             cls  := "text-sm mt-2",
-            "Already confirmed? ",
-            a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), "Sign in"),
+            I18n.t(UiKeys.checkInboxConfirmed),
+            a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.commonSignIn)),
           ),
         ),
       ),
@@ -67,7 +74,7 @@ private class CheckInboxPage {
           case Right(_)  =>
             Var.set(
               inFlightVar -> false,
-              noticeVar   -> Some("If that address needs verifying, a new link is on its way."),
+              noticeVar   -> Some(I18n.t(UiKeys.verificationResent)),
             )
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))

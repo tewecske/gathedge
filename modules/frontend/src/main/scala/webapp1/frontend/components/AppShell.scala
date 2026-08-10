@@ -5,9 +5,11 @@ import com.raquo.laminar.codecs.Codec
 import org.scalajs.dom
 import scala.scalajs.js
 import webapp1.frontend.api.{ApiClient, ApiError}
+import webapp1.frontend.i18n.I18n
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.domain.Theme
+import webapp1.shared.i18n.UiKeys
 import webapp1.shared.dto.AuthResponse
 
 /** Themed authenticated shell: navbar (nav links + theme toggle + account menu) wrapping page-specific content. Every
@@ -100,9 +102,9 @@ private class AppShell(active: Page, content: HtmlElement) {
       div(
         cls := "navbar-start gap-2",
         span(cls := "text-lg font-semibold px-2", "webapp1"),
-        navLink(Page.Home, "Todo"),
-        navLink(Page.Groups, "Groups"),
-        child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin, "Admin"))),
+        navLink(Page.Home, I18n.t(UiKeys.navTodo)),
+        navLink(Page.Groups, I18n.t(UiKeys.navGroups)),
+        child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin, I18n.t(UiKeys.navAdmin)))),
       ),
       div(
         cls := "navbar-end gap-2",
@@ -113,9 +115,9 @@ private class AppShell(active: Page, content: HtmlElement) {
           text <--
             themeSignal.map {
               case Theme.Light =>
-                "Switch to dark"
+                I18n.t(UiKeys.navThemeDark)
               case Theme.Dark  =>
-                "Switch to light"
+                I18n.t(UiKeys.navThemeLight)
             }.distinct,
           onClick.mapToUnit --> themeToggleBus.writer,
         ),
@@ -132,7 +134,7 @@ private class AppShell(active: Page, content: HtmlElement) {
     button(
       cls                        := "btn btn-ghost btn-circle avatar avatar-placeholder",
       typ                        := "button",
-      aria.label                 := "Account menu",
+      aria.label                 := I18n.t(UiKeys.navAccountMenu),
       title <-- emailSignal,
       AppShell.popoverTargetAttr := menuId,
       styleAttr                  := s"anchor-name:$menuAnchor",
@@ -158,12 +160,12 @@ private class AppShell(active: Page, content: HtmlElement) {
               ""
           ),
           AppRouter.router.navigateTo(Page.Settings),
-          "Account settings",
+          I18n.t(UiKeys.settingsTitle),
           onClick.mapToUnit --> Observer[Unit](_ => closeMenu()),
         )
       ),
       // No `closeMenu` needed: logout pushes Page.SignIn, which rebuilds the shell away.
-      li(button(typ := "button", "Log out", onClick.mapToUnit --> logoutBus.writer)),
+      li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
     )
   }
 
