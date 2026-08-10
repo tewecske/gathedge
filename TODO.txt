@@ -1,4 +1,6 @@
-Back button removes all query params
-Page starts at 0
+Back button removes all query params abd goes back to previous page
+Page starts at 0 so second page is page=1
 Link with filter query doesn't work, the filter query is removed
+Responsive layout, collapse menu: Responsive (dropdown menu on small screen, center menu on large screen)
+
 
