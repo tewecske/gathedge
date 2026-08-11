@@ -13,7 +13,7 @@ import webapp1.backend.db.{
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.shared.dto.AuditAction
+import webapp1.shared.dto.{AuditAction, Paging}
 import zio._
 import zio.json._
 import zio.test._
@@ -118,7 +118,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
         before  <- SystemService.overview
         result  <- SystemService.prune(AdminActor(user.id))
         after   <- SystemService.overview
-        audited <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.systemPrune), None, None)
+        audited <- AdminService.auditLog(Paging.firstPage, 50, None, false, Some(AuditAction.systemPrune), None, None)
       } yield assertTrue(
         before.stats.sessions == 1L,
         result.sessions == 1L,

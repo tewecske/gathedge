@@ -117,10 +117,10 @@ object AppRouter {
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
     *
     * A single `Route.onlyQuery` would address the unfiltered list as `/admin/users?` — url-dsl's `createUrlString`
-    * joins the path and the parameters with a `?` whether or not there are any parameters to write. So the query
-    * route is a *partial* one, defined in both directions only when there is something to carry, and the plain path
-    * answers for the default. Order in [[router]] decides which of a pair answers, and it is the same list for
-    * building a URL and for matching one, so the query route has to come first in both.
+    * joins the path and the parameters with a `?` whether or not there are any parameters to write. So the query route
+    * is a *partial* one, defined in both directions only when there is something to carry, and the plain path answers
+    * for the default. Order in [[router]] decides which of a pair answers, and it is the same list for building a URL
+    * and for matching one, so the query route has to come first in both.
     */
   private val adminQueryRoute = Route.onlyQueryPF[Admin, UserQuery](
     matchEncode = { case page: Admin if page.query != UserQuery.default => page.query },

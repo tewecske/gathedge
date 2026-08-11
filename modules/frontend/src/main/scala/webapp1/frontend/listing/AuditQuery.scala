@@ -11,7 +11,7 @@ import webapp1.shared.dto.{AuditSort, Paging}
   * once it is complete — so they are held here alongside the paging rather than being read off the inputs.
   */
 final case class AuditQuery(
-  page: Int = 0,
+  page: Int = Paging.firstPage,
   pageSize: Int = Paging.defaultPageSize,
   sort: SortHeader.Sort = SortHeader.Sort.unsorted,
   action: Option[String] = None,
@@ -19,7 +19,7 @@ final case class AuditQuery(
 ) {
 
   /** Anything but turning the page starts again at the first one. */
-  def reset(change: AuditQuery => AuditQuery): AuditQuery = change(this).copy(page = 0)
+  def reset(change: AuditQuery => AuditQuery): AuditQuery = change(this).copy(page = Paging.firstPage)
 }
 
 object AuditQuery {

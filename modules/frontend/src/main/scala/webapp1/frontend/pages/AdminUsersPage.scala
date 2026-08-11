@@ -70,8 +70,8 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
     *
     * Loaded alongside the users and joined here rather than server-side: the lock lives in a process-local `Ref`, it
     * changes on a timescale of minutes, and keeping it out of `GET /api/admin/users` leaves that endpoint — and its
-    * entry in the OpenAPI document — exactly as it was. It is also why the sign-in column is the one column that
-    * cannot be sorted: there is no `ORDER BY` that could produce it.
+    * entry in the OpenAPI document — exactly as it was. It is also why the sign-in column is the one column that cannot
+    * be sorted: there is no `ORDER BY` that could produce it.
     */
   private val lockedVar    = Var(Set.empty[String])
   private val lockedSignal = lockedVar.signal
@@ -82,22 +82,29 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
 
   /** Every way this page asks for a different listing, as one stream of edits rather than a `Var` it owns.
     *
-    * The state lives in the URL, so a writer cannot read the current value out of a local `Var` to change one field
-    * of it. It emits the change instead, and [[render]] applies it to whatever the address bar currently says.
+    * The state lives in the URL, so a writer cannot read the current value out of a local `Var` to change one field of
+    * it. It emits the change instead, and [[render]] applies it to whatever the address bar currently says.
     */
   private val changeBus = new EventBus[UserQuery => UserQuery]()
 
   private def change(edit: UserQuery => UserQuery): Unit = changeBus.emit(edit)
 
-  /** What the reader has typed, which is not yet what has been asked for — see the debounce in [[render]]. Separate
-    * from the query so the input stays responsive while the request it will cause waits for a pause in typing.
+  /** What the box shows. It follows the query in one direction only: seeded from it, and re-seeded whenever the term
+    * changes, which is what puts `?q=bob` from a bookmark into the box and what restores it when the back button moves
+    * through the history.
     *
-    * It is seeded from the query and re-seeded whenever the query's search term changes, which is what puts `?q=bob`
-    * from a bookmark into the box, and what restores it when the back button moves through the history. That cannot
-    * fight the typing: the round trip from the debounce to the address bar and back is synchronous, so the value that
-    * arrives is the one the box holds at that instant.
+    * Nothing reads it back. What the reader *types* travels on [[searchTypedBus]] instead, and the reason is that this
+    * `Var` is written to through an `Observer`: a `Var` write opens a transaction, and a transaction opened inside a
+    * running one is queued rather than applied. The page mounts inside one (the gate in `App` opens on a `Var` write of
+    * its own), so at that instant this still holds `""` however the query is filtered — and a debounce built on its
+    * signal would compare that `""` against `?q=bob` and "correct" the address by clearing the filter.
     */
   private val searchInputVar = Var("")
+
+  /** What the reader typed, as a stream. A stream has no current value, so nothing at all is sent until somebody types
+    * — which is the whole point: mounting the page can no longer look like an edit.
+    */
+  private val searchTypedBus = new EventBus[String]()
 
   private val formVar    = Var(CreateUserForm())
   private val formSignal = formVar.signal
@@ -162,14 +169,12 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
       // Each edit is applied to what the URL currently says, which is the only place the listing state lives.
       changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
       querySignal.map(_.search).distinct --> searchInputVar.writer,
-      // Only the changes are debounced: the input itself stays immediate, and a page click or a column heading is not
+      // Only what was typed is debounced: the box itself stays immediate, and a page click or a column heading is not
       // affected by how recently anything was typed.
       //
-      // A debounced value that the URL already says is *not* a change, and the comparison is what makes that so. The
-      // box is written to from two directions — the reader types in it, and the line above fills it from the query —
-      // and without this the second one would come back 300ms later as a search the reader never asked for, resetting
-      // the page index with it. Opening `?page=3&q=bob` from a bookmark would land on page 3 and then jump to page 1.
-      searchInputVar.signal.composeUpdates(_.debounce(searchDebounceMs)).withCurrentValueOf(querySignal) -->
+      // The comparison keeps a term the URL already says from being asked for again — typing a letter and deleting it
+      // is not a new search. It is no longer load-bearing for correctness; see `searchTypedBus` for what is.
+      searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->
         Observer[(String, UserQuery)] { case (typed, current) =>
           val wanted = typed.trim
           if (wanted != current.search) {
@@ -245,7 +250,7 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
     div(
       cls := "flex flex-wrap items-end gap-2 mb-4",
       label(
-        cls           := "form-control",
+        cls := "form-control",
         span(cls      := "label-text text-xs", I18n.t(UiKeys.adminUsersFilterLabel)),
         input(
           // `search` rather than `text`, so the browser offers its own clear button on the platforms that have one.
@@ -253,6 +258,9 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
           typ         := "search",
           placeholder := I18n.t(UiKeys.adminUsersFilterPlaceholder),
           controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
+          // The same keystroke, on its way to the query. Only an event of the reader's making reaches this, which is
+          // what the write-back above must never be built on.
+          onInput.mapToValue --> searchTypedBus.writer,
         ),
       ),
     )

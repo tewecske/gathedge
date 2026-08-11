@@ -32,6 +32,7 @@ import webapp1.backend.service.{
   TodoService,
 }
 import webapp1.shared.domain.{GroupRole, TodoStatus}
+import webapp1.shared.dto.Paging
 import zio._
 import zio.test._
 
@@ -166,11 +167,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           _              <- AuthService.login("pgaudited@example.com", "wrong").either
           _              <- AdminService.clearLockout(AdminActor(target.id), target.id)
           attemptsBefore <- AdminService.loginAttempts(50, None).map(_.count(_.userId.contains(target.id)))
-          auditBefore    <- AdminService.auditLog(0, 50, None, false, None, None, Some(target.id.toString))
+          auditBefore    <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
           _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone           <- AdminService.getUser(target.id).either
           attemptsAfter  <- AdminService.loginAttempts(50, None).map(_.filter(_.email == "pgaudited@example.com"))
-          auditAfter     <- AdminService.auditLog(0, 50, None, false, None, None, Some(target.id.toString))
+          auditAfter     <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
         } yield assertTrue(
           gone == Left(webapp1.backend.service.AdminFailure.NotFound),
           attemptsBefore == 2,

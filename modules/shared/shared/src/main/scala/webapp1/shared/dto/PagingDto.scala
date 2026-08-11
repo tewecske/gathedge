@@ -39,19 +39,28 @@ object Paging {
 
   val maxPageSize: Int = pageSizes.max
 
+  /** The index of the first page — **one**, in the URL, in the API and in the browser alike.
+    *
+    * It is a named constant rather than a literal because it is the one number every layer has to agree on: the address
+    * bar says `page=2` for the second page, the request repeats it, and only [[offset]] turns it into rows to skip. A
+    * zero-based index anywhere else would show `page=1` for the second page, which is what a reader reports as a bug.
+    */
+  val firstPage: Int = 1
+
   def boundedPageSize(requested: Option[Int]): Int = {
     requested.getOrElse(defaultPageSize).max(1).min(maxPageSize)
   }
 
-  /** Zero-based, and never negative. Past the end is *not* clamped here — the server does not know the total until it
-    * has counted, and an empty page with an honest total is what lets the browser correct itself.
+  /** One-based, and never below the first page. Past the end is *not* clamped here — the server does not know the total
+    * until it has counted, and an empty page with an honest total is what lets the browser correct itself.
     */
   def boundedPage(requested: Option[Int]): Int = {
-    requested.getOrElse(0).max(0)
+    requested.getOrElse(firstPage).max(firstPage)
   }
 
+  /** How many rows to skip to reach `page`. The only place the one-based index becomes an offset. */
   def offset(page: Int, pageSize: Int): Int = {
-    boundedPage(Some(page)) * pageSize
+    (boundedPage(Some(page)) - firstPage) * pageSize
   }
 
   /** How many pages `total` rows fill, a partial last page included. Zero rows is zero pages, not one. */

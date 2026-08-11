@@ -185,7 +185,8 @@ test.describe('administrator flows', () => {
     const newAdminUserEmail = `admin-created-${unique}@example.com`;
     await page.locator('input[placeholder="Email"]').fill(newAdminUserEmail);
     await page.locator('input[placeholder="Password (min 8 characters)"]').fill('password123');
-    await page.getByRole('button', { name: 'Create' }).click();
+    // `exact`, because the sortable "Created" column heading is a button whose name starts with the same word.
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(page.getByText(newAdminUserEmail)).toBeVisible();
   });
 
@@ -231,6 +232,40 @@ test.describe('administrator flows', () => {
     const rows = page.locator('table tbody');
     await expect(rows.getByText('Create user').first()).toBeVisible();
     await expect(rows.getByText(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com').first()).toBeVisible();
+  });
+
+  // The listing state lives in the URL, and only a real browser can say whether it survives the trip: the address has
+  // to keep what a link put in it, the numbers in it have to be the numbers on the buttons, and the back button has to
+  // walk back through the listing rather than off it. All three were wrong, and none of the three is visible to a
+  // jsdom spec, which has no address bar and no history.
+  test('a listing keeps its filter in the URL, numbers its pages from one, and steps back', async () => {
+    // A shared or bookmarked filter link: it arrives filtered, and stays that way. It used to clear itself as the page
+    // mounted, taking `?q=` out of the address with it.
+    await page.goto(`/en/admin/users?q=${encodeURIComponent(email)}`);
+    await expect(page.locator('input[type=search]')).toHaveValue(email);
+    await expect(page.locator('table tbody tr')).toHaveCount(1);
+    expect(new URL(page.url()).searchParams.get('q')).toBe(email);
+
+    // One row per page, so there is a second page to reach whatever the dev database holds.
+    await page.goto('/en/admin/users?size=1');
+    const pageButton = (number: string) => page.getByRole('button', { name: number, exact: true });
+    await expect(pageButton('1')).toHaveAttribute('aria-current', 'page');
+
+    await pageButton('2').click();
+    // One-based: the second page is `page=2`, not `page=1`.
+    await expect(page).toHaveURL(/[?&]page=2(&|$)/);
+    await expect(pageButton('2')).toHaveAttribute('aria-current', 'page');
+
+    await page.goBack();
+    await expect(page).not.toHaveURL(/page=/);
+    await expect(pageButton('1')).toHaveAttribute('aria-current', 'page');
+
+    // The first search is a place worth returning to, so it gets a history entry of its own. Typing the term out
+    // further replaces that entry rather than adding one per pause, which is why one press is enough here.
+    await page.locator('input[type=search]').fill('e2e-');
+    await expect(page).toHaveURL(/[?&]q=e2e-/);
+    await page.goBack();
+    await expect(page).not.toHaveURL(/q=/);
   });
 
   test('editing and deleting a user, with confirmation before delete', async () => {

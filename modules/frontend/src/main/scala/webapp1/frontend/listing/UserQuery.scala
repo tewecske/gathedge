@@ -14,16 +14,30 @@ import webapp1.shared.dto.{Paging, UserSort}
   * It lives here rather than in the page because it is also the argument of a route — see [[UserQuery.params]].
   */
 final case class UserQuery(
-  page: Int = 0,
+  page: Int = Paging.firstPage,
   pageSize: Int = Paging.defaultPageSize,
   sort: SortHeader.Sort = SortHeader.Sort.unsorted,
   search: String = "",
 ) {
 
-  /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing
-    * about the new one.
+  /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing about
+    * the new one.
     */
-  def reset(change: UserQuery => UserQuery): UserQuery = change(this).copy(page = 0)
+  def reset(change: UserQuery => UserQuery): UserQuery = change(this).copy(page = Paging.firstPage)
+
+  /** Whether this query is the previous one with the search term typed out further — "bo" after "b".
+    *
+    * It decides whether a change gets a history entry of its own: everything else pushes, a refinement replaces. The
+    * back button then leaves the search rather than walking backwards through the reader's own words, while the search
+    * itself is still one step back from wherever it led. Both terms have to be non-empty — clearing the box is a change
+    * worth returning to, and the *first* search is what the entry behind it is for.
+    *
+    * Nothing else may differ, and the two terms have to differ: a query refines the previous one, never itself.
+    */
+  def refines(previous: UserQuery): Boolean = {
+    search.nonEmpty && previous.search.nonEmpty && search != previous.search &&
+    copy(search = "") == previous.copy(search = "")
+  }
 }
 
 object UserQuery {
@@ -51,8 +65,8 @@ object UserQuery {
     )
   }
 
-  /** The query half of `/admin/users`. `q` is the search box: a substring of the address, matched case-insensitively
-    * by the server.
+  /** The query half of `/admin/users`. `q` is the search box: a substring of the address, matched case-insensitively by
+    * the server.
     */
   val params = (ListingParams.common & param[String]("q").?).as[UserQuery](using codec)
 }

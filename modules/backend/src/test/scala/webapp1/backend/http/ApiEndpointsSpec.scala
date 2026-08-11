@@ -41,6 +41,7 @@ import webapp1.shared.dto.{
   CreateUserRequest,
   ErrorResponse,
   LoginRequest,
+  Paging,
   ResendVerificationRequest,
   SignupRequest,
   SignupResponse,
@@ -392,7 +393,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                            withCsrf(withSession(Request.delete(s"/api/admin/users/${target.id}"), admin._2)),
                          )
             raw       <- body(response)
-            remaining <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
+            remaining <- AdminService.listUsers(page = Paging.firstPage, pageSize = 100, None, None, descending = false)
           } yield assertTrue(
             response.status == Status.NoContent,
             raw.isEmpty,

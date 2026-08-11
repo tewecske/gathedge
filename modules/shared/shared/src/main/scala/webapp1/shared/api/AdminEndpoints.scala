@@ -44,9 +44,11 @@ object AdminEndpoints {
     * would put the default into the OpenAPI document as if the client had to send it — `dto.Paging` is where the
     * defaults actually live, and both ends read them from there.
     *
-    * `page` is zero-based. `sort` names a column out of `dto.UserSort`/`dto.AuditSort` and `dir` is a
-    * `dto.SortDirection`; neither is validated, because an unrecognised value means "the listing's own order" rather
-    * than a malformed request — a client is free to stop sending a sort it no longer offers.
+    * `page` is one-based — `page=2` is the second page, the same number the address bar shows; `dto.Paging.firstPage`
+    * is that number and `dto.Paging.offset` is the only place it becomes rows to skip. `sort` names a column out of
+    * `dto.UserSort`/`dto.AuditSort` and `dir` is a `dto.SortDirection`; neither is validated, because an unrecognised
+    * value means "the listing's own order" rather than a malformed request — a client is free to stop sending a sort it
+    * no longer offers.
     */
   private val pageQuery     = HttpCodec.query[Int]("page").optional
   private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional

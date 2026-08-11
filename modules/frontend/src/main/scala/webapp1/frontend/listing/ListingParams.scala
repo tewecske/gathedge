@@ -7,8 +7,8 @@ import webapp1.shared.dto.{Paging, SortDirection}
 /** The four query parameters every paged listing puts in its URL, and the rules for reading them back out.
   *
   * They are shared because they are the same four questions for any listing — which page, how big, ordered by what,
-  * which way — so a third listing needs only its own case class, its own extra parameters, and one route. What is
-  * *not* shared is the meaning of `sort`: each listing knows its own columns, so [[decodeSort]] is told which ones.
+  * which way — so a third listing needs only its own case class, its own extra parameters, and one route. What is *not*
+  * shared is the meaning of `sort`: each listing knows its own columns, so [[decodeSort]] is told which ones.
   */
 object ListingParams {
 
@@ -25,7 +25,9 @@ object ListingParams {
 
   def encodeCommon(page: Int, pageSize: Int, sort: SortHeader.Sort): Common = {
     (
-      Option.when(page != 0)(page),
+      // One-based, like the API and like the buttons: the second page is `page=2`, and the first writes no parameter
+      // at all, so the unpaged listing keeps a clean address.
+      Option.when(page != Paging.firstPage)(page),
       Option.when(pageSize != Paging.defaultPageSize)(pageSize),
       // Both already answer `None` for an unsorted table, so an unordered listing writes neither parameter.
       sort.column,
@@ -35,10 +37,11 @@ object ListingParams {
 
   /** A URL is hand-editable, so both bounds are applied on the way in.
     *
-    * `pageSize` reaches the SQL `LIMIT`, and the server clamps it as well ([[Paging.boundedPageSize]] is the same
-    * value on both sides) — doing it here too is what keeps the address bar and the control in agreement, rather than
-    * showing 20 rows under a URL that says `size=100000`.
+    * `pageSize` reaches the SQL `LIMIT`, and the server clamps it as well ([[Paging.boundedPageSize]] is the same value
+    * on both sides) — doing it here too is what keeps the address bar and the control in agreement, rather than showing
+    * 20 rows under a URL that says `size=100000`.
     */
+  /** `?page=0`, or anything below the first page, reads as the first page rather than as an error. */
   def decodePage(page: Option[Int]): Int = Paging.boundedPage(page)
 
   def decodePageSize(size: Option[Int]): Int = Paging.boundedPageSize(size)

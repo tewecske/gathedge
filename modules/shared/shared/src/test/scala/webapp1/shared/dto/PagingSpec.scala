@@ -34,12 +34,18 @@ object PagingSpec extends ZIOSpecDefault {
       },
       // Deliberately *not* clamped at the top: the server has not counted anything yet when it reads this, and an
       // empty page with an honest total is what lets the browser correct itself.
-      test("a page index is floored at the first page and left alone above it") {
+      //
+      // One-based: `page=2` is the second page, in the URL and in the request alike, and the first page skips nothing.
+      test("a page number is floored at the first page and left alone above it") {
         assertTrue(
-          Paging.boundedPage(None) == 0,
-          Paging.boundedPage(Some(-1)) == 0,
+          Paging.firstPage == 1,
+          Paging.boundedPage(None) == Paging.firstPage,
+          Paging.boundedPage(Some(0)) == Paging.firstPage,
+          Paging.boundedPage(Some(-1)) == Paging.firstPage,
           Paging.boundedPage(Some(7)) == 7,
-          Paging.offset(3, 20) == 60,
+          Paging.offset(Paging.firstPage, 20) == 0,
+          Paging.offset(2, 20) == 20,
+          Paging.offset(4, 20) == 60,
           Paging.offset(-3, 20) == 0,
         )
       },
@@ -47,7 +53,7 @@ object PagingSpec extends ZIOSpecDefault {
         val total  = 45L
         val size   = 20
         val ranges = {
-          (0 until Paging.pageCount(total, size)).toList
+          (Paging.firstPage to Paging.pageCount(total, size)).toList
             .map(page => (Paging.offset(page, size), math.min(Paging.offset(page, size) + size, total.toInt)))
         }
 

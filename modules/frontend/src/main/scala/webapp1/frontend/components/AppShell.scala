@@ -25,8 +25,8 @@ object AppShell {
   /** The signed-in shell. `active` is the page to mark in the nav. */
   def render(active: Page, content: HtmlElement): HtmlElement = new AppShell(Some(active), content).render()
 
-  /** The signed-out shell: wordmark, language picker and theme control only, with the content centred rather than
-    * laid out from the top — these pages are a single card, not a screenful.
+  /** The signed-out shell: wordmark, language picker and theme control only, with the content centred rather than laid
+    * out from the top — these pages are a single card, not a screenful.
     */
   def renderPublic(content: HtmlElement): HtmlElement = new AppShell(None, content).render()
 }

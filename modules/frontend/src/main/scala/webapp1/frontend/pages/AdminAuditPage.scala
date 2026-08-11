@@ -29,7 +29,6 @@ private class AdminAuditPage(pageQuery: Signal[AuditQuery], onQuery: Observer[Au
   /** `.distinct` because every reader here treats an emission as "ask the server again". */
   private val querySignal = pageQuery.distinct
 
-
   /** The page currently on screen, and how many entries match across every page. Both come off one response: this is
     * offset paging in SQL, so the server knows the total and the buttons below are counted off it.
     */

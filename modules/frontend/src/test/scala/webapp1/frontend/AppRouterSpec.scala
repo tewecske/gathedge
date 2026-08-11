@@ -56,7 +56,7 @@ object AppRouterSpec extends ZIOSpecDefault {
       // the address can be bookmarked and sent on. A round trip is the statement worth making — an assertion on the
       // exact string would also be asserting the order a `Map` happens to iterate in.
       test("a listing's paging, ordering and search survive a round trip through its URL") {
-        val users = Page.Admin(UserQuery(page = 2, sort = SortHeader.Sort.descending(UserSort.email), search = "bob"))
+        val users = Page.Admin(UserQuery(page = 3, sort = SortHeader.Sort.descending(UserSort.email), search = "bob"))
         val audit = Page.AdminAudit(AuditQuery(pageSize = 50, action = Some("user.create"), actorId = Some(7L)))
 
         val usersUrl = AppRouter.router.relativeUrlForPage(users)
@@ -64,7 +64,8 @@ object AppRouterSpec extends ZIOSpecDefault {
 
         assertTrue(
           usersUrl.startsWith(s"$prefix/admin/users?"),
-          usersUrl.contains("page=2"),
+          // One-based: the number in the address is the number on the button.
+          usersUrl.contains("page=3"),
           usersUrl.contains(s"sort=${UserSort.email}"),
           usersUrl.contains("dir=desc"),
           usersUrl.contains("q=bob"),
@@ -74,13 +75,18 @@ object AppRouterSpec extends ZIOSpecDefault {
         )
       },
       // A parameter is written only when the reader chose something other than the default, so the plain listing keeps
-      // a clean address — and the bare path still has to arrive as the same page.
+      // a clean address — and the bare path still has to arrive as the same page. The first page is a default, so it
+      // writes no `page` at all.
       test("the default listing is the bare path, with no query string") {
         assertTrue(
           AppRouter.router.relativeUrlForPage(Page.Admin()) == s"$prefix/admin/users",
           AppRouter.router.relativeUrlForPage(Page.AdminAudit()) == s"$prefix/admin/audit",
+          AppRouter.router.relativeUrlForPage(Page.Admin(UserQuery(page = Paging.firstPage))) ==
+            s"$prefix/admin/users",
           AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users").contains(Page.Admin()),
           AppRouter.router.pageForRelativeUrl(s"$prefix/admin/audit").contains(Page.AdminAudit()),
+          // The second page, spelled the way a reader would guess it.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users?page=2").contains(Page.Admin(UserQuery(page = 2))),
         )
       },
       // A URL is hand-editable and `pageSize` reaches the SQL `LIMIT`, so the bound is applied on the way in. An
@@ -92,13 +98,15 @@ object AppRouterSpec extends ZIOSpecDefault {
             .pageForRelativeUrl(s"$prefix/admin/users?size=100000")
             .contains(Page.Admin(UserQuery(pageSize = Paging.maxPageSize))),
           AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users?page=-3").contains(Page.Admin()),
+          // There is no page zero to show, so `page=0` is the first page rather than a Not Found.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users?page=0").contains(Page.Admin()),
           AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users?sort=shoe-size&dir=desc").contains(Page.Admin()),
         )
       },
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the
       // query would answer the back button with the filter silently gone.
       test("the history tag carries the listing state too") {
-        val page = Page.Admin(UserQuery(page = 1, search = "a&b=c"))
+        val page = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
 
         assertTrue(AppRouter.deserialize(AppRouter.serialize(page)) == page)
       },

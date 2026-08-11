@@ -89,8 +89,8 @@ object App {
     * in-flight request and the loaded rows with it.
     *
     * Waypoint's signal renderers are the answer — each builds its element once and feeds it the query, and drops it
-    * only when another renderer takes over. Everything else keeps the old behaviour, which is why `viewSignal` is
-    * still `.distinct`: the catch-all below re-runs on every emission.
+    * only when another renderer takes over. Everything else keeps the old behaviour, which is why `viewSignal` is still
+    * `.distinct`: the catch-all below re-runs on every emission.
     */
   private def renderers(viewSignal: Signal[(Gate, Page)]): SplitRender[(Gate, Page), HtmlElement] = {
     SplitRender[(Gate, Page), HtmlElement](viewSignal)
@@ -109,16 +109,44 @@ object App {
     */
   private def showsAdminScreen(gate: Gate): Boolean = gate.loaded && gate.isAdmin
 
-  /** Writing the listing state back to the URL is what makes it bookmarkable, and `replaceState` rather than
-    * `pushState` is what keeps it usable: the search box writes on a pause in typing, so a history entry per write
-    * would leave the back button walking backwards through the reader's own words instead of leaving the screen.
+  /** Writing the listing state back to the URL is what makes it bookmarkable; whether the write is a `pushState` or a
+    * `replaceState` is what decides where the back button goes.
+    *
+    * A page turn, a column, a page size, a filter — each is a place the reader can want to return to, so each gets a
+    * history entry. The one exception is a search term being typed out further ([[UserQuery.refines]]): the box writes
+    * on a pause in typing, and an entry per pause would leave the back button walking through the reader's own words. A
+    * refinement therefore replaces, so one search costs one entry however long the term is.
+    *
+    * A write that changes nothing does not touch the history at all — [[AdminAuditPage]]'s Apply button re-asks for the
+    * listing it is already showing, and that is a reload, not a navigation.
     */
-  private val onAdminQuery: Observer[UserQuery] = {
-    Observer(query => AppRouter.router.replaceState(Page.Admin(query)))
+  private def navigate(next: Page, replace: Boolean): Unit = {
+    if (AppRouter.router.currentPageSignal.now() == next) {
+      ()
+    } else if (replace) {
+      AppRouter.router.replaceState(next)
+    } else {
+      AppRouter.router.pushState(next)
+    }
   }
 
+  private val onAdminQuery: Observer[UserQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.Admin(previous) =>
+            query.refines(previous)
+          case _                    =>
+            false
+        }
+      }
+      navigate(Page.Admin(query), replace = refinesSearch)
+    }
+  }
+
+  /** No refinement case: the audit trail's two filters are applied on a button, so every change here is deliberate. */
   private val onAdminAuditQuery: Observer[AuditQuery] = {
-    Observer(query => AppRouter.router.replaceState(Page.AdminAudit(query)))
+    Observer(query => navigate(Page.AdminAudit(query), replace = false))
   }
 
   /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the

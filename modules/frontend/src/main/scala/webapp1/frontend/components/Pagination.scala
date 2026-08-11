@@ -23,31 +23,34 @@ object Pagination {
     */
   private val maxButtons = 7
 
-  /** A page index the caller can safely use, whatever it was holding. A listing that shrinks — a filter narrowing, a
-    * row deleted — leaves the stored index pointing past the end, and clamping on read means no page has to watch for
-    * that and write a corrected index back.
+  /** A page number the caller can safely use, whatever it was holding. A listing that shrinks — a filter narrowing, a
+    * row deleted — leaves the stored number pointing past the end, and clamping on read means no page has to watch for
+    * that and write a corrected number back.
+    *
+    * One-based throughout, like `dto.Paging`: an empty listing still says page one, since there is no page zero to
+    * offer instead.
     */
   def clampPage(page: Int, pageCount: Int): Int = {
-    math.max(0, math.min(page, pageCount - 1))
+    math.max(Paging.firstPage, math.min(page, pageCount))
   }
 
-  /** The index of the last page, or `0` when there is nothing to show. What a caller jumps to when it has just added a
-    * row at the end and wants it on screen.
+  /** The number of the last page, or the first when there is nothing to show. What a caller jumps to when it has just
+    * added a row at the end and wants it on screen.
     */
   def lastPage(total: Long, pageSize: Int): Int = {
-    math.max(0, Paging.pageCount(total, pageSize) - 1)
+    math.max(Paging.firstPage, Paging.pageCount(total, pageSize))
   }
 
-  /** The buttons to draw, left to right: `Some(index)` is a page, `None` an elision. The first and last page are always
-    * offered, along with the current one and its neighbours; everything between collapses.
+  /** The buttons to draw, left to right: `Some(number)` is a page, `None` an elision. The first and last page are
+    * always offered, along with the current one and its neighbours; everything between collapses.
     */
   def pageItems(pageCount: Int, current: Int): List[Option[Int]] = {
     if (pageCount <= maxButtons) {
-      (0 until pageCount).toList.map(Some(_))
+      (Paging.firstPage to pageCount).toList.map(Some(_))
     } else {
       val shown = {
-        (List(0, pageCount - 1) ++ ((current - 1) to (current + 1)))
-          .filter(index => index >= 0 && index < pageCount)
+        (List(Paging.firstPage, pageCount) ++ ((current - 1) to (current + 1)))
+          .filter(number => number >= Paging.firstPage && number <= pageCount)
           .distinct
           .sorted
       }
@@ -63,7 +66,7 @@ object Pagination {
   }
 
   /** @param page
-    *   the current page, zero-based.
+    *   the current page, one-based — the number the URL and the buttons both show.
     * @param total
     *   how many rows match, across every page. The server counts it; everything on screen is derived from it.
     * @param summary
@@ -98,7 +101,7 @@ object Pagination {
       cls := "flex items-center gap-2",
       span(cls := "label-text text-xs", I18n.t(UiKeys.commonRowsPerPage)),
       select(
-        cls := "select select-sm w-auto",
+        cls    := "select select-sm w-auto",
         disabled <-- busy,
         Paging.pageSizes.map(size => option(value := size.toString, size.toString)),
         controlled(
@@ -110,9 +113,7 @@ object Pagination {
     )
   }
 
-  /** The two figures the numbered buttons only imply: how many rows there are, and how many pages they fill. The page
-    * indicator is one-based, unlike everything else here, because it is read rather than indexed with.
-    */
+  /** The two figures the numbered buttons only imply: how many rows there are, and how many pages they fill. */
   private def renderSummary(current: Signal[Int], pageCount: Signal[Int], summary: Signal[String]): HtmlElement = {
     div(
       cls := "text-sm opacity-60 flex flex-wrap items-center gap-x-2",
@@ -124,7 +125,7 @@ object Pagination {
               if (count <= 0)
                 ""
               else
-                I18n.t(UiKeys.commonPageOf, page + 1, count)
+                I18n.t(UiKeys.commonPageOf, page, count)
             }
             .distinct
       ),
@@ -137,8 +138,8 @@ object Pagination {
     onPage: Observer[Int],
     busy: Signal[Boolean],
   ): HtmlElement = {
-    val atFirst = current.map(_ <= 0).distinct
-    val atLast  = current.combineWithFn(pageCount)((page, count) => page >= count - 1).distinct
+    val atFirst = current.map(_ <= Paging.firstPage).distinct
+    val atLast  = current.combineWithFn(pageCount)((page, count) => page >= count).distinct
 
     div(
       cls := "join",
@@ -159,19 +160,19 @@ object Pagination {
     busy: Signal[Boolean],
   ): HtmlElement = {
     item match {
-      case Some(index) =>
+      case Some(number) =>
         button(
           cls := "join-item btn btn-sm",
           // `btn-active` is what daisyUI marks the current page with; `aria-current` is what says so to a reader that
           // cannot see the styling.
-          cls("btn-active") <-- current.map(_ == index).distinct,
-          aria.current.maybe <-- current.map(page => Option.when(page == index)("page")),
+          cls("btn-active") <-- current.map(_ == number).distinct,
+          aria.current.maybe <-- current.map(page => Option.when(page == number)("page")),
           typ := "button",
           disabled <-- busy,
-          (index + 1).toString,
-          onClick.mapTo(index) --> onPage,
+          number.toString,
+          onClick.mapTo(number) --> onPage,
         )
-      case None        =>
+      case None         =>
         button(cls := "join-item btn btn-sm btn-disabled", typ := "button", disabled := true, "…")
     }
   }
@@ -185,8 +186,8 @@ object Pagination {
     onPage: Observer[Int],
   ): HtmlElement = {
     button(
-      cls := "join-item btn btn-sm",
-      typ := "button",
+      cls        := "join-item btn btn-sm",
+      typ        := "button",
       aria.label := I18n.t(labelKey),
       disabled <-- off.combineWithFn(busy)(_ || _).distinct,
       glyph,

@@ -13,7 +13,7 @@ import webapp1.backend.db.{
 }
 import webapp1.backend.security.PasswordHasher
 import webapp1.shared.domain.OAuthProvider
-import webapp1.shared.dto.{AuditAction, LoginOutcome}
+import webapp1.shared.dto.{AuditAction, LoginOutcome, Paging}
 import zio._
 import zio.json._
 import zio.test._
@@ -47,7 +47,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
     test("creates a user and lists it") {
       for {
         created <- AdminService.createUser(AdminActor.system, "new@example.com", "password123", isAdmin = false)
-        listed  <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
+        listed  <- AdminService.listUsers(page = Paging.firstPage, pageSize = 100, None, None, descending = false)
       } yield assertTrue(
         created.email == "new@example.com",
         !created.isAdmin,
@@ -130,7 +130,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
           before   <- AdminService.userDetail(signedUp._1.id)
           _        <- AdminService.verifyEmailFor(AdminActor(admin.id), signedUp._1.id)
           after    <- AdminService.userDetail(signedUp._1.id)
-          audited  <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.userVerifyEmail), None, None)
+          audited  <-
+            AdminService.auditLog(Paging.firstPage, 50, None, false, Some(AuditAction.userVerifyEmail), None, None)
         } yield assertTrue(
           before.emailVerifiedAt.isEmpty,
           !before.user.emailVerified,
@@ -249,7 +250,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
           _      <- AdminService.revokeSessions(AdminActor(admin.id, Some("10.0.0.9")), target.id)
           _      <- AdminService.clearLockout(AdminActor(admin.id), target.id)
           _      <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          byUser <- AdminService.auditLog(0, 50, None, false, None, Some(admin.id), Some(target.id.toString))
+          byUser <-
+            AdminService.auditLog(Paging.firstPage, 50, None, false, None, Some(admin.id), Some(target.id.toString))
         } yield assertTrue(
           byUser.items.map(_.action).toSet ==
             Set(
@@ -269,7 +271,15 @@ object AdminServiceSpec extends ZIOSpecDefault {
           admin  <- AdminService.createUser(AdminActor.system, "vanishing@example.com", "password123", isAdmin = true)
           victim <- AdminService.createUser(AdminActor(admin.id), "gone@example.com", "password123", isAdmin = false)
           _      <- AdminService.deleteUser(AdminActor(admin.id), victim.id)
-          after  <- AdminService.auditLog(0, 50, None, false, Some(AuditAction.userDelete), None, Some(victim.id.toString))
+          after  <- AdminService.auditLog(
+                      Paging.firstPage,
+                      50,
+                      None,
+                      false,
+                      Some(AuditAction.userDelete),
+                      None,
+                      Some(victim.id.toString),
+                    )
         } yield assertTrue(after.items.exists(_.actorEmail.contains("vanishing@example.com")))
       },
     ),
@@ -278,7 +288,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
         admin  <- AdminService.createUser(AdminActor.system, "admin4@example.com", "password123", isAdmin = true)
         victim <- AdminService.createUser(AdminActor.system, "victim@example.com", "password123", isAdmin = false)
         _      <- AdminService.deleteUser(AdminActor(admin.id), victim.id)
-        listed <- AdminService.listUsers(page = 0, pageSize = 100, None, None, descending = false)
+        listed <- AdminService.listUsers(page = Paging.firstPage, pageSize = 100, None, None, descending = false)
       } yield assertTrue(!listed.items.exists(_.id == victim.id))
     },
   ).provide(layer)

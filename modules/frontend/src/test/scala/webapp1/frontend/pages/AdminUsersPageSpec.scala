@@ -35,6 +35,46 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
     }
   }
 
+  /** Mounts the page the way the application does: **inside a transaction**, because the real mount happens when
+    * `/api/me` opens `App`'s gate, which is a `Var` write.
+    *
+    * That is the whole point of this helper, and [[withPage]] cannot say it: `L.render` runs outside any transaction,
+    * so a `Var` written on mount applies at once there and is queued here. The page was reading such a `Var` back to
+    * decide whether the reader had cleared the search box, saw the seed write had not landed, and answered a bookmarked
+    * `?q=bob` by clearing the filter.
+    */
+  private def withPageMountedInTransaction[A](query: UserQuery)(use: (dom.Element, Var[UserQuery]) => A): A = {
+    val container = dom.document.createElement("div")
+    dom.document.body.appendChild(container)
+    val queryVar  = Var(query)
+    val mountVar  = Var(false)
+    val rootNode  = {
+      L.render(
+        container,
+        div(
+          child <--
+            mountVar.signal.map { mounted =>
+              if (mounted)
+                AdminUsersPage.render(queryVar.signal, queryVar.writer)
+              else
+                emptyNode
+            }
+        ),
+      )
+    }
+    try {
+      mountVar.set(true)
+      use(container, queryVar)
+    } finally {
+      rootNode.unmount()
+      dom.document.body.removeChild(container)
+    }
+  }
+
+  private def searchBox(container: dom.Element): dom.html.Input = {
+    container.querySelector("input[type=search]").asInstanceOf[dom.html.Input]
+  }
+
   private def fieldErrors(container: dom.Element): List[String] = {
     container.querySelectorAll(".text-error").toList.map(_.textContent)
   }
@@ -84,6 +124,29 @@ object AdminUsersPageSpec extends ZIOSpecDefault {
         }
 
         assertTrue(!errors.exists(_.contains("email")), errors.exists(_.contains(passwordTooShort)))
+      },
+      // A bookmarked or shared `/admin/users?q=bob` has to stay filtered. Mounting is not an edit, so the page must
+      // ask for nothing at all until somebody types.
+      test("mounting a filtered listing leaves the filter alone") {
+        val (query, box) = {
+          withPageMountedInTransaction(UserQuery(page = 2, search = "bob")) { (container, queryVar) =>
+            (queryVar.now(), searchBox(container).value)
+          }
+        }
+
+        assertTrue(query == UserQuery(page = 2, search = "bob"), box == "bob")
+      },
+      // The other direction of the same rule: what the reader types does reach the query. The debounce makes the
+      // request wait for a pause, so this asserts the box, and `UserQuerySpec` states what a change does to the page.
+      test("the search box shows what the reader types") {
+        val box = {
+          withPageMountedInTransaction(UserQuery()) { (container, _) =>
+            fill(container, "input[type=search]", "bob")
+            searchBox(container).value
+          }
+        }
+
+        assertTrue(box == "bob")
       },
     )
   }

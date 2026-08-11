@@ -120,7 +120,7 @@ object ApiSchemas {
   given Schema[UserPage]  = DeriveSchema.gen[UserPage]
   given Schema[AuditPage] = DeriveSchema.gen[AuditPage]
 
-  given Schema[ClearRateLimitRequest]      = DeriveSchema.gen[ClearRateLimitRequest]
+  given Schema[ClearRateLimitRequest] = DeriveSchema.gen[ClearRateLimitRequest]
 
   given Schema[ConfigSummary]  = DeriveSchema.gen[ConfigSummary]
   given Schema[MigrationInfo]  = DeriveSchema.gen[MigrationInfo]
