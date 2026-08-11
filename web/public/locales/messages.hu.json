@@ -83,6 +83,7 @@
   "ui.common.nextPage": "Következő oldal",
   "ui.common.pageOf": "{0} / {1}. oldal",
 
+  "ui.nav.menu": "Főmenü",
   "ui.nav.todo": "Teendők",
   "ui.nav.groups": "Csoportok",
   "ui.nav.admin": "Adminisztráció",

@@ -90,6 +90,7 @@ object UiKeys {
 
   // -- Navigation ------------------------------------------------------------------------------
 
+  val navMenu: String          = key("ui.nav.menu")
   val navTodo: String          = key("ui.nav.todo")
   val navGroups: String        = key("ui.nav.groups")
   val navAdmin: String         = key("ui.nav.admin")

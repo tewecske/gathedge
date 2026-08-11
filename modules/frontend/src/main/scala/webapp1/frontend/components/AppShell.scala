@@ -41,7 +41,8 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private val emailSignal       = currentUserSignal.map(_.map(_.email).getOrElse("")).distinct
   private val initialSignal     = emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
 
-  private val (menuId, menuAnchor) = Popover.nextIds("user-menu")
+  private val (menuId, menuAnchor)       = Popover.nextIds("user-menu")
+  private val (navMenuId, navMenuAnchor) = Popover.nextIds("nav-menu")
 
   private val isAuthenticated = active.isDefined
 
@@ -93,7 +94,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     */
   private def renderContent(): HtmlElement = {
     if (isAuthenticated) {
-      div(cls := "p-8", content)
+      div(cls := "p-4 lg:p-8", content)
     } else {
       div(cls := "flex-1 flex items-center justify-center p-4", content)
     }
@@ -122,12 +123,46 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
+  /** The same entry as [[navLink]], worded for a `menu` rather than for a row of buttons: inside the small-screen
+    * dropdown a nav entry is a list item, and `menu-active` is what marks it there.
+    *
+    * The explicit `hide`: a popover is light-dismissed by clicks *outside* it, so navigating to the page already open
+    * (which rebuilds nothing) would otherwise leave the menu standing.
+    */
+  private def navMenuItem(page: Page, label: String): HtmlElement = {
+    li(
+      a(
+        cls := (
+          if (active.contains(page))
+            "menu-active"
+          else
+            ""
+        ),
+        AppRouter.router.navigateTo(page),
+        label,
+        onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(navMenuId)),
+      )
+    )
+  }
+
   /** Empty on the signed-out shell: every one of these needs a session. The admin link is left to the signal below,
     * which is already `false` for a visitor with no account.
     */
   private def navLinks(): List[HtmlElement] = {
     if (isAuthenticated) {
       List(navLink(Page.Home, I18n.t(UiKeys.navTodo)), navLink(Page.Groups, I18n.t(UiKeys.navGroups)))
+    } else {
+      Nil
+    }
+  }
+
+  /** The same entries as [[navLinks]], as menu items. Built separately rather than reused: a Laminar element belongs to
+    * one place in the DOM, and these two renderings of the nav are both in the document at once — only ever one of them
+    * displayed, which is the whole of the responsive behaviour.
+    */
+  private def navMenuItems(): List[HtmlElement] = {
+    if (isAuthenticated) {
+      List(navMenuItem(Page.Home, I18n.t(UiKeys.navTodo)), navMenuItem(Page.Groups, I18n.t(UiKeys.navGroups)))
     } else {
       Nil
     }
@@ -144,23 +179,85 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     }
   }
 
+  /** The nav is rendered twice and shown once: a dropdown under `lg`, a centred row of buttons at `lg` and up. Both are
+    * in the DOM, and the breakpoint utilities (`lg:hidden` / `hidden lg:flex`) decide which one exists as far as a
+    * reader — or the accessibility tree, hence Playwright's `getByRole` — is concerned, since `hidden` is
+    * `display:none`.
+    *
+    * The other three controls (language, theme, account) are already single icons wide, so they stay in `navbar-end` at
+    * every width rather than folding into the dropdown.
+    */
   private def renderNavbar(): HtmlElement = {
     div(
       cls := "navbar bg-base-100 shadow-sm gap-2",
       div(
         cls := "navbar-start gap-2",
+        navDropdown(),
         span(cls := "text-lg font-semibold px-2", "webapp1"),
+      ),
+      div(
+        cls := "navbar-center hidden lg:flex gap-2",
         navLinks(),
         child.maybe <-- isAdminSignal.map(Option.when(_)(navLink(Page.Admin(), I18n.t(UiKeys.navAdmin)))),
       ),
       div(
         cls := "navbar-end gap-2",
-        // Both stay on the signed-out shell — a visitor who cannot read this page has to be able to
-        // reach one they can, and the theme is the browser's choice whether or not anyone is signed in.
+        // All three stay on the signed-out shell — a visitor who cannot read this page has to be able
+        // to reach one they can, and the theme is the browser's choice whether or not anyone is signed in.
         LanguagePicker.render(),
         renderThemeSwap(),
         accountControls(),
       ),
+    )
+  }
+
+  /** The small-screen nav: the hamburger and the popover it names, as a pair so neither can be rendered without the
+    * other. Nothing at all on the signed-out shell, where the nav is empty — a button opening an empty menu is worse
+    * than no button.
+    */
+  private def navDropdown(): List[HtmlElement] = {
+    if (isAuthenticated) {
+      List(renderNavMenuTrigger(), renderNavMenu())
+    } else {
+      Nil
+    }
+  }
+
+  private def renderNavMenuTrigger(): HtmlElement = {
+    button(
+      cls                := "btn btn-ghost btn-circle lg:hidden",
+      typ                := "button",
+      aria.label         := I18n.t(UiKeys.navMenu),
+      Popover.targetAttr := navMenuId,
+      styleAttr          := s"anchor-name:$navMenuAnchor",
+      hamburgerIcon(),
+    )
+  }
+
+  /** The same popover-API dropdown as the account menu, opening from the left. `lg:hidden` sits on the popover too: an
+    * author `display:none` outranks the `:popover-open` display the browser applies, so a menu left open across a
+    * resize closes itself rather than floating over the centred nav.
+    */
+  private def renderNavMenu(): HtmlElement = {
+    ul(
+      cls                 := "dropdown dropdown-start menu w-52 rounded-box bg-base-100 shadow-sm lg:hidden",
+      Popover.popoverAttr := "auto",
+      idAttr              := navMenuId,
+      styleAttr           := s"position-anchor:$navMenuAnchor",
+      navMenuItems(),
+      child.maybe <-- isAdminSignal.map(Option.when(_)(navMenuItem(Page.Admin(), I18n.t(UiKeys.navAdmin)))),
+    )
+  }
+
+  private def hamburgerIcon(): SvgElement = {
+    svg.svg(
+      svg.cls           := "size-5",
+      svg.viewBox       := "0 0 24 24",
+      svg.fill          := "none",
+      svg.stroke        := "currentColor",
+      svg.strokeWidth   := "2",
+      svg.strokeLineCap := "round",
+      svg.path(svg.d := "M4 6h16M4 12h16M4 18h16"),
     )
   }
 
