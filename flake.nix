@@ -2,7 +2,12 @@
   description = "gathedge — ZIO HTTP backend + Scala.js/Laminar SPA";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    # Kept in step with the deployment target's nixpkgs (tewenixsrv runs 26.05). The NixOS
+    # module only contributes overlays, so the packages actually build against the *host's*
+    # nixpkgs — a different pin here would make `nix build .#backend` produce a different
+    # derivation from the one the server needs, and the fixed-output hashes below would not
+    # transfer.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     sbt-derivation = {
       url = "github:zaninime/sbt-derivation";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -56,10 +61,20 @@
       };
 
       # `.jvmopts` carries -Xmx4G, which the sbt build needs.
+      #
+      # `web/public/locales` is here because build.sbt adds it to the backend's
+      # `Compile / unmanagedResourceDirectories` — the i18n catalogs are shared verbatim
+      # between the SPA and the server, with no generated duplicate to go stale. Leaving it
+      # out builds a jar with no catalogs on its classpath, and `Messages.live` fails the boot
+      # with "Message catalog '/messages.en.json' is not on the classpath" (deliberately
+      # fail-fast, so this surfaces at startup rather than one email at a time). Only the
+      # locales subtree is listed, not `web`, so the sbt build is not invalidated whenever a
+      # stylesheet changes.
       scalaSrc = mkSrc "gathedge-scala-src" [
         "build.sbt"
         "project"
         "modules"
+        "web/public/locales"
         ".jvmopts"
         ".scalafmt.conf"
       ];

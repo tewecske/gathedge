@@ -38,6 +38,19 @@ an alternative, not a replacement.
 }
 ```
 
+Two options decide how the deployment is exposed, and both are easy to get wrong:
+
+| Option | Default | What it is |
+| --- | --- | --- |
+| `production` | `false` | `APP_ENV=production` + `SESSION_COOKIE_SECURE=true`. See **Security** below — switching it on before an administrator exists leaves the deployment with no account. |
+| `trustedProxyHops` | `1` | Proxies between the browser and the backend, counted from the **right** of `X-Forwarded-For`. `1` is this module's nginx alone; add one per further hop (a Cloudflare tunnel, a CDN, an ingress). |
+
+`trustedProxyHops` is a security setting in both directions. Too low and every request carries
+nginx's address rather than the client's, so `AuthService` rate-limits the whole deployment as one
+client — five failed sign-ins from anybody block sign-in, sign-up and verification resends for
+*every* account, for as long as failures keep arriving. Too high and an entry of an
+attacker-supplied header is treated as the client address. Never claim more hops than you run.
+
 Then on the server:
 
 ```
@@ -69,9 +82,10 @@ set passwords).
 
 ## Security — read before first boot
 
-Over plain HTTP the app must run `APP_ENV=dev`: under `APP_ENV=production`,
-`AppConfig.productionIssues` refuses to start unless `SESSION_COOKIE_SECURE=true`,
-`PUBLIC_BASE_URL` is `https://`, and `DB_PASSWORD` differs from the development default.
+Over plain HTTP the app must run with `production = false` (the default): under
+`APP_ENV=production`, `AppConfig.productionIssues` refuses to start unless
+`SESSION_COOKIE_SECURE=true`, `PUBLIC_BASE_URL` is `https://`, and `DB_PASSWORD` differs from the
+development default.
 
 The consequence is that `AdminSeeder` auto-provisions an admin account on first start.
 **Set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` before the first
@@ -79,9 +93,22 @@ The consequence is that `AdminSeeder` auto-provisions an admin account on first 
 usable by anyone who can reach port 80. Session cookies also travel in the clear over HTTP,
 so keep this on a trusted network.
 
-Moving to a real domain later: add `enableACME = true; forceSSL = true;` to the vhost, set
-`publicBaseUrl` to the `https://` URL, and flip `APP_ENV` / `SESSION_COOKIE_SECURE` in
-`nix/module.nix` (worth turning into an `enableTls` option at that point).
+**`AdminSeeder` is skipped entirely under `production = true`**, and nothing else creates an
+administrator from nothing — `AdminService.createUser` needs an authenticated one already. So the
+order is fixed: boot once with `production = false`, sign in as the bootstrap admin, change the
+password, and only then switch it on. Going straight to production leaves a deployment nobody can
+administer.
+
+Moving to a real domain later, in one of two shapes:
+
+- **TLS terminated by this host** — add `enableACME = true; forceSSL = true;` to the vhost, and
+  open port 443.
+- **TLS terminated in front of it** (a Cloudflare tunnel, a CDN, an ingress) — leave the vhost on
+  plain HTTP and raise `trustedProxyHops` by one for the extra hop.
+
+Either way, set `publicBaseUrl` to the `https://` URL and set `production = true`. A `Secure`
+cookie is never sent over plain HTTP, so from that point the app can only be signed into over the
+https origin: reaching it by bare IP will still load the SPA and then fail to authenticate.
 
 ## Maintenance: the two hashes
 
@@ -139,7 +166,7 @@ On the server after switching:
 
 ```
 systemctl status gathedge-backend nginx postgresql
-journalctl -u gathedge-backend -f      # Flyway applies V1-V3, then the server binds
+journalctl -u gathedge-backend -f      # Flyway creates the schema and applies V1, then binds
 curl -I http://<server>/              # 200, Cache-Control: no-cache
 curl http://<server>/api/docs/openapi # proves the nginx -> backend proxy path
 ```

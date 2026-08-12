@@ -62,6 +62,45 @@ in
       description = "Open the HTTP port in the firewall.";
     };
 
+    production = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Sets APP_ENV=production and SESSION_COOKIE_SECURE=true.
+
+        AppConfig.productionIssues then refuses the boot unless publicBaseUrl is https:// and
+        the DB_PASSWORD in the environment file differs from the development default — i.e. it
+        assumes a TLS terminator in front of nginx.
+
+        Leave it off for the first boot: AdminSeeder does not run in production, so switching
+        it on before an administrator exists leaves the deployment with no account at all. Seed
+        with it off, sign in, change the password, then switch it on.
+
+        A Secure cookie is never sent over plain HTTP, so once this is on the app can only be
+        signed into over the https origin — reaching it by bare IP will load the SPA and fail
+        to authenticate.
+      '';
+    };
+
+    trustedProxyHops = mkOption {
+      type = types.ints.unsigned;
+      default = 1;
+      description = ''
+        How many reverse proxies stand between the browser and the backend. The address is
+        taken that many entries in from the RIGHT of X-Forwarded-For, because each proxy
+        appends and only the right-hand end is unforgeable.
+
+        1 is this module's nginx alone. 2 adds one further hop in front of it — a Cloudflare
+        tunnel, a CDN, an ingress.
+
+        Both wrong answers are security bugs. Too low and every request carries nginx's own
+        address, so AuthService rate-limits the whole deployment as one client: five failed
+        sign-ins from anybody block sign-in, sign-up and verification resends for every
+        account. Too high and an entry of an attacker-supplied header is treated as the
+        client address.
+      '';
+    };
+
     environmentFile = mkOption {
       type = types.path;
       example = "/var/lib/secrets/gathedge.env";
@@ -144,17 +183,19 @@ in
       # Config substitution reads real environment variables, which is what systemd's
       # Environment=/EnvironmentFile= provide.
       environment = {
-        # Staying on dev is required while the app is served over plain HTTP:
-        # AppConfig.productionIssues refuses to boot under APP_ENV=production unless
-        # SESSION_COOKIE_SECURE=true, PUBLIC_BASE_URL is https:// and DB_PASSWORD is not
-        # the development default. See the security note in the README section below.
-        APP_ENV = "dev";
+        # Both of these follow `production`, which is off by default: while the app is served
+        # over plain HTTP, AppConfig.productionIssues would refuse the boot. See that option's
+        # description for what switching it on requires.
+        APP_ENV = if cfg.production then "production" else "dev";
+        SESSION_COOKIE_SECURE = lib.boolToString cfg.production;
         SERVER_HOST = "127.0.0.1";
         SERVER_PORT = toString cfg.port;
         DB_URL = "jdbc:postgresql://127.0.0.1:${toString config.services.postgresql.settings.port}/${cfg.database.name}";
         DB_USER = cfg.database.user;
         PUBLIC_BASE_URL = cfg.publicBaseUrl;
-        SESSION_COOKIE_SECURE = "false";
+        # Without this the backend takes application.conf's default of 0 — the socket peer,
+        # which behind the nginx below is always 127.0.0.1 for every client at once.
+        TRUSTED_PROXY_HOPS = toString cfg.trustedProxyHops;
         NETTY_MAX_THREADS = "0";
         JAVA_OPTS = "-XX:MaxRAMPercentage=75";
       };
@@ -195,6 +236,16 @@ in
         default = true;
         root = "${cfg.webPackage}";
 
+        # The OAuth callback carries a bearer credential in its URL: the authorization code,
+        # as a query parameter. RouteSupport.loggableUrl keeps it out of the backend's own
+        # request log; nginx writes $request verbatim and has to be told separately, or the
+        # access log keeps the copy the backend was careful not to make. A regex location
+        # outranks a prefix one, so this wins over "/api/" below.
+        locations."~ ^/api/auth/[^/]+/callback" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          extraConfig = "access_log off;";
+        };
+
         # No trailing path, so the /api prefix is preserved — backend routes are mounted
         # under /api.
         locations."/api/".proxyPass = "http://127.0.0.1:${toString cfg.port}";
@@ -223,6 +274,14 @@ in
       {
         assertion = config.services.nginx.enable;
         message = "services.gathedge needs services.nginx.enable = true on the host.";
+      }
+      # The backend checks this too and fails at boot; catching it during evaluation says so
+      # before a rebuild swaps in a unit that cannot start.
+      {
+        assertion = !cfg.production || lib.hasPrefix "https://" cfg.publicBaseUrl;
+        message =
+          "services.gathedge.production requires an https:// publicBaseUrl "
+          + "(it is currently '${cfg.publicBaseUrl}'); the backend refuses to start otherwise.";
       }
     ];
   };
