@@ -1,18 +1,6 @@
 package webapp1.shared.api
 
-import webapp1.shared.domain.{
-  Group,
-  GroupMember,
-  GroupPair,
-  GroupRole,
-  InvitationInfo,
-  Locale,
-  OAuthProvider,
-  Theme,
-  TodoItem,
-  TodoStatus,
-  User,
-}
+import webapp1.shared.domain.{Locale, OAuthProvider, Theme, User}
 import webapp1.shared.dto.{
   AdminIdentityInfo,
   AdminSessionInfo,
@@ -23,13 +11,9 @@ import webapp1.shared.dto.{
   AuthResponse,
   ClearRateLimitRequest,
   ConfigSummary,
-  CreateGroupRequest,
-  CreatePairRequest,
-  CreateTodoRequest,
   CreateUserRequest,
   DbStats,
   IdentitiesResponse,
-  InviteMemberRequest,
   JobStatus,
   LinkedIdentity,
   LockoutStatus,
@@ -46,9 +30,7 @@ import webapp1.shared.dto.{
   SignupResponse,
   SystemOverview,
   UpdateLocaleRequest,
-  UpdateRoleRequest,
   UpdateThemeRequest,
-  UpdateTodoStatusRequest,
   UpdateUserRequest,
   UserPage,
   VerifyEmailRequest,
@@ -71,16 +53,9 @@ object ApiSchemas {
 
   given Schema[Theme]         = DeriveSchema.gen[Theme]
   given Schema[Locale]        = DeriveSchema.gen[Locale]
-  given Schema[TodoStatus]    = DeriveSchema.gen[TodoStatus]
-  given Schema[GroupRole]     = DeriveSchema.gen[GroupRole]
   given Schema[OAuthProvider] = DeriveSchema.gen[OAuthProvider]
 
-  given Schema[User]           = DeriveSchema.gen[User]
-  given Schema[TodoItem]       = DeriveSchema.gen[TodoItem]
-  given Schema[Group]          = DeriveSchema.gen[Group]
-  given Schema[GroupPair]      = DeriveSchema.gen[GroupPair]
-  given Schema[GroupMember]    = DeriveSchema.gen[GroupMember]
-  given Schema[InvitationInfo] = DeriveSchema.gen[InvitationInfo]
+  given Schema[User] = DeriveSchema.gen[User]
 
   given Schema[AuthResponse]              = DeriveSchema.gen[AuthResponse]
   given Schema[SignupResponse]            = DeriveSchema.gen[SignupResponse]
@@ -94,14 +69,6 @@ object ApiSchemas {
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]
   given Schema[ProvidersResponse]         = DeriveSchema.gen[ProvidersResponse]
-
-  given Schema[CreateTodoRequest]       = DeriveSchema.gen[CreateTodoRequest]
-  given Schema[UpdateTodoStatusRequest] = DeriveSchema.gen[UpdateTodoStatusRequest]
-
-  given Schema[CreateGroupRequest]  = DeriveSchema.gen[CreateGroupRequest]
-  given Schema[CreatePairRequest]   = DeriveSchema.gen[CreatePairRequest]
-  given Schema[InviteMemberRequest] = DeriveSchema.gen[InviteMemberRequest]
-  given Schema[UpdateRoleRequest]   = DeriveSchema.gen[UpdateRoleRequest]
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]

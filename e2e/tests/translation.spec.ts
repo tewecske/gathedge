@@ -19,7 +19,7 @@ const adminPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123';
 // Signed-out pages first, then the ones behind a session. `/en` and `/hu` are the same list: the
 // prefix is the only thing that decides the language.
 const publicPaths = ['/sign-in', '/sign-up', '/check-inbox', '/verify-email/not-a-real-token', '/forbidden'];
-const signedInPaths = ['/', '/groups', '/settings', '/admin/users', '/admin/audit', '/admin/system'];
+const signedInPaths = ['/', '/settings', '/admin/users', '/admin/audit', '/admin/system'];
 
 /** Catalog misses seen since the page was opened, as `I18n.t` reports them. */
 function collectMissingKeys(page: Page): string[] {

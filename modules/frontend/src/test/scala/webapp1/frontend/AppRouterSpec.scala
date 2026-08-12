@@ -24,16 +24,14 @@ object AppRouterSpec extends ZIOSpecDefault {
     suite("AppRouter")(
       test("a static route builds its URL under the language prefix") {
         assertTrue(
-          AppRouter.router.relativeUrlForPage(Page.Groups) == s"$prefix/groups",
           AppRouter.router.relativeUrlForPage(Page.SignIn) == s"$prefix/sign-in",
+          AppRouter.router.relativeUrlForPage(Page.CheckInbox) == s"$prefix/check-inbox",
           AppRouter.router.relativeUrlForPage(Page.Settings) == s"$prefix/settings",
           AppRouter.router.relativeUrlForPage(Page.AdminSystem) == s"$prefix/admin/system",
         )
       },
       test("so does a route with path parameters") {
         assertTrue(
-          AppRouter.router.relativeUrlForPage(Page.GroupDetail(7)) == s"$prefix/groups/7",
-          AppRouter.router.relativeUrlForPage(Page.GroupMembers(7)) == s"$prefix/groups/7/members",
           AppRouter.router.relativeUrlForPage(Page.AdminUserDetail(3)) == s"$prefix/admin/users/3",
           AppRouter.router.relativeUrlForPage(Page.VerifyEmail("tok")) == s"$prefix/verify-email/tok",
         )
@@ -43,14 +41,11 @@ object AppRouterSpec extends ZIOSpecDefault {
       test("the home route is the prefix itself") {
         assertTrue(AppRouter.router.relativeUrlForPage(Page.Home) == s"$prefix/")
       },
-      // The invitation and verification links in transactional email are built server-side, by
-      // string concatenation, against these same patterns. If the two ever disagree, a link that
-      // arrives in someone's inbox lands on NotFoundPage — and no test on either side alone sees it.
+      // The verification link in transactional email is built server-side, by string concatenation, against this
+      // same pattern. If the two ever disagree, a link that arrives in someone's inbox lands on NotFoundPage — and no
+      // test on either side alone sees it. Any further link the server mails belongs here too.
       test("the email links the server builds match the routes that receive them") {
-        assertTrue(
-          AppRouter.router.relativeUrlForPage(Page.VerifyEmail("abc")) == s"$prefix/verify-email/abc",
-          AppRouter.router.relativeUrlForPage(Page.AcceptInvite("abc")) == s"$prefix/invitations/abc",
-        )
+        assertTrue(AppRouter.router.relativeUrlForPage(Page.VerifyEmail("abc")) == s"$prefix/verify-email/abc")
       },
       // The whole point of the listing routes: the state that decides which rows are on screen is in the address, so
       // the address can be bookmarked and sent on. A round trip is the statement worth making — an assertion on the

@@ -13,7 +13,7 @@ trait EmailSender {
 }
 
 /** Used whenever no SMTP host is configured: logs instead of sending. That is the default in development, and it is how
-  * a verification or group-invite link is read locally — off the backend's stdout.
+  * a verification link is read locally — off the backend's stdout.
   */
 final class LoggingEmailSender extends EmailSender {
   private val logger = LoggerFactory.getLogger("webapp1.email")

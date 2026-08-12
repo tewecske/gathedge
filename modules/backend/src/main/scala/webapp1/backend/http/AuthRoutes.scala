@@ -338,7 +338,7 @@ object AuthRoutes {
                             MessageRef(MessageKeys.oauthUnavailable),
                             "Sign-in is unavailable",
                           )
-                     })
+                        })
           } yield {
             val cookieValue = s"$nonce|${OAuthIntent.wire(intent)}|${locale.code}"
             Response.redirect(url).addCookie(oauthStateCookie(cookieValue, cfg.session.cookieSecure, 10.minutes))

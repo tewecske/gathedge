@@ -46,15 +46,11 @@ object MessageKeys {
 
   // -- Field labels ----------------------------------------------------------------------------
   // Substituted into the two messages above. Referenced from both modules, which is why the
-  // frontend and backend can no longer disagree about what a field is called — they used to, with
-  // GroupsPage saying "Group name" and GroupService saying "Name" for the same input.
+  // frontend and backend cannot disagree about what a field is called: a form input whose label
+  // already exists here renders this key rather than minting a second one in `UiKeys`.
 
-  val fieldEmail: String     = key("field.email")
-  val fieldPassword: String  = key("field.password")
-  val fieldGroupName: String = key("field.groupName")
-  val fieldTodoText: String  = key("field.todoText")
-  val fieldSource: String    = key("field.source")
-  val fieldTarget: String    = key("field.target")
+  val fieldEmail: String    = key("field.email")
+  val fieldPassword: String = key("field.password")
 
   // -- Authentication --------------------------------------------------------------------------
 
@@ -74,19 +70,6 @@ object MessageKeys {
   val oauthAlreadyLinked: String   = key("oauth.alreadyLinked")
   val oauthUnknownProvider: String = key("oauth.unknownProvider")
   val oauthUnavailable: String     = key("oauth.unavailable")
-
-  // -- Todo ------------------------------------------------------------------------------------
-
-  val todoNotFound: String = key("todo.notFound")
-
-  // -- Groups and invitations ------------------------------------------------------------------
-
-  val groupNotFound: String       = key("group.notFound")
-  val groupNotMember: String      = key("group.notMember")
-  val groupReadOnlyMember: String = key("group.readOnlyMember")
-  val groupAdminOnly: String      = key("group.adminOnly")
-  val groupLastAdmin: String      = key("group.lastAdmin")
-  val invitationInvalid: String   = key("invitation.invalid")
 
   // -- Administration --------------------------------------------------------------------------
 
@@ -116,6 +99,4 @@ object MessageKeys {
 
   val emailVerifySubject: String = key("email.verify.subject")
   val emailVerifyBody: String    = key("email.verify.body")
-  val emailInviteSubject: String = key("email.invite.subject")
-  val emailInviteBody: String    = key("email.invite.body")
 }

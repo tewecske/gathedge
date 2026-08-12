@@ -183,7 +183,6 @@ private class AdminSystemPage {
       row(I18n.t(UiKeys.adminSystemConfigDatabase), config.databaseUrl),
       row(I18n.t(UiKeys.adminSystemConfigDatabaseUser), config.databaseUser),
       row(I18n.t(UiKeys.adminSystemConfigSessionLife), hours(config.sessionValidityHours)),
-      row(I18n.t(UiKeys.adminSystemConfigInviteLife), hours(config.invitationValidityHours)),
       row(I18n.t(UiKeys.adminSystemConfigVerifyLife), hours(config.verificationValidityHours)),
       row(
         I18n.t(UiKeys.adminSystemConfigRateLimit),
@@ -282,17 +281,6 @@ private class AdminSystemPage {
         stats.expiredVerificationTokens.toString,
         warn = stats.expiredVerificationTokens > 0,
       ),
-      row(
-        I18n.t(UiKeys.adminSystemStatsGroups),
-        I18n.plural(UiKeys.adminSystemStatsGroupMembers, stats.groupMembers, stats.groups),
-      ),
-      row(
-        I18n.t(UiKeys.adminSystemStatsInvitations),
-        I18n.t(UiKeys.adminSystemStatsInvitationsValue, stats.pendingInvitations, stats.acceptedInvitations),
-      ),
-      // Counts only: no administrator may read a task board or a group's entries.
-      row(I18n.t(UiKeys.adminSystemStatsTodoItems), stats.todoItems.toString),
-      row(I18n.t(UiKeys.adminSystemStatsGroupPairs), stats.groupPairs.toString),
       row(I18n.t(UiKeys.adminSystemStatsLoginAttempts), stats.loginAttempts.toString),
       row(
         I18n.t(UiKeys.adminSystemStatsFailedLogins),

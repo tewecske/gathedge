@@ -144,7 +144,7 @@ curl -I http://<server>/              # 200, Cache-Control: no-cache
 curl http://<server>/api/docs/openapi # proves the nginx -> backend proxy path
 ```
 
-Then in a browser: sign in, create a todo, and reload on a deep link (that last one
+Then in a browser: sign in, open Settings, and reload on a deep link (that last one
 exercises the `/index.html` fallback that Waypoint's routing needs).
 
 `nixos-rebuild --rollback` returns to the previous generation.

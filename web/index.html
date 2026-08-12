@@ -53,8 +53,8 @@
 
         // The root keeps its trailing slash: `/hu/` is the form Waypoint builds for the home route,
         // and a bare `/hu` leaves it matching an empty path — a gamble not worth taking on the one
-        // URL every visitor hits first. Any other path drops a trailing slash so `/groups/` and
-        // `/groups` land on the same place.
+        // URL every visitor hits first. Any other path drops a trailing slash so `/settings/` and
+        // `/settings` land on the same place.
         var rest = path === '/' ? '/' : path.replace(/\/$/, '');
         window.location.replace('/' + chosen + rest + window.location.search + window.location.hash);
       })();

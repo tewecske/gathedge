@@ -5,7 +5,7 @@ import webapp1.frontend.i18n.I18n
 import webapp1.frontend.{AppRouter, Page}
 import webapp1.shared.i18n.UiKeys
 
-/** Sub-navigation across the three administrator screens, in the same shape as [[GroupSubmenu]].
+/** Sub-navigation across the three administrator screens.
   *
   * The navbar keeps one "Admin" link, pointing at the user list; these tabs are how the audit log and the system
   * overview are reached, so neither needs a navbar entry of its own for a screen most sessions never open.

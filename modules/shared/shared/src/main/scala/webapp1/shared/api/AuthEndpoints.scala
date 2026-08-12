@@ -28,9 +28,9 @@ import ApiSchemas.given
   * These are the only endpoints in the API that declare 429: the rate limiter lives in `AuthService` and signup, login
   * and the verification resend are all that go through it.
   *
-  * [[login]] is also the only path outside `/api/groups` and `/api/invitations` that declares 403, and for the same
-  * reason those do: the *service* raises it rather than an aspect. `AuthFailure.EmailNotVerified` is an answer to a
-  * well-formed request with the right password, and the sign-in form renders it as an offer to resend the link.
+  * [[login]] is the API's only path that declares 403, and it does so for the reason those do: the *service* raises it
+  * rather than an aspect. `AuthFailure.EmailNotVerified` is an answer to a well-formed request with the right password,
+  * and the sign-in form renders it as an offer to resend the link.
   */
 object AuthEndpoints {
 

@@ -77,8 +77,8 @@ object TestAuthLayers {
       .project(config => config.copy(app = config.app.copy(requireEmailVerification = requireEmailVerification)))
   }
 
-  /** The non-repository half of `AuthService.live`'s (and `GroupService.live`'s) requirements: a config, the logging
-    * mailer it selects, and the message catalogs that mailer's subjects and bodies come out of.
+  /** The non-repository half of `AuthService.live`'s requirements: a config, the logging mailer it selects, and the
+    * message catalogs that mailer's subjects and bodies come out of.
     *
     * `Messages.live` reads the real `messages.*.json` off the test classpath rather than a stub, so a spec asserting on
     * a sent email is asserting on the copy that actually ships — and a catalog key deleted out from under the email

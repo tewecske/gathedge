@@ -4,6 +4,7 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import webapp1.frontend.i18n.{CurrentLocale, I18n}
 import webapp1.frontend.state.AppState
+import webapp1.shared.Branding
 
 import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -22,7 +23,7 @@ object Main {
         I18n.load(CurrentLocale.value).foreach(_ => render(container, App.render()))
       case None            =>
         // index.html and this id are shipped together, so this only fires if the host page is wrong.
-        dom.console.error("webapp1: no #app element to mount into")
+        dom.console.error(s"${Branding.slug}: no #app element to mount into")
     }
   }
 }

@@ -1,6 +1,7 @@
 package webapp1.backend.http
 
 import webapp1.backend.{TestAuthLayers, TestDataSource}
+import webapp1.backend.config.AppConfig
 import webapp1.backend.db.{
   AuditLogRepository,
   LoginAttemptRepository,
@@ -8,7 +9,6 @@ import webapp1.backend.db.{
   EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
-  TodoRepository,
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
@@ -18,11 +18,10 @@ import webapp1.backend.service.{
   AuditTrail,
   AuthService,
   BackgroundJobs,
+  OAuthClients,
   RateLimiter,
   SystemService,
-  TodoService,
 }
-import webapp1.shared.validation.Validation
 import zio.*
 import zio.http.*
 import zio.test.*
@@ -32,25 +31,37 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
 /** The cross-cutting checks in [[RouteSupport]] are the only thing standing between an anonymous request and the data,
   * but they were previously exercised only indirectly through one end-to-end browser test. These drive the real
   * `Routes` values with `runZIO`, no server needed.
+  *
+  * `AuthRoutes` is what the session and CSRF cases are driven through, because `GET /api/me` and `PUT /api/me/theme`
+  * are the skeleton's own read and write behind the `authenticated` aspect. Any route set a feature adds carries the
+  * same aspects, so these cases cover it too. What a new route set does need a case of its own for is the shape
+  * `AdminRoutes` has below: a *second* context-providing aspect, on a handler that also takes a path parameter.
   */
 object RouteGuardsSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
     TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
+      UserRepository.test ++ SessionRepository.test ++
         OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
     )
   }
 
   // AdminService is stacked on top of AuthService rather than built beside it: it delegates the resend and unlink
-  // paths to the one service that owns them.
+  // paths to the one service that owns them. `OAuthClients` is here because `AuthRoutes` carries the two OAuth
+  // redirects as well as the described endpoints — none of the cases below reaches them, but the `Routes` value still
+  // has to be constructible.
   private val layer = {
     val base = {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
-        TestAuthLayers.emailAndConfig
+        TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live ++ TodoService.live) >+> (AdminService.live ++ SystemService.live)
+    base >+> (AuthService.live ++ AuditTrail.live) >+> (AdminService.live ++ SystemService.live)
   }
+
+  /** The one mutating body the CSRF cases are driven with. Its content is beside the point — what matters is that the
+    * request is a PUT behind the `authenticated` aspect, carrying a body the endpoint's codec accepts.
+    */
+  private val darkTheme = """{"theme":"Dark"}"""
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
     orDieWithFailure(AuthService.signup(email, "password123")).map(_._2.get)
@@ -68,42 +79,40 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       test("a state-changing request without the CSRF header is refused") {
         for {
           session  <- signUp("csrf@example.com")
-          request   = withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
-          response <- runRoutes(TodoRoutes.routes, request)
+          request   = withSession(Request.put("/api/me/theme", Body.fromString(darkTheme)), session)
+          response <- runRoutes(AuthRoutes.routes, request)
         } yield assertTrue(response.status == Status.Forbidden)
       },
       test("the same request with the CSRF header goes through") {
         for {
           session  <- signUp("csrf-ok@example.com")
-          request   = withCsrf(
-                        withSession(Request.post("/api/todos", Body.fromString("""{"text":"buy milk"}""")), session)
-                      )
-          response <- runRoutes(TodoRoutes.routes, request)
-        } yield assertTrue(response.status == Status.Created)
+          request   = withCsrf(withSession(Request.put("/api/me/theme", Body.fromString(darkTheme)), session))
+          response <- runRoutes(AuthRoutes.routes, request)
+        } yield assertTrue(response.status == Status.Ok)
       },
       // The CSRF aspect is scoped by method rather than attached route by route, so a read has to stay reachable
       // without the header — the frontend's initial page loads don't send one.
       test("a read is not subject to the CSRF header") {
         for {
           session  <- signUp("csrf-read@example.com")
-          response <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
+          response <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me"), session))
         } yield assertTrue(response.status == Status.Ok)
       },
       // CSRF is checked before the session is looked up, so a cross-site request can't tell a valid
       // session cookie from an invalid one by the status code.
       test("a state-changing request without either the CSRF header or a session is refused, not unauthorized") {
         for {
-          response <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.fromString("""{"text":"x"}""")))
+          response <- runRoutes(AuthRoutes.routes, Request.put("/api/me/theme", Body.fromString(darkTheme)))
         } yield assertTrue(response.status == Status.Forbidden)
       },
       test("a request without a session cookie is unauthorized") {
         for {
-          response <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
+          response <- runRoutes(AuthRoutes.routes, Request.get("/api/me"))
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("a request carrying an unknown session id is unauthorized") {
         for {
-          response <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), "not-a-real-session"))
+          response <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me"), "not-a-real-session"))
         } yield assertTrue(response.status == Status.Unauthorized)
       },
       test("an admin route denies a signed-in non-admin") {
@@ -166,17 +175,6 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           allowed <- runRoutes(AdminRoutes.routes, withSession(Request.get("/api/admin/system"), session))
         } yield assertTrue(denied.status == Status.Forbidden, allowed.status == Status.Ok)
       },
-      // Over-length input used to reach the database and surface as a 500 with a stack trace in the
-      // body; it has to come back as an ordinary validation failure.
-      test("text longer than the column width is a 400, not a 500") {
-        val tooLong = "a" * (Validation.maxTextLength + 1)
-        for {
-          session  <- signUp("long-text@example.com")
-          body      = Body.fromString(s"""{"text":"$tooLong"}""")
-          request   = withCsrf(withSession(Request.post("/api/todos", body), session))
-          response <- runRoutes(TodoRoutes.routes, request)
-        } yield assertTrue(response.status == Status.BadRequest)
-      },
       test("a defect becomes a generic JSON 500 rather than a stack trace in the body") {
         val boom                               = new RuntimeException("relation \"users\" does not exist")
         val dyingRoutes: Routes[Any, Response] = {
@@ -196,7 +194,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       // echoed back into the body. Every other error this API can answer with is an `ErrorResponse` object.
       test("a path that matches no route is a JSON 404 that does not echo the path") {
         for {
-          response <- runRoutes(TodoRoutes.routes, Request.get("/api/no-such-thing"))
+          response <- runRoutes(AuthRoutes.routes, Request.get("/api/no-such-thing"))
           body     <- response.body.asString
         } yield assertTrue(
           response.status == Status.NotFound,

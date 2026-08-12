@@ -147,7 +147,6 @@ final case class SystemServiceLive(
       databaseUrl = SystemService.redactUrl(config.db.url),
       databaseUser = config.db.user,
       sessionValidityHours = SessionAuth.sessionDuration.toHours,
-      invitationValidityHours = GroupService.invitationValidity.toHours,
       verificationValidityHours = AuthService.verificationValidity.toHours,
       rateLimitMaxAttempts = RateLimiter.maxAttempts,
       rateLimitWindowMinutes = RateLimiter.window.toMinutes,
@@ -215,7 +214,7 @@ final case class SystemServiceLive(
     (
       for {
         now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        counts         <- metrics.counts(now)
+        counts         <- metrics.counts
         sessions       <- sessionRepo.countAll
         activeSessions <- sessionRepo.countActive(now)
         tokens         <- tokenRepo.countAll
@@ -238,13 +237,6 @@ final case class SystemServiceLive(
         activeSessions = activeSessions,
         verificationTokens = tokens,
         expiredVerificationTokens = expiredTokens,
-        todoItems = counts.todoItems,
-        groups = counts.groups,
-        groupMembers = counts.groupMembers,
-        groupPairs = counts.groupPairs,
-        invitations = counts.invitations,
-        pendingInvitations = counts.pendingInvitations,
-        acceptedInvitations = counts.acceptedInvitations,
         loginAttempts = attempts,
         // Counted as "everything that was not a success", so a failure outcome added by a later build is included
         // without this having to be told about it.

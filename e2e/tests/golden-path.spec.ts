@@ -3,16 +3,16 @@ import { test, expect, type Page } from '@playwright/test';
 // Full-stack golden-path smoke test. Requires the real stack running (see
 // playwright.config.ts) — Postgres via docker compose, backend, and vite dev.
 //
-// Note on group invites: EmailSender is log-based in dev (summary.md/M3 plan), so
-// the invite link only ever reaches the backend's stdout, not anything a browser
-// automation script can observe. This suite verifies the invite *request* succeeds
-// (UI feedback), not clicking the emailed link — the full invite -> accept round
-// trip is covered by GroupServiceSpec (backend, SQLite) instead.
+// This walks the skeleton's own screens: sign up, sign in and out, the theme control,
+// and the whole administrator surface. A project built from the skeleton adds its
+// feature's path here, between signing up and signing out.
 //
-// Email verification is the same story, twice over: the link is only ever logged, and
-// REQUIRE_EMAIL_VERIFICATION defaults to false, so signup below still lands on the todo
-// board. Turning it on would send this suite to /check-inbox with no way to continue —
-// the verify -> login round trip is in AuthServiceSpec, which can read the sent mail.
+// Email verification is deliberately out of reach: EmailSender is log-based in dev, so
+// the confirmation link only ever reaches the backend's stdout, not anything a browser
+// automation script can observe. REQUIRE_EMAIL_VERIFICATION also defaults to false, so
+// signup below lands on the home page rather than /check-inbox — turning it on would
+// strand this suite there with no way to continue. The verify -> login round trip is in
+// AuthServiceSpec, which can read the sent mail.
 
 const unique = Date.now();
 const email = `e2e-${unique}@example.com`;
@@ -21,7 +21,6 @@ const password = 'password123';
 test.describe.configure({ mode: 'serial' });
 
 let page: Page;
-let groupName: string;
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
@@ -37,40 +36,19 @@ test('unauthenticated visitor is redirected to sign-in', async () => {
   await expect(page).toHaveURL(/\/en\/sign-in$/);
 });
 
-test('sign up creates an account and lands on the Todo board', async () => {
+test('sign up creates an account and lands on the home page', async () => {
   await page.goto('/en/sign-up');
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'TODO' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
 });
 
-test('todo item can be added and cycled through statuses by clicking', async () => {
-  const itemText = `write the report ${unique}`;
-  await page.locator('input[placeholder="New to-do item"]').fill(itemText);
-  await page.getByRole('button', { name: 'Add' }).click();
-
-  const toDoColumn = page.locator('.card').filter({ hasText: 'To Do' });
-  await expect(toDoColumn.getByText(itemText)).toBeVisible();
-
-  await toDoColumn.getByText(itemText).click();
-  const inProgressColumn = page.locator('.card').filter({ hasText: 'In Progress' });
-  await expect(inProgressColumn.getByText(itemText)).toBeVisible();
-});
-
-test('blank todo submission is a no-op', async () => {
-  const before = await page.locator('.list-row').count();
-  await page.getByRole('button', { name: 'Add' }).click();
-  const after = await page.locator('.list-row').count();
-  expect(after).toBe(before);
-});
-
-test('todo item survives a page refresh (list is re-fetched, not just held in memory)', async () => {
-  const itemText = `write the report ${unique}`;
+test('the session survives a page refresh', async () => {
   await page.reload();
-  const inProgressColumn = page.locator('.card').filter({ hasText: 'In Progress' });
-  await expect(inProgressColumn.getByText(itemText)).toBeVisible();
+  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
 });
 
 test('theme toggle switches the page theme immediately', async () => {
@@ -81,65 +59,6 @@ test('theme toggle switches the page theme immediately', async () => {
   await expect(page.getByRole('checkbox', { name: /Switch to/ })).toBeAttached();
   await page.locator('label.swap').click();
   await expect(html).not.toHaveAttribute('data-theme', before ?? '');
-});
-
-test('creating a group makes the creator its admin', async () => {
-  groupName = `E2E Group ${unique}`;
-  await page.getByRole('link', { name: 'Groups' }).click();
-  await expect(page).toHaveURL(/\/en\/groups$/);
-  await page.locator('input[placeholder="New group name"]').fill(groupName);
-  await page.getByRole('button', { name: 'Create group' }).click();
-  const row = page.locator('.list-row').filter({ hasText: groupName });
-  await expect(row).toBeVisible();
-  await expect(row.getByText('Admin')).toBeVisible();
-  await row.getByRole('link', { name: groupName }).click();
-  await expect(page.getByRole('heading', { name: groupName })).toBeVisible();
-});
-
-test('group list survives a page refresh (list is re-fetched, not just held in memory)', async () => {
-  await page.goto('/en/groups');
-  const row = page.locator('.list-row').filter({ hasText: groupName });
-  await expect(row).toBeVisible();
-  await row.getByRole('link', { name: groupName }).click();
-  await expect(page.getByRole('heading', { name: groupName })).toBeVisible();
-});
-
-test('adding a source/target pair requires both fields and then appears in the table', async () => {
-  const pairsTable = page.locator('table').filter({ has: page.locator('th', { hasText: 'Source' }) });
-
-  await page.getByRole('button', { name: 'Add' }).click(); // blank submit: no-op
-  await expect(pairsTable.locator('tbody tr')).toHaveCount(0);
-
-  await page.locator('input[placeholder="Source"]').fill('source-value');
-  await page.locator('input[placeholder="Target"]').fill('target-value');
-  await page.getByRole('button', { name: 'Add' }).click();
-
-  await expect(pairsTable.locator('tbody tr', { hasText: 'source-value' })).toBeVisible();
-});
-
-// Members (the list and the invite form) live on their own route, reached from the
-// group submenu — they were split out of the group overview and are not on it.
-test('inviting a member is accepted by the server (link delivery is out of e2e reach)', async () => {
-  await page.getByRole('link', { name: 'Members' }).click();
-  await expect(page).toHaveURL(/\/en\/groups\/\d+\/members$/);
-  await page.locator('input[placeholder="Email to invite"]').fill(`invitee-${unique}@example.com`);
-  await page.getByRole('button', { name: 'Invite' }).click();
-  await expect(page.getByText(/Invited /)).toBeVisible();
-});
-
-test('the members list survives a page refresh', async () => {
-  await page.reload();
-  // Must include the creator (self) — this is the "empty members" bug.
-  await expect(page.getByText(email)).toBeVisible();
-});
-
-test('group detail (pairs, add-pair form) survives a page refresh', async () => {
-  await page.getByRole('link', { name: 'Overview' }).click();
-  await page.reload();
-  // Add-pair form is only rendered once the group (with myRole) has loaded.
-  await expect(page.locator('input[placeholder="Source"]')).toBeVisible();
-  await expect(page.locator('input[placeholder="Target"]')).toBeVisible();
-  await expect(page.locator('table tbody tr', { hasText: 'source-value' })).toBeVisible();
 });
 
 test('log out returns to sign-in', async () => {
@@ -168,7 +87,7 @@ test.describe('administrator flows', () => {
     // The forbidden page the previous test lands on renders outside the app shell, so
     // there is no navbar on it to reach the account menu through: go somewhere there is
     // one first. Signing out has to happen before /en/sign-in, which is RequireAnon and
-    // would bounce a still-signed-in visitor straight back to the board.
+    // would bounce a still-signed-in visitor straight back to the home page.
     await page.goto('/en/');
     await page.getByRole('button', { name: 'Account menu' }).click();
     await page.getByRole('button', { name: 'Log out' }).click();

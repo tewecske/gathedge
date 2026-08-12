@@ -21,8 +21,8 @@ object MessageCatalogSpec extends ZIOSpecDefault {
           MessageCatalog.substitute("{0}{0}", List("x")) == "xx",
         )
       },
-      // A single left-to-right pass. Without it, a group someone named "{0}" would splice its own
-      // name back into the sentence — user input is an argument, and arguments are not templates.
+      // A single left-to-right pass. Without it, an argument whose own text is "{0}" would splice
+      // itself back into the sentence — user input is an argument, and arguments are not templates.
       test("does not re-scan a substituted value for placeholders") {
         assertTrue(MessageCatalog.substitute("name: {0}, id: {1}", List("{1}", "7")) == "name: {1}, id: 7")
       },
@@ -41,13 +41,13 @@ object MessageCatalogSpec extends ZIOSpecDefault {
         val en = catalog(
           Locale.En,
           "validation.field.required" -> "{0} is required",
-          "field.groupName"           -> "Group name",
+          "field.email"               -> "Email",
         )
         assertTrue(
-          en.resolve(MessageRef("validation.field.required", List(MessageRef.keyArg("field.groupName")))) ==
-            "Group name is required",
-          en.resolve(MessageRef("validation.field.required", List("field.groupName"))) ==
-            "field.groupName is required",
+          en.resolve(MessageRef("validation.field.required", List(MessageRef.keyArg("field.email")))) ==
+            "Email is required",
+          en.resolve(MessageRef("validation.field.required", List("field.email"))) ==
+            "field.email is required",
         )
       },
       // English distinguishes 1 from everything else; Hungarian takes the singular after any

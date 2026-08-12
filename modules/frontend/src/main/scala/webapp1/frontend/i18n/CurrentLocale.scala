@@ -58,7 +58,7 @@ object CurrentLocale {
   def urlUnder(locale: Locale): String = {
     val location = dom.window.location
     val segments = location.pathname.split('/').toList.filter(_.nonEmpty)
-    // Drop the current prefix if there is one: "/hu/groups/7" -> List("groups", "7"), "/hu" -> Nil.
+    // Drop the current prefix if there is one: "/hu/admin/users" -> List("admin", "users"), "/hu" -> Nil.
     val rest     = {
       if (fromPath(location.pathname).isDefined)
         segments.drop(1)

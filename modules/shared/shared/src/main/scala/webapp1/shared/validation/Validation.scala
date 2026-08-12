@@ -8,7 +8,7 @@ import webapp1.shared.i18n.{MessageKeys, MessageRef}
   * Failures are [[MessageRef]]s rather than rendered strings, so the same check produces the same message in whatever
   * language the caller is reading — whether it ran in the browser before submitting or on the server afterwards. It
   * also means a field's *label* is a catalog key chosen by the caller, which is what finally stopped the two sides
-  * disagreeing about what a field is called (the sign-up form said "Group name" where `GroupService` said "Name").
+  * disagreeing about what a field is called.
   */
 object Validation {
 
@@ -53,9 +53,12 @@ object Validation {
 
   // The upper bounds below mirror the column widths in db/migration/*: exceeding one used to reach
   // the database and come back as a constraint violation (a 500), instead of a field error.
-  val maxEmailLength = 255  // users.email, group_invitations.email
-  val maxNameLength  = 255  // groups.name
-  val maxTextLength  = 2000 // todo_items.text, group_pairs.source/target
+  val maxEmailLength = 255 // users.email
+
+  // No column in the skeleton's own schema is this wide; both are here as the conventional ceilings a
+  // feature's VARCHAR should be declared at, so a form and its column agree from the start.
+  val maxNameLength = 255
+  val maxTextLength = 2000
 
   def isValidEmail(email: String): Boolean = {
     emailPattern.matches(email.trim) && email.trim.length <= maxEmailLength
@@ -94,8 +97,8 @@ object Validation {
   }
 
   /** @param fieldKey
-    *   the *catalog key* of the field's label (e.g. `MessageKeys.fieldGroupName`), not the label itself. It is passed
-    *   as a `MessageRef.keyArg` so the label is translated before being spliced into the sentence around it.
+    *   the *catalog key* of the field's label (e.g. `MessageKeys.fieldEmail`), not the label itself. It is passed as a
+    *   `MessageRef.keyArg` so the label is translated before being spliced into the sentence around it.
     */
   def validateNonBlank(value: String, fieldKey: String, maxLength: Int = maxTextLength): Either[MessageRef, String] = {
     val trimmed = value.trim

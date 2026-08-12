@@ -21,9 +21,9 @@ import scala.collection.mutable
   * travels on the wire is never translated: the `value` of a `<select>` `option` stays the enum's `toString` or the
   * stored audit code, and only its label comes through a key below.
   *
-  * Where a field's label already exists as a `MessageKeys` constant — `field.email`, `field.password`, `field.source`,
-  * `field.target` — the page reuses that one rather than minting a second. Those keys exist precisely so a form and the
-  * endpoint behind it cannot disagree about what an input is called.
+  * Where a field's label already exists as a `MessageKeys` constant — `field.email`, `field.password` — the page reuses
+  * that one rather than minting a second. Those keys exist precisely so a form and the endpoint behind it cannot
+  * disagree about what an input is called.
   */
 object UiKeys {
 
@@ -50,9 +50,9 @@ object UiKeys {
   lazy val all: Set[String] = registered.toSet
 
   // -- Shared vocabulary -----------------------------------------------------------------------
-  // Words appearing on several screens. Shared only where the *meaning* is shared: `commonAdd` is
-  // the same verb on the to-do and the group-pair form, whereas a heading and a button that merely
-  // read alike keep separate keys, since a translator may well want to split them.
+  // Words appearing on several screens. Shared only where the *meaning* is shared: a heading and a
+  // button that merely read alike keep separate keys, since a translator may well want to split
+  // them.
 
   val commonSignIn: String        = key("ui.common.signIn")
   val commonSignUp: String        = key("ui.common.signUp")
@@ -90,18 +90,22 @@ object UiKeys {
 
   // -- Navigation ------------------------------------------------------------------------------
 
-  val navMenu: String          = key("ui.nav.menu")
-  val navTodo: String          = key("ui.nav.todo")
-  val navGroups: String        = key("ui.nav.groups")
-  val navAdmin: String         = key("ui.nav.admin")
-  val navAccountMenu: String   = key("ui.nav.accountMenu")
-  val navLogOut: String        = key("ui.nav.logOut")
-  val navThemeDark: String     = key("ui.nav.themeDark")
-  val navThemeLight: String    = key("ui.nav.themeLight")
-  val navAdminUsers: String    = key("ui.nav.adminUsers")
-  val navAdminSystem: String   = key("ui.nav.adminSystem")
-  val navGroupOverview: String = key("ui.nav.groupOverview")
-  val navGroupMembers: String  = key("ui.nav.groupMembers")
+  val navMenu: String = key("ui.nav.menu")
+  val navHome: String = key("ui.nav.home")
+
+  /** The language picker's accessible name. It was the one page string reaching `I18n.t` as a bare literal rather than
+    * a constant, under a key outside the `ui.` namespace — which is exactly the gap this object exists to close, since
+    * neither of `MessagesSpec`'s checks could see it. `e2e/tests/translation.spec.ts` is what caught it.
+    */
+  val navLanguage: String = key("ui.nav.language")
+
+  val navAdmin: String       = key("ui.nav.admin")
+  val navAccountMenu: String = key("ui.nav.accountMenu")
+  val navLogOut: String      = key("ui.nav.logOut")
+  val navThemeDark: String   = key("ui.nav.themeDark")
+  val navThemeLight: String  = key("ui.nav.themeLight")
+  val navAdminUsers: String  = key("ui.nav.adminUsers")
+  val navAdminSystem: String = key("ui.nav.adminSystem")
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
@@ -146,22 +150,6 @@ object UiKeys {
   val oauthErrorStateMismatch: String       = key("ui.oauth.error.stateMismatch")
   val oauthErrorFailed: String              = key("ui.oauth.error.failed")
 
-  // -- Invitations -----------------------------------------------------------------------------
-
-  val inviteTitle: String = key("ui.invite.title")
-
-  /** Split around the `<strong>` holding the group's name, which is why it is two keys and not one message with a
-    * placeholder. `{0}` on the second half is the role.
-    */
-  val inviteIntroBefore: String = key("ui.invite.introBefore")
-  val inviteIntroAfter: String  = key("ui.invite.introAfter")
-
-  val inviteSentTo: String       = key("ui.invite.sentTo")
-  val inviteAccepted: String     = key("ui.invite.accepted")
-  val inviteExpired: String      = key("ui.invite.expired")
-  val inviteAccept: String       = key("ui.invite.accept")
-  val inviteWrongAccount: String = key("ui.invite.wrongAccount")
-
   // -- Status pages ----------------------------------------------------------------------------
 
   val forbiddenTitle: String = key("ui.status.forbidden.title")
@@ -170,42 +158,12 @@ object UiKeys {
   val notFoundBody: String   = key("ui.status.notFound.body")
   val statusBackHome: String = key("ui.status.backHome")
 
-  // -- To-do -----------------------------------------------------------------------------------
+  // -- Home ------------------------------------------------------------------------------------
+  // The placeholder landing page. A new project replaces this screen first, and these two keys with
+  // it — they are here so the skeleton renders in both languages out of the box.
 
-  val todoTitle: String       = key("ui.todo.title")
-  val todoPlaceholder: String = key("ui.todo.placeholder")
-
-  val todoStatusToDo: String       = key("ui.todostatus.toDo")
-  val todoStatusInProgress: String = key("ui.todostatus.inProgress")
-  val todoStatusDone: String       = key("ui.todostatus.done")
-
-  // -- Groups ----------------------------------------------------------------------------------
-
-  val groupsTitle: String       = key("ui.groups.title")
-  val groupsPlaceholder: String = key("ui.groups.placeholder")
-  val groupsCreate: String      = key("ui.groups.create")
-
-  val groupBackToGroups: String  = key("ui.group.backToGroups")
-  val groupFallbackName: String  = key("ui.group.fallbackName")
-  val groupPairAddedBy: String   = key("ui.group.pairAddedBy")
-  val groupDelete: String        = key("ui.group.delete")
-  val groupDeleteConfirm: String = key("ui.group.deleteConfirm")
-
-  val membersBackToGroup: String = key("ui.members.backToGroup")
-  val membersTitle: String       = key("ui.members.title")
-
-  /** `{0}` is the group's name; the page falls back to [[membersTitle]] until the group has loaded. */
-  val membersTitleFor: String = key("ui.members.titleFor")
-
-  val membersForbidden: String         = key("ui.members.forbidden")
-  val membersColRole: String           = key("ui.members.colRole")
-  val membersInvitePlaceholder: String = key("ui.members.invitePlaceholder")
-  val membersInvite: String            = key("ui.members.invite")
-  val membersInvited: String           = key("ui.members.invited")
-
-  val roleAdmin: String     = key("ui.role.admin")
-  val roleReadWrite: String = key("ui.role.readWrite")
-  val roleReadOnly: String  = key("ui.role.readOnly")
+  val homeTitle: String = key("ui.home.title")
+  val homeBody: String  = key("ui.home.body")
 
   // -- Account settings ------------------------------------------------------------------------
 
@@ -392,10 +350,9 @@ object UiKeys {
   val adminSystemConfigDatabase: String      = key("ui.admin.system.config.database")
   val adminSystemConfigDatabaseUser: String  = key("ui.admin.system.config.databaseUser")
   val adminSystemConfigSessionLife: String   = key("ui.admin.system.config.sessionLife")
-  val adminSystemConfigInviteLife: String    = key("ui.admin.system.config.inviteLife")
   val adminSystemConfigVerifyLife: String    = key("ui.admin.system.config.verifyLife")
 
-  /** `.one`/`.other`; the three lifetimes above all render their value through it. */
+  /** `.one`/`.other`; both lifetimes above render their value through it. */
   val adminSystemConfigHours: String = pluralKey("ui.admin.system.config.hours")
 
   val adminSystemConfigRateLimit: String      = key("ui.admin.system.config.rateLimit")
@@ -433,19 +390,10 @@ object UiKeys {
   val adminSystemStatsSessionsValue: String = key("ui.admin.system.stats.sessionsValue")
   val adminSystemStatsTokens: String        = key("ui.admin.system.stats.tokens")
   val adminSystemStatsTokensExpired: String = key("ui.admin.system.stats.tokensExpired")
-  val adminSystemStatsGroups: String        = key("ui.admin.system.stats.groups")
-
-  /** `.one`/`.other`; `{0}` is the member count and `{1}` the number of groups holding them. */
-  val adminSystemStatsGroupMembers: String = pluralKey("ui.admin.system.stats.groupMembers")
-
-  val adminSystemStatsInvitations: String      = key("ui.admin.system.stats.invitations")
-  val adminSystemStatsInvitationsValue: String = key("ui.admin.system.stats.invitationsValue")
-  val adminSystemStatsTodoItems: String        = key("ui.admin.system.stats.todoItems")
-  val adminSystemStatsGroupPairs: String       = key("ui.admin.system.stats.groupPairs")
-  val adminSystemStatsLoginAttempts: String    = key("ui.admin.system.stats.loginAttempts")
-  val adminSystemStatsFailedLogins: String     = key("ui.admin.system.stats.failedLogins")
-  val adminSystemStatsLockedOut: String        = key("ui.admin.system.stats.lockedOut")
-  val adminSystemStatsAuditEntries: String     = key("ui.admin.system.stats.auditEntries")
+  val adminSystemStatsLoginAttempts: String = key("ui.admin.system.stats.loginAttempts")
+  val adminSystemStatsFailedLogins: String  = key("ui.admin.system.stats.failedLogins")
+  val adminSystemStatsLockedOut: String     = key("ui.admin.system.stats.lockedOut")
+  val adminSystemStatsAuditEntries: String  = key("ui.admin.system.stats.auditEntries")
 
   val adminSystemMaintenanceCard: String         = key("ui.admin.system.maintenance.card")
   val adminSystemMaintenanceHint: String         = key("ui.admin.system.maintenance.hint")

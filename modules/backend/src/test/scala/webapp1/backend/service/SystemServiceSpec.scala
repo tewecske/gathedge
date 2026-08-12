@@ -88,13 +88,13 @@ object SystemServiceSpec extends ZIOSpecDefault {
         signedUp._1.id > 0,
       )
     },
-    test("reports the applied schema, which is at least the migration that added these tables") {
+    test("reports the applied schema, which is at least the baseline that created these tables") {
       for {
         overview <- SystemService.overview
       } yield assertTrue(
         overview.runtime.migrations.nonEmpty,
         overview.runtime.migrations.forall(_.success),
-        overview.runtime.migrations.flatMap(_.version).contains("7"),
+        overview.runtime.migrations.flatMap(_.version).contains("1"),
         overview.runtime.apiVersion == AppConfig.apiVersion,
         overview.runtime.uptimeMillis >= 0L,
       )

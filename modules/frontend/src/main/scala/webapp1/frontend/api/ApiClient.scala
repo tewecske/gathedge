@@ -1,17 +1,13 @@
 package webapp1.frontend.api
 
 import com.raquo.laminar.api.L._
-import webapp1.shared.api.{AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
+import webapp1.shared.api.AuthEndpoints
 import webapp1.frontend.i18n.CurrentLocale
-import webapp1.shared.domain.{Group, GroupMember, GroupPair, InvitationInfo, Locale, OAuthProvider, Theme, TodoItem}
+import webapp1.shared.domain.{Locale, OAuthProvider, Theme}
 import webapp1.shared.domain.Locale.code
 import webapp1.shared.dto.{
   AuthResponse,
-  CreateGroupRequest,
-  CreatePairRequest,
-  CreateTodoRequest,
   IdentitiesResponse,
-  InviteMemberRequest,
   LoginRequest,
   ProvidersResponse,
   ResendVerificationRequest,
@@ -19,9 +15,7 @@ import webapp1.shared.dto.{
   SignupRequest,
   SignupResponse,
   UpdateLocaleRequest,
-  UpdateRoleRequest,
   UpdateThemeRequest,
-  UpdateTodoStatusRequest,
   VerifyEmailRequest,
 }
 
@@ -118,71 +112,5 @@ object ApiClient {
       List(Option.when(link)("link=1"), Some(s"locale=${CurrentLocale.value.code}")).flatten
     }
     s"/api/auth/${provider.wire}/start?${params.mkString("&")}"
-  }
-
-  // --- Todos --------------------------------------------------------------------------------------------------
-
-  def listTodos: EventStream[Either[ApiError, List[TodoItem]]] = {
-    run(executor(TodoEndpoints.listTodos(())))
-  }
-
-  def createTodo(text: String): EventStream[Either[ApiError, TodoItem]] = {
-    run(executor(TodoEndpoints.createTodo(CreateTodoRequest(text))))
-  }
-
-  def updateTodoStatus(id: Long, request: UpdateTodoStatusRequest): EventStream[Either[ApiError, TodoItem]] = {
-    run(executor(TodoEndpoints.updateTodoStatus(id, request)))
-  }
-
-  // --- Groups -------------------------------------------------------------------------------------------------
-
-  def createGroup(request: CreateGroupRequest): EventStream[Either[ApiError, Group]] = {
-    run(executor(GroupEndpoints.createGroup(request)))
-  }
-
-  def listGroups: EventStream[Either[ApiError, List[Group]]] = {
-    run(executor(GroupEndpoints.listGroups(())))
-  }
-
-  def getGroup(groupId: Long): EventStream[Either[ApiError, Group]] = {
-    run(executor(GroupEndpoints.getGroup(groupId)))
-  }
-
-  def deleteGroup(groupId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GroupEndpoints.deleteGroup(groupId)))
-  }
-
-  def listPairs(groupId: Long): EventStream[Either[ApiError, List[GroupPair]]] = {
-    run(executor(GroupEndpoints.listPairs(groupId)))
-  }
-
-  def addPair(groupId: Long, request: CreatePairRequest): EventStream[Either[ApiError, GroupPair]] = {
-    run(executor(GroupEndpoints.addPair(groupId, request)))
-  }
-
-  def listMembers(groupId: Long): EventStream[Either[ApiError, List[GroupMember]]] = {
-    run(executor(GroupEndpoints.listMembers(groupId)))
-  }
-
-  def removeMember(groupId: Long, userId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GroupEndpoints.removeMember(groupId, userId)))
-  }
-
-  def updateMemberRole(groupId: Long, userId: Long, request: UpdateRoleRequest): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GroupEndpoints.updateMemberRole(groupId, userId, request)))
-  }
-
-  def inviteMember(groupId: Long, request: InviteMemberRequest): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GroupEndpoints.inviteMember(groupId, request)))
-  }
-
-  // --- Invitations --------------------------------------------------------------------------------------------
-
-  def getInvitation(token: String): EventStream[Either[ApiError, InvitationInfo]] = {
-    run(executor(InvitationEndpoints.getInvitation(token)))
-  }
-
-  def acceptInvitation(token: String): EventStream[Either[ApiError, Group]] = {
-    run(executor(InvitationEndpoints.acceptInvitation(token)))
   }
 }

@@ -4,21 +4,17 @@ import com.raquo.laminar.api.L._
 import com.raquo.waypoint.SplitRender
 import webapp1.frontend.api.ApiClient
 import webapp1.frontend.pages.{
-  AcceptInvitePage,
   AdminAuditPage,
   AdminSystemPage,
   AdminUserDetailPage,
   AdminUsersPage,
   CheckInboxPage,
   ForbiddenPage,
-  GroupDetailPage,
-  GroupMembersPage,
-  GroupsPage,
+  HomePage,
   NotFoundPage,
   SettingsPage,
   SignInPage,
   SignUpPage,
-  TodoPage,
   VerifyEmailPage,
 }
 import webapp1.frontend.i18n.LocaleSync
@@ -29,8 +25,8 @@ import webapp1.shared.dto.AuthResponse
 
 /** Root component: loads the current session once, then renders + guards pages. Any page requiring a session redirects
   * an unauthenticated visitor to sign-in, and vice versa (cross-cutting behavior from summary.md) — implemented once
-  * here so every page reuses it for free. A few pages (accept-invite, forbidden, not-found) render regardless of auth
-  * state; see [[Page.guardFor]].
+  * here so every page reuses it for free. A few pages (verify-email, check-inbox, forbidden, not-found) render
+  * regardless of auth state; see [[Page.guardFor]].
   */
 object App {
 
@@ -201,17 +197,9 @@ object App {
       case Page.SignUp                              =>
         SignUpPage.render()
       case Page.Home                                =>
-        TodoPage.render()
-      case Page.Groups                              =>
-        GroupsPage.render()
+        HomePage.render()
       case Page.Settings                            =>
         SettingsPage.render()
-      case Page.GroupDetail(id)                     =>
-        GroupDetailPage.render(id)
-      case Page.GroupMembers(id)                    =>
-        GroupMembersPage.render(id)
-      case Page.AcceptInvite(token)                 =>
-        AcceptInvitePage.render(gate.signedIn, token)
       case Page.VerifyEmail(token)                  =>
         VerifyEmailPage.render(token)
       case Page.CheckInbox                          =>

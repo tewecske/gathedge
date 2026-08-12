@@ -59,8 +59,8 @@ object EndpointClient {
     * a whole rather than about one of its inputs.
     *
     * Every case is matched because `ApiFailure` is sealed, not because every case arrives: no endpoint declares 500 and
-    * only the group and invitation ones declare 403, so those two responses reach [[run]] as an undeclared status
-    * instead — see `ApiEndpoint.failure` for why they are left out of the descriptions.
+    * only `POST /api/auth/login` declares 403, so those two responses reach [[run]] as an undeclared status instead —
+    * see `ApiEndpoint.failure` for why they are left out of the descriptions.
     */
   private def toApiError(failure: ApiFailure): ApiError = {
     def worded(status: Int, error: MessageRef, fieldErrors: Map[String, MessageRef] = Map.empty): ApiError = {

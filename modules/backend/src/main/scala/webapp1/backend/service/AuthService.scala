@@ -197,8 +197,8 @@ object AuthService {
     */
   private val timingEqualizerSource = "account-enumeration-guard"
 
-  /** How long a verification link stays redeemable. Shorter than the 7 days a group invite gets: an invite is passed
-    * between people, a verification link goes straight back to the address that just signed up.
+  /** How long a verification link stays redeemable. A day is generous for a link that goes straight back to the address
+    * that just asked for it, and the account can request another at any time.
     */
   val verificationValidity: Duration = 24.hours
 

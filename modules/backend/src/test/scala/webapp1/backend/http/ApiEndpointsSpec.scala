@@ -7,13 +7,8 @@ import webapp1.backend.db.{
   LoginAttemptRepository,
   MetricsRepository,
   EmailVerificationTokenRepository,
-  GroupInvitationRepository,
-  GroupMemberRepository,
-  GroupPairRepository,
-  GroupRepository,
   OAuthIdentityRepository,
   SessionRepository,
-  TodoRepository,
   UserRepository,
 }
 import webapp1.backend.security.{PasswordHasher, SessionAuth}
@@ -24,20 +19,17 @@ import webapp1.backend.service.{
   AuthService,
   BackgroundJobs,
   EmailSender,
-  GroupService,
   OAuthClients,
   RateLimiter,
   SystemService,
-  TodoService,
 }
 import webapp1.shared.api.ApiFailure
 import webapp1.shared.i18n.{MessageKeys, MessageRef}
-import webapp1.shared.domain.{Group, GroupMember, Theme, TodoItem, User}
+import webapp1.shared.domain.{Theme, User}
 import webapp1.shared.dto.{
   AdminUserDetail,
   AuditPage,
   AuthResponse,
-  CreateTodoRequest,
   CreateUserRequest,
   ErrorResponse,
   LoginRequest,
@@ -63,17 +55,16 @@ import RouteRunner.{getWithQuery, orDieWithFailure, runRoutes, withCsrf, withSes
   * those. Nothing in the type system connects the two stacks, so this spec asserts the actual bytes: response bodies
   * are decoded with the *zio-json* codec, and error bodies as `dto.ErrorResponse`.
   *
-  * The per-resource behaviour lives in `RouteGuardsSpec`, `GroupRoutesSpec` and `InvitationRoutesSpec`; what is here is
-  * the encoding — statuses, enum representations, empty 204s and the session cookie.
+  * The per-resource behaviour lives in `RouteGuardsSpec`; what is here is the encoding — statuses, enum
+  * representations, empty 204s and the session cookie.
   */
 object ApiEndpointsSpec extends ZIOSpecDefault {
 
   private val repos = {
     TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ TodoRepository.test ++
-        GroupRepository.test ++ GroupMemberRepository.test ++ GroupPairRepository.test ++
-        GroupInvitationRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
+      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++
+        MetricsRepository.test
     )
   }
 
@@ -85,9 +76,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
           TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
           (AdminService.live ++ SystemService.live)
-      ) ++
-      (repos >>> TodoService.live) ++
-      ((repos ++ TestAuthLayers.emailAndConfig) >>> GroupService.live)
+      )
   }
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
@@ -220,69 +209,6 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("verification link")),
           )
-        },
-      ),
-      suite("todos")(
-        // TodoStatus is a Scala 3 enum, which zio-json writes as a bare string. If zio-schema wrapped it in an object
-        // the frontend would fail to decode every item it loads.
-        test("creating and listing todos keeps TodoStatus a bare string") {
-          for {
-            session    <- signUp("todo@example.com")
-            created    <-
-              runRoutes(
-                TodoRoutes.routes,
-                withCsrf(
-                  withSession(Request.post("/api/todos", Body.fromString(CreateTodoRequest("milk").toJson)), session)
-                ),
-              )
-            createdRaw <- body(created)
-            listed     <- runRoutes(TodoRoutes.routes, withSession(Request.get("/api/todos"), session))
-            listedRaw  <- body(listed)
-          } yield assertTrue(
-            created.status == Status.Created,
-            createdRaw.contains("\"status\":\"ToDo\""),
-            createdRaw.fromJson[TodoItem].map(_.text) == Right("milk"),
-            listed.status == Status.Ok,
-            listedRaw.fromJson[List[TodoItem]].map(_.map(_.text)) == Right(List("milk")),
-          )
-        }
-      ),
-      suite("groups")(
-        test("creating a group and listing its members keeps GroupRole a bare string") {
-          for {
-            session    <- signUp("group@example.com")
-            created    <-
-              runRoutes(
-                GroupRoutes.routes,
-                withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Acme"}""")), session)),
-              )
-            createdRaw <- body(created)
-            groupId     = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
-            members    <- runRoutes(GroupRoutes.routes, withSession(Request.get(s"/api/groups/$groupId/members"), session))
-            membersRaw <- body(members)
-          } yield assertTrue(
-            created.status == Status.Created,
-            createdRaw.contains("\"myRole\":\"Admin\""),
-            createdRaw.fromJson[Group].map(_.name) == Right("Acme"),
-            membersRaw.fromJson[List[GroupMember]].map(_.map(_.email)) == Right(List("group@example.com")),
-          )
-        },
-        test("deleting a group is an empty 204") {
-          for {
-            session    <- signUp("delete-group@example.com")
-            created    <-
-              runRoutes(
-                GroupRoutes.routes,
-                withCsrf(withSession(Request.post("/api/groups", Body.fromString("""{"name":"Doomed"}""")), session)),
-              )
-            createdRaw <- body(created)
-            groupId     = createdRaw.fromJson[Group].map(_.id).getOrElse(0L)
-            deleted    <- runRoutes(
-                            GroupRoutes.routes,
-                            withCsrf(withSession(Request.delete(s"/api/groups/$groupId"), session)),
-                          )
-            deletedRaw <- body(deleted)
-          } yield assertTrue(deleted.status == Status.NoContent, deletedRaw.isEmpty)
         },
       ),
       suite("admin")(
@@ -505,8 +431,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // No description says anything about sessions or CSRF; the aspects are still what enforce them.
         test("the aspects still apply on a described route: no session is a 401, no CSRF header a 403") {
           for {
-            unauthenticated <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
-            noCsrf          <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
+            unauthenticated <- runRoutes(AuthRoutes.routes, Request.get("/api/me"))
+            noCsrf          <- runRoutes(AuthRoutes.routes, Request.put("/api/me/theme", Body.empty))
           } yield assertTrue(unauthenticated.status == Status.Unauthorized, noCsrf.status == Status.Forbidden)
         },
         // A description has to *declare* a status for a client generated from it to decode one: an undeclared status
@@ -520,9 +446,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           val unauthorizedCodec = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Unauthorized]
           val forbiddenCodec    = JsonCodec.schemaBasedBinaryCodec[ApiFailure.Forbidden]
           for {
-            unauthenticated     <- runRoutes(TodoRoutes.routes, Request.get("/api/todos"))
+            unauthenticated     <- runRoutes(AuthRoutes.routes, Request.get("/api/me"))
             unauthenticatedBody <- unauthenticated.body.asChunk.orDie
-            noCsrf              <- runRoutes(TodoRoutes.routes, Request.post("/api/todos", Body.empty))
+            noCsrf              <- runRoutes(AuthRoutes.routes, Request.put("/api/me/theme", Body.empty))
             noCsrfBody          <- noCsrf.body.asChunk.orDie
           } yield assertTrue(
             unauthorizedCodec.decode(unauthenticatedBody) ==
@@ -557,8 +483,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           for {
             session  <- signUp("malformed@example.com")
             response <- runRoutes(
-                          TodoRoutes.routes,
-                          withCsrf(withSession(Request.post("/api/todos", Body.fromString("{ not json")), session)),
+                          AuthRoutes.routes,
+                          withCsrf(withSession(Request.put("/api/me/theme", Body.fromString("{ not json")), session)),
                         )
             raw      <- body(response)
           } yield assertTrue(

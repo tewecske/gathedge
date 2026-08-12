@@ -3,17 +3,16 @@ package webapp1.frontend
 import com.raquo.waypoint._
 import webapp1.frontend.i18n.CurrentLocale
 import webapp1.frontend.listing.{AuditQuery, UserQuery}
+import webapp1.shared.Branding
 
 sealed trait Page
 
 object Page {
-  case object SignIn                           extends Page
-  case object SignUp                           extends Page
-  case object Home                             extends Page
-  case object Groups                           extends Page
-  final case class GroupDetail(id: Long)       extends Page
-  final case class GroupMembers(id: Long)      extends Page
-  final case class AcceptInvite(token: String) extends Page
+  case object SignIn extends Page
+  case object SignUp extends Page
+
+  /** The skeleton's landing page — a placeholder a new project replaces with its own first screen. */
+  case object Home extends Page
 
   /** Where a verification link lands. Public: the account it verifies usually cannot sign in yet. */
   final case class VerifyEmail(token: String) extends Page
@@ -44,17 +43,17 @@ object Page {
     /** Redirects an already-authenticated visitor to Home (sign-in/sign-up). */
     case RequireAnon
 
-    /** Renders regardless of auth state (accept-invite, forbidden, not-found). */
+    /** Renders regardless of auth state (verify-email, check-inbox, forbidden, not-found). */
     case Public
   }
 
   def guardFor(page: Page): AuthGuard = {
     page match {
-      case SignIn | SignUp                                                      =>
+      case SignIn | SignUp                                    =>
         AuthGuard.RequireAnon
-      case AcceptInvite(_) | VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
+      case VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
         AuthGuard.Public
-      case _                                                                    =>
+      case _                                                  =>
         AuthGuard.RequireAuth
     }
   }
@@ -63,7 +62,7 @@ object Page {
 object AppRouter {
   import Page._
 
-  /** Every route is mounted under the language prefix this page load is in — `/en/groups`, `/hu/groups`.
+  /** Every route is mounted under the language prefix this page load is in — `/en/settings`, `/hu/settings`.
     *
     * Waypoint's `basePath` does all of the work: it is prepended when a URL is *built* (`Route.relativeUrlForPage` is
     * `basePath + createRelativeUrl(args)`) and stripped when one is *matched*. So every internal link and every
@@ -78,26 +77,7 @@ object AppRouter {
   private val signInRoute          = Route.static(SignIn, root / "sign-in", basePath)
   private val signUpRoute          = Route.static(SignUp, root / "sign-up", basePath)
   private val homeRoute            = Route.static(Home, root, basePath)
-  private val groupsRoute          = Route.static(Groups, root / "groups", basePath)
   private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
-  private val groupDetailRoute     = Route(
-    encode = (p: GroupDetail) => p.id,
-    decode = (id: Long) => GroupDetail(id),
-    pattern = root / "groups" / segment[Long],
-    basePath = basePath,
-  )
-  private val groupMembersRoute    = Route(
-    encode = (p: GroupMembers) => p.id,
-    decode = (id: Long) => GroupMembers(id),
-    pattern = root / "groups" / segment[Long] / "members",
-    basePath = basePath,
-  )
-  private val acceptInviteRoute    = Route(
-    encode = (p: AcceptInvite) => p.token,
-    decode = (token: String) => AcceptInvite(token),
-    pattern = root / "invitations" / segment[String],
-    basePath = basePath,
-  )
   private val verifyEmailRoute     = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
@@ -157,16 +137,8 @@ object AppRouter {
         "SignUp"
       case Home                =>
         "Home"
-      case Groups              =>
-        "Groups"
       case Settings            =>
         "Settings"
-      case GroupDetail(id)     =>
-        s"GroupDetail:$id"
-      case GroupMembers(id)    =>
-        s"GroupMembers:$id"
-      case AcceptInvite(token) =>
-        s"AcceptInvite:$token"
       case VerifyEmail(token)  =>
         s"VerifyEmail:$token"
       case CheckInbox          =>
@@ -193,13 +165,7 @@ object AppRouter {
   }
 
   private[frontend] def deserialize(tag: String): Page = {
-    if (tag.startsWith("GroupMembers:")) {
-      withId(tag, "GroupMembers:")(GroupMembers.apply)
-    } else if (tag.startsWith("GroupDetail:")) {
-      withId(tag, "GroupDetail:")(GroupDetail.apply)
-    } else if (tag.startsWith("AcceptInvite:")) {
-      AcceptInvite(tag.stripPrefix("AcceptInvite:"))
-    } else if (tag.startsWith("VerifyEmail:")) {
+    if (tag.startsWith("VerifyEmail:")) {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
     } else if (tag.startsWith("AdminUserDetail:")) {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
@@ -220,8 +186,6 @@ object AppRouter {
           SignUp
         case "Home"        =>
           Home
-        case "Groups"      =>
-          Groups
         case "Settings"    =>
           Settings
         case "CheckInbox"  =>
@@ -247,11 +211,7 @@ object AppRouter {
         signInRoute,
         signUpRoute,
         homeRoute,
-        groupsRoute,
         settingsRoute,
-        groupDetailRoute,
-        groupMembersRoute,
-        acceptInviteRoute,
         verifyEmailRoute,
         checkInboxRoute,
         // Each listing's query route must precede its bare-path one; see the comment on `adminQueryRoute`.
@@ -265,7 +225,7 @@ object AppRouter {
       ),
       serializePage = serialize,
       deserializePage = deserialize,
-      getPageTitle = _ => "webapp1",
+      getPageTitle = _ => Branding.appName,
       routeFallback = _ => NotFound,
     )
   }

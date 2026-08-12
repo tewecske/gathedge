@@ -47,9 +47,9 @@ abstract class QuillRepository[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   /** One INFO line per completed action. Logged after success so the message can report what the query did (rows
     * affected, whether a row was found); a failure is logged where it is handled, not here.
     *
-    * '''Never put a credential in the message.''' Password hashes, session ids, verification tokens, invitation tokens
-    * and OAuth subjects are all readable in `logs/backend.log` and in `docker logs`; log the surrogate id or a `found=`
-    * flag instead. Emails are left out for the same reason.
+    * '''Never put a credential in the message.''' Password hashes, session ids, verification tokens and OAuth subjects
+    * are all readable in `logs/backend.log` and in `docker logs`; log the surrogate id or a `found=` flag instead. Any
+    * opaque token a later feature mints falls under the same rule. Emails are left out for the same reason.
     *
     * `trace` is taken explicitly so `ZIO.logInfo` reports the repository method that called this, not this helper —
     * without it every line's `location` is `QuillRepository.logged`.

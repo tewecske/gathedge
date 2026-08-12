@@ -5,8 +5,8 @@ import zio.*
 import java.security.SecureRandom
 import java.util.Base64
 
-/** The one generator for every opaque bearer string this application mints: session ids, email verification tokens,
-  * group invitation tokens and the OAuth `state` nonce.
+/** The one generator for every opaque bearer string this application mints: session ids, email verification tokens, and
+  * the OAuth `state` nonce.
   *
   * '''`zio.Random` is not an alternative here.''' Its live implementation delegates to `scala.util.Random`, i.e. a
   * 48-bit linear congruential generator whose internal state is recoverable from a couple of observed outputs — fine

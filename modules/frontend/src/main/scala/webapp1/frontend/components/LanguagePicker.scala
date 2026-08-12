@@ -4,6 +4,7 @@ import com.raquo.laminar.api.L._
 import webapp1.frontend.i18n.{CurrentLocale, I18n}
 import webapp1.shared.domain.Locale
 import webapp1.shared.domain.Locale.{code, display}
+import webapp1.shared.i18n.UiKeys
 
 /** Switches the page's language, by navigating to the same path under the other prefix.
   *
@@ -41,7 +42,7 @@ private class LanguagePicker {
     button(
       cls                := "btn btn-sm btn-ghost",
       typ                := "button",
-      aria.label         := I18n.t("nav.language"),
+      aria.label         := I18n.t(UiKeys.navLanguage),
       Popover.targetAttr := menuId,
       styleAttr          := s"anchor-name:$menuAnchor",
       CurrentLocale.value.code.toUpperCase,

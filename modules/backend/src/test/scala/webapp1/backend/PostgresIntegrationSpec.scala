@@ -11,27 +11,13 @@ import webapp1.backend.db.{
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
-  GroupInvitationRepository,
-  GroupMemberRepository,
-  GroupPairRepository,
-  GroupRepository,
   OAuthIdentityRepository,
+  OAuthIdentityRow,
   SessionRepository,
-  TodoRepository,
   UserRepository,
 }
 import webapp1.backend.security.PasswordHasher
-import webapp1.backend.service.{
-  AdminActor,
-  AdminService,
-  AuditTrail,
-  AuthService,
-  EmailSender,
-  GroupService,
-  RateLimiter,
-  TodoService,
-}
-import webapp1.shared.domain.{GroupRole, TodoStatus}
+import webapp1.backend.service.{AdminActor, AdminService, AuditTrail, AuthService, EmailSender, RateLimiter}
 import webapp1.shared.dto.Paging
 import zio._
 import zio.test._
@@ -74,9 +60,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
 
   private val repoLayer = {
     containerDataSource >>> (
-      UserRepository.live ++ SessionRepository.live ++ TodoRepository.live ++
-        GroupRepository.live ++ GroupMemberRepository.live ++ GroupPairRepository.live ++
-        GroupInvitationRepository.live ++ OAuthIdentityRepository.live ++
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ LoginAttemptRepository.live ++ AuditLogRepository.live
     )
   }
@@ -85,29 +69,29 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
     repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
-      (AuthService.live ++ AuditTrail.live ++ TodoService.live ++ GroupService.live) >+> AdminService.live
+      (AuthService.live ++ AuditTrail.live) >+> AdminService.live
   }
 
   def spec = {
     suite("Postgres dialect (testcontainers)")(
-      test("signup, login, todo add/move, and group create/pairs all round-trip through real Postgres") {
+      // `RETURNING id` and `GENERATED ALWAYS AS IDENTITY` are the two things this dialect does differently from the
+      // SQLite one every other spec runs against, and a signup exercises both: the user row, the session row keyed by
+      // the id it just produced, and the verification token pointing back at it.
+      test("signup and login round-trip through real Postgres, with the rows keyed to the generated id") {
         for {
           signupResult <- AuthService.signup("pguser@example.com", "password123")
           (user, _)     = signupResult
-          todo         <- TodoService.addTodo(user.id, "verify postgres")
-          moved        <- TodoService.moveTodo(user.id, todo.id, TodoStatus.Done)
-          group        <- GroupService.createGroup(user.id, "PG Group")
-          pair         <- GroupService.addPair(user.id, user.email, group.id, "src", "tgt")
-          pairs        <- GroupService.listPairs(user.id, group.id)
-          // Proves the creator's membership row committed with the group: without it the group
-          // would be invisible here and unreachable through every other group endpoint.
-          myGroups     <- GroupService.myGroups(user.id)
+          loggedIn     <- AuthService.login("pguser@example.com", "password123")
+          sessions     <- SessionRepository.listForUser(user.id)
+          tokens       <- EmailVerificationTokenRepository.findForUser(user.id)
+          current      <- AuthService.currentUser(loggedIn._2)
         } yield assertTrue(
-          moved.status == TodoStatus.Done,
-          group.name == "PG Group",
-          pair.source == "src",
-          pairs.map(_.id) == List(pair.id),
-          myGroups.map(_.id) == List(group.id),
+          user.id > 0,
+          loggedIn._1.id == user.id,
+          current.map(_.id).contains(user.id),
+          sessions.forall(_.userId == user.id),
+          sessions.size == 2,
+          tokens.map(_.userId) == List(user.id),
         )
       },
       test("an admin profile-and-password edit commits as one unit and drops the user's sessions") {
@@ -132,26 +116,35 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           withNewPassword._1.id == target.id,
         )
       },
-      // Only Postgres can catch this: SQLite runs with `PRAGMA foreign_keys` off, so `group_pairs.created_by` and
-      // `group_invitations.invited_by` are inert there and the delete succeeds however the constraint is declared.
-      // Before V6 those two were the only user references without an ON DELETE action, and this raised
-      // "update or delete on table \"users\" violates foreign key constraint" — which `deleteById`'s `.orDie` turned
-      // into a bare 500 for any admin trying to remove a user who had ever added a pair or sent an invitation.
-      test("deleting a user cascades to the group pairs they authored and the invitations they sent") {
+      // Only Postgres can catch this: SQLite runs with `PRAGMA foreign_keys` off, so every foreign key in that dialect
+      // is inert and the delete succeeds however the constraint is declared. `AdminService.deleteUser` issues a bare
+      // `deleteById` and nothing else — removing the rows that point at the account *is* the constraint's job, and a
+      // reference declared without an ON DELETE action instead raises
+      // "update or delete on table \"users\" violates foreign key constraint", which `deleteById`'s `.orDie` turns
+      // into a bare 500. Any new table that references `users` belongs in this test.
+      test("deleting a user cascades to its sessions, linked identities and verification tokens") {
         for {
-          admin          <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
-          target         <-
-            AdminService.createUser(AdminActor(admin.id), "pgdeltarget@example.com", "password123", isAdmin = false)
-          group          <- GroupService.createGroup(target.id, "Doomed Author Group")
-          _              <- GroupService.addPair(target.id, target.email, group.id, "src", "tgt")
-          _              <- GroupService.inviteMember(target.id, group.id, "pginvitee@example.com", GroupRole.ReadWrite)
-          _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          gone           <- AdminService.getUser(target.id).either
-          remainingPairs <- GroupPairRepository.listForGroup(group.id)
-        } yield assertTrue(gone == Left(webapp1.backend.service.AdminFailure.NotFound), remainingPairs.isEmpty)
+          admin      <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
+          signup     <- AuthService.signup("pgdeltarget@example.com", "password123")
+          (target, _) = signup
+          _          <- AuthService.login("pgdeltarget@example.com", "password123")
+          _          <- OAuthIdentityRepository.insert(
+                          OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", Some(target.email), 0L)
+                        )
+          _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          gone       <- AdminService.getUser(target.id).either
+          sessions   <- SessionRepository.listForUser(target.id)
+          identities <- OAuthIdentityRepository.listForUser(target.id)
+          tokens     <- EmailVerificationTokenRepository.findForUser(target.id)
+        } yield assertTrue(
+          gone == Left(webapp1.backend.service.AdminFailure.NotFound),
+          sessions.isEmpty,
+          identities.isEmpty,
+          tokens.isEmpty,
+        )
       },
-      // The V7 tables are the first user references declared ON DELETE SET NULL rather than CASCADE, and the same
-      // blind spot applies: SQLite enforces neither, so the whole SQLite suite passes whichever this is. Getting it
+      // `login_attempts` and `audit_log` are the two user references declared ON DELETE SET NULL rather than CASCADE,
+      // and the same blind spot applies: SQLite enforces neither, so the whole SQLite suite passes whichever. Getting it
       // wrong in either direction is a real bug — CASCADE would erase the record of what was done to an account the
       // moment it is deleted, and NO ACTION would make `deleteUser` answer 500 for every account that has ever
       // signed in.

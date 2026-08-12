@@ -33,8 +33,8 @@ object MessageRef {
     * expands it:
     *
     * {{{
-    * MessageRef(MessageKeys.validationRequired, List(MessageRef.keyArg("field.groupName")))
-    * // en: "Group name is required"     hu: "Kötelező mező: csoportnév"
+    * MessageRef(MessageKeys.validationRequired, List(MessageRef.keyArg("field.email")))
+    * // en: "Email is required"     hu: "Kötelező mező: e-mail cím"
     * }}}
     *
     * The `@` sentinel is what separates the two kinds of argument. Sniffing for "looks like a catalog key" instead

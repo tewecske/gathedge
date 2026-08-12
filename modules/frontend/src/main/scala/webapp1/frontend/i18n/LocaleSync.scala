@@ -12,9 +12,9 @@ import webapp1.shared.domain.Locale
   * }}}
   *
   * The first `>` is the one that matters and the easy one to get backwards. A stored preference must '''never''' win
-  * over a prefix the visitor actually typed or followed: opening `/en/groups` deliberately, signing in, and being
-  * thrown to `/hu/groups` is a bug, not a feature. So the account's language only decides anything when the URL had no
-  * prefix and the boot script had to guess — which is exactly what `CurrentLocale.wasImplicit` records.
+  * over a prefix the visitor actually typed or followed: opening `/en/settings` deliberately, signing in, and being
+  * thrown to `/hu/settings` is a bug, not a feature. So the account's language only decides anything when the URL had
+  * no prefix and the boot script had to guess — which is exactly what `CurrentLocale.wasImplicit` records.
   *
   * When the URL *was* explicit and disagrees with the account, the URL wins and becomes the new stored preference. That
   * keeps the picker, `localStorage` and the column from drifting apart after someone switches language by editing the

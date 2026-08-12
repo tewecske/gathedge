@@ -5,7 +5,7 @@ import zio.json.*
 /** The languages the application is translated into.
   *
   * Lives in `shared` for the same reason [[OAuthProvider]] does: four places need the same vocabulary — the
-  * `users.locale` column, the URL prefix the SPA is served under (`/hu/groups`), the catalog filename the frontend
+  * `users.locale` column, the URL prefix the SPA is served under (`/hu/settings`), the catalog filename the frontend
   * fetches and the backend reads off its classpath, and the `Locale` field on the wire-safe [[User]].
   *
   * Adding a third language is this enum plus a `messages.<code>.json`; `MessagesSpec` then fails until the new catalog

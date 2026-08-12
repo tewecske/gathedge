@@ -6,8 +6,8 @@ import zio.json.*
 /** Everything an administrator may see *about* an account, as opposed to the account's own data.
   *
   * The boundary this file sits on is the one summary.md draws: an administrator manages accounts, not the content
-  * accounts own. Nothing here reaches into a user's task board or a group's entries, and three things the server holds
-  * are deliberately projected away rather than carried:
+  * accounts own. Nothing here reaches into whatever a feature stores on a user's behalf, and three things the server
+  * holds are deliberately projected away rather than carried:
   *
   *   - the password hash;
   *   - the session id, which *is* the bearer credential — [[AdminSessionInfo]] has no identifier at all, not even a
@@ -214,7 +214,6 @@ final case class ConfigSummary(
   databaseUrl: String,
   databaseUser: String,
   sessionValidityHours: Long,
-  invitationValidityHours: Long,
   verificationValidityHours: Long,
   rateLimitMaxAttempts: Int,
   rateLimitWindowMinutes: Long,
@@ -255,8 +254,9 @@ final case class RuntimeInfo(
   migrations: List[MigrationInfo],
 ) derives JsonCodec
 
-/** Row counts across the whole schema. Counts only: the tables behind `todoItems` and `groupPairs` hold data no
-  * administrator may read, and a count says how much the deployment holds without saying what anyone wrote.
+/** Row counts across the whole schema. Counts only, and a feature adding a row here should keep it that way: a table
+  * may hold data no administrator is allowed to read, and a count says how much the deployment holds without saying
+  * what anyone wrote.
   */
 final case class DbStats(
   users: Long,
@@ -268,13 +268,6 @@ final case class DbStats(
   activeSessions: Long,
   verificationTokens: Long,
   expiredVerificationTokens: Long,
-  todoItems: Long,
-  groups: Long,
-  groupMembers: Long,
-  groupPairs: Long,
-  invitations: Long,
-  pendingInvitations: Long,
-  acceptedInvitations: Long,
   loginAttempts: Long,
   failedLoginsLast24h: Long,
   auditEntries: Long,

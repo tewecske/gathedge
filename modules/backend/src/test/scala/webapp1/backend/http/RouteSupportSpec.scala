@@ -30,20 +30,14 @@ object RouteSupportSpec extends ZIOSpecDefault {
 
   def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, localeSuite)
 
-  /** The request log used to write the whole URL, and two of this API's URLs carry a credential. Every case below is
-    * one that reached `logs/backend.log` and `docker logs` on every request.
+  /** The request log used to write the whole URL, query string included, and the OAuth callback carries an
+    * authorization code in one. That code reached `logs/backend.log` and `docker logs` on every callback.
+    *
+    * A path *segment* holding a credential would need scrubbing that `loggableUrl` does not do today — see the note
+    * there. A feature that adds one belongs in this suite.
     */
   private val logSuite = {
     suite("loggableUrl")(
-      test("an invitation token never reaches the log line") {
-        val token = "0Fh3Kx9QpL7mN2sT4vW6yZ8bC1dE5gH7jK9lM0nO2pQ"
-        assertTrue(
-          RouteSupport.loggableUrl(Request.get(s"/api/invitations/$token")) == "/api/invitations/…",
-          RouteSupport.loggableUrl(Request.post(s"/api/invitations/$token/accept", Body.empty)) ==
-            "/api/invitations/…/accept",
-          !RouteSupport.loggableUrl(Request.get(s"/api/invitations/$token")).contains(token),
-        )
-      },
       test("the OAuth authorization code goes with the query string") {
         val request = getWithQuery("/api/auth/google/callback?code=4%2F0AY0e-secret&state=abc123")
         val logged  = RouteSupport.loggableUrl(request)
@@ -54,9 +48,6 @@ object RouteSupportSpec extends ZIOSpecDefault {
           RouteSupport.loggableUrl(Request.get("/api/me")) == "/api/me",
           RouteSupport.loggableUrl(Request.get("/api/admin/users/42")) == "/api/admin/users/42",
         )
-      },
-      test("a path too short to hold a token is left alone rather than indexed into") {
-        assertTrue(RouteSupport.loggableUrl(Request.get("/api/invitations")) == "/api/invitations")
       },
     )
   }

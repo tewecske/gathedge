@@ -37,7 +37,7 @@ test.describe('language prefix', () => {
   });
 
   // A deep link has to survive the redirect intact — this is the shape every emailed
-  // verification and invitation link arrives in.
+  // link arrives in.
   test('a prefixed deep link renders its page rather than the not-found page', async ({ page }) => {
     await page.goto('/hu/verify-email/not-a-real-token');
     await expect(page).toHaveURL(/\/hu\/verify-email\/not-a-real-token$/);

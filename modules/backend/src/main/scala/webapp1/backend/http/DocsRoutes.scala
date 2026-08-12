@@ -2,7 +2,8 @@ package webapp1.backend.http
 
 import webapp1.backend.security.SessionAuth
 import webapp1.backend.config.AppConfig
-import webapp1.shared.api.{AdminEndpoints, AuthEndpoints, GroupEndpoints, InvitationEndpoints, TodoEndpoints}
+import webapp1.shared.Branding
+import webapp1.shared.api.{AdminEndpoints, AuthEndpoints}
 import zio.http.*
 import zio.http.codec.Doc
 import zio.http.codec.PathCodec.path
@@ -23,9 +24,7 @@ import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
   */
 object DocsRoutes {
 
-  private val allEndpoints = {
-    AuthEndpoints.all ++ TodoEndpoints.all ++ GroupEndpoints.all ++ InvitationEndpoints.all ++ AdminEndpoints.all
-  }
+  private val allEndpoints = AuthEndpoints.all ++ AdminEndpoints.all
 
   /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the
     * `authenticated` or `adminOnly` aspect. Everything else needs the session cookie.
@@ -42,7 +41,6 @@ object DocsRoutes {
       AuthEndpoints.providers,
       AuthEndpoints.verifyEmail,
       AuthEndpoints.resendVerification,
-      InvitationEndpoints.getInvitation,
     )
   }
 
@@ -69,7 +67,7 @@ object DocsRoutes {
     *
     * Which operation is which is decided by generating a second document from the public endpoints alone and using its
     * paths and methods as the exemption list, rather than by matching path strings by hand — the two documents render a
-    * path the same way (`/api/groups/{id}`) because the same generator produced both.
+    * path the same way (`/api/admin/users/{id}`) because the same generator produced both.
     */
   private def requireSession(document: OpenAPI): OpenAPI = {
     val publicDocument =
@@ -111,12 +109,17 @@ object DocsRoutes {
     document.copy(paths = paths, components = withScheme.orElse(document.components))
   }
 
-  /** The title also names the JSON document — it is served at `<basePath>/<url-encoded title>.json` — so keep it free
-    * of spaces.
+  /** The title also names the JSON document — it is served at `<basePath>/<url-encoded title>.json` — which is why it
+    * is built from [[Branding.slug]] rather than [[Branding.appName]]: the slug is the half guaranteed to be free of
+    * spaces.
     */
   val openApi: OpenAPI = {
     requireSession(
-      OpenAPIGen.fromEndpoints(title = "webapp1-api", version = AppConfig.apiVersion, endpoints = allEndpoints)
+      OpenAPIGen.fromEndpoints(
+        title = s"${Branding.slug}-api",
+        version = AppConfig.apiVersion,
+        endpoints = allEndpoints,
+      )
     )
   }
 

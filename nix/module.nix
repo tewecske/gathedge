@@ -11,7 +11,7 @@ let
 in
 {
   options.services.webapp1 = {
-    enable = mkEnableOption "the webapp1 todo/groups application";
+    enable = mkEnableOption "the webapp1 application";
 
     package = mkOption {
       type = types.package;
@@ -40,8 +40,8 @@ in
       type = types.str;
       example = "http://webapp1.lan";
       description = ''
-        Origin the app builds user-visible links from (group invitation links, the Google
-        OAuth redirect). Must match how users actually reach the server, or invite links
+        Origin the app builds user-visible links from (the email confirmation link, the Google
+        OAuth redirect). Must match how users actually reach the server, or those links
         will point somewhere unreachable.
       '';
     };

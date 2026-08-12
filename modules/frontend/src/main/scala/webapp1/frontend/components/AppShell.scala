@@ -5,6 +5,7 @@ import webapp1.frontend.api.{ApiClient, ApiError}
 import webapp1.frontend.i18n.I18n
 import webapp1.frontend.state.AppState
 import webapp1.frontend.{AppRouter, Page}
+import webapp1.shared.Branding
 import webapp1.shared.domain.Theme
 import webapp1.shared.i18n.UiKeys
 import webapp1.shared.dto.AuthResponse
@@ -150,7 +151,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     */
   private def navLinks(): List[HtmlElement] = {
     if (isAuthenticated) {
-      List(navLink(Page.Home, I18n.t(UiKeys.navTodo)), navLink(Page.Groups, I18n.t(UiKeys.navGroups)))
+      List(navLink(Page.Home, I18n.t(UiKeys.navHome)))
     } else {
       Nil
     }
@@ -162,7 +163,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     */
   private def navMenuItems(): List[HtmlElement] = {
     if (isAuthenticated) {
-      List(navMenuItem(Page.Home, I18n.t(UiKeys.navTodo)), navMenuItem(Page.Groups, I18n.t(UiKeys.navGroups)))
+      List(navMenuItem(Page.Home, I18n.t(UiKeys.navHome)))
     } else {
       Nil
     }
@@ -193,7 +194,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       div(
         cls := "navbar-start gap-2",
         navDropdown(),
-        span(cls := "text-lg font-semibold px-2", "webapp1"),
+        span(cls := "text-lg font-semibold px-2", Branding.appName),
       ),
       div(
         cls := "navbar-center hidden lg:flex gap-2",

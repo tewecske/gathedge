@@ -11,7 +11,7 @@ import webapp1.shared.domain.Locale
   *
   * @param entries
   *   flat key → template map, straight from the JSON file. A missing key resolves to the key itself rather than
-  *   throwing or rendering empty: a visible `group.notFound` in the UI is a bug report, whereas a blank space is a
+  *   throwing or rendering empty: a visible `auth.rateLimited` in the UI is a bug report, whereas a blank space is a
   *   mystery. `MessagesSpec` is what stops that reaching anyone.
   */
 final case class MessageCatalog(locale: Locale, entries: Map[String, String]) {
@@ -68,9 +68,9 @@ object MessageCatalog {
   /** Replaces `{0}`, `{1}`, … in `template` with the corresponding entry of `args`.
     *
     * One left-to-right pass, so a substituted value containing something that looks like a placeholder is never
-    * re-scanned — otherwise a group named `{0}` would splice its own name back into the sentence. An index with no
-    * argument, and any other brace content, is left exactly as written: that shape means the catalog and the call site
-    * disagree, and showing the raw `{2}` makes it obvious which.
+    * re-scanned — otherwise an argument whose own text is `{0}` would splice itself back into the sentence. An index
+    * with no argument, and any other brace content, is left exactly as written: that shape means the catalog and the
+    * call site disagree, and showing the raw `{2}` makes it obvious which.
     */
   def substitute(template: String, args: List[String]): String = {
     if (args.isEmpty || !template.contains("{")) {

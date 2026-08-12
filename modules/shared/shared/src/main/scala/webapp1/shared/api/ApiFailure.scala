@@ -51,19 +51,19 @@ object ApiFailure {
   /** No session, an expired one, or credentials that didn't match. */
   final case class Unauthorized(error: MessageRef, message: String) extends ApiFailure
 
-  /** Signed in but not allowed: not an administrator, not a member of the group, read-only in it — or a mutating
+  /** Signed in but not allowed: not an administrator, or lacking whatever permission a feature requires — or a mutating
     * request without the CSRF header.
     */
   final case class Forbidden(error: MessageRef, message: String) extends ApiFailure
 
-  /** A resource the request named does not exist — a todo id, a group, a user. Not the same thing as a request whose
-    * path matches no route at all: that one never reaches an endpoint, is answered by `RouteSupport.handleFailures`'s
-    * replacement for `Routes.notFound`, and is deliberately absent from the OpenAPI document because there is no
-    * operation to document it on.
+  /** A resource the request named does not exist — a user id, or whatever a feature addresses by id. Not the same thing
+    * as a request whose path matches no route at all: that one never reaches an endpoint, is answered by
+    * `RouteSupport.handleFailures`'s replacement for `Routes.notFound`, and is deliberately absent from the OpenAPI
+    * document because there is no operation to document it on.
     */
   final case class NotFound(error: MessageRef, message: String) extends ApiFailure
 
-  /** The request conflicts with the current state: a taken email address, a group's last administrator. */
+  /** The request conflicts with the current state: a taken email address, an account's last credential. */
   final case class Conflict(error: MessageRef, message: String) extends ApiFailure
 
   /** Raised by the login/signup rate limiter, and declared only by those two endpoints. */

@@ -31,22 +31,6 @@ final case class OAuthIdentityRow(
 
 final case class SessionRow(id: String, userId: Long, createdAt: Long, expiresAt: Long, revokedAt: Option[Long])
 
-final case class TodoItemRow(id: Long, userId: Long, text: String, status: String, createdAt: Long)
-
-final case class GroupRow(id: Long, name: String, createdAt: Long)
-
-final case class GroupMemberRow(groupId: Long, userId: Long, role: String, joinedAt: Long)
-
-final case class GroupPairRow(
-  id: Long,
-  groupId: Long,
-  source: String,
-  target: String,
-  createdBy: Long,
-  createdByEmail: String,
-  createdAt: Long,
-)
-
 /** A single-use proof-of-address link. `consumedAt` set means it has already been redeemed; rows are pruned by
   * [[webapp1.backend.service.SessionReaper]] once they are past `expiresAt`.
   */
@@ -92,16 +76,4 @@ final case class AuditLogRow(
   targetId: Option[String],
   detail: Option[String],
   ip: Option[String],
-)
-
-final case class GroupInvitationRow(
-  id: Long,
-  groupId: Long,
-  email: String,
-  role: String,
-  token: String,
-  invitedBy: Long,
-  createdAt: Long,
-  expiresAt: Long,
-  acceptedAt: Option[Long],
 )

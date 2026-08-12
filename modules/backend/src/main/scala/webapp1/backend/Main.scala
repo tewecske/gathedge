@@ -7,26 +7,13 @@ import webapp1.backend.db.{
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
-  GroupInvitationRepository,
-  GroupMemberRepository,
-  GroupPairRepository,
-  GroupRepository,
   LoginAttemptRepository,
   MetricsRepository,
   OAuthIdentityRepository,
   SessionRepository,
-  TodoRepository,
   UserRepository,
 }
-import webapp1.backend.http.{
-  AdminRoutes,
-  AuthRoutes,
-  DocsRoutes,
-  GroupRoutes,
-  InvitationRoutes,
-  RouteSupport,
-  TodoRoutes,
-}
+import webapp1.backend.http.{AdminRoutes, AuthRoutes, DocsRoutes, RouteSupport}
 import webapp1.backend.i18n.Messages
 import webapp1.backend.security.PasswordHasher
 import webapp1.backend.service.{
@@ -36,13 +23,12 @@ import webapp1.backend.service.{
   AuthService,
   BackgroundJobs,
   EmailSender,
-  GroupService,
   OAuthClients,
   RateLimiter,
   SessionReaper,
   SystemService,
-  TodoService,
 }
+import webapp1.shared.Branding
 import zio.*
 import zio.http.*
 import zio.http.netty.NettyConfig
@@ -57,13 +43,9 @@ object Main extends ZIOAppDefault {
   }
 
   private val allRoutes = {
-    val combined = {
-      AuthRoutes.routes ++ TodoRoutes.routes ++ GroupRoutes.routes ++ InvitationRoutes.routes ++ AdminRoutes.routes ++
-        DocsRoutes.routes
-    }
-    // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and two of this API's URLs carry a
-    // credential — the invitation token is a path segment and the OAuth authorization code a query parameter. See
-    // `RouteSupport.loggableUrl`.
+    val combined = AuthRoutes.routes ++ AdminRoutes.routes ++ DocsRoutes.routes
+    // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and one of this API's URLs carries a
+    // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
     RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging
   }
 
@@ -82,7 +64,9 @@ object Main extends ZIOAppDefault {
       rateLimiter <- ZIO.service[RateLimiter]
       _           <- rateLimiter.runPruner.forkDaemon
       _           <- SessionReaper.run.forkDaemon
-      _           <- ZIO.logInfo(s"Starting webapp1 backend on ${cfg.app.serverHost}:${cfg.app.serverPort} (env=${cfg.app.env})")
+      _           <- ZIO.logInfo(
+                       s"Starting ${Branding.slug} backend on ${cfg.app.serverHost}:${cfg.app.serverPort} (env=${cfg.app.env})"
+                     )
       _           <- Server.serve(allRoutes)
     } yield ()
   }
@@ -92,11 +76,6 @@ object Main extends ZIOAppDefault {
     DataSourceFactory.postgresLive,
     UserRepository.live,
     SessionRepository.live,
-    TodoRepository.live,
-    GroupRepository.live,
-    GroupMemberRepository.live,
-    GroupPairRepository.live,
-    GroupInvitationRepository.live,
     OAuthIdentityRepository.live,
     EmailVerificationTokenRepository.live,
     LoginAttemptRepository.live,
@@ -113,8 +92,6 @@ object Main extends ZIOAppDefault {
     OAuthClients.live,
     // The outbound half of zio-http: the providers' token and tokeninfo endpoints are the only calls this server makes.
     Client.default,
-    TodoService.live,
-    GroupService.live,
     AdminService.live,
     SystemService.live,
     Server.customized,

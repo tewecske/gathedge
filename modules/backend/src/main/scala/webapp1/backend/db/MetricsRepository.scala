@@ -17,9 +17,9 @@ final case class MigrationRow(installedRank: Int, version: Option[String], descr
 
 /** Row counts across the whole schema, for the administrator's system overview.
   *
-  * Deliberately counts only. The tables it reaches into include `todo_items` and `group_pairs`, whose *contents* no
-  * administrator may read (see summary.md) — a count says how much the deployment is holding without saying anything
-  * about what any user wrote.
+  * Deliberately counts only. As a feature's own tables are added here, keep it that way: a count says how much the
+  * deployment is holding without saying anything about what any user wrote, and the contents of a user's own rows are
+  * not something an administrator may read (see summary.md).
   */
 final case class TableCounts(
   users: Long,
@@ -27,31 +27,26 @@ final case class TableCounts(
   unverifiedUsers: Long,
   usersWithoutPassword: Long,
   oauthIdentities: Long,
-  todoItems: Long,
-  groups: Long,
-  groupMembers: Long,
-  groupPairs: Long,
-  invitations: Long,
-  pendingInvitations: Long,
-  acceptedInvitations: Long,
 )
 
 /** The one repository that is not backed by a table of its own: it answers the aggregate questions the system overview
   * asks, across tables owned by the other repositories.
   *
-  * It exists so `SystemService` needs one dependency rather than nine, and so the counts are written once instead of
-  * being scattered as a `countAll` on every repository that happens to need one.
+  * It exists so `SystemService` needs one dependency rather than one per table, and so the counts are written once
+  * instead of being scattered as a `countAll` on every repository that happens to need one. A new feature that wants a
+  * row on the system overview adds a `querySchema` and a field to [[TableCounts]] here, not a method on its own
+  * repository.
   */
 trait MetricsRepository {
-  def counts(now: Long): Task[TableCounts]
+  def counts: Task[TableCounts]
 
   /** Flyway's applied-migration history, in the order it applied them. */
   def migrations: Task[List[MigrationRow]]
 }
 
 object MetricsRepository {
-  def counts(now: Long): RIO[MetricsRepository, TableCounts] =
-    ZIO.serviceWithZIO[MetricsRepository](_.counts(now))
+  def counts: RIO[MetricsRepository, TableCounts] =
+    ZIO.serviceWithZIO[MetricsRepository](_.counts)
 
   def migrations: RIO[MetricsRepository, List[MigrationRow]] =
     ZIO.serviceWithZIO[MetricsRepository](_.migrations)
@@ -73,24 +68,17 @@ final class MetricsRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
     with MetricsRepository {
   import ctx._
 
-  private inline def users       = quote(querySchema[UserRow]("users"))
-  private inline def identities  = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
-  private inline def todos       = quote(querySchema[TodoItemRow]("todo_items"))
-  private inline def groups      = quote(querySchema[GroupRow]("groups"))
-  private inline def members     = quote(querySchema[GroupMemberRow]("group_members"))
-  private inline def pairs       = quote(querySchema[GroupPairRow]("group_pairs"))
-  private inline def invitations = quote(querySchema[GroupInvitationRow]("group_invitations"))
-  private inline def flywayRows  = quote(querySchema[MigrationRow]("flyway_schema_history"))
+  private inline def users      = quote(querySchema[UserRow]("users"))
+  private inline def identities = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
+  private inline def flywayRows = quote(querySchema[MigrationRow]("flyway_schema_history"))
 
-  def counts(now: Long): Task[TableCounts] = {
-    // Twelve round trips rather than one twelve-column SELECT: Quill has no cross-table aggregate combinator, and
+  def counts: Task[TableCounts] = {
+    // One round trip per count rather than one wide SELECT: Quill has no cross-table aggregate combinator, and
     // hand-writing the union as `infix` would have to be written twice, once per dialect. This runs once per load of
-    // an administrator-only page.
+    // an administrator-only page, behind `SystemService`'s 30-second memo.
     // The bindings are all suffixed `Count` so none of them shadows the `inline def` of the same name — a
     // for-comprehension binding is in scope for every later generator, and `users <- …` would quietly turn the next
     // `quote(users.filter(…))` into a filter over a Long.
-    val pendingQuery = quote(invitations.filter(i => i.acceptedAt.isEmpty && i.expiresAt > lift(now)).size)
-
     val counted = {
       for {
         userCount            <- run(ctx.run(quote(users.size)))
@@ -98,29 +86,15 @@ final class MetricsRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
         unverifiedCount      <- run(ctx.run(quote(users.filter(_.emailVerifiedAt.isEmpty).size)))
         withoutPasswordCount <- run(ctx.run(quote(users.filter(_.passwordHash.isEmpty).size)))
         identityCount        <- run(ctx.run(quote(identities.size)))
-        todoCount            <- run(ctx.run(quote(todos.size)))
-        groupCount           <- run(ctx.run(quote(groups.size)))
-        memberCount          <- run(ctx.run(quote(members.size)))
-        pairCount            <- run(ctx.run(quote(pairs.size)))
-        invitationCount      <- run(ctx.run(quote(invitations.size)))
-        pendingCount         <- run(ctx.run(pendingQuery))
-        acceptedCount        <- run(ctx.run(quote(invitations.filter(_.acceptedAt.isDefined).size)))
       } yield TableCounts(
         users = userCount,
         admins = adminCount,
         unverifiedUsers = unverifiedCount,
         usersWithoutPassword = withoutPasswordCount,
         oauthIdentities = identityCount,
-        todoItems = todoCount,
-        groups = groupCount,
-        groupMembers = memberCount,
-        groupPairs = pairCount,
-        invitations = invitationCount,
-        pendingInvitations = pendingCount,
-        acceptedInvitations = acceptedCount,
       )
     }
-    logged(counted)(result => s"metrics.counts users=${result.users} groups=${result.groups}")
+    logged(counted)(result => s"metrics.counts users=${result.users} identities=${result.oauthIdentities}")
   }
 
   def migrations: Task[List[MigrationRow]] = {

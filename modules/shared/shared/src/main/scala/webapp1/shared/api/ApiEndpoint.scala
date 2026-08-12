@@ -32,8 +32,9 @@ object ApiEndpoint {
     *   - **403 from an aspect** — `csrf` rejecting a mutating request with no `X-Requested-With`, or `adminOnly`
     *     rejecting a non-administrator. The generated client always sends the header and no page routes a
     *     non-administrator to an admin call, so reaching either means a client that is not the one these descriptions
-    *     generated. (403 *is* described on the group and invitation endpoints — there it comes from `GroupService`, not
-    *     from an aspect, and "you are not a member of this group" is an answer, not a rejection.)
+    *     generated. (403 *is* described on `POST /api/auth/login` — there it comes from the service rather than from an
+    *     aspect, and "confirm your address first" is an answer, not a rejection. A feature whose service raises a
+    *     permission failure of its own should describe it the same way.)
     *   - **429** — the rate limiter, which only signup and login pass through. Still described on those two, because
     *     `ApiFailures.auth` maps `AuthFailure.RateLimited` onto it and the sign-in form renders the message; there is
     *     nowhere else in the API it can occur.

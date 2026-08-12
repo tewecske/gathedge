@@ -122,30 +122,23 @@ object RouteSupport {
       message.replaceAll("\\s*\\R\\s*", " ").trim
   }
 
-  /** The path segment a logged URL shows in place of a bearer token. */
-  private val redacted = "…"
-
-  /** The request log's version of a URL: the path, scrubbed, and never the query string.
+  /** The request log's version of a URL: the path, and never the query string.
     *
-    * Two credentials in this API travel inside a URL rather than a body, because both are followed as links rather than
-    * sent by script: the group invitation token is a path segment (`/api/invitations/{token}`, where the token *is* the
-    * secret), and the OAuth authorization code arrives as `?code=` on the callback. `Middleware.requestLogging` logged
-    * the whole URL, so both were written to `logs/backend.log` and to `docker logs` on every request — while
-    * `QuillRepository.logged` was carefully keeping the same tokens out of the lines one layer down.
+    * One credential in this API travels inside a URL rather than a body, because it is followed as a link rather than
+    * sent by script: the OAuth authorization code arrives as `?code=` on the callback. `Middleware.requestLogging`
+    * logged the whole URL, so it was written to `logs/backend.log` and to `docker logs` on every request — while
+    * `QuillRepository.logged` was carefully keeping the same class of secret out of the lines one layer down.
     *
-    * The query string is dropped wholesale rather than filtered. The only endpoints that use one are the admin list
-    * filters, whose values are worth less than an allowlist that some later endpoint forgets to join.
+    * The query string is dropped wholesale rather than filtered. The only other endpoints that use one are the admin
+    * list filters, whose values are worth less than an allowlist that some later endpoint forgets to join — the user
+    * search term in particular is a fragment of somebody's address.
+    *
+    * '''A credential that arrives as a path segment needs more than this.''' If you add an endpoint whose path carries
+    * a token — `/api/invitations/{token}` is the shape this project used to have — replace that segment here before the
+    * path is joined, and pin it in `RouteSupportSpec`.
     */
   private[http] def loggableUrl(request: Request): String = {
-    val segments = request.path.segments
-    val scrubbed = {
-      // `/api/invitations/{token}` and `/api/invitations/{token}/accept` — the token is always the third segment.
-      if (segments.length >= 3 && segments(0) == "api" && segments(1) == "invitations")
-        segments.updated(2, redacted)
-      else
-        segments
-    }
-    scrubbed.mkString("/", "/", "")
+    request.path.segments.mkString("/", "/", "")
   }
 
   /** One log line per request, replacing `Middleware.requestLogging()`.

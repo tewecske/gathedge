@@ -2,20 +2,25 @@
 
 ## What this is
 
-A private, account-based web application with three parts:
+The account-and-administration half of a private, account-based web application — the part that is
+the same in every such application, with the part that makes one specific left out.
 
-- a personal task board, private to each account;
-- shared group workspaces, private to the members of each group;
-- account administration, available only to administrators.
+It provides two things: a way for a person to have an account (sign up, confirm an address, sign in
+with a password or a social account, choose a language and a theme), and a way for an administrator
+to look after those accounts (find one, diagnose why it cannot sign in, see what administrators have
+done, and see what the deployment is holding).
 
-Everything except signing up, signing in, viewing an invitation and confirming an email address
-requires being signed in. No user can see another user's personal data. Administrators manage
-*accounts*, not the content those accounts own: an administrator has no way to read another
-user's task board or a group they are not a member of.
+Everything except signing up, signing in and confirming an email address requires being signed in.
+Administrators manage *accounts*, not the content those accounts own — a rule that matters most for
+whatever a project built on this adds: the administrator screens are designed so that no amount of
+new data becomes readable through them, only countable.
 
 Each rule below is written as one testable statement. Where a rule exists for a non-obvious
 reason, the reason follows on the same line; those reasons are the most valuable part of this
 document for anyone rebuilding the application.
+
+The home screen is a placeholder. So is this sentence's absence of a feature: a project starting
+from here replaces both.
 
 ## Concepts
 
@@ -26,26 +31,11 @@ administrator flag, and a record of whether its email address has been confirmed
 **Session.** A signed-in period belonging to one user. Lasts 7 days, and can be ended earlier by
 signing out or by an administrator resetting that user's password.
 
-**Group.** A named workspace owned by its members. Every member holds exactly one role:
-administrator, read-write, or read-only. A group always has at least one administrator.
-
-**Invitation.** An offer to join one group in one role, addressed to one email address, delivered
-as a link. Valid for 7 days and usable once.
-
-**Task item.** A short piece of text belonging to one user, in one of three states: To Do,
-In Progress, Done.
-
-**Group entry.** A pair of values, a source and a target, belonging to one group, recording who
-added it and when.
-
 ## Screens
 
 | Screen | Who can see it |
 | --- | --- |
-| Task board (home) | signed-in users |
-| Groups list | signed-in users |
-| Group entries | members of that group |
-| Group members | members of that group |
+| Home (a placeholder) | signed-in users |
 | Account settings | signed-in users |
 | Administrator user list | administrators |
 | Administrator user detail | administrators |
@@ -55,7 +45,6 @@ added it and when.
 | Sign up | signed-out visitors |
 | Check your inbox | anyone |
 | Confirm email address | anyone |
-| Accept invitation | anyone (accepting needs an account) |
 | Access denied | anyone |
 | Not found | anyone |
 
@@ -149,63 +138,11 @@ account from the settings screen.
 - Each user chooses Light or Dark. The choice applies to the whole application immediately and is
   stored on the account, so it follows the user to another browser.
 
-## Task board
+## Home
 
-The home screen. Three lists side by side: To Do, In Progress, Done.
-
-- Submitting text adds an item to To Do.
-- Clicking an item advances it: To Do to In Progress to Done, and from Done back to To Do.
-- Blank or whitespace-only text is rejected and adds nothing.
-- Text is at most 2000 characters; longer text is a field error, not a failure.
-- Every item records its text, its state, and when it was created.
-- Items are private to their owner. Acting on someone else's item is answered as if it does not
-  exist, so ownership cannot be probed.
-- The list is loaded from the server, not held only in the page: a refresh shows the same items.
-
-## Groups
-
-- Any user can create a group, and becomes its administrator.
-- A blank group name is rejected. A name is at most 255 characters.
-- The groups screen lists the groups the user belongs to, with their role in each.
-- A group may have several administrators. Any of them can invite, remove members, change roles,
-  and delete the group.
-- Read-write and read-only members can do neither of those things.
-- A group must always keep at least one administrator. Removing or demoting the last one is
-  refused; promoting somebody else first is the only way for a sole administrator to leave.
-- Deleting a group removes its entries, members and outstanding invitations with it.
-- Removing a member revokes their access to the group and its content at once.
-- A signed-in user who is not a member is told they may not see the group, not that it is
-  missing. A group that genuinely does not exist is reported as missing. The distinction is
-  deliberate: a member who has just been removed should learn that, not be misled into thinking
-  the group was deleted.
-
-## Group entries
-
-Each group has one table of paired values, a source and a target.
-
-- Adding an entry requires both fields; either one blank blocks the submission and reports the
-  empty field.
-- Each field is at most 2000 characters.
-- Read-only members can view entries but cannot add them.
-- A new entry appears in the table straight away.
-- Every entry records its group, its source and target, who added it, and when.
-- Entries are private to their group. A non-member can neither read nor add.
-- The table is loaded from the server: a refresh shows the same entries.
-- Deleting the user who added an entry does not delete the entry's group or the other entries.
-
-## Invitations
-
-- A group administrator invites a person by email address, choosing the role they will hold.
-- The invited address receives a link naming the group.
-- Anyone holding the link can see who the invitation is for, which group it is for, which role it
-  grants, and whether it has expired or already been used, without signing in. Nothing else about
-  the group is revealed.
-- Accepting requires being signed in. A visitor without an account is asked to create one first.
-- An invitation can only be accepted by the address it was sent to. Accepting it while signed in
-  as anybody else is refused, so a forwarded link grants nothing.
-- An invitation can be accepted once, and expires after 7 days. Unknown, spent and expired links
-  are all answered the same way.
-- Accepting puts the user in the group with the role the invitation named, and takes them to it.
+A placeholder: a card greeting the signed-in user, and nothing else. It exists so the router, the
+shell and the sign-in guard have somewhere to point, and it is the first screen a project built on
+this replaces.
 
 ## Administrator user management
 
@@ -220,9 +157,10 @@ Available only to administrators, and only over accounts.
   outlive the reset.
 - A profile change and a password reset submitted together either both take effect or neither
   does.
-- Delete an account, behind an explicit confirmation step. Deleting an account also removes the
-  group entries it created and the invitations it sent, and it must not leave anything behind
-  that fails when read.
+- Delete an account, behind an explicit confirmation step. Deleting an account removes everything
+  belonging to it — its sessions, its linked social accounts, its outstanding confirmation links,
+  and whatever a later feature stores on its behalf — and must not leave anything behind that
+  fails when read. The two exceptions are deliberate and below.
 - An administrator cannot remove their own administrator status and cannot delete their own
   account. Both are refused by the server as well as hidden in the screen, so bypassing the
   interface does not bypass the rule.
@@ -280,8 +218,9 @@ One screen for facts about the deployment rather than about any account.
   each background maintenance job last ran and whether it failed. A job that has not run in far
   longer than its interval is the signal that something is wrong, and there was previously no way
   to see it.
-- How much it is holding: a count per kind of record. Counts only — the tables holding task items
-  and group entries are counted, never read. Numbers that indicate a problem are marked: unconfirmed
+- How much it is holding: a count per kind of record. Counts only, and this is the rule a new
+  feature has to keep: a table may hold data no administrator is allowed to read, so it is counted
+  and never read. Numbers that indicate a problem are marked: unconfirmed
   addresses, expired records the cleanup has not removed, failed sign-ins in the last day, accounts
   currently locked out.
 - Two maintenance actions, both confirmed first: run the periodic cleanup now, and release every
@@ -314,10 +253,7 @@ One screen for facts about the deployment rather than about any account.
 | --- | --- |
 | Password | 8 to 72 characters |
 | Email address | 255 characters |
-| Group name | 255 characters |
-| Task text, entry source, entry target | 2000 characters each |
 | Session | 7 days |
-| Invitation | 7 days, single use |
 | Email confirmation link | 24 hours, single use |
 | Failed sign-in attempts | 5 per 15 minutes, per address and per origin |
 
@@ -336,7 +272,9 @@ One screen for facts about the deployment rather than about any account.
   turn a correct password into a failed sign-in, nor a completed administrative action into an
   error saying it did not happen.
 - Never write a secret to any log: no password, no password hash, no session identifier, no
-  invitation or confirmation link, no social account identifier, and no email address.
+  confirmation link, no social account identifier, and no email address. This covers the request
+  log as well as the application's own lines — a credential that travels inside a URL is still a
+  credential.
 - Log ordinary application events too: user actions, errors, lifecycle events.
 - Publish a machine-readable description of the application's own interface, kept in step with
   what the application actually accepts and answers, and generated from the same definitions

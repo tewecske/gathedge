@@ -127,10 +127,10 @@ object MessagesSpec extends ZIOSpecDefault {
       test("a key argument is translated before substitution") {
         val hu  = catalogs(Locale.Hu)
         val en  = catalogs(Locale.default)
-        val ref = MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(MessageKeys.fieldGroupName)))
+        val ref = MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(MessageKeys.fieldEmail)))
         assertTrue(
-          en.resolve(ref) == "Group name is required",
-          hu.resolve(ref) == "Kötelező mező: Csoportnév",
+          en.resolve(ref) == "Email is required",
+          hu.resolve(ref) == "Kötelező mező: E-mail cím",
         )
       },
       test("a literal argument is substituted verbatim") {
