@@ -7,6 +7,10 @@
 , jdk
 , makeWrapper
 , runCommand
+, coreutils
+, gawk
+, gnugrep
+, gnused
 , src
 , logbackConfig
 , version ? "0.1.0"
@@ -65,6 +69,17 @@ let
   # Mirrors the Dockerfile ENTRYPOINT: the in-repo logback.xml writes to a relative
   # logs/ dir, which is unwritable under a hardened systemd unit, so point at the
   # stdout-only config instead. Journald takes it from there.
+  #
+  # The PATH prefix is not optional. sbt-native-packager's launcher is a bash script that
+  # shells out to ordinary Unix tools, and its `java_version_check` reads the version out of
+  # `java -version` through awk. Under a systemd unit the PATH is systemd's own default
+  # (coreutils, findutils, grep, sed) with no awk in it, so that pipeline yields an empty
+  # string and the script exits with the singularly misleading
+  #
+  #   No java installations was detected.
+  #
+  # even though JAVA_HOME below points at a perfectly good JDK. Setting JAVA_HOME alone is
+  # therefore not enough to make this runnable outside an interactive shell.
   backend = runCommand "gathedge-backend-${version}"
     {
       nativeBuildInputs = [ makeWrapper ];
@@ -75,6 +90,7 @@ let
       mkdir -p $out/bin
       makeWrapper ${scala}/bin/backend $out/bin/gathedge-backend \
         --set JAVA_HOME ${jdk} \
+        --prefix PATH : ${lib.makeBinPath [ jdk coreutils gawk gnugrep gnused ]} \
         --add-flags "-Dlogback.configurationFile=${logbackConfig}"
     '';
 in
