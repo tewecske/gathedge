@@ -6,7 +6,7 @@
 #
 # Run it once, in a fresh copy of the repository, before writing any code. It renames the Scala
 # package root, the sbt project and organization, the Docker image names, the database name/user/
-# password defaults, the Nix attributes, the tmux session and the wordmark — everything the
+# password/schema defaults, the Nix attributes, the tmux session and the wordmark — everything the
 # skeleton calls "gathedge".
 #
 # The rename is a plain search-and-replace, and that is safe here for one specific reason: the
@@ -23,8 +23,8 @@ usage() {
 Usage: ./scripts/init-project.sh <slug> ["Display Name"] [options]
 
   <slug>            Lowercase identifier: [a-z][a-z0-9]*. Becomes the Scala package root, the sbt
-                    project name, the Docker image names and the database name. No dashes or
-                    underscores — it has to be a legal Scala package segment.
+                    project name, the Docker image names, and the database name and schema. No
+                    dashes or underscores — it has to be a legal Scala package segment.
   "Display Name"    What a reader sees: the navbar wordmark and the browser tab. Defaults to <slug>.
 
 Options:
@@ -91,8 +91,9 @@ done
   exit 1
 }
 
-# The slug reaches a Scala `package` declaration, a Docker image name and a Postgres database name.
-# The intersection of what all three accept is narrower than any one of them.
+# The slug reaches a Scala `package` declaration, a Docker image name, and a Postgres database name
+# and schema. The intersection of what all four accept is narrower than any one of them — this also
+# keeps the schema a legal unquoted Postgres identifier, which is what `search_path` is set to.
 [[ "$slug" =~ ^[a-z][a-z0-9]*$ ]] || die "slug must match [a-z][a-z0-9]* — got '$slug'"
 [ "$slug" != "$OLD_SLUG" ] || die "slug is already '$OLD_SLUG'; pick a different one"
 

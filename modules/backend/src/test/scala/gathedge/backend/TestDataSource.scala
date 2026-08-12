@@ -31,7 +31,9 @@ object TestDataSource {
             new HikariDataSource(config)
           }
         )(ds => ZIO.attempt(ds.close()).orDie)
-      _  <- FlywayMigrator.migrate(ds, DbDialect.Sqlite)
+      // `None`: SQLite has no schemas. The Postgres schema the application owns is exercised by
+      // PostgresIntegrationSpec, which is the only place that dialect's DDL actually runs.
+      _  <- FlywayMigrator.migrate(ds, DbDialect.Sqlite, None)
     } yield ds: DataSource
   }
 }

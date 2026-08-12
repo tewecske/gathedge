@@ -28,6 +28,9 @@ services:
       DB_URL: ${DB_URL:-jdbc:postgresql://postgres:5432/gathedge}
       DB_USER: ${DB_USER:-gathedge}
       DB_PASSWORD: ${DB_PASSWORD:-gathedge}
+      # The schema the app owns, inside whichever database DB_URL names. Flyway creates it on the
+      # first boot; pointing DB_URL at a database that already holds something else is then safe.
+      DB_SCHEMA: ${DB_SCHEMA:-gathedge}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       # The `web` container is the one proxy in front of this, and it sets X-Forwarded-For. Without
       # this the backend would see every request as coming from nginx's address and rate-limit the

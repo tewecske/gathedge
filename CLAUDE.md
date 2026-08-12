@@ -72,7 +72,11 @@ Three consequences for anyone changing this repo:
   across the package root, `build.sbt`, `application.conf`, `docker-compose.yml`, `flake.nix`,
   `dev-tmux.sh` and the rest. **Do not introduce `Webapp1`, `WEBAPP1` or a bare `webapp`**, and do
   not hard-code the name in a new file: a plain `sed` is the whole rename, and any variant casing
-  silently survives it. The script re-checks afterwards and warns if anything is left.
+  silently survives it. The script re-checks afterwards and warns if anything is left. The Postgres
+  schema the app owns (`db.schema`) is renamed by that same `sed` and by nothing else — which is why
+  it is written as the bare token in `application.conf`, `.env.example`, `docker-compose.yml` and
+  `PostgresIntegrationSpec`, never assembled from parts or abbreviated. It also means the slug has to
+  be a legal unquoted Postgres identifier; the script's `[a-z][a-z0-9]*` guard already ensures that.
 - **The display name lives in `shared/Branding.scala`,** which the wordmark, the page title, the
   frontend's mount-failure message, the backend's startup line and the OpenAPI document all read.
   `appName` is prose and may contain anything; `slug` is the identifier and reaches a URL (the
@@ -105,6 +109,8 @@ Postgres is the only real target (see `docker-compose.yml`); SQLite exists solel
 **That pragma is a real blind spot: no foreign key is enforced on SQLite, so no cascade or constraint violation is exercised by anything except `PostgresIntegrationSpec`.** This cost real time once: `AdminService.deleteUser` answered 500 for months for any user who had touched one of two tables whose `users` references were declared without an `ON DELETE` action, and the entire SQLite-backed suite passed throughout. Any change to referential integrity is only actually tested under `RUN_POSTGRES_TESTS=1`, and that is where its regression test belongs — **including a new table's reference to `users`**, which is why that spec's delete-user test enumerates them. The two `SET NULL` columns are covered there in both directions: `CASCADE` would silently delete an account's audit trail along with the account, `NO ACTION` would bring back the 500, and SQLite passes either way.
 
 `Main.scala` always wires the Postgres implementations. Tests wire the SQLite ones via `TestDataSource.sqlite`, a `ZLayer` that spins up a temp-file SQLite DB and runs the SQLite migrations, fresh per test.
+
+**The application owns a named Postgres schema (`db.schema`, `DB_SCHEMA`, default `gathedge`) rather than living in `public`** — that is what lets it share a database with something else without colliding, and makes "drop everything it owns" one statement. Every Quill `querySchema` names its table unqualified, so nothing in the repositories mentions it; `search_path` is the whole mechanism. **One config key, two readers, and they are a correctness pair:** `FlywayMigrator.migrate` takes it as a third parameter and passes it to `.schemas(...)` (which is what issues the `CREATE SCHEMA` on a first boot, and what puts `flyway_schema_history` *inside* the managed schema rather than beside it in `public`), while `DataSourceFactory.postgresLive` calls `hikariConfig.setSchema`, which Hikari applies as `Connection.setSchema` per connection and pgjdbc issues as `SET SESSION search_path`. Point the two at different schemas and the app migrates one and queries the other — a failure that surfaces at the first request, long after the migration reported success. Set on the pool rather than as `?currentSchema=` in `DB_URL` so the name is configured once. The ordering in `Main` is safe as it stands: the pool is built before the migration runs, and Postgres accepts a `search_path` naming a schema that does not exist yet, simply skipping it until the `CREATE SCHEMA` lands. `baselineOnMigrate` stays `false` for Postgres — a fresh named schema is empty, so `V1` applies normally and the guard still catches a non-empty schema with no history table. The parameter is an `Option` because **SQLite has no schemas**: `TestDataSource.sqlite` passes `None`, and `PostgresIntegrationSpec` — the only place Postgres DDL actually executes — sets both halves, so it is the only thing that can catch a mismatch between them.
 
 ### Backend request flow
 

@@ -59,7 +59,7 @@ object Main extends ZIOAppDefault {
                        )
                      }
       dataSource  <- ZIO.service[DataSource]
-      _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql)
+      _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql, Some(cfg.db.schema))
       _           <- AdminSeeder.seedIfNeeded
       rateLimiter <- ZIO.service[RateLimiter]
       _           <- rateLimiter.runPruner.forkDaemon

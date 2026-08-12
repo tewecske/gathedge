@@ -33,6 +33,12 @@ import javax.sql.DataSource
   */
 object PostgresIntegrationSpec extends ZIOSpecDefault {
 
+  /** The schema the application owns, matching `db.schema` in application.conf. Set on both the pool and Flyway below,
+    * exactly as production does it, so this spec exercises the real search_path rather than falling back to `public` —
+    * a mismatch between the two halves is precisely the failure no other spec could see.
+    */
+  private val schema = "gathedge"
+
   private val containerDataSource: ZLayer[Any, Throwable, DataSource] = ZLayer.scoped {
     for {
       container <-
@@ -51,10 +57,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             config.setDriverClassName("org.postgresql.Driver")
             config.setUsername(container.username)
             config.setPassword(container.password)
+            config.setSchema(schema)
             new HikariDataSource(config)
           }
         )(ds => ZIO.attempt(ds.close()).orDie)
-      _         <- FlywayMigrator.migrate(ds, DbDialect.Postgresql)
+      _         <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(schema))
     } yield ds: DataSource
   }
 

@@ -9,9 +9,9 @@ import zio.json.*
   * when it composes an email — turns it into prose. The server therefore never reads `Accept-Language` for wording, and
   * `ApiFailures`' mappers keep their locale-free signatures.
   *
-  * The same type is the failure channel of [[gathedge.shared.validation.Validation]], which runs on both platforms, so a
-  * form and the endpoint behind it produce byte-identical messages by construction rather than by two translations that
-  * have to be kept in step.
+  * The same type is the failure channel of [[gathedge.shared.validation.Validation]], which runs on both platforms, so
+  * a form and the endpoint behind it produce byte-identical messages by construction rather than by two translations
+  * that have to be kept in step.
   *
   * @param key
   *   a catalog key, e.g. `auth.invalidCredentials`. Constants for every key the backend can mint live in

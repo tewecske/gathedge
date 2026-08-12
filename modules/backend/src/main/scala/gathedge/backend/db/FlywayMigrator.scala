@@ -12,7 +12,13 @@ enum DbDialect {
 
 object FlywayMigrator {
 
-  def migrate(dataSource: DataSource, dialect: DbDialect): Task[Unit] = {
+  /** `schema` is an `Option` rather than a `String` because only one dialect has the concept: on Postgres it names the
+    * schema this application owns, which Flyway creates if it is missing and puts its own history table in; SQLite has
+    * no schemas at all, so the test databases pass `None`. It must be the same value `DataSourceFactory` puts on the
+    * pool's connections as their `search_path` — migrating into one schema and querying another fails at the first
+    * request, long after this call has reported success.
+    */
+  def migrate(dataSource: DataSource, dialect: DbDialect, schema: Option[String]): Task[Unit] = {
     ZIO.attempt {
       val location          = {
         dialect match {
@@ -34,11 +40,18 @@ object FlywayMigrator {
             true
         }
       }
-      Flyway
-        .configure()
-        .dataSource(dataSource)
-        .locations(location)
-        .baselineOnMigrate(baselineOnMigrate)
+      val configured        = {
+        Flyway
+          .configure()
+          .dataSource(dataSource)
+          .locations(location)
+          .baselineOnMigrate(baselineOnMigrate)
+      }
+      // `.schemas` rather than leaving it to the connection's search_path: it is what makes Flyway
+      // issue the CREATE SCHEMA on a first boot, and what puts flyway_schema_history inside the
+      // schema it manages rather than next to it in public.
+      schema
+        .fold(configured)(name => configured.schemas(name))
         .load()
         .migrate()
     }.unit
