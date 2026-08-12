@@ -150,6 +150,11 @@ in
     # services.postgresql.ensureUsers cannot set a password (the option was removed from
     # nixpkgs), so set it here from the same secret file the backend reads. psql's :'var'
     # interpolation quotes the value properly, so a password with a quote in it is safe.
+    #
+    # The statement is piped in rather than passed with `-c`, and that is load-bearing:
+    # variable interpolation is something psql's own lexer does to input it parses, while a
+    # `-c` string is handed to the server as-is. With `-c` the server receives the literal
+    # `:'pw'` and answers `ERROR: syntax error at or near ":"`.
     systemd.services.gathedge-db-password = {
       description = "Set the gathedge Postgres role password";
       after = [ "postgresql.service" "postgresql-setup.service" ];
@@ -166,10 +171,15 @@ in
       script = ''
         set -euo pipefail
         pw=$(${pkgs.gnugrep}/bin/grep -m1 '^DB_PASSWORD=' "$CREDENTIALS_DIRECTORY/env" | cut -d= -f2-)
-        ${config.services.postgresql.package}/bin/psql \
-          --no-psqlrc --quiet --tuples-only \
-          -v pw="$pw" \
-          -c "ALTER ROLE ${cfg.database.user} WITH LOGIN PASSWORD :'pw'"
+        if [ -z "$pw" ]; then
+          echo "DB_PASSWORD is empty or absent in the environment file; refusing to set an empty role password" >&2
+          exit 1
+        fi
+        printf '%s\n' "ALTER ROLE ${cfg.database.user} WITH LOGIN PASSWORD :'pw'" \
+          | ${config.services.postgresql.package}/bin/psql \
+              --no-psqlrc --quiet --tuples-only \
+              -v ON_ERROR_STOP=1 \
+              -v pw="$pw"
       '';
     };
 
