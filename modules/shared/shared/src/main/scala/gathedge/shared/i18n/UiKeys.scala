@@ -433,7 +433,17 @@ object UiKeys {
   val wordsTagAdd: String    = key("ui.words.tagAdd")
   val wordsTagRemove: String = key("ui.words.tagRemove")
 
-  val wordsTagLabel: String          = key("ui.words.tagLabel")
+  /** The tag a tick files a word into. Deliberately worded as an action rather than as "Tag": the control next to it
+    * narrows the listing instead, and the two used to be one select that did both.
+    */
+  val wordsCollectLabel: String = key("ui.words.collectLabel")
+  val wordsCollectHint: String  = key("ui.words.collectHint")
+
+  /** The other half of that pair: which tag the listing is narrowed to, which changes nothing about where a tick files.
+    */
+  val wordsFilterTagLabel: String = key("ui.words.filterTagLabel")
+  val wordsFilterTagAny: String   = key("ui.words.filterTagAny")
+
   val wordsTagNew: String            = key("ui.words.tagNew")
   val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
 
@@ -443,6 +453,7 @@ object UiKeys {
   val wordsAddGender: String          = key("ui.words.addGender")
   val wordsAddGenderNone: String      = key("ui.words.addGenderNone")
   val wordsAddTranslation: String     = key("ui.words.addTranslation")
+  val wordsAddTranslations: String    = key("ui.words.addTranslations")
   val wordsAddTranslationHint: String = key("ui.words.addTranslationHint")
 
   /** Required by the licence the dictionary data is under, and so not optional page furniture. */
@@ -455,6 +466,12 @@ object UiKeys {
   val wordDetailBack: String              = key("ui.word.back")
   val wordDetailNotFound: String          = key("ui.word.notFound")
   val wordDetailRemoveTranslation: String = key("ui.word.removeTranslation")
+
+  /** The detail page's own form, which is the only place a word gains a translation in a *third* language — the listing
+    * can only offer the two it is showing.
+    */
+  val wordDetailAddTitle: String    = key("ui.word.addTitle")
+  val wordDetailAddLanguage: String = key("ui.word.addLanguage")
 
   /** Every `WordLanguage`, `PartOfSpeech` and translation origin, resolved by suffix the way [[loginOutcomePrefix]] is.
     * The `<select>` values stay the wire codes.

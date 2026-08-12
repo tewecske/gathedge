@@ -37,9 +37,13 @@ private class WordDetailPage(id: Long) {
 
   private val signedInSignal = AppState.isSignedInSignal
 
-  private val textVar     = Var("")
-  private val languageVar = Var(WordLanguage.Hu)
-  private val genderVar   = Var(Option.empty[Gender])
+  private val textVar   = Var("")
+  private val genderVar = Var(Option.empty[Gender])
+
+  /** Which language the next translation is in. `None` until the word is loaded, because what it may be depends on the
+    * word: a word is never a translation of itself, so its own language is not on offer.
+    */
+  private val languageVar = Var(Option.empty[WordLanguage])
 
   private val loadBus   = new EventBus[Unit]()
   private val addBus    = new EventBus[Unit]()
@@ -56,6 +60,7 @@ private class WordDetailPage(id: Long) {
         Observer[Either[ApiError, WordDetail]] {
           case Right(detail) =>
             Var.set(detailVar -> Some(detail), missingVar -> false, errorVar -> None)
+            keepLanguageValid(detail)
           case Left(err)     =>
             // A word that is not there is a different thing from a request that failed, and reads differently.
             if (err.status == 404)
@@ -65,7 +70,8 @@ private class WordDetailPage(id: Long) {
         },
       addStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
-          Var.set(detailVar -> Some(detail), textVar -> "", inFlightVar -> false, errorVar -> None)
+          // The form stays where it is and keeps its language: adding one translation is usually the first of two.
+          Var.set(detailVar -> Some(detail), textVar -> "", genderVar -> None, inFlightVar -> false, errorVar -> None)
         case Left(err)     =>
           Var.set(inFlightVar -> false, errorVar -> Some(err.message))
       },
@@ -79,17 +85,30 @@ private class WordDetailPage(id: Long) {
     )
   }
 
+  /** The languages this word can be translated into: the two that are not its own. */
+  private def otherLanguages(word: Word): List[WordLanguage] = WordLanguage.all.filterNot(_ == word.language)
+
+  /** Keeps the form's language on one the word can actually take. It starts empty, and a word whose own language the
+    * reader had selected on the previous word would otherwise submit a pair the server refuses.
+    */
+  private def keepLanguageValid(detail: WordDetail): Unit = {
+    val allowed = otherLanguages(detail.word)
+    if (!languageVar.now().exists(allowed.contains)) {
+      languageVar.set(allowed.headOption)
+    }
+  }
+
   private def addStream: EventStream[Either[ApiError, WordDetail]] = {
     addBus.events
       .filterWith(inFlightSignal.not)
-      .map(_ => textVar.now().trim)
-      .filter(_.nonEmpty)
-      .flatMapSwitch { text =>
+      .map(_ => (textVar.now().trim, languageVar.now()))
+      .collect { case (text, Some(language)) if text.nonEmpty => (text, language) }
+      .flatMapSwitch { case (text, language) =>
         inFlightVar.set(true)
         WordApiClient.addTranslation(
           id,
           // The part of speech is left to the server, which takes the source word's: a noun translates to a noun.
-          NewTranslation(languageVar.now(), text, None, genderVar.now()),
+          NewTranslation(language, text, None, genderVar.now().filter(_ => language == WordLanguage.De)),
         )
       }
   }
@@ -105,40 +124,51 @@ private class WordDetailPage(id: Long) {
           s"${Labels.language(detail.word.language)} · ${Labels.partOfSpeech(detail.word.partOfSpeech)}",
         ),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTranslations)),
-        renderTranslations(detail.translations),
+        renderTranslations(detail.word, detail.translations),
+        child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTags)),
         renderTags(detail.tags),
-        child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm())),
       ),
     )
   }
 
-  private def renderTranslations(entries: List[TranslationEntry]): HtmlElement = {
-    if (entries.isEmpty)
-      p(cls := "text-sm opacity-60", I18n.t(UiKeys.wordDetailNoTranslations))
-    else {
-      div(
-        cls := "flex flex-col gap-1",
-        entries.map { entry =>
-          div(
-            cls := "flex items-center gap-2",
-            span(cls := "badge badge-ghost badge-sm", Labels.language(entry.word.language)),
-            span(Word.display(entry.word)),
-            // Marked rather than hidden: a pair inferred through English is worth having and worth knowing about.
-            span(cls := "text-xs opacity-60", Labels.translationOrigin(entry.origin)),
-            if (entry.ownedByMe) {
-              button(
-                cls := "btn btn-ghost btn-xs",
-                typ := "button",
-                I18n.t(UiKeys.wordDetailRemoveTranslation),
-                onClick.mapTo(entry.id) --> removeBus.writer,
-              )
-            } else
-              emptyNode,
-          )
-        },
-      )
-    }
+  /** Grouped by language, with both other languages shown even when one of them is empty.
+    *
+    * The empty one is the point: a word that has a Hungarian translation and no English one used to render as a list
+    * with nothing to say that English was missing, and the form below reads as "add another Hungarian one".
+    */
+  private def renderTranslations(word: Word, entries: List[TranslationEntry]): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-3",
+      otherLanguages(word).map(language => {
+        val group = entries.filter(_.word.language == language)
+        div(
+          div(cls := "badge badge-ghost badge-sm", Labels.language(language)),
+          if (group.isEmpty)
+            p(cls   := "text-sm opacity-60 mt-1", I18n.t(UiKeys.wordDetailNoTranslations))
+          else
+            div(cls := "flex flex-col gap-1 mt-1", group.map(renderEntry)),
+        )
+      }),
+    )
+  }
+
+  private def renderEntry(entry: TranslationEntry): HtmlElement = {
+    div(
+      cls := "flex items-center gap-2",
+      span(Word.display(entry.word)),
+      // Marked rather than hidden: a pair inferred through English is worth having and worth knowing about.
+      span(cls := "text-xs opacity-60", Labels.translationOrigin(entry.origin)),
+      if (entry.ownedByMe) {
+        button(
+          cls := "btn btn-ghost btn-xs",
+          typ := "button",
+          I18n.t(UiKeys.wordDetailRemoveTranslation),
+          onClick.mapTo(entry.id) --> removeBus.writer,
+        )
+      } else
+        emptyNode,
+    )
   }
 
   private def renderTags(tags: List[Tag]): HtmlElement = {
@@ -148,37 +178,51 @@ private class WordDetailPage(id: Long) {
       div(cls := "flex flex-wrap gap-2", tags.map(tag => span(cls := "badge badge-primary badge-soft", tag.name)))
   }
 
-  private def renderAddForm(): HtmlElement = {
-    form(
-      cls        := "flex flex-wrap items-end gap-2 mt-4",
-      noValidate := true,
-      onSubmit.preventDefault.mapToUnit --> addBus.writer,
-      label(
-        cls         := "form-control",
-        span(cls := "label-text text-xs", I18n.t(UiKeys.wordsLanguageLabel)),
-        select(
-          cls    := "select select-sm",
-          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
-          controlled(
-            value <-- languageVar.signal.map(WordLanguage.code),
-            onChange.mapToValue --> Observer[String] { code =>
-              languageVar.set(WordLanguage.fromString(code).getOrElse(WordLanguage.Hu))
-            },
+  /** The only place a word gains a translation in a language the listing was not showing, so it names itself and its
+    * language select offers both of the word's other languages rather than all three.
+    */
+  private def renderAddForm(word: Word): HtmlElement = {
+    val languages = otherLanguages(word)
+
+    div(
+      cls := "mt-4 pt-3 border-t border-base-300",
+      h2(cls       := "font-semibold", I18n.t(UiKeys.wordDetailAddTitle)),
+      form(
+        cls        := "flex flex-wrap items-end gap-2 mt-2",
+        noValidate := true,
+        onSubmit.preventDefault.mapToUnit --> addBus.writer,
+        label(
+          cls := "form-control",
+          span(cls := "label-text text-xs", I18n.t(UiKeys.wordDetailAddLanguage)),
+          select(
+            cls    := "select select-sm",
+            languages.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+            controlled(
+              value <-- languageVar.signal.map(_.map(WordLanguage.code).getOrElse("")),
+              onChange.mapToValue --> Observer[String] { code =>
+                languageVar.set(WordLanguage.fromString(code).filter(languages.contains).orElse(languages.headOption))
+              },
+            ),
           ),
         ),
-      ),
-      input(
-        cls         := "input input-sm",
-        placeholder := I18n.t(UiKeys.wordsAddTranslationHint),
-        controlled(value <-- textVar.signal, onInput.mapToValue --> textVar.writer),
-      ),
-      // Only a German noun takes an article, so the control appears only for one.
-      child.maybe <-- languageVar.signal.map(language => Option.when(language == WordLanguage.De)(renderGender())),
-      button(
-        cls         := "btn btn-sm btn-primary",
-        typ         := "submit",
-        disabled <-- inFlightSignal,
-        I18n.t(UiKeys.wordsAddTranslation),
+        // Only a German noun takes an article, so the control appears only for one.
+        child.maybe <--
+          languageVar.signal.map(language => Option.when(language.contains(WordLanguage.De))(renderGender())),
+        label(
+          cls := "form-control grow",
+          span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsAddTranslation)),
+          input(
+            cls         := "input input-sm w-full",
+            placeholder := I18n.t(UiKeys.wordsAddTranslationHint),
+            controlled(value <-- textVar.signal, onInput.mapToValue --> textVar.writer),
+          ),
+        ),
+        button(
+          cls := "btn btn-sm btn-primary",
+          typ := "submit",
+          disabled <-- inFlightSignal,
+          I18n.t(UiKeys.commonAdd),
+        ),
       ),
     )
   }

@@ -1,6 +1,7 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
+import org.scalajs.dom
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
@@ -36,6 +37,35 @@ object WordsPage {
     * otherwise appear to change its name.
     */
   val defaultTagName = "saved"
+
+  /** Where the tag a tick files into is remembered.
+    *
+    * '''It is deliberately not in the URL, and that is the whole of the fix for the two controls being confusable.''' A
+    * `?tag=` in the address narrows the listing — a view of the data, worth bookmarking and sending — while this is the
+    * reader's working state, which nobody wants to send anybody. One select doing both meant that narrowing to
+    * `lesson1` silently redirected every subsequent tick into it, and that choosing where to file emptied the listing
+    * of everything not already in it.
+    */
+  private val collectStorageKey = "words.tag"
+
+  /** Wrapped like `AppState`'s theme access, and for the same reason: the storage API throws rather than returns null
+    * when the browser has it disabled, and a remembered tag is not worth failing a page load over.
+    */
+  def storedCollectTag: Option[Long] = {
+    try Option(dom.window.localStorage.getItem(collectStorageKey)).flatMap(_.toLongOption)
+    catch { case _: Throwable => None }
+  }
+
+  def storeCollectTag(tagId: Option[Long]): Unit = {
+    try {
+      tagId match {
+        case Some(id) =>
+          dom.window.localStorage.setItem(collectStorageKey, id.toString)
+        case None     =>
+          dom.window.localStorage.removeItem(collectStorageKey)
+      }
+    } catch { case _: Throwable => () }
+  }
 }
 
 private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuery]) {
@@ -52,21 +82,27 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
   private val tagsVar    = Var(List.empty[Tag])
   private val tagsSignal = tagsVar.signal
 
-  private val sortSignal      = querySignal.map(_.sort).distinct
-  private val pageSignal      = querySignal.map(_.page).distinct
-  private val pageSizeSignal  = querySignal.map(_.pageSize).distinct
-  private val targetSignal    = querySignal.map(_.target).distinct
-  private val activeTagSignal = querySignal.map(_.tagId).distinct
+  private val sortSignal     = querySignal.map(_.sort).distinct
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
+  private val targetSignal   = querySignal.map(_.target).distinct
+
+  /** The tag the *listing* is narrowed to. Nothing else reads it — where a tick files is [[collectTagVar]]. */
+  private val filterTagSignal = querySignal.map(_.tagId).distinct
 
   private val userSignal     = AppState.currentUserSignal
   private val signedInSignal = AppState.isSignedInSignal
 
-  /** Mirrors of the two things a *click* has to read at the moment it happens: who the reader is, and which tag they
-    * are filing under. Signals cannot be read outside a subscription, and a click handler is not one; these follow
-    * their signals through an observer and are read with `.now()`.
+  /** Mirrors who the reader is at the moment a row is *clicked*. Signals cannot be read outside a subscription, and a
+    * click handler is not one; this follows its signal through an observer and is read with `.now()`.
     */
-  private val readerVar    = Var(Option.empty[User])
-  private val activeTagVar = Var(Option.empty[Long])
+  private val readerVar = Var(Option.empty[User])
+
+  /** The tag a tick files into: remembered per browser (see [[WordsPage.storedCollectTag]]), never in the URL. `None`
+    * only until the reader's tag list arrives, or while they have no tags at all — a tick then makes one.
+    */
+  private val collectTagVar    = Var(WordsPage.storedCollectTag)
+  private val collectTagSignal = collectTagVar.signal
 
   /** Every way this page asks for a different listing, as edits applied to whatever the address bar says — the
     * arrangement `AdminUsersPage` uses, and for the same reason: the state is in the URL, not in a local `Var`.
@@ -114,8 +150,17 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   private val newWordPosVar    = Var(PartOfSpeech.Noun)
   private val newWordGenderVar = Var(Option.empty[Gender])
-  private val newWordTransVar  = Var("")
   private val newWordBus       = new EventBus[String]()
+
+  /** One box per language, so a word can be given both its translations at the moment it is added rather than only the
+    * one the listing happens to be showing. A box for the word's own language is never rendered.
+    */
+  private val newWordTransVars: Map[WordLanguage, Var[String]] = {
+    WordLanguage.all.map(language => language -> Var("")).toMap
+  }
+
+  /** The article of a German *translation*, which is part of that word the same way the source word's is. */
+  private val newWordTransGenderVar = Var(Option.empty[Gender])
 
   private val searchDebounceMs = 300
 
@@ -125,7 +170,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
       renderDirection(),
-      child.maybe <-- signedInSignal.map(Option.when(_)(renderTagBar())),
+      child.maybe <-- signedInSignal.map(Option.when(_)(renderCollectBar())),
       renderSearch(),
       // Offered only when the search found nothing: the dictionary is meant to already have the word, and a permanent
       // "add a word" form next to a hundred matches would invite duplicates of words that are already there.
@@ -164,15 +209,19 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>
             tagsVar.set(tags)
+            reconcileCollectTag(tags)
           case Left(_)     =>
             tagsVar.set(Nil)
         },
       newTagBus.events.map(_ => newTagVar.now().trim).filter(_.nonEmpty).flatMapSwitch(WordApiClient.createTag) -->
         Observer[Either[ApiError, Tag]] {
           case Right(tag) =>
-            // Straight to filing under it: creating a tag is something a reader does *in order to* use it.
+            // Straight to filing under it: creating a tag is something a reader does *in order to* use it. The listing
+            // is deliberately *not* narrowed to it — that is the filter's job, and one control doing both is what made
+            // the two indistinguishable. Held locally as well as re-fetched, so the select has the new name at once.
             Var.set(newTagVar -> "", errorVar -> None)
-            change(_.reset(_.copy(tagId = Some(tag.id))))
+            tagsVar.update(_ :+ tag)
+            setCollectTag(Some(tag.id))
             tagsBus.emit(())
           case Left(err)  =>
             errorVar.set(Some(err.message))
@@ -187,14 +236,15 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       newWordStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // Straight to the word: it exists now, and whatever anybody else has already recorded about it is on that
-          // screen — which is the answer to "somebody else added this word first".
-          Var.set(newWordTransVar -> "", errorVar -> None)
+          // screen — which is the answer to "somebody else added this word first", and where a translation in a third
+          // language is added.
+          newWordTransVars.values.foreach(_.set(""))
+          Var.set(newWordTransGenderVar -> None, errorVar -> None)
           AppRouter.router.pushState(Page.WordDetail(detail.word.id))
         case Left(err)     =>
           errorVar.set(Some(err.message))
       },
       userSignal --> readerVar.writer,
-      activeTagSignal --> activeTagVar.writer,
       onMountCallback { _ =>
         reloadBus.emit(())
         tagsBus.emit(())
@@ -227,9 +277,25 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     }
   }
 
-  /** Puts the word under the active tag, or under the reader's default one when they have not chosen. */
+  private def setCollectTag(tagId: Option[Long]): Unit = {
+    collectTagVar.set(tagId)
+    WordsPage.storeCollectTag(tagId)
+  }
+
+  /** Keeps the collect tag on a tag that still exists, and chooses one for a reader who has never picked — including a
+    * guest, whose first tag is minted by their first tick. A tag deleted on another device would otherwise leave every
+    * tick failing against an id nobody owns.
+    */
+  private def reconcileCollectTag(tags: List[Tag]): Unit = {
+    val kept = collectTagVar.now().filter(id => tags.exists(_.id == id)).orElse(tags.headOption.map(_.id))
+    if (kept != collectTagVar.now()) {
+      setCollectTag(kept)
+    }
+  }
+
+  /** Puts the word under the collect tag, or under the reader's default one when they have not chosen. */
   private def writeTag(wordId: Long, tagged: Boolean): EventStream[Either[ApiError, Unit]] = {
-    activeTagOrDefault.flatMapSwitch {
+    collectTagOrDefault.flatMapSwitch {
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
@@ -240,13 +306,13 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     }
   }
 
-  /** The tag a click files under: the one in the address bar, else whichever the reader already has, else a fresh one.
+  /** The tag a click files under: the collect tag, else whichever the reader already has, else a fresh one.
     *
     * Clicking without having chosen a tag has to mean something — it is the first thing a new reader does — so the page
     * creates one on their behalf rather than refusing the click.
     */
-  private def activeTagOrDefault: EventStream[Either[ApiError, Long]] = {
-    activeTagVar.now() match {
+  private def collectTagOrDefault: EventStream[Either[ApiError, Long]] = {
+    collectTagVar.now() match {
       case Some(id) =>
         EventStream.fromValue(Right(id))
       case None     =>
@@ -254,7 +320,12 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           case Some(tag) =>
             EventStream.fromValue(Right(tag.id))
           case None      =>
-            WordApiClient.createTag(WordsPage.defaultTagName).map(_.map(_.id))
+            WordApiClient
+              .createTag(WordsPage.defaultTagName)
+              .map(_.map(created => {
+                setCollectTag(Some(created.id))
+                created.id
+              }))
         }
     }
   }
@@ -313,7 +384,32 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           ),
         ),
       ),
+      child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
+    )
+  }
+
+  /** Narrows the listing to one tag, and does nothing else — in particular it does not decide where a tick files. It
+    * sits among the filters rather than in the collect card for exactly that reason, offers "all tags", and is the half
+    * of the old single control that stayed in the URL.
+    */
+  private def renderTagFilter(): HtmlElement = {
+    label(
+      cls := "form-control",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsFilterTagLabel)),
+      select(
+        cls    := "select select-sm",
+        option(value := "", I18n.t(UiKeys.wordsFilterTagAny)),
+        children <-- tagsSignal.map(
+          _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
+        ),
+        controlled(
+          value <-- filterTagSignal.map(_.map(_.toString).getOrElse("")),
+          onChange.mapToValue --> Observer[String] { raw =>
+            change(_.reset(_.copy(tagId = raw.toLongOption)))
+          },
+        ),
+      ),
     )
   }
 
@@ -353,77 +449,113 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     )
   }
 
-  /** The tag being filed under, and the way to make another one. Only rendered with a session, since a tag belongs to
-    * an account.
+  /** Where ticks are filed, and the way to make another tag. Only rendered with a session, since a tag belongs to an
+    * account.
+    *
+    * A card of its own, above the table and away from the filters, because it answers a different question from the tag
+    * *filter*: this one says where words go, that one says which words are shown. The hint under it is what makes that
+    * readable without having to try it.
     */
-  private def renderTagBar(): HtmlElement = {
+  private def renderCollectBar(): HtmlElement = {
     div(
       cls := "card bg-base-100 shadow mb-4",
       div(
-        cls := "card-body py-3 flex-row flex-wrap items-end gap-3",
-        label(
-          cls        := "form-control",
-          span(cls := "label-text text-xs", I18n.t(UiKeys.wordsTagLabel)),
-          select(
-            cls    := "select select-sm",
-            option(value := "", I18n.t(UiKeys.commonNone)),
-            children <-- tagsSignal.map(
-              _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
+        cls := "card-body py-3 gap-2",
+        div(
+          cls := "flex flex-wrap items-end gap-3",
+          // Absent until there is a tag to name: a reader with none has the box below and nothing to choose between.
+          child.maybe <-- tagsSignal.map(tags => Option.when(tags.nonEmpty)(renderCollectSelect())),
+          form(
+            cls        := "flex items-end gap-2",
+            noValidate := true,
+            onSubmit.preventDefault.mapToUnit --> newTagBus.writer,
+            label(
+              cls      := "form-control",
+              span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsTagNew)),
+              input(
+                cls         := "input input-sm",
+                placeholder := I18n.t(UiKeys.wordsTagNewPlaceholder),
+                controlled(value <-- newTagVar.signal, onInput.mapToValue --> newTagVar.writer),
+              ),
             ),
-            controlled(
-              value <-- activeTagSignal.map(_.map(_.toString).getOrElse("")),
-              onChange.mapToValue --> Observer[String] { raw =>
-                change(_.reset(_.copy(tagId = raw.toLongOption)))
-              },
-            ),
+            button(cls := "btn btn-sm", typ := "submit", I18n.t(UiKeys.commonAdd)),
           ),
         ),
-        form(
-          cls        := "flex items-end gap-2",
-          noValidate := true,
-          onSubmit.preventDefault.mapToUnit --> newTagBus.writer,
-          label(
-            cls      := "form-control",
-            span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsTagNew)),
-            input(
-              cls         := "input input-sm",
-              placeholder := I18n.t(UiKeys.wordsTagNewPlaceholder),
-              controlled(value <-- newTagVar.signal, onInput.mapToValue --> newTagVar.writer),
-            ),
-          ),
-          button(cls := "btn btn-sm", typ := "submit", I18n.t(UiKeys.commonAdd)),
+        p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
+      ),
+    )
+  }
+
+  /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
+    * the reader to discover that the empty entry silently meant "the first one".
+    */
+  private def renderCollectSelect(): HtmlElement = {
+    label(
+      cls := "form-control",
+      span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
+      select(
+        cls    := "select select-sm select-primary",
+        children <-- tagsSignal.map(
+          _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
+        ),
+        controlled(
+          value <-- collectTagSignal.map(_.map(_.toString).getOrElse("")),
+          onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
         ),
       ),
     )
   }
 
-  /** Adds the word the search did not find, in the language being browsed, with an optional first translation.
+  /** The languages a word in `source` can be translated into, the one being read first. Two of the three, always: a
+    * word is never a translation of itself, and the server refuses that pair anyway.
+    */
+  private def translationLanguages(source: WordLanguage, target: WordLanguage): List[WordLanguage] = {
+    (target :: WordLanguage.all).distinct.filterNot(_ == source)
+  }
+
+  /** Adds the word the search did not find, in the language being browsed, with a translation in either of the other
+    * two languages — both, if the reader types both.
     *
     * The request is "ensure and attach": if somebody else has already added the word, the server answers the existing
-    * one with everybody's translations on it rather than refusing.
+    * one with everybody's translations on it rather than refusing. It is filed under the collect tag, since a word
+    * somebody bothered to type is one they are collecting.
     */
   private def newWordStream: EventStream[Either[ApiError, WordDetail]] = {
     newWordBus.events.withCurrentValueOf(querySignal).flatMapSwitch { case (text, query) =>
-      val pos         = newWordPosVar.now()
-      val gender      = {
+      val pos          = newWordPosVar.now()
+      val gender       = {
         if (query.language == WordLanguage.De && pos == PartOfSpeech.Noun)
           newWordGenderVar.now()
         else
           None
       }
-      val translation = newWordTransVar.now().trim
-      WordApiClient.create(
-        CreateWordRequest(
-          language = query.language,
-          text = text,
-          partOfSpeech = pos,
-          gender = gender,
-          translations = Option
-            .when(translation.nonEmpty)(NewTranslation(query.target, translation, None, None))
-            .toList,
-          tagIds = activeTagVar.now().toList,
+      val translations = translationLanguages(query.language, query.target).flatMap(language => {
+        val typed = newWordTransVars(language).now().trim
+        Option.when(typed.nonEmpty)(
+          NewTranslation(
+            language,
+            typed,
+            None,
+            // Only a German noun takes an article; the server drops one given for anything else.
+            newWordTransGenderVar.now().filter(_ => language == WordLanguage.De),
+          )
         )
-      )
+      })
+      collectTagOrDefault.flatMapSwitch {
+        case Left(err)    =>
+          EventStream.fromValue(Left(err))
+        case Right(tagId) =>
+          WordApiClient.create(
+            CreateWordRequest(
+              language = query.language,
+              text = text,
+              partOfSpeech = pos,
+              gender = gender,
+              translations = translations,
+              tagIds = List(tagId),
+            )
+          )
+      }
     }
   }
 
@@ -457,15 +589,23 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
               .map(_.language)
               .combineWith(newWordPosVar.signal)
               .map { case (language, pos) =>
-                Option.when(language == WordLanguage.De && pos == PartOfSpeech.Noun)(renderGenderSelect())
+                Option.when(language == WordLanguage.De && pos == PartOfSpeech.Noun)(
+                  renderGenderSelect(newWordGenderVar)
+                )
               },
-          label(
-            cls      := "form-control grow",
-            span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsAddTranslation)),
-            input(
-              cls         := "input input-sm w-full",
-              placeholder := I18n.t(UiKeys.wordsAddTranslationHint),
-              controlled(value <-- newWordTransVar.signal, onInput.mapToValue --> newWordTransVar.writer),
+          // One box per other language rather than one for whichever the listing is showing: a word typed here is
+          // usually being learned in both directions, and the alternative was to add it, open it, and add the second
+          // translation from the detail page.
+          div(
+            cls      := "grow basis-full",
+            span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddTranslations)),
+            div(
+              cls    := "flex flex-wrap items-end gap-2",
+              children <--
+                querySignal
+                  .map(query => translationLanguages(query.language, query.target))
+                  .distinct
+                  .map(_.map(renderTranslationInput)),
             ),
           ),
           button(cls := "btn btn-sm btn-primary", typ := "submit", I18n.t(UiKeys.commonAdd)),
@@ -474,7 +614,32 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     )
   }
 
-  private def renderGenderSelect(): HtmlElement = {
+  private def renderTranslationInput(language: WordLanguage): HtmlElement = {
+    label(
+      cls := "form-control grow",
+      span(cls := "label-text text-xs", Labels.language(language)),
+      div(
+        cls    := "flex items-end gap-2",
+        // A German translation carries its article for the same reason a German headword does: it is part of the word.
+        child.maybe <--
+          newWordPosVar.signal.map(pos => {
+            Option.when(language == WordLanguage.De && pos == PartOfSpeech.Noun)(
+              renderGenderSelect(newWordTransGenderVar)
+            )
+          }),
+        input(
+          cls         := "input input-sm w-full",
+          placeholder := I18n.t(UiKeys.wordsAddTranslationHint),
+          controlled(
+            value <-- newWordTransVars(language).signal,
+            onInput.mapToValue --> newWordTransVars(language).writer,
+          ),
+        ),
+      ),
+    )
+  }
+
+  private def renderGenderSelect(target: Var[Option[Gender]]): HtmlElement = {
     label(
       cls := "form-control",
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddGender)),
@@ -484,8 +649,8 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         // The article itself is the value *and* the label: `der` is part of the word being learned, not copy.
         Gender.all.map(gender => option(value := Gender.article(gender), Gender.article(gender))),
         controlled(
-          value <-- newWordGenderVar.signal.map(Gender.toColumn),
-          onChange.mapToValue --> Observer[String](article => newWordGenderVar.set(Gender.fromColumn(article))),
+          value <-- target.signal.map(Gender.toColumn),
+          onChange.mapToValue --> Observer[String](article => target.set(Gender.fromColumn(article))),
         ),
       ),
     )
@@ -536,11 +701,11 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     * on every emission — and the toggle knows which word it acts on without sampling anything.
     */
   private def renderRow(id: Long, row: Signal[WordSummary]): HtmlElement = {
-    // With a tag chosen, the tick means "carries *that* tag". With none, it means "is in my vocabulary at all", which
-    // is the same question a reader who has not chosen one is asking.
+    // The tick answers the question the button acts on — "does this carry the *collect* tag" — not what the listing is
+    // narrowed to. Reading it off the filter is what made a filtered listing look like a fully-collected one.
     val taggedSignal = row
-      .combineWithFn(activeTagSignal) { (summary, active) =>
-        active match {
+      .combineWithFn(collectTagSignal) { (summary, collect) =>
+        collect match {
           case Some(tagId) =>
             summary.tagIds.contains(tagId)
           case None        =>

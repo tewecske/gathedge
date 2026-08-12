@@ -111,7 +111,11 @@ object WordsPageSpec extends ZIOSpecDefault {
           text.contains(UiKeys.wordsTitle),
           // Required by the licence the dictionary data is under, so it is not optional page furniture.
           text.contains(UiKeys.wordsAttribution),
-          !text.contains(UiKeys.wordsTagLabel),
+          // Both halves of the tag machinery belong to an account: where ticks are filed, and what the listing is
+          // narrowed to.
+          !text.contains(UiKeys.wordsCollectLabel),
+          !text.contains(UiKeys.wordsCollectHint),
+          !text.contains(UiKeys.wordsFilterTagLabel),
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.
           !text.contains(UiKeys.wordsOnlyMine),

@@ -13,8 +13,11 @@ import gathedge.shared.dto.{Paging, WordSort}
   * translations are shown in; together they are the direction a reader is learning, and putting them in the URL is what
   * makes `de → hu` a link somebody can bookmark or send.
   *
-  * `tagId` is the tag the reader is filing words under, and it is in the URL for the same reason: a half-finished
-  * `lesson1` is a page worth coming back to.
+  * `tagId` narrows the listing to one tag, and that is '''all''' it does. Where a tick files a word is a separate,
+  * page-local choice remembered in `localStorage` (see `WordsPage.storedCollectTag`) — the two were one field, and one
+  * select, until narrowing to `lesson1` was found to silently redirect every subsequent tick into it. The filter is in
+  * the URL because it is a view of the data worth bookmarking and sending; the collect tag is working state nobody
+  * wants to send anybody.
   */
 final case class WordQuery(
   page: Int = Paging.firstPage,
