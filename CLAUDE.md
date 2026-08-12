@@ -22,7 +22,7 @@ Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:808
 ```
 sbt test                                                        # everything
 sbt backend/test                                                 # backend only
-sbt "backend/testOnly webapp1.backend.service.AuthServiceSpec"   # single spec
+sbt "backend/testOnly gathedge.backend.service.AuthServiceSpec"   # single spec
 sbt sharedJVM/test                                                # shared validation logic
 sbt frontend/test                                                 # Laminar components, jsdom
 npm --prefix web run typecheck                                    # frontend TS config only (no app TS)
@@ -68,7 +68,7 @@ is the recipe for adding a resource, with the exact list of places one has to to
 Three consequences for anyone changing this repo:
 
 - **`scripts/init-project.sh <slug> "Display Name"` is what renames it.** It works because the token
-  `webapp1` appears in exactly one casing and never as a substring of another word — 669 occurrences
+  `gathedge` appears in exactly one casing and never as a substring of another word — 669 occurrences
   across the package root, `build.sbt`, `application.conf`, `docker-compose.yml`, `flake.nix`,
   `dev-tmux.sh` and the rest. **Do not introduce `Webapp1`, `WEBAPP1` or a bare `webapp`**, and do
   not hard-code the name in a new file: a plain `sed` is the whole rename, and any variant casing
@@ -272,7 +272,7 @@ Four things that follow from it:
 - **Field labels are not duplicated.** A form input whose label already exists as a `MessageKeys` constant — `field.email`, `field.password`, `field.source`, `field.target` — renders that one. Those keys exist precisely so a form and the endpoint behind it cannot disagree about what an input is called.
 - **Only labels are translated, never values.** `components/Labels.scala` words `login_attempts.outcome` and `audit_log.action`, and is where a feature's enum gets its match; wherever one sits in a `<select>`, the `option`'s `value` stays the enum's `toString` or the stored code, which is what `controlled(...)` round-trips and what the API is sent. The two stored-code helpers key off the string via `I18n.get` and fall back to the code itself, so a row written by a newer build still renders — the rule the old `LoginOutcome.display` followed.
 - **`Formats` follows the page's language, not the browser's.** `dateTime`/`date` pass `I18n.locale.code` as the locale tag through a small `LocalizedDate` facade, because the Scala.js `js.Date` facade declares only the no-argument forms. The *timezone* still comes from the browser, which is the half that matters for "when did this happen relative to when the user says it did".
-- Brand and language names stay untranslated by design: `OAuthProvider.displayName`, `Locale.displayName` (the endonym rule — "Magyar" is never "Hungarian"), and the `webapp1` wordmark.
+- Brand and language names stay untranslated by design: `OAuthProvider.displayName`, `Locale.displayName` (the endonym rule — "Magyar" is never "Hungarian"), and the `gathedge` wordmark.
 
 The frontend specs assert on message *keys* rather than copy — with no catalog loaded under jsdom a message resolves to its own key, which is the stronger statement anyway: it says the page routed the right message to the right place, and `MessagesSpec` separately proves that key has real copy behind it. **The English copy is what `e2e/` matches on**, though: that suite runs under `/en/` and finds buttons, headings and placeholders by their text, so changing an English string in `messages.en.json` is a change to the e2e suite's fixtures.
 

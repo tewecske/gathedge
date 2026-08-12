@@ -1,4 +1,4 @@
-# webapp1
+# gathedge
 
 A skeleton for a full-stack Scala 3 web application: a ZIO HTTP backend, a Scala.js + Laminar
 single-page frontend, Postgres, and one shared module that both ends compile against.
@@ -29,7 +29,7 @@ git clone <this repo> myapp && cd myapp
 ```
 
 That renames the Scala package root, the sbt project and organization, the Docker image names, the
-database defaults, the Nix attributes and the wordmark — everything the skeleton calls `webapp1`.
+database defaults, the Nix attributes and the wordmark — everything the skeleton calls `gathedge`.
 Run it once, before writing any code. `--reinit-git` additionally starts a fresh git history; it is
 off by default because the skeleton's history is worth keeping (see below).
 

@@ -1,4 +1,4 @@
-# NixOS module for webapp1.
+# NixOS module for gathedge.
 #
 # Deliberately does NOT enable services.postgresql or services.nginx — it only contributes
 # a database, a role and a vhost to whatever the host already runs. That way a second app
@@ -6,30 +6,30 @@
 # one nginx with many vhosts.
 { config, lib, pkgs, ... }:
 let
-  cfg = config.services.webapp1;
+  cfg = config.services.gathedge;
   inherit (lib) mkIf mkOption mkEnableOption mkBefore types;
 in
 {
-  options.services.webapp1 = {
-    enable = mkEnableOption "the webapp1 application";
+  options.services.gathedge = {
+    enable = mkEnableOption "the gathedge application";
 
     package = mkOption {
       type = types.package;
-      default = pkgs.webapp1-backend;
-      defaultText = lib.literalExpression "pkgs.webapp1-backend";
-      description = "Backend package providing bin/webapp1-backend.";
+      default = pkgs.gathedge-backend;
+      defaultText = lib.literalExpression "pkgs.gathedge-backend";
+      description = "Backend package providing bin/gathedge-backend.";
     };
 
     webPackage = mkOption {
       type = types.package;
-      default = pkgs.webapp1-web;
-      defaultText = lib.literalExpression "pkgs.webapp1-web";
+      default = pkgs.gathedge-web;
+      defaultText = lib.literalExpression "pkgs.gathedge-web";
       description = "Built SPA assets served by nginx as the vhost root.";
     };
 
     hostName = mkOption {
       type = types.str;
-      example = "webapp1.lan";
+      example = "gathedge.lan";
       description = ''
         nginx virtual host name. It is also set as the default vhost, so reaching the
         server by bare IP works too.
@@ -38,7 +38,7 @@ in
 
     publicBaseUrl = mkOption {
       type = types.str;
-      example = "http://webapp1.lan";
+      example = "http://gathedge.lan";
       description = ''
         Origin the app builds user-visible links from (the email confirmation link, the Google
         OAuth redirect). Must match how users actually reach the server, or those links
@@ -64,14 +64,14 @@ in
 
     environmentFile = mkOption {
       type = types.path;
-      example = "/var/lib/secrets/webapp1.env";
+      example = "/var/lib/secrets/gathedge.env";
       description = ''
         systemd EnvironmentFile holding the secrets, kept out of the Nix store (the store
         is world-readable). Must define DB_PASSWORD; should define BOOTSTRAP_ADMIN_EMAIL
         and BOOTSTRAP_ADMIN_PASSWORD; may define GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
         and GOOGLE_REDIRECT_URI.
 
-        Mode 0400, owned by root. DB_PASSWORD is also read by the webapp1-db-password
+        Mode 0400, owned by root. DB_PASSWORD is also read by the gathedge-db-password
         unit, which sets the Postgres role's password to match.
       '';
     };
@@ -79,12 +79,12 @@ in
     database = {
       name = mkOption {
         type = types.str;
-        default = "webapp1";
+        default = "gathedge";
         description = "Database created in the host's Postgres cluster.";
       };
       user = mkOption {
         type = types.str;
-        default = "webapp1";
+        default = "gathedge";
         description = "Postgres role owning that database.";
       };
     };
@@ -111,12 +111,12 @@ in
     # services.postgresql.ensureUsers cannot set a password (the option was removed from
     # nixpkgs), so set it here from the same secret file the backend reads. psql's :'var'
     # interpolation quotes the value properly, so a password with a quote in it is safe.
-    systemd.services.webapp1-db-password = {
-      description = "Set the webapp1 Postgres role password";
+    systemd.services.gathedge-db-password = {
+      description = "Set the gathedge Postgres role password";
       after = [ "postgresql.service" "postgresql-setup.service" ];
       requires = [ "postgresql.service" ];
       wantedBy = [ "multi-user.target" ];
-      before = [ "webapp1-backend.service" ];
+      before = [ "gathedge-backend.service" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -134,9 +134,9 @@ in
       '';
     };
 
-    systemd.services.webapp1-backend = {
-      description = "webapp1 backend (ZIO HTTP)";
-      after = [ "network.target" "postgresql.service" "webapp1-db-password.service" ];
+    systemd.services.gathedge-backend = {
+      description = "gathedge backend (ZIO HTTP)";
+      after = [ "network.target" "postgresql.service" "gathedge-db-password.service" ];
       requires = [ "postgresql.service" ];
       wantedBy = [ "multi-user.target" ];
 
@@ -218,11 +218,11 @@ in
     assertions = [
       {
         assertion = config.services.postgresql.enable;
-        message = "services.webapp1 needs services.postgresql.enable = true on the host.";
+        message = "services.gathedge needs services.postgresql.enable = true on the host.";
       }
       {
         assertion = config.services.nginx.enable;
-        message = "services.webapp1 needs services.nginx.enable = true on the host.";
+        message = "services.gathedge needs services.nginx.enable = true on the host.";
       }
     ];
   };

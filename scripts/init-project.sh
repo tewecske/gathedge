@@ -7,16 +7,16 @@
 # Run it once, in a fresh copy of the repository, before writing any code. It renames the Scala
 # package root, the sbt project and organization, the Docker image names, the database name/user/
 # password defaults, the Nix attributes, the tmux session and the wordmark — everything the
-# skeleton calls "webapp1".
+# skeleton calls "gathedge".
 #
 # The rename is a plain search-and-replace, and that is safe here for one specific reason: the
-# repository contains the token `webapp1` in exactly one casing and nowhere as a substring of some
+# repository contains the token `gathedge` in exactly one casing and nowhere as a substring of some
 # other word. The check at the bottom of this script re-asserts that. If you have already renamed
 # once, run it in a copy of *this* skeleton rather than of your project — see the guard below.
 
 set -euo pipefail
 
-readonly OLD_SLUG="webapp1"
+readonly OLD_SLUG="gathedge"
 
 usage() {
   cat <<'USAGE'
@@ -105,7 +105,7 @@ cd "$root"
 [ -f build.sbt ] && [ -d modules ] || die "this does not look like the skeleton's root: $root"
 
 # Renaming a second time would leave the previous name behind in half the files, because this only
-# ever replaces `webapp1`. Better to refuse than to half-finish.
+# ever replaces `gathedge`. Better to refuse than to half-finish.
 grep -rqI --exclude-dir={.git,node_modules,target,.bloop,.metals,dist,logs} "$OLD_SLUG" . ||
   die "found no '$OLD_SLUG' to rename — has this project been renamed already?"
 

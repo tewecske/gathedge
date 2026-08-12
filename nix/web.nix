@@ -18,7 +18,7 @@ let
   '';
 in
 buildNpmPackage {
-  pname = "webapp1-web";
+  pname = "gathedge-web";
   inherit version src nodejs;
 
   # src is the repo root, not web/ — web/main.css declares
@@ -41,7 +41,7 @@ buildNpmPackage {
   '';
 
   meta = {
-    description = "webapp1 single-page app (Scala.js + Laminar), built static assets";
+    description = "gathedge single-page app (Scala.js + Laminar), built static assets";
     platforms = lib.platforms.all;
   };
 }

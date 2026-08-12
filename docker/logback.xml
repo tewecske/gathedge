@@ -26,7 +26,7 @@
         <appender-ref ref="SECURITY"/>
     </logger>
 
-    <logger name="webapp1" level="INFO"/>
+    <logger name="gathedge" level="INFO"/>
     <logger name="io.getquill" level="WARN"/>
     <logger name="com.zaxxer.hikari" level="WARN"/>
     <logger name="org.flywaydb" level="INFO"/>

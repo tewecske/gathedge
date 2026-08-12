@@ -1,5 +1,5 @@
 {
-  description = "webapp1 — ZIO HTTP backend + Scala.js/Laminar SPA";
+  description = "gathedge — ZIO HTTP backend + Scala.js/Laminar SPA";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -56,7 +56,7 @@
       };
 
       # `.jvmopts` carries -Xmx4G, which the sbt build needs.
-      scalaSrc = mkSrc "webapp1-scala-src" [
+      scalaSrc = mkSrc "gathedge-scala-src" [
         "build.sbt"
         "project"
         "modules"
@@ -66,31 +66,31 @@
 
       # modules/frontend/src is here because web/main.css declares
       # `@source "../modules/frontend/src"` — Tailwind scans the Scala sources.
-      webSrc = mkSrc "webapp1-web-src" [
+      webSrc = mkSrc "gathedge-web-src" [
         "web"
         "modules/frontend/src"
       ];
     in
     {
       overlays.default = final: prev: {
-        webapp1-backend = final.callPackage ./nix/scala.nix {
+        gathedge-backend = final.callPackage ./nix/scala.nix {
           src = scalaSrc;
           jdk = final.jdk21;
           logbackConfig = ./docker/logback.xml;
         };
 
-        webapp1-web = final.callPackage ./nix/web.nix {
+        gathedge-web = final.callPackage ./nix/web.nix {
           src = webSrc;
           nodejs = final.nodejs_22;
-          scalaJs = final.webapp1-backend.scala.js;
+          scalaJs = final.gathedge-backend.scala.js;
         };
       };
 
       packages = forAllSystems (pkgs: {
-        inherit (pkgs) webapp1-backend webapp1-web;
-        backend = pkgs.webapp1-backend;
-        web = pkgs.webapp1-web;
-        default = pkgs.webapp1-backend;
+        inherit (pkgs) gathedge-backend gathedge-web;
+        backend = pkgs.gathedge-backend;
+        web = pkgs.gathedge-web;
+        default = pkgs.gathedge-backend;
       });
 
       nixosModules.default = { ... }: {

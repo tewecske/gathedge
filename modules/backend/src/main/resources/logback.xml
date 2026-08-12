@@ -37,7 +37,7 @@
         <appender-ref ref="FILE"/>
     </logger>
 
-    <logger name="webapp1" level="DEBUG"/>
+    <logger name="gathedge" level="DEBUG"/>
     <logger name="io.getquill" level="WARN"/>
     <logger name="com.zaxxer.hikari" level="WARN"/>
     <logger name="org.flywaydb" level="INFO"/>

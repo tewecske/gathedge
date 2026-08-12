@@ -1,5 +1,5 @@
 {
-  "name": "webapp1",
+  "name": "gathedge",
   "private": true,
   "devDependencies": {
     "concurrently": "^10.0.3",

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SESSION_NAME="webapp1"
+SESSION_NAME="gathedge"
 WINDOW_NAME="dev"
 
 cd "$ROOT_DIR"

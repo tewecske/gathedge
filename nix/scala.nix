@@ -20,7 +20,7 @@ let
   };
 
   scala = mkSbt {
-    pname = "webapp1-scala";
+    pname = "gathedge-scala";
     inherit version src;
 
     # out = modules/backend/target/universal/stage  (bin/backend + lib/*.jar)
@@ -57,7 +57,7 @@ let
     '';
 
     meta = {
-      description = "webapp1 backend (staged) and Scala.js linker output";
+      description = "gathedge backend (staged) and Scala.js linker output";
       platforms = lib.platforms.unix;
     };
   };
@@ -65,15 +65,15 @@ let
   # Mirrors the Dockerfile ENTRYPOINT: the in-repo logback.xml writes to a relative
   # logs/ dir, which is unwritable under a hardened systemd unit, so point at the
   # stdout-only config instead. Journald takes it from there.
-  backend = runCommand "webapp1-backend-${version}"
+  backend = runCommand "gathedge-backend-${version}"
     {
       nativeBuildInputs = [ makeWrapper ];
-      meta.mainProgram = "webapp1-backend";
+      meta.mainProgram = "gathedge-backend";
       passthru = { inherit scala; };
     }
     ''
       mkdir -p $out/bin
-      makeWrapper ${scala}/bin/backend $out/bin/webapp1-backend \
+      makeWrapper ${scala}/bin/backend $out/bin/gathedge-backend \
         --set JAVA_HOME ${jdk} \
         --add-flags "-Dlogback.configurationFile=${logbackConfig}"
     '';

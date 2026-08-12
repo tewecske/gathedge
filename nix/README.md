@@ -1,4 +1,4 @@
-# Deploying webapp1 to NixOS
+# Deploying gathedge to NixOS
 
 Native Nix build — no Docker daemon on the server. The backend runs as a systemd unit,
 nginx serves the SPA and proxies `/api`, and the database is a plain database inside the
@@ -11,29 +11,29 @@ an alternative, not a replacement.
 
 | Output | What it is |
 | --- | --- |
-| `packages.<system>.backend` | `bin/webapp1-backend` — the sbt `backend/stage` output, wrapped with the stdout-only logback config |
+| `packages.<system>.backend` | `bin/gathedge-backend` — the sbt `backend/stage` output, wrapped with the stdout-only logback config |
 | `packages.<system>.web` | `web/dist` — the built SPA, used as the nginx vhost root |
-| `nixosModules.default` | `services.webapp1.*`, plus the overlay that provides both packages |
+| `nixosModules.default` | `services.gathedge.*`, plus the overlay that provides both packages |
 | `devShells.default` | JDK 21, sbt, Node 22, psql — the versions the build uses |
 
 ## Server configuration
 
 ```nix
 {
-  inputs.webapp1.url = "github:you/webapp1";  # or path:/srv/webapp1
+  inputs.gathedge.url = "github:you/gathedge";  # or path:/srv/gathedge
 
   # ... in the host's module list:
-  imports = [ inputs.webapp1.nixosModules.default ];
+  imports = [ inputs.gathedge.nixosModules.default ];
 
   # The host owns these; the app module only contributes a database and a vhost.
   services.postgresql.enable = true;
   services.nginx.enable = true;
 
-  services.webapp1 = {
+  services.gathedge = {
     enable = true;
-    hostName = "webapp1.lan";
-    publicBaseUrl = "http://webapp1.lan";
-    environmentFile = "/var/lib/secrets/webapp1.env";
+    hostName = "gathedge.lan";
+    publicBaseUrl = "http://gathedge.lan";
+    environmentFile = "/var/lib/secrets/gathedge.env";
   };
 }
 ```
@@ -53,17 +53,17 @@ Not in the Nix store — the store is world-readable. Create it by hand (or via
 sops-nix/agenix later, no module change needed):
 
 ```
-install -Dm0400 /dev/stdin /var/lib/secrets/webapp1.env <<'EOF'
+install -Dm0400 /dev/stdin /var/lib/secrets/gathedge.env <<'EOF'
 DB_PASSWORD=<generate one>
 BOOTSTRAP_ADMIN_EMAIL=you@example.com
 BOOTSTRAP_ADMIN_PASSWORD=<generate one>
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
-# GOOGLE_REDIRECT_URI=http://webapp1.lan/api/auth/google/callback
+# GOOGLE_REDIRECT_URI=http://gathedge.lan/api/auth/google/callback
 EOF
 ```
 
-`DB_PASSWORD` is read twice: by the backend, and by the `webapp1-db-password` oneshot unit
+`DB_PASSWORD` is read twice: by the backend, and by the `gathedge-db-password` oneshot unit
 that sets the Postgres role's password to match (`services.postgresql.ensureUsers` cannot
 set passwords).
 
@@ -128,7 +128,7 @@ under `nix/` — run `git add` before building, or Nix reports the file as missi
 ```
 git add flake.nix nix/
 nix flake check
-nix build .#backend && ./result/bin/webapp1-backend      # needs a reachable Postgres
+nix build .#backend && ./result/bin/gathedge-backend      # needs a reachable Postgres
 nix build .#web && ls -la result result/assets
 ```
 
@@ -138,8 +138,8 @@ scan missed `modules/frontend/src`.
 On the server after switching:
 
 ```
-systemctl status webapp1-backend nginx postgresql
-journalctl -u webapp1-backend -f      # Flyway applies V1-V3, then the server binds
+systemctl status gathedge-backend nginx postgresql
+journalctl -u gathedge-backend -f      # Flyway applies V1-V3, then the server binds
 curl -I http://<server>/              # 200, Cache-Control: no-cache
 curl http://<server>/api/docs/openapi # proves the nginx -> backend proxy path
 ```

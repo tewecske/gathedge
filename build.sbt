@@ -22,7 +22,7 @@ val flywayVersion = "13.1.0"
 val testcontainersScalaVersion = "0.44.1"
 
 ThisBuild / scalaVersion := scala3Version
-ThisBuild / organization := "com.example.webapp1"
+ThisBuild / organization := "tewe.gathedge"
 ThisBuild / version := "0.1.0-SNAPSHOT"
 
 // quill-jdbc-zio 4.8.6 depends on an older zio-json than we use directly; both are
@@ -137,7 +137,7 @@ lazy val backend = project
         "org.xerial" % "sqlite-jdbc" % sqliteJdbcVersion % Test,
         "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
       ),
-    Compile / mainClass := Some("webapp1.backend.Main"),
+    Compile / mainClass := Some("gathedge.backend.Main"),
     // The message catalogs are one JSON file per language, canonically under `web/public/locales`,
     // where Vite serves them to the SPA in dev and nginx serves them out of the built image — both
     // with no configuration at all. The backend needs the same catalogs, because it renders the two
@@ -179,4 +179,4 @@ lazy val frontend = project
 lazy val root = project
   .in(file("."))
   .aggregate(sharedJVM, sharedJS, backend, frontend)
-  .settings(name := "webapp1", publish / skip := true)
+  .settings(name := "gathedge", publish / skip := true)
