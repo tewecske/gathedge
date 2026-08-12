@@ -58,7 +58,7 @@ final case class AuditTrailLive(userRepo: UserRepository, auditRepo: AuditLogRep
       (
         for {
           now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-          actorEmail <- userRepo.findById(actor.userId).map(_.map(_.email))
+          actorEmail <- userRepo.findById(actor.userId).map(_.flatMap(_.email))
           _          <- auditRepo.insert(
                           AuditLogRow(
                             id = 0L,

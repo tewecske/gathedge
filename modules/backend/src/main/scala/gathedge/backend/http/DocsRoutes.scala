@@ -3,7 +3,7 @@ package gathedge.backend.http
 import gathedge.backend.security.SessionAuth
 import gathedge.backend.config.AppConfig
 import gathedge.shared.Branding
-import gathedge.shared.api.{AdminEndpoints, AuthEndpoints}
+import gathedge.shared.api.{AdminEndpoints, AuthEndpoints, WordEndpoints}
 import zio.http.*
 import zio.http.codec.Doc
 import zio.http.codec.PathCodec.path
@@ -24,7 +24,7 @@ import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
   */
 object DocsRoutes {
 
-  private val allEndpoints = AuthEndpoints.all ++ AdminEndpoints.all
+  private val allEndpoints = AuthEndpoints.all ++ WordEndpoints.all ++ AdminEndpoints.all
 
   /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the
     * `authenticated` or `adminOnly` aspect. Everything else needs the session cookie.
@@ -41,7 +41,12 @@ object DocsRoutes {
       AuthEndpoints.providers,
       AuthEndpoints.verifyEmail,
       AuthEndpoints.resendVerification,
-    )
+    ) ++
+      // Minting a guest and redeeming a transfer code both hand out a session to somebody who has none.
+      AuthEndpoints.publicGuest ++
+      // The dictionary reads. They are wrapped in `optionalUser` rather than `authenticated`: a visitor sees the same
+      // words and no tags, which is what lets the feature be used before signing up for anything.
+      WordEndpoints.public
   }
 
   private val sessionSchemeName = "sessionCookie"

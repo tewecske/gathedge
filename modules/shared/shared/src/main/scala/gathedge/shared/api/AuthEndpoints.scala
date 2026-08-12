@@ -2,6 +2,8 @@ package gathedge.shared.api
 
 import gathedge.shared.dto.{
   AuthResponse,
+  ClaimCodeResponse,
+  ClaimRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
@@ -11,6 +13,7 @@ import gathedge.shared.dto.{
   SignupResponse,
   UpdateLocaleRequest,
   UpdateThemeRequest,
+  UpgradeRequest,
   VerifyEmailRequest,
 }
 import zio.http.{Method, Status}
@@ -179,6 +182,64 @@ object AuthEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** Mints an account with no address and no password, and signs the caller in as it.
+    *
+    * Public, and the one endpoint in the API that creates an account without anybody asking to register. The browser
+    * calls it lazily — on the first *write* a visitor performs, never on a page view, because a session minted per
+    * visit is a row per crawler.
+    *
+    * 429 is its only declared failure: it takes no input, so no codec error is reachable, and no aspect guards it.
+    * `AuthService` rate-limits it under its own key namespace, which is not tidiness but the rule the rest of the
+    * service follows — sharing a namespace with sign-in is what once let a burst of failures lock every account out.
+    */
+  val createGuest = {
+    Endpoint(Method.POST / "api" / "guest")
+      .out[AuthResponse](Status.Created)
+      .outHeader(sessionCookie)
+      .outFailure(failure.tooManyRequests)
+  }
+
+  /** Issues a transfer code for the guest account the caller is signed in as, and answers it **once**.
+    *
+    * 403 is `GuestFailure.NotGuest`: a real account has an address and a password to sign in with, so it has no use for
+    * a bearer code and is not allowed to mint one. It is declared for the same reason [[login]]'s 403 is — the
+    * *service* raises it, and it is an answer to a well-formed request rather than an aspect's rejection.
+    */
+  val guestCode = {
+    Endpoint(Method.POST / "api" / "guest" / "code")
+      .out[ClaimCodeResponse]
+      .outErrors(failure.unauthorized, failure.forbidden)
+  }
+
+  /** Signs the caller in as the guest account a transfer code belongs to.
+    *
+    * Public: the whole point is that the caller is on a machine that has never held that session. 404 covers a code
+    * that is unknown, revoked or simply mistyped — one answer for all three, so the code space cannot be probed — and
+    * 429 is its own rate-limit namespace, since this is the one endpoint where guessing is worth an attacker's time.
+    */
+  val claimGuest = {
+    Endpoint(Method.POST / "api" / "guest" / "claim")
+      .in[ClaimRequest]
+      .withCodecError
+      .out[AuthResponse]
+      .outHeader(sessionCookie)
+      .outErrors(failure.badRequest, failure.notFound, failure.tooManyRequests)
+  }
+
+  /** Turns the caller's guest account into a real one, in place: the address and password land on the same row, so
+    * every tag and word it holds is still there under the same id afterwards.
+    *
+    * 409 is an address already registered, exactly as on [[signup]]; 403 is `GuestFailure.NotGuest`, since a real
+    * account has nothing to upgrade.
+    */
+  val upgradeGuest = {
+    Endpoint(Method.POST / "api" / "auth" / "upgrade")
+      .in[UpgradeRequest]
+      .withCodecError
+      .out[AuthResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.conflict)
+  }
+
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection to generate the OpenAPI document
     * from. Nothing else should reach for it — the implementations and the client name the endpoints individually.
     */
@@ -196,6 +257,13 @@ object AuthEndpoints {
       setPassword,
       verifyEmail,
       resendVerification,
+      createGuest,
+      guestCode,
+      claimGuest,
+      upgradeGuest,
     )
   }
+
+  /** The two guest endpoints that answer without a session, for `DocsRoutes.publicEndpoints`. */
+  val publicGuest: List[Endpoint[?, ?, ?, ?, ?]] = List(createGuest, claimGuest)
 }

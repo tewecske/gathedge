@@ -93,6 +93,7 @@ private class AdminSystemPage {
       I18n.plural(UiKeys.adminSystemPruneSessions, result.sessions.toLong),
       I18n.plural(UiKeys.adminSystemPruneTokens, result.verificationTokens.toLong),
       I18n.plural(UiKeys.adminSystemPruneAttempts, result.loginAttempts.toLong),
+      I18n.plural(UiKeys.adminSystemPruneGuests, result.guests.toLong),
       I18n.plural(UiKeys.adminSystemPruneKeys, result.rateLimitKeys.toLong),
     )
   }
@@ -293,6 +294,12 @@ private class AdminSystemPage {
         warn = stats.blockedRateLimitKeys > 0,
       ),
       row(I18n.t(UiKeys.adminSystemStatsAuditEntries), stats.auditEntries.toString),
+      // The vocabulary's own tables. Counts only, like every other row here: how much the deployment is holding,
+      // never what anybody wrote.
+      row(I18n.t(UiKeys.adminSystemStatsGuests), stats.guests.toString),
+      row(I18n.t(UiKeys.adminSystemStatsWords), stats.words.toString),
+      row(I18n.t(UiKeys.adminSystemStatsTranslations), stats.wordTranslations.toString),
+      row(I18n.t(UiKeys.adminSystemStatsTags), stats.tags.toString),
     )
   }
 

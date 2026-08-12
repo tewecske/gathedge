@@ -345,7 +345,8 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
         a(
           cls := "link link-hover",
           AppRouter.router.navigateTo(Page.AdminUserDetail(id)),
-          text <-- userSignal.map(_.email).distinct,
+          // A guest has no address; the id is what identifies it on this screen instead.
+          text <-- userSignal.map(user => user.email.getOrElse(s"#${user.id}")).distinct,
         )
       ),
       td(
@@ -375,11 +376,12 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
       td(
         child <--
           userSignal
-            .map(_.email)
+            .map(_.email.getOrElse(""))
             .distinct
             .combineWith(lockedSignal)
             .map { (email, locked) =>
-              if (locked.contains(email.trim.toLowerCase))
+              // An empty address matches no key, so a guest is never shown as locked out — it has nothing to lock.
+              if (email.nonEmpty && locked.contains(email.trim.toLowerCase))
                 span(cls := "badge badge-error", I18n.t(UiKeys.adminUsersBadgeLocked))
               else
                 span(cls := "badge badge-ghost", I18n.t(UiKeys.adminUsersBadgeOk))

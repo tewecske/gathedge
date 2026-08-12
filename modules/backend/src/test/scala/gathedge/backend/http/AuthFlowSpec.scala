@@ -4,8 +4,9 @@ import gathedge.backend.{TestAuthLayers, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
-  LoginAttemptRepository,
   EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
+  LoginAttemptRepository,
   OAuthIdentityRepository,
   SessionRepository,
   UserRepository,
@@ -32,7 +33,8 @@ object AuthFlowSpec extends ZIOSpecDefault {
     val repos = {
       TestDataSource.sqlite >>> (
         UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
+          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++
+          GuestClaimCodeRepository.test
       )
     }
     AppConfig.live ++ (
@@ -99,11 +101,11 @@ object AuthFlowSpec extends ZIOSpecDefault {
         } yield assertTrue(
           signup.status == Status.Created,
           cookie.exists(_.nonEmpty),
-          signupBody.fromJson[SignupResponse].map(_.user.email) == Right("wire@example.com"),
+          signupBody.fromJson[SignupResponse].map(_.user.email) == Right(Some("wire@example.com")),
           // Verification is off in the test config, so signup still hands back a session.
           signupBody.fromJson[SignupResponse].map(_.signedIn) == Right(true),
           me.status == Status.Ok,
-          meBody.fromJson[AuthResponse].map(_.user.email) == Right("wire@example.com"),
+          meBody.fromJson[AuthResponse].map(_.user.email) == Right(Some("wire@example.com")),
           logout.status == Status.NoContent,
           afterLogout.status == Status.Unauthorized,
         )

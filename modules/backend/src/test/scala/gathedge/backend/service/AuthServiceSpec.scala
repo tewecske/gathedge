@@ -3,8 +3,9 @@ package gathedge.backend.service
 import gathedge.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestDataSource}
 import gathedge.backend.db.{
   AuditLogRepository,
-  LoginAttemptRepository,
   EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
+  LoginAttemptRepository,
   OAuthIdentityRepository,
   SessionRepository,
   UserRepository,
@@ -26,7 +27,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test
     )
   }
 
@@ -53,7 +54,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
         _             <- AuthService.logout(loginResult._2)
         meAfterLogout <- AuthService.currentUser(loginResult._2)
       } yield assertTrue(
-        signupResult._1.email == "user@example.com",
+        signupResult._1.email.contains("user@example.com"),
         !signupResult._1.isAdmin,
         meAfterSignup.contains(signupResult._1),
         loginResult._1.id == signupResult._1.id,
@@ -178,7 +179,10 @@ object AuthServiceSpec extends ZIOSpecDefault {
         result     <- AuthService.loginWithOAuth(identity(OAuthProvider.Google, "g-1", "fresh@example.com"))
         identities <- AuthService.listIdentities(result._1.id)
       } yield {
-        assertTrue(result._1.email == "fresh@example.com", identities.map(_.provider) == List(OAuthProvider.Google))
+        assertTrue(
+          result._1.email.contains("fresh@example.com"),
+          identities.map(_.provider) == List(OAuthProvider.Google),
+        )
       }
     },
     test("the same subject signing in again lands in the same account rather than a second one") {
@@ -187,7 +191,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
         // A provider is free to report a different address later (a work account renamed, a Microsoft
         // `preferred_username` change). The subject is the identity, so this must not fork the account.
         second <- AuthService.loginWithOAuth(identity(OAuthProvider.Google, "g-2", "renamed@example.com"))
-      } yield assertTrue(first._1.id == second._1.id, second._1.email == "repeat@example.com")
+      } yield assertTrue(first._1.id == second._1.id, second._1.email.contains("repeat@example.com"))
     },
     // The never-auto-link rule. Without this an attacker at any provider that does not verify email
     // addresses could sign in as the owner of an existing account by claiming their address.

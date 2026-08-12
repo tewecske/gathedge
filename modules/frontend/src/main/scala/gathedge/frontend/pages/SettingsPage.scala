@@ -56,15 +56,18 @@ private class SettingsPage {
   /** The email card is driven off the session state rather than a fetch of its own: `/api/me` already carries
     * `emailVerified`, and this page is only reachable with a session.
     */
+  /** `flatMap`, not `map`: an account with no address at all — a guest — has no email status to show, exactly like
+    * nobody being signed in.
+    */
   private val emailStatusSignal = {
-    AppState.currentUserSignal.map(_.map(user => (user.email, user.emailVerified)))
+    AppState.currentUserSignal.map(_.flatMap(user => user.email.map(address => (address, user.emailVerified))))
   }
 
   /** Also what the resend stream samples, so a click that outraces a session refresh cannot post an address that has
     * meanwhile been verified.
     */
   private val unverifiedEmailSignal = {
-    AppState.currentUserSignal.map(_.filterNot(_.emailVerified).map(_.email))
+    AppState.currentUserSignal.map(_.filterNot(_.emailVerified).flatMap(_.email))
   }
 
   private val passwordStream = passwordSubmitBus.events.filterWith(inFlightSignal.not)

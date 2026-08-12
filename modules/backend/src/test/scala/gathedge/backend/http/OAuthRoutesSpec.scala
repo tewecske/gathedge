@@ -4,8 +4,9 @@ import gathedge.backend.{TestAuthLayers, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
-  LoginAttemptRepository,
   EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
+  LoginAttemptRepository,
   OAuthIdentityRepository,
   SessionRepository,
   UserRepository,
@@ -65,7 +66,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
     val repos = {
       TestDataSource.sqlite >>> (
         UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
+          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test
       )
     }
     AppConfig.live ++ stubClients ++ (

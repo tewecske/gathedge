@@ -1,6 +1,14 @@
 package gathedge.backend.http
 
-import gathedge.backend.service.{AdminFailure, AuthFailure}
+import gathedge.backend.service.{
+  AdminFailure,
+  AuthFailure,
+  GuestAccountFailure,
+  GuestClaimFailure,
+  GuestCodeFailure,
+  GuestMintFailure,
+  WordFailure,
+}
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.domain.OAuthProvider.display
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
@@ -161,6 +169,71 @@ object ApiFailures {
           MessageRef(MessageKeys.adminLastCredential),
           "That is the account's only way to sign in; give it a password first",
         )
+    }
+  }
+
+  def word(failure: WordFailure): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case WordFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case WordFailure.NotFound                     =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordNotFound), "No such word")
+      case WordFailure.TagNotFound                  =>
+        // Somebody else's tag id answers the same as one that does not exist: whose a given id is is not something an
+        // account may learn by trying.
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
+      case WordFailure.DuplicateTag                 =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.wordTagExists), "You already have a tag with that name")
+      case WordFailure.DuplicateTranslation         =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTranslationExists),
+          "You have already added that translation",
+        )
+    }
+  }
+
+  // The guest paths get four mappings rather than one, because their four failure enums exist for exactly that reason:
+  // a single mapping would return the union of every status any of them can produce, and each endpoint would then have
+  // to describe a 403 it cannot raise or a 409 it has no notion of. See the enums in `AuthService`.
+
+  private val notGuest: ApiFailure.Forbidden = {
+    ApiFailure.Forbidden(MessageRef(MessageKeys.guestNotGuest), "This account is already registered")
+  }
+
+  def guestMint(failure: GuestMintFailure): ApiFailure.TooManyRequests = {
+    failure match {
+      case GuestMintFailure.RateLimited =>
+        rateLimited
+    }
+  }
+
+  def guestClaim(failure: GuestClaimFailure): ApiFailure.NotFound | ApiFailure.TooManyRequests = {
+    failure match {
+      case GuestClaimFailure.RateLimited =>
+        rateLimited
+      case GuestClaimFailure.InvalidCode =>
+        // Unknown and revoked answer alike, so the code space cannot be probed.
+        ApiFailure.NotFound(MessageRef(MessageKeys.guestCodeInvalid), "That transfer code is not valid")
+    }
+  }
+
+  def guestCode(failure: GuestCodeFailure): ApiFailure.Forbidden = {
+    failure match {
+      case GuestCodeFailure.NotGuest =>
+        notGuest
+    }
+  }
+
+  def guestUpgrade(
+    failure: GuestAccountFailure
+  ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.Conflict = {
+    failure match {
+      case GuestAccountFailure.NotGuest                     =>
+        notGuest
+      case GuestAccountFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case GuestAccountFailure.EmailAlreadyRegistered       =>
+        emailAlreadyRegistered
     }
   }
 }

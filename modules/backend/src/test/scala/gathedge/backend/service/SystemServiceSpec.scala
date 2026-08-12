@@ -6,6 +6,7 @@ import gathedge.backend.i18n.Messages
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
   OAuthIdentityRepository,
@@ -26,7 +27,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
         MetricsRepository.test
     )
   }

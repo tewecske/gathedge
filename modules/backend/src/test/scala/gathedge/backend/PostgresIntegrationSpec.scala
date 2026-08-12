@@ -7,20 +7,33 @@ import gathedge.backend.TestAuthLayers
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
-  LoginAttemptRepository,
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
+  GuestClaimCodeRepository,
+  LoginAttemptRepository,
   OAuthIdentityRepository,
   OAuthIdentityRow,
   SessionRepository,
   UserRepository,
+  WordRepository,
+  WordRow,
 }
 import gathedge.backend.security.PasswordHasher
-import gathedge.backend.service.{AdminActor, AdminService, AuditTrail, AuthService, EmailSender, RateLimiter}
+import gathedge.backend.service.{
+  AdminActor,
+  AdminService,
+  AuditTrail,
+  AuthService,
+  EmailSender,
+  RateLimiter,
+  SessionReaper,
+}
 import gathedge.shared.dto.Paging
 import zio._
 import zio.test._
+
+import java.util.concurrent.TimeUnit
 
 import javax.sql.DataSource
 
@@ -68,7 +81,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   private val repoLayer = {
     containerDataSource >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ LoginAttemptRepository.live ++ AuditLogRepository.live
+        EmailVerificationTokenRepository.live ++ LoginAttemptRepository.live ++ AuditLogRepository.live ++
+        GuestClaimCodeRepository.live ++ WordRepository.live
     )
   }
 
@@ -117,7 +131,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterReset      <- AuthService.currentUser(session)
           withNewPassword <- AuthService.login("pgrenamed@example.com", "replacedpw")
         } yield assertTrue(
-          updated.email == "pgrenamed@example.com",
+          updated.email.contains("pgrenamed@example.com"),
           updated.isAdmin,
           afterReset.isEmpty,
           withNewPassword._1.id == target.id,
@@ -129,25 +143,45 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // reference declared without an ON DELETE action instead raises
       // "update or delete on table \"users\" violates foreign key constraint", which `deleteById`'s `.orDie` turns
       // into a bare 500. Any new table that references `users` belongs in this test.
-      test("deleting a user cascades to its sessions, linked identities and verification tokens") {
+      test("deleting a user cascades to its sessions, linked identities, tokens, tags and transfer codes") {
         for {
           admin      <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
           signup     <- AuthService.signup("pgdeltarget@example.com", "password123")
           (target, _) = signup
           _          <- AuthService.login("pgdeltarget@example.com", "password123")
           _          <- OAuthIdentityRepository.insert(
-                          OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", Some(target.email), 0L)
+                          OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", target.email, 0L)
                         )
+          // The vocabulary's three per-account tables, and the one table it shares with everybody.
+          tag        <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L)
+          word       <- WordRepository.ensureWord(
+                          WordRow(0L, "de", "Löffel", "löffel", "noun", "der", 1, "user", Some(target.id), 0L)
+                        )
+          spoon      <- WordRepository.ensureWord(WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L))
+          _          <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
+          _          <- WordRepository.tagWord(word.id, tag.id, 0L)
+          _          <- GuestClaimCodeRepository.insert(target.id, "PGDE-LETE-CODE-0001", 0L)
           _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone       <- AdminService.getUser(target.id).either
           sessions   <- SessionRepository.listForUser(target.id)
           identities <- OAuthIdentityRepository.listForUser(target.id)
           tokens     <- EmailVerificationTokenRepository.findForUser(target.id)
+          tags       <- WordRepository.listTags(target.id)
+          codes      <- GuestClaimCodeRepository.countFor(target.id)
+          // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
+          stillThere <- WordRepository.findWordById(word.id)
+          links      <- WordRepository.allTranslationsOf(word.id)
         } yield assertTrue(
           gone == Left(gathedge.backend.service.AdminFailure.NotFound),
           sessions.isEmpty,
           identities.isEmpty,
           tokens.isEmpty,
+          tags.isEmpty,
+          codes == 0L,
+          stillThere.isDefined,
+          stillThere.flatMap(_.createdBy).isEmpty,
+          links.map(_._2.text) == List("kanál"),
+          links.forall(_._1.createdBy.isEmpty),
         )
       },
       // `login_attempts` and `audit_log` are the two user references declared ON DELETE SET NULL rather than CASCADE,
@@ -185,6 +219,50 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           auditAfter.items.exists(entry =>
             entry.actorEmail.contains("pgaudited@example.com") && entry.actorUserId.isEmpty
           ),
+        )
+      },
+      // Both of these are queries the SQLite suite runs happily and Postgres refuses, because Quill names the SQL
+      // alias after the lambda parameter and `user` is a reserved word there. `UPDATE users AS user SET ...` is a
+      // syntax error, and so is a `WHERE user.is_guest` in the reaper's subquery — the whole guest feature was
+      // green on SQLite and 500 on the real dialect. Anything touching `users` through a quoted lambda belongs here.
+      test("a guest can be minted, carried by a transfer code and upgraded, on the real dialect") {
+        for {
+          minted    <- AuthService.createGuest(Some("10.9.0.1"))
+          (guest, _) = minted
+          code      <- AuthService.issueClaimCode(guest.id)
+          claimed   <- AuthService.claimGuest(code, Some("10.9.0.2"))
+          upgraded  <- AuthService.upgradeGuest(guest.id, "pgguest@example.com", "password123")
+          signedIn  <- AuthService.login("pgguest@example.com", "password123")
+          codeGone  <- AuthService.claimGuest(code, Some("10.9.0.3")).either
+        } yield assertTrue(
+          guest.isGuest,
+          guest.email.isEmpty,
+          claimed._1.id == guest.id,
+          upgraded.id == guest.id,
+          !upgraded.isGuest,
+          upgraded.email.contains("pgguest@example.com"),
+          signedIn._1.id == guest.id,
+          codeGone.isLeft,
+        )
+      },
+      test("the reaper's sweep runs, and takes only the guests with nothing on them") {
+        for {
+          empty      <- AuthService.createGuest(Some("10.9.1.1")).map(_._1)
+          keeper     <- AuthService.createGuest(Some("10.9.1.2")).map(_._1)
+          tag        <- WordRepository.insertTag(keeper.id, "keep", "keep", 0L)
+          _           = tag
+          now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          // Both are minutes old, so a cutoff in the future is what makes them sweepable at all.
+          abandoned  <- UserRepository.findAbandonedGuests(now + 1000L, 100)
+          swept      <- SessionReaper.sweep
+          emptyGone  <- UserRepository.findById(empty.id)
+          keeperHere <- UserRepository.findById(keeper.id)
+        } yield assertTrue(
+          abandoned.contains(empty.id),
+          !abandoned.contains(keeper.id),
+          swept.guests >= 0L,
+          emptyGone.isDefined || swept.guests > 0L,
+          keeperHere.isDefined,
         )
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential

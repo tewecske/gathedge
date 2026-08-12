@@ -53,9 +53,49 @@ private class SignInPage {
 
   private val submitBus = new EventBus[Unit]()
 
+  private val claimOpenVar = Var(false)
+  private val claimCodeVar = Var("")
+  private val claimBus     = new EventBus[Unit]()
+
+  private val claimStream = {
+    claimBus.events.map(_ => claimCodeVar.now().trim).filter(_.nonEmpty).flatMapSwitch(ApiClient.claimGuest)
+  }
+
   // `flatMapSwitch` discards a superseded response, but the request has already been sent —
   // gating the stream on the in-flight flag is what actually prevents a double submit.
   private val submitStream = submitBus.events.filterWith(inFlightSignal.not)
+
+  /** The other way in: a guest's transfer code, which is the only credential a guest account has. Kept below the
+    * password form and folded away until it is asked for, since most visitors have an address and a password.
+    */
+  private def renderClaim(): HtmlElement = {
+    div(
+      cls := "mt-4 text-sm",
+      child <-- claimOpenVar.signal.map { open =>
+        if (!open) {
+          a(
+            cls        := "link link-hover",
+            href       := "#",
+            I18n.t(UiKeys.guestClaimLink),
+            onClick.preventDefault.mapToUnit --> Observer[Unit](_ => claimOpenVar.set(true)),
+          )
+        } else {
+          form(
+            cls        := "flex flex-wrap items-end gap-2",
+            noValidate := true,
+            onSubmit.preventDefault.mapToUnit --> claimBus.writer,
+            p(cls         := "basis-full opacity-70", I18n.t(UiKeys.guestClaimHint)),
+            input(
+              cls         := "input input-sm font-mono grow",
+              placeholder := I18n.t(UiKeys.guestClaimPlaceholder),
+              controlled(value <-- claimCodeVar.signal, onInput.mapToValue --> claimCodeVar.writer),
+            ),
+            button(cls    := "btn btn-sm", typ := "submit", I18n.t(UiKeys.guestClaimSubmit)),
+          )
+        }
+      },
+    )
+  }
 
   def render(): HtmlElement = {
     div(
@@ -100,6 +140,7 @@ private class SignInPage {
           ),
         ),
       ),
+      renderClaim(),
       ApiClient.providers -->
         Observer[Either[ApiError, ProvidersResponse]] {
           case Right(res) =>
@@ -110,6 +151,16 @@ private class SignInPage {
         },
       submitStream -->
         Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None, canResendVar -> false)),
+      claimStream -->
+        Observer[Either[ApiError, AuthResponse]] {
+          case Right(res) =>
+            // Same arrangement as a password sign-in: writing the user into `AppState` is what moves the visitor off
+            // this `RequireAnon` page, and the vocabulary is where a transfer code was going anyway.
+            AppState.setUser(res.user)
+            AppRouter.router.replaceState(Page.Words())
+          case Left(err)  =>
+            errorVar.set(Some(err.message))
+        },
       submitStream.flatMapSwitch(_ => login()) -->
         Observer[Either[ApiError, AuthResponse]] {
           case Right(res) =>

@@ -8,6 +8,7 @@ import gathedge.backend.db.{
   MetricsRepository,
   MigrationRow,
   SessionRepository,
+  UserRepository,
 }
 import gathedge.backend.security.SessionAuth
 import gathedge.shared.dto.{
@@ -70,7 +71,7 @@ object SystemService {
   /** Captures the process start instant as the layer is built, which for this layer is startup. */
   val live: URLayer[
     AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository &
-      AuditLogRepository & AuditTrail & RateLimiter & BackgroundJobs,
+      UserRepository & AuditLogRepository & AuditTrail & RateLimiter & BackgroundJobs,
     SystemService,
   ] = ZLayer {
     for {
@@ -79,6 +80,7 @@ object SystemService {
       sessionRepo <- ZIO.service[SessionRepository]
       tokenRepo   <- ZIO.service[EmailVerificationTokenRepository]
       attemptRepo <- ZIO.service[LoginAttemptRepository]
+      userRepo    <- ZIO.service[UserRepository]
       auditRepo   <- ZIO.service[AuditLogRepository]
       auditTrail  <- ZIO.service[AuditTrail]
       rateLimiter <- ZIO.service[RateLimiter]
@@ -91,6 +93,7 @@ object SystemService {
       sessionRepo,
       tokenRepo,
       attemptRepo,
+      userRepo,
       auditRepo,
       auditTrail,
       rateLimiter,
@@ -116,6 +119,7 @@ final case class SystemServiceLive(
   sessionRepo: SessionRepository,
   tokenRepo: EmailVerificationTokenRepository,
   attemptRepo: LoginAttemptRepository,
+  userRepo: UserRepository,
   auditRepo: AuditLogRepository,
   auditTrail: AuditTrail,
   rateLimiter: RateLimiter,
@@ -243,6 +247,10 @@ final case class SystemServiceLive(
         failedLoginsLast24h = recentAttempts - recentSuccess,
         auditEntries = auditEntries,
         blockedRateLimitKeys = blockedKeys.toLong,
+        guests = counts.guests,
+        words = counts.words,
+        wordTranslations = counts.wordTranslations,
+        tags = counts.tags,
       )
     ).orDie
   }
@@ -258,19 +266,22 @@ final case class SystemServiceLive(
   def prune(actor: AdminActor): UIO[PruneResult] = {
     for {
       // The reaper's own body, not a copy of it, so the button and the hourly loop cannot remove different things.
-      swept <- SessionReaper.sweep.provideEnvironment(ZEnvironment(sessionRepo, tokenRepo, attemptRepo, config)).orDie
+      swept <- SessionReaper.sweep
+                 .provideEnvironment(ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config))
+                 .orDie
       // Stale keys only: this is housekeeping, and it must not quietly unblock an account that is being brute-forced
       // right now. Unblocking is `clearRateLimits`, which is a separate, audited action.
       keys  <- rateLimiter.pruneStale
       // This is the one operation that changes the counts from inside this service, so it is also the one that has to
       // drop the memo — an administrator who prunes and sees the same numbers would reasonably conclude it did not work.
       _     <- statsCache.set(None)
-      result = PruneResult(swept.sessions, swept.verificationTokens, swept.loginAttempts, keys)
+      result = PruneResult(swept.sessions, swept.verificationTokens, swept.loginAttempts, swept.guests, keys)
       _     <- auditTrail.recordSystem(
                  actor,
                  AuditAction.systemPrune,
                  s"pruned ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
-                   s"${swept.loginAttempts} sign-in attempt record(s) and $keys rate-limit key(s)",
+                   s"${swept.loginAttempts} sign-in attempt record(s), ${swept.guests} abandoned guest(s) and " +
+                   s"$keys rate-limit key(s)",
                )
     } yield result
   }

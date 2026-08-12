@@ -9,6 +9,8 @@ import gathedge.shared.domain.Locale.{code, urlPrefix}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import gathedge.shared.dto.{
   AuthResponse,
+  ClaimCodeResponse,
+  ClaimRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
@@ -18,6 +20,7 @@ import gathedge.shared.dto.{
   SignupResponse,
   UpdateLocaleRequest,
   UpdateThemeRequest,
+  UpgradeRequest,
   VerifyEmailRequest,
 }
 import zio.*
@@ -51,6 +54,18 @@ object AuthRoutes {
     Some(Header.SetCookie(SessionAuth.buildSessionCookie(sessionId, cfg.session.cookieSecure)))
   }
 
+  /** A guest's cookie outlives a signed-in one by a long way, and has to say so: the row's expiry is
+    * `SessionAuth.guestSessionDuration`, and a cookie that expired first would end the account's only way back in while
+    * the session behind it was still perfectly good.
+    */
+  private def guestCookie(sessionId: String, cfg: AppConfig): Option[Header.SetCookie] = {
+    Some(
+      Header.SetCookie(
+        SessionAuth.buildSessionCookie(sessionId, cfg.session.cookieSecure, SessionAuth.guestSessionDuration)
+      )
+    )
+  }
+
   private val signupRoute = {
     AuthEndpoints.signup
       .implementHandler(
@@ -78,6 +93,74 @@ object AuthRoutes {
               .login(body.email, body.password, context.clientIp)
               .mapError(ApiFailures.authLogin)
               .map { case (user, sessionId) => (AuthResponse(user), sessionCookie(sessionId, cfg)) }
+          }
+        }
+      )
+  }
+
+  /** Mints an account with no credentials, so that tagging a word needs no sign-up.
+    *
+    * The browser calls this lazily, on the first write a visitor performs — never on a page view, which would be a row
+    * per crawler. The locale comes from the request context so the account starts in the language of the page that
+    * minted it, which is what an eventual verification email would be written in.
+    */
+  private val createGuestRoute = {
+    AuthEndpoints.createGuest
+      .implementHandler(
+        handler { (_: Unit) =>
+          withContext { (context: RequestContext, cfg: AppConfig) =>
+            AuthService
+              .createGuest(context.clientIp, context.locale)
+              .mapError(ApiFailures.guestMint)
+              .map { case (user, sessionId) => (AuthResponse(user), guestCookie(sessionId, cfg)) }
+          }
+        }
+      )
+  }
+
+  /** Signs the caller in as the guest account a transfer code belongs to — the second half of "use my words on another
+    * machine", and the only credential a guest has to offer.
+    */
+  private val claimGuestRoute = {
+    AuthEndpoints.claimGuest
+      .implementHandler(
+        handler { (body: ClaimRequest) =>
+          withContext { (context: RequestContext, cfg: AppConfig) =>
+            AuthService
+              .claimGuest(body.code, context.clientIp)
+              .mapError(ApiFailures.guestClaim)
+              .map { case (user, sessionId) => (AuthResponse(user), guestCookie(sessionId, cfg)) }
+          }
+        }
+      )
+  }
+
+  /** Answers a fresh transfer code, once. It is never readable again — the response body is the only place it exists
+    * outside the database.
+    */
+  private val guestCodeRoute = {
+    AuthEndpoints.guestCode
+      .implementHandler(
+        handler { (_: Unit) =>
+          withContext { (user: User) =>
+            AuthService.issueClaimCode(user.id).mapError(ApiFailures.guestCode).map(ClaimCodeResponse.apply)
+          }
+        }
+      )
+  }
+
+  /** Gives the caller's guest account an address and a password, keeping everything it holds. The session it is already
+    * signed in with stays valid, so nothing has to be re-entered.
+    */
+  private val upgradeGuestRoute = {
+    AuthEndpoints.upgradeGuest
+      .implementHandler(
+        handler { (body: UpgradeRequest) =>
+          withContext { (user: User, context: RequestContext) =>
+            AuthService
+              .upgradeGuest(user.id, body.email, body.password, context.locale)
+              .mapError(ApiFailures.guestUpgrade)
+              .map(AuthResponse.apply)
           }
         }
       )
@@ -435,8 +518,18 @@ object AuthRoutes {
     * `requestContext` aspect exactly the former, with the CSRF check spanning everything.
     */
   private val anonymousRoutes = {
-    Routes(signupRoute, loginRoute, logoutRoute, verifyEmailRoute, resendVerificationRoute) @@
-      RouteSupport.requestContext
+    Routes(
+      signupRoute,
+      loginRoute,
+      logoutRoute,
+      verifyEmailRoute,
+      resendVerificationRoute,
+      // Both mint a session for somebody who has none: one for a brand-new guest, one for a guest arriving on a
+      // second machine with a transfer code. Both are rate-limited on the client address, which is what they need
+      // `requestContext` for.
+      createGuestRoute,
+      claimGuestRoute,
+    ) @@ RouteSupport.requestContext
   }
 
   /** Reachable without a session and needing none of the context the other anonymous routes do — the sign-in form reads
@@ -451,11 +544,19 @@ object AuthRoutes {
       RouteSupport.authenticated
   }
 
+  /** The two guest routes that need a session *and* the request context — the upgrade writes a verification email, so
+    * it needs the language the caller is reading. Attached to the `Routes` value rather than to the handlers, like
+    * everywhere else.
+    */
+  private val guestSessionRoutes = {
+    Routes(guestCodeRoute, upgradeGuestRoute) @@ RouteSupport.authenticated @@ RouteSupport.requestContext
+  }
+
   private val oauthRoutes = {
     Routes(oauthStartRoute, oauthCallbackRoute)
   }
 
   val routes: Routes[AuthService & OAuthClients & AppConfig, Response] = {
-    (anonymousRoutes ++ publicRoutes ++ sessionRoutes ++ oauthRoutes) @@ RouteSupport.csrf
+    (anonymousRoutes ++ publicRoutes ++ sessionRoutes ++ guestSessionRoutes ++ oauthRoutes) @@ RouteSupport.csrf
   }
 }

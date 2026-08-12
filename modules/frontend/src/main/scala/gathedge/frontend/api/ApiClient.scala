@@ -7,6 +7,8 @@ import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
   AuthResponse,
+  ClaimCodeResponse,
+  ClaimRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
@@ -16,6 +18,7 @@ import gathedge.shared.dto.{
   SignupResponse,
   UpdateLocaleRequest,
   UpdateThemeRequest,
+  UpgradeRequest,
   VerifyEmailRequest,
 }
 
@@ -73,6 +76,32 @@ object ApiClient {
     */
   def updateLocale(locale: Locale): EventStream[Either[ApiError, AuthResponse]] = {
     run(executor(AuthEndpoints.updateLocale(UpdateLocaleRequest(locale))))
+  }
+
+  // --- Guest accounts -----------------------------------------------------------------------------------------
+
+  /** Mints an account with no credentials and signs the caller in as it.
+    *
+    * Called on the reader's *first write*, not on load: the page has to be usable without leaving a row behind for
+    * everything that opens it. The cookie is handled by the browser, as with [[login]].
+    */
+  def createGuest: EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.createGuest(()))).map(_.map(_._1))
+  }
+
+  /** Answers a transfer code once; it is never readable again. */
+  def guestCode: EventStream[Either[ApiError, ClaimCodeResponse]] = {
+    run(executor(AuthEndpoints.guestCode(())))
+  }
+
+  /** Signs the caller in as the guest account a transfer code belongs to. */
+  def claimGuest(code: String): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.claimGuest(ClaimRequest(code)))).map(_.map(_._1))
+  }
+
+  /** Turns the caller's guest account into a real one, keeping everything on it. */
+  def upgradeGuest(email: String, password: String): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.upgradeGuest(UpgradeRequest(email, password))))
   }
 
   // --- Account settings ---------------------------------------------------------------------------------------

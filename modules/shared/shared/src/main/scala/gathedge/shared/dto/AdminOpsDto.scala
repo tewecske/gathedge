@@ -272,6 +272,13 @@ final case class DbStats(
   failedLoginsLast24h: Long,
   auditEntries: Long,
   blockedRateLimitKeys: Long,
+  /** Accounts with no address, minted so a visitor could tag a word without signing up. Counted apart from `users`
+    * because the two grow for entirely different reasons.
+    */
+  guests: Long,
+  words: Long,
+  wordTranslations: Long,
+  tags: Long,
 ) derives JsonCodec
 
 final case class SystemOverview(
@@ -286,5 +293,9 @@ final case class PruneResult(
   sessions: Long,
   verificationTokens: Long,
   loginAttempts: Long,
+  /** Guest accounts that were minted and then never used — no tags, no words, no transfer code. One holding anything at
+    * all is never swept, so this counts abandoned rows rather than vocabularies.
+    */
+  guests: Long,
   rateLimitKeys: Long,
 ) derives JsonCodec

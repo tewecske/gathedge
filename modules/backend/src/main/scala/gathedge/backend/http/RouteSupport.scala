@@ -330,6 +330,25 @@ object RouteSupport {
     )
   }
 
+  /** Resolves the session cookie if there is one, and hands the handler `None` if there is not. Never 401s.
+    *
+    * What lets a route be readable by a visitor and still personal to a reader who has one: the vocabulary listing
+    * answers the same words either way, and marks the reader's own tags on them only when there is a reader. An expired
+    * or unknown cookie is `None` too — the same as no cookie, since neither identifies anybody.
+    */
+  val optionalUser: HandlerAspect[AuthService, Option[User]] = {
+    HandlerAspect.interceptIncomingHandler(
+      Handler.fromFunctionZIO[Request] { (request: Request) =>
+        SessionAuth.sessionIdFrom(request) match {
+          case None      =>
+            ZIO.succeed((request, None))
+          case Some(sid) =>
+            AuthService.currentUser(sid).map(user => (request, user))
+        }
+      }
+    )
+  }
+
   /** As [[authenticated]], but any admin-only endpoint denies a signed-in non-admin with a message explaining they're
     * signed in but lack admin rights (summary.md).
     */
@@ -340,7 +359,10 @@ object RouteSupport {
           if (user.isAdmin)
             ZIO.succeed((request, user))
           else {
-            SecurityLog.warn(s"Admin-only route denied for '${user.email}': ${request.method} ${request.path}") *>
+            SecurityLog.warn(
+              s"Admin-only route denied for '${user.email.getOrElse(s"user id=${user.id}")}': " +
+                s"${request.method} ${request.path}"
+            ) *>
               ZIO.fail(
                 errorResponse(
                   Status.Forbidden,

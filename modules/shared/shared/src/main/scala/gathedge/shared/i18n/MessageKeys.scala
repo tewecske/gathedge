@@ -51,6 +51,8 @@ object MessageKeys {
 
   val fieldEmail: String    = key("field.email")
   val fieldPassword: String = key("field.password")
+  val fieldWord: String     = key("field.word")
+  val fieldTag: String      = key("field.tag")
 
   // -- Authentication --------------------------------------------------------------------------
 
@@ -77,6 +79,22 @@ object MessageKeys {
   val adminSelfDemote: String     = key("admin.selfDemote")
   val adminSelfDelete: String     = key("admin.selfDelete")
   val adminLastCredential: String = key("admin.lastCredential")
+
+  // -- Vocabulary ------------------------------------------------------------------------------
+
+  val wordNotFound: String          = key("words.notFound")
+  val wordTagNotFound: String       = key("words.tagNotFound")
+  val wordTagExists: String         = key("words.tagExists")
+  val wordTagReserved: String       = key("words.tagReserved")
+  val wordTranslationExists: String = key("words.translationExists")
+  val wordNotOwn: String            = key("words.notOwn")
+
+  // -- Guest accounts --------------------------------------------------------------------------
+  // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
+  // cannot be probed — the same reasoning as the verification token's single answer.
+
+  val guestCodeInvalid: String = key("guest.codeInvalid")
+  val guestNotGuest: String    = key("guest.notGuest")
 
   // -- Responses built outside the endpoint codecs ----------------------------------------------
   // RouteSupport's aspects and the OAuth routes assemble `dto.ErrorResponse` by hand, and

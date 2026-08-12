@@ -1,0 +1,159 @@
+package gathedge.backend.tools
+
+import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import zio.test._
+
+import scala.io.Source
+import java.nio.charset.StandardCharsets
+
+/** The dictionary pipeline's parsing half, on real wiktextract lines.
+  *
+  * Nobody is going to re-run a 22.9 GB import to find out whether German gender was read correctly, which is why
+  * everything here is pure: `WiktextractParser` and `DictionaryImport`'s selection and pivot are functions, and this
+  * drives them over a handful of lines shaped exactly like the dump's.
+  */
+object DictionaryImportSpec extends ZIOSpecDefault {
+
+  private val hausLine = {
+    """{"word":"Haus","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
+      |"senses":[{"glosses":["house"]}],"forms":[{"form":"Häuser","tags":["plural"]}]}""".stripMargin.replace("\n", "")
+  }
+
+  private val houseLine = {
+    """{"word":"house","lang_code":"en","lang":"English","pos":"noun",
+      |"senses":[{"glosses":["a building for people to live in"]}],
+      |"translations":[{"code":"de","lang":"German","word":"Haus","tags":["neuter"],"sense":"building"},
+      |{"code":"hu","lang":"Hungarian","word":"ház","sense":"building"},
+      |{"code":"fr","lang":"French","word":"maison","sense":"building"}]}""".stripMargin.replace("\n", "")
+  }
+
+  private val plateLine = {
+    """{"word":"Teller","lang_code":"de","lang":"German","pos":"noun","tags":["masculine"],
+      |"senses":[{"glosses":["plate"]}]}""".stripMargin.replace("\n", "")
+  }
+
+  /** An inflected form with a page of its own. Importing these would bury the lemma in the search box. */
+  private val inflectedLine = {
+    """{"word":"Häuser","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
+      |"senses":[{"glosses":["plural of Haus"],"tags":["form-of","plural"]}]}""".stripMargin.replace("\n", "")
+  }
+
+  private val prefixLine = {
+    """{"word":"un-","lang_code":"de","lang":"German","pos":"prefix","senses":[{"glosses":["un-"]}]}"""
+  }
+
+  def spec = {
+    suite("DictionaryImport")(
+      test("a German noun keeps its article, and everything else keeps none") {
+        val (haus, _)   = WiktextractParser.parse(hausLine)
+        val (teller, _) = WiktextractParser.parse(plateLine)
+        assertTrue(
+          haus.map(_.text).contains("Haus"),
+          haus.flatMap(_.gender).contains(Gender.Das),
+          haus.map(_.partOfSpeech).contains(PartOfSpeech.Noun),
+          haus.map(_.language).contains(WordLanguage.De),
+          teller.flatMap(_.gender).contains(Gender.Der),
+        )
+      },
+      test("inflected forms and affixes are not vocabulary") {
+        assertTrue(
+          WiktextractParser.parse(inflectedLine)._1.isEmpty,
+          WiktextractParser.parse(prefixLine)._1.isEmpty,
+        )
+      },
+      test("an English entry's translation table is where the pairs come from, gender included") {
+        val (word, pairs) = WiktextractParser.parse(houseLine)
+        val german        = pairs.find(_.target.language == WordLanguage.De)
+        assertTrue(
+          word.map(_.text).contains("house"),
+          // French is in the line and dropped: the parser keeps only the three languages this application holds.
+          pairs.map(_.target.text).toSet == Set("Haus", "ház"),
+          german.flatMap(_.target.gender).contains(Gender.Das),
+          // The target takes the headword's part of speech: Wiktionary does not repeat it per row.
+          german.map(_.target.partOfSpeech).contains(PartOfSpeech.Noun),
+          german.flatMap(_.sense).contains("building"),
+        )
+      },
+      test("German and Hungarian are joined through the English sense they share") {
+        val (_, pairs) = WiktextractParser.parse(houseLine)
+        val inferred   = DictionaryImport.pivot(pairs)
+        assertTrue(
+          inferred.map(pair => (pair.source.text, pair.target.text)) == List(("Haus", "ház")),
+          // Only ever de -> hu: the pivot answers the one pair no source states directly.
+          inferred.forall(pair => pair.source.language == WordLanguage.De && pair.target.language == WordLanguage.Hu),
+        )
+      },
+      test("a language not being imported contributes nothing, and a malformed line is skipped") {
+        val french = """{"word":"maison","lang_code":"fr","pos":"noun","senses":[{"glosses":["house"]}]}"""
+        assertTrue(
+          !WiktextractParser.mayConcern(french, WordLanguage.all.toSet),
+          WiktextractParser.mayConcern(hausLine, Set(WordLanguage.De)),
+          !WiktextractParser.mayConcern(hausLine, Set(WordLanguage.Hu)),
+          WiktextractParser.parse("{ not json")._1.isEmpty,
+        )
+      },
+      test("a limit keeps the commonest words, and whatever they translate to") {
+        val (house, pairs) = WiktextractParser.parse(houseLine)
+        val collected      = pairs
+          .foldLeft(DictionaryImport.Collected.empty)((acc, pair) =>
+            acc.withWord(pair.source, 0).withWord(pair.target, 0)
+          )
+          .copy(pairs = pairs)
+        val frequencies    = Map(WordLanguage.En -> Map("house" -> 1))
+        val selected       = DictionaryImport.select(collected, frequencies, limit = 10)
+        assertTrue(
+          house.isDefined,
+          // The English word is inside the cut; the German and Hungarian ones are outside it and kept anyway, because
+          // dropping them would leave the translations pointing at nothing.
+          selected.words.keySet.map(_.text).contains("house"),
+          selected.words.keySet.map(_.text).contains("Haus"),
+          selected.pairs.nonEmpty,
+        )
+      },
+      // The committed sample is data, and a line of it going malformed would be discovered by a developer with an
+      // empty search box rather than by a test. This reads the real file.
+      test("the committed seed file parses, and holds both halves of der/die See") {
+        val lines      = {
+          val source = Source.fromFile("data/dictionary/seed.tsv", StandardCharsets.UTF_8.name)
+          try source.getLines().toList
+          finally source.close()
+        }
+        val collected  = DictionaryImport.SeedFormat.decode(lines)
+        val german     = collected.words.keySet.filter(_.language == WordLanguage.De)
+        val seeEntries = german.filter(_.text == "See").flatMap(_.gender)
+        assertTrue(
+          collected.words.size > 100,
+          collected.pairs.size > 100,
+          seeEntries == Set(Gender.Der, Gender.Die),
+          // Every pair is stated from English, since that is the only direction any source has.
+          collected.pairs.forall(_.source.language == WordLanguage.En),
+          DictionaryImport.pivot(collected.pairs).nonEmpty,
+        )
+      },
+      test("the seed format round-trips") {
+        val (_, pairs) = WiktextractParser.parse(houseLine)
+        val collected  = pairs
+          .foldLeft(DictionaryImport.Collected.empty)((acc, pair) =>
+            acc.withWord(pair.source, 3).withWord(pair.target, 7)
+          )
+          .copy(pairs = pairs)
+        val decoded    = DictionaryImport.SeedFormat.decode(DictionaryImport.SeedFormat.encode(collected))
+        assertTrue(
+          decoded.words.keySet == collected.words.keySet,
+          decoded.pairs.toSet == collected.pairs.toSet,
+          decoded.words.get(collected.words.keys.find(_.text == "house").get).contains(3),
+        )
+      },
+      test("arguments are read, and the two modes are exclusive") {
+        assertTrue(
+          DictionaryImport.parseArgs(List("--seed")).map(_.seed) == Right(true),
+          DictionaryImport.parseArgs(List("--raw", "dump.gz", "--limit", "10")).map(_.limit) == Right(10),
+          DictionaryImport.parseArgs(List("--languages", "de,hu")).isLeft,
+          DictionaryImport.parseArgs(List("--seed", "--raw", "dump.gz")).isLeft,
+          DictionaryImport.parseArgs(Nil).isLeft,
+          DictionaryImport.parseArgs(List("--nonsense")).isLeft,
+        )
+      },
+    )
+  }
+}

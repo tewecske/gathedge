@@ -99,6 +99,7 @@ object UiKeys {
     */
   val navLanguage: String = key("ui.nav.language")
 
+  val navWords: String       = key("ui.nav.words")
   val navAdmin: String       = key("ui.nav.admin")
   val navAccountMenu: String = key("ui.nav.accountMenu")
   val navLogOut: String      = key("ui.nav.logOut")
@@ -330,6 +331,7 @@ object UiKeys {
   val adminSystemPruneSessions: String = pluralKey("ui.admin.system.prune.sessions")
   val adminSystemPruneTokens: String   = pluralKey("ui.admin.system.prune.tokens")
   val adminSystemPruneAttempts: String = pluralKey("ui.admin.system.prune.attempts")
+  val adminSystemPruneGuests: String   = pluralKey("ui.admin.system.prune.guests")
   val adminSystemPruneKeys: String     = pluralKey("ui.admin.system.prune.keys")
 
   val adminSystemLocksCleared: String = key("ui.admin.system.locksCleared")
@@ -394,12 +396,117 @@ object UiKeys {
   val adminSystemStatsFailedLogins: String  = key("ui.admin.system.stats.failedLogins")
   val adminSystemStatsLockedOut: String     = key("ui.admin.system.stats.lockedOut")
   val adminSystemStatsAuditEntries: String  = key("ui.admin.system.stats.auditEntries")
+  val adminSystemStatsGuests: String        = key("ui.admin.system.stats.guests")
+  val adminSystemStatsWords: String         = key("ui.admin.system.stats.words")
+  val adminSystemStatsTranslations: String  = key("ui.admin.system.stats.translations")
+  val adminSystemStatsTags: String          = key("ui.admin.system.stats.tags")
 
   val adminSystemMaintenanceCard: String         = key("ui.admin.system.maintenance.card")
   val adminSystemMaintenanceHint: String         = key("ui.admin.system.maintenance.hint")
   val adminSystemMaintenancePrune: String        = key("ui.admin.system.maintenance.prune")
   val adminSystemMaintenanceClear: String        = key("ui.admin.system.maintenance.clear")
   val adminSystemMaintenanceClearConfirm: String = key("ui.admin.system.maintenance.clearConfirm")
+
+  // -- Vocabulary ------------------------------------------------------------------------------
+  // The browse-and-tag screen. Note what is *not* here: a German noun's article is never
+  // translated, and neither is the word itself — only the labels around them.
+
+  val wordsTitle: String             = key("ui.words.title")
+  val wordsSearchLabel: String       = key("ui.words.searchLabel")
+  val wordsSearchPlaceholder: String = key("ui.words.searchPlaceholder")
+  val wordsLanguageLabel: String     = key("ui.words.languageLabel")
+  val wordsTargetLabel: String       = key("ui.words.targetLabel")
+  val wordsPosLabel: String          = key("ui.words.posLabel")
+  val wordsPosAny: String            = key("ui.words.posAny")
+  val wordsOnlyMine: String          = key("ui.words.onlyMine")
+  val wordsEmpty: String             = key("ui.words.empty")
+
+  /** `{0}` is the matching row count. */
+  val wordsCount: String = pluralKey("ui.words.count")
+
+  val wordsColWord: String         = key("ui.words.colWord")
+  val wordsColPos: String          = key("ui.words.colPos")
+  val wordsColTranslations: String = key("ui.words.colTranslations")
+  val wordsColTagged: String       = key("ui.words.colTagged")
+
+  /** Read out beside each row's toggle, so the control says which word it acts on. `{0}` is the word. */
+  val wordsTagAdd: String    = key("ui.words.tagAdd")
+  val wordsTagRemove: String = key("ui.words.tagRemove")
+
+  val wordsTagLabel: String          = key("ui.words.tagLabel")
+  val wordsTagNew: String            = key("ui.words.tagNew")
+  val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
+
+  /** Offered when the search matches nothing: `{0}` is what the reader typed. */
+  val wordsAddMissing: String = key("ui.words.addMissing")
+
+  val wordsAddGender: String          = key("ui.words.addGender")
+  val wordsAddGenderNone: String      = key("ui.words.addGenderNone")
+  val wordsAddTranslation: String     = key("ui.words.addTranslation")
+  val wordsAddTranslationHint: String = key("ui.words.addTranslationHint")
+
+  /** Required by the licence the dictionary data is under, and so not optional page furniture. */
+  val wordsAttribution: String = key("ui.words.attribution")
+
+  val wordDetailTranslations: String      = key("ui.word.translations")
+  val wordDetailTags: String              = key("ui.word.tags")
+  val wordDetailNoTranslations: String    = key("ui.word.noTranslations")
+  val wordDetailNoTags: String            = key("ui.word.noTags")
+  val wordDetailBack: String              = key("ui.word.back")
+  val wordDetailNotFound: String          = key("ui.word.notFound")
+  val wordDetailRemoveTranslation: String = key("ui.word.removeTranslation")
+
+  /** Every `WordLanguage`, `PartOfSpeech` and translation origin, resolved by suffix the way [[loginOutcomePrefix]] is.
+    * The `<select>` values stay the wire codes.
+    */
+  val languagePrefix: String = "ui.language."
+
+  val languageEn: String = key(languagePrefix + "en")
+  val languageDe: String = key(languagePrefix + "de")
+  val languageHu: String = key(languagePrefix + "hu")
+
+  /** The parts of speech, spelled out rather than assembled from the wire code the way the two prefixes above are —
+    * because one of those codes is `other`, and `ui.pos.other` would read to `MessagesSpec` as the plural half of a
+    * `ui.pos` pair. `Labels.partOfSpeech` matches the enum exhaustively instead, which it can: unlike a stored code, an
+    * enum cannot gain a case behind the frontend's back.
+    */
+  val posNoun: String      = key("ui.pos.noun")
+  val posVerb: String      = key("ui.pos.verb")
+  val posAdjective: String = key("ui.pos.adjective")
+  val posAdverb: String    = key("ui.pos.adverb")
+  val posOtherKind: String = key("ui.pos.otherKind")
+
+  val originPrefix: String = "ui.origin."
+
+  val originDictionary: String = key(originPrefix + "dictionary")
+  val originPivot: String      = key(originPrefix + "pivot")
+  val originUser: String       = key(originPrefix + "user")
+
+  // -- Guest accounts --------------------------------------------------------------------------
+  // The banner a visitor who has tagged something sees, and the two ways out of it: a transfer code
+  // for another machine, or a real account.
+
+  val guestBannerTitle: String = key("ui.guest.bannerTitle")
+  val guestBannerHint: String  = key("ui.guest.bannerHint")
+  val guestGetCode: String     = key("ui.guest.getCode")
+  val guestUpgrade: String     = key("ui.guest.upgrade")
+
+  val guestCodeOnce: String   = key("ui.guest.codeOnce")
+  val guestCodeCopy: String   = key("ui.guest.codeCopy")
+  val guestCodeCopied: String = key("ui.guest.codeCopied")
+  val guestCodeClose: String  = key("ui.guest.codeClose")
+
+  val guestUpgradeTitle: String = key("ui.guest.upgradeTitle")
+  val guestUpgradeHint: String  = key("ui.guest.upgradeHint")
+  val guestUpgradeDone: String  = key("ui.guest.upgradeDone")
+
+  val guestClaimHint: String        = key("ui.guest.claimHint")
+  val guestClaimPlaceholder: String = key("ui.guest.claimPlaceholder")
+  val guestClaimSubmit: String      = key("ui.guest.claimSubmit")
+  val guestClaimLink: String        = key("ui.guest.claimLink")
+
+  /** What the account menu says instead of an address, for an account that has none. */
+  val guestAccountLabel: String = key("ui.guest.accountLabel")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

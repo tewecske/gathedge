@@ -2,7 +2,7 @@ package gathedge.frontend
 
 import com.raquo.waypoint._
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, UserQuery}
+import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
 import gathedge.shared.Branding
 
 sealed trait Page
@@ -20,6 +20,17 @@ object Page {
   /** Shown after a signup that did not sign the user in, and wherever a fresh link needs asking for. */
   case object CheckInbox extends Page
   case object Settings   extends Page
+
+  /** The vocabulary: the shared dictionary, and the reader's own tags on it.
+    *
+    * Public, and the only listing in the application that is. A visitor with no session sees the same words and none of
+    * the tag marks; tagging one is what mints them a guest account. It carries its whole listing state for the same
+    * reason the admin listings do — `/words?lang=de&target=hu&q=hau&tag=3` is a screen worth sending to somebody.
+    */
+  final case class Words(query: WordQuery = WordQuery.default) extends Page
+
+  /** One word: every translation anybody has recorded for it, and the reader's tags. Public for the same reason. */
+  final case class WordDetail(id: Long) extends Page
 
   /** The user list. It carries its whole listing state, so a filtered, sorted, paged view has an address somebody can
     * bookmark or send on — see [[gathedge.frontend.listing.UserQuery]] and the two routes below.
@@ -52,6 +63,9 @@ object Page {
       case SignIn | SignUp                                    =>
         AuthGuard.RequireAnon
       case VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
+        AuthGuard.Public
+      // The whole point of the vocabulary is that it is usable before signing up for anything.
+      case Words(_) | WordDetail(_)                           =>
         AuthGuard.Public
       case _                                                  =>
         AuthGuard.RequireAuth
@@ -120,6 +134,22 @@ object AppRouter {
 
   private val adminAuditRoute = Route.staticPartial(AdminAudit(), root / "admin" / "audit", basePath)
 
+  private val wordsQueryRoute = Route.onlyQueryPF[Words, WordQuery](
+    matchEncode = { case page: Words if page.query != WordQuery.default => page.query },
+    decode = { case query if query != WordQuery.default => Words(query) },
+    pattern = (root / "words") ? WordQuery.params,
+    basePath = basePath,
+  )
+
+  private val wordsRoute = Route.staticPartial(Words(), root / "words", basePath)
+
+  private val wordDetailRoute = Route(
+    encode = (p: WordDetail) => p.id,
+    decode = (id: Long) => WordDetail(id),
+    pattern = root / "words" / segment[Long],
+    basePath = basePath,
+  )
+
   // All pages are derivable from the URL alone, so serialization (used only for
   // browser-history state) is just a tag — no JSON library needed.
   //
@@ -147,6 +177,10 @@ object AppRouter {
         "Admin:" + UserQuery.params.createParamsString(query)
       case AdminUserDetail(id) =>
         s"AdminUserDetail:$id"
+      case Words(query)        =>
+        "Words:" + WordQuery.params.createParamsString(query)
+      case WordDetail(id)      =>
+        s"WordDetail:$id"
       case AdminAudit(query)   =>
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
       case AdminSystem         =>
@@ -167,6 +201,10 @@ object AppRouter {
   private[frontend] def deserialize(tag: String): Page = {
     if (tag.startsWith("VerifyEmail:")) {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
+    } else if (tag.startsWith("WordDetail:")) {
+      withId(tag, "WordDetail:")(WordDetail.apply)
+    } else if (tag.startsWith("Words:")) {
+      WordQuery.params.matchQueryString(tag.stripPrefix("Words:")).map(query => Words(query)).getOrElse(Words())
     } else if (tag.startsWith("AdminUserDetail:")) {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else if (tag.startsWith("AdminAudit:")) {
@@ -193,6 +231,8 @@ object AppRouter {
         // The colon-less forms are what a history entry written by an older build holds.
         case "Admin"       =>
           Admin()
+        case "Words"       =>
+          Words()
         case "AdminAudit"  =>
           AdminAudit()
         case "AdminSystem" =>
@@ -215,6 +255,9 @@ object AppRouter {
         verifyEmailRoute,
         checkInboxRoute,
         // Each listing's query route must precede its bare-path one; see the comment on `adminQueryRoute`.
+        wordsQueryRoute,
+        wordsRoute,
+        wordDetailRoute,
         adminQueryRoute,
         adminRoute,
         adminUserDetailRoute,

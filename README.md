@@ -1,10 +1,16 @@
 # gathedge
 
-A skeleton for a full-stack Scala 3 web application: a ZIO HTTP backend, a Scala.js + Laminar
-single-page frontend, Postgres, and one shared module that both ends compile against.
+A full-stack Scala 3 web application: a ZIO HTTP backend, a Scala.js + Laminar single-page
+frontend, Postgres, and one shared module that both ends compile against.
 
-It is a *starting point*, not a demo — there is no example feature in it. What it does have is the
-part of an application that is the same every time and tedious to get right:
+**The application is a vocabulary trainer** for English, German and Hungarian: a shared dictionary
+imported from Wiktionary — every word with its part of speech and, for German nouns, its
+`der`/`die`/`das` — that a reader searches and tags with whatever they are learning. It needs no
+sign-up: browsing is anonymous, and the first word somebody tags mints them a **guest account**,
+which can be carried to another machine with a transfer code or turned into a real account later,
+in place, keeping everything on it.
+
+Under that sits the part of an application that is the same every time and tedious to get right:
 
 - **Accounts and sessions** — sign-up, sign-in, an opaque session cookie (`HttpOnly`, `SameSite=Lax`),
   CSRF via a required custom header, and per-key rate limiting with a persisted attempt history.
@@ -20,6 +26,23 @@ part of an application that is the same every time and tedious to get right:
 - **Paged, sorted and filtered listings** whose entire state lives in the address bar.
 - **A declarative API**: every endpoint is described once in `modules/shared`, and the routes, the
   OpenAPI document and the frontend client are all derived from that one description.
+
+## The vocabulary
+
+`/en/words` is the whole of it: pick a tag, type, and click the rows worth learning. There is no save
+button — a click is the entire action.
+
+The dictionary is imported rather than typed. Load the committed sample once, and the dev stack has
+real words in it:
+
+```
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --seed"
+```
+
+The real thing is a 2.6 GB wiktextract dump of the English Wiktionary; see
+[`data/dictionary/README.md`](data/dictionary/README.md) for that, for the frequency lists that
+decide search ranking, and for how German–Hungarian translations are derived (no free source states
+them directly). Word data is **CC BY-SA 4.0**, which the word list attributes on screen.
 
 ## Starting a project from it
 

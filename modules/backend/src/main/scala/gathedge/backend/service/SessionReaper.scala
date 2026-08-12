@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{EmailVerificationTokenRepository, LoginAttemptRepository, SessionRepository}
+import gathedge.backend.db.{EmailVerificationTokenRepository, LoginAttemptRepository, SessionRepository, UserRepository}
 import zio.*
 
 import java.util.concurrent.TimeUnit
@@ -30,25 +30,42 @@ object SessionReaper {
 
   val jobName: String = "session-reaper"
 
-  /** What one pass removed: sessions, verification tokens, sign-in attempts. Named rather than a bare triple, because
-    * three `Long`s in a row is exactly the shape that gets silently reordered.
+  /** How many abandoned guest accounts one pass will remove. Bounded so a deployment that has accumulated a great many
+    * of them clears them over several passes rather than in one long transaction.
     */
-  final case class Swept(sessions: Long, verificationTokens: Long, loginAttempts: Long)
+  private val guestSweepLimit = 500
 
-  /** One pass. Returns what it removed, so both the hourly loop and the on-demand button can report it. */
-  def sweep: RIO[SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & AppConfig, Swept] = {
+  /** What one pass removed. Named rather than a bare tuple, because four `Long`s in a row is exactly the shape that
+    * gets silently reordered.
+    */
+  final case class Swept(sessions: Long, verificationTokens: Long, loginAttempts: Long, guests: Long)
+
+  /** One pass. Returns what it removed, so both the hourly loop and the on-demand button can report it.
+    *
+    * '''The guest sweep only ever takes empty accounts.''' A guest holding tags is never removed, however long its
+    * session has been gone: it has no address to recover it by, but somebody may well have its transfer code written
+    * down. What this clears is the account a visitor minted and then walked away from before tagging anything.
+    */
+  def sweep: RIO[
+    SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & UserRepository & AppConfig,
+    Swept,
+  ] = {
     for {
-      config   <- ZIO.service[AppConfig]
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      sessions <- SessionRepository.deleteExpired(now)
-      tokens   <- EmailVerificationTokenRepository.deleteExpired(now)
-      cutoff    = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      attempts <- LoginAttemptRepository.deleteOlderThan(cutoff)
-    } yield Swept(sessions, tokens, attempts)
+      config     <- ZIO.service[AppConfig]
+      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      sessions   <- SessionRepository.deleteExpired(now)
+      tokens     <- EmailVerificationTokenRepository.deleteExpired(now)
+      cutoff      = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      attempts   <- LoginAttemptRepository.deleteOlderThan(cutoff)
+      guestCutoff = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      abandoned  <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
+      guests     <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
+    } yield Swept(sessions, tokens, attempts, guests)
   }
 
   def run: URIO[
-    SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & AppConfig & BackgroundJobs,
+    SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & UserRepository & AppConfig &
+      BackgroundJobs,
     Nothing,
   ] = {
     val once = {
@@ -61,10 +78,11 @@ object SessionReaper {
         _     <- ZIO.when(swept.loginAttempts > 0)(
                    ZIO.logInfo(s"Purged ${swept.loginAttempts} expired sign-in attempt record(s)")
                  )
+        _     <- ZIO.when(swept.guests > 0)(ZIO.logInfo(s"Purged ${swept.guests} abandoned guest account(s)"))
         _     <- BackgroundJobs.recordSuccess(
                    jobName,
-                   s"removed ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s) and " +
-                     s"${swept.loginAttempts} sign-in attempt record(s)",
+                   s"removed ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
+                     s"${swept.loginAttempts} sign-in attempt record(s) and ${swept.guests} abandoned guest(s)",
                  )
       } yield ()
     }

@@ -1,5 +1,6 @@
 package gathedge.shared.validation
 
+import gathedge.shared.domain.Tag
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 
 /** Validation shared between the signup form (frontend) and the signup/create-user endpoints (backend), so the same
@@ -94,6 +95,24 @@ object Validation {
       Left(MessageRef(MessageKeys.passwordTooLong))
     } else
       Right(password)
+  }
+
+  /** A word as typed into the add-a-word form. `words.text` is `VARCHAR(255)`, hence [[maxNameLength]]. */
+  def validateWordText(text: String): Either[MessageRef, String] = {
+    validateNonBlank(text, MessageKeys.fieldWord, maxNameLength)
+  }
+
+  /** A tag name, which is bounded by `tags.name` and additionally may not be one of the names the practice screen will
+    * compute for itself (`ALL`, `ALL_UNKNOWN`, …). Refusing them now is what stops a reader creating a tag today that
+    * collides with a built-in set later; the check is case-insensitive, since tag names are matched that way.
+    */
+  def validateTagName(name: String): Either[MessageRef, String] = {
+    validateNonBlank(name, MessageKeys.fieldTag, Tag.maxNameLength).flatMap { trimmed =>
+      if (Tag.isReserved(trimmed))
+        Left(MessageRef(MessageKeys.wordTagReserved, List(trimmed)))
+      else
+        Right(trimmed)
+    }
   }
 
   /** @param fieldKey

@@ -3,16 +3,21 @@ package gathedge.backend.db
 /** `emailVerifiedAt` is `None` until the address is proven — either by following a verification link or by arriving
   * from a provider that asserts `email_verified`. Whether that actually blocks a password login is
   * `app.require-email-verification`; the column is filled in either way.
+  *
+  * `email` is `None` exactly when `isGuest` is true — an account minted without credentials so that the vocabulary
+  * needs no sign-up. A NULL address is what lets any number of guests coexist under the column's `UNIQUE` index, and it
+  * is why `findByEmail` cannot accidentally return one: nothing equals NULL.
   */
 final case class UserRow(
   id: Long,
-  email: String,
+  email: Option[String],
   passwordHash: Option[String],
   isAdmin: Boolean,
   theme: String,
   locale: String,
   createdAt: Long,
   emailVerifiedAt: Option[Long],
+  isGuest: Boolean,
 )
 
 /** One external identity linked to a user. `provider` holds [[gathedge.backend.service.OAuthProvider]]'s wire name and
@@ -76,4 +81,59 @@ final case class AuditLogRow(
   targetId: Option[String],
   detail: Option[String],
   ip: Option[String],
+)
+
+/** One lexical unit, shared by every account.
+  *
+  * `textNorm` is the lowercased form and the only column search touches. `gender` and `frequencyRank` are never null —
+  * `""` and a large sentinel stand in — because a NULL is distinct in a `UNIQUE` index on both dialects and sorts in a
+  * dialect-dependent place; see the migration's comment. `createdBy` is `None` for an imported row, and becomes `None`
+  * again if the account that typed one is deleted: a word other people have tagged outlives its author.
+  */
+final case class WordRow(
+  id: Long,
+  language: String,
+  text: String,
+  textNorm: String,
+  partOfSpeech: String,
+  gender: String,
+  frequencyRank: Int,
+  source: String,
+  createdBy: Option[Long],
+  createdAt: Long,
+)
+
+/** One direction of a translation. Both directions are stored, so every read is a filter on `sourceWordId` and the
+  * practice screen can prompt either way round.
+  *
+  * `origin` is `dictionary` for what the dictionary asserts, `pivot` for a German–Hungarian pair derived through a
+  * shared English sense, and `user` for one somebody typed — which is the only case where `createdBy` is set.
+  */
+final case class WordTranslationRow(
+  id: Long,
+  sourceWordId: Long,
+  targetWordId: Long,
+  origin: String,
+  createdBy: Option[Long],
+  createdAt: Long,
+)
+
+/** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on. */
+final case class TagRow(id: Long, userId: Long, name: String, nameNorm: String, createdAt: Long)
+
+/** One word carrying one tag — and, since a tag belongs to exactly one account, the whole of what "this word is in my
+  * vocabulary" means.
+  */
+final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long)
+
+/** A guest account's transfer code. The `code` column *is* the bearer credential, like `SessionRow.id`: it must never
+  * reach a log line, and it is answered to its owner exactly once, when it is minted.
+  */
+final case class GuestClaimCodeRow(
+  id: Long,
+  userId: Long,
+  code: String,
+  createdAt: Long,
+  lastUsedAt: Option[Long],
+  revokedAt: Option[Long],
 )

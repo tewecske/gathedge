@@ -73,6 +73,17 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/providers",
               "/api/auth/verify",
               "/api/auth/verification/resend",
+              "/api/auth/upgrade",
+              "/api/guest",
+              "/api/guest/code",
+              "/api/guest/claim",
+              "/api/words",
+              "/api/words/{id}",
+              "/api/words/{id}/translations",
+              "/api/words/{id}/translations/{translationId}",
+              "/api/words/{id}/tags/{tagId}",
+              "/api/tags",
+              "/api/tags/{tagId}",
               "/api/me",
               "/api/me/theme",
               "/api/me/locale",
@@ -135,61 +146,86 @@ object OpenApiSpec extends ZIOSpecDefault {
         assertTrue(
           statuses ==
             Map(
-              ("POST", "/api/auth/signup")                              -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
+              ("POST", "/api/auth/signup")                               -> Set(Created, BadRequest, Unauthorized, Conflict, TooManyRequests),
               // The 403 is `AuthFailure.EmailNotVerified` — the service's own answer, not an aspect's, which is why
               // this is the only path in the API that documents one.
-              ("POST", "/api/auth/login")                               -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests),
-              ("POST", "/api/auth/logout")                              -> Set(NoContent),
+              ("POST", "/api/auth/login")                                -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict, TooManyRequests),
+              ("POST", "/api/auth/logout")                               -> Set(NoContent),
               // Public, no input, no aspect: the one operation in the API that documents no failure status at all.
-              ("GET", "/api/auth/providers")                            -> Set(Ok),
+              ("GET", "/api/auth/providers")                             -> Set(Ok),
               // One 400 for an unknown, spent or expired token alike; nothing else is reachable.
-              ("POST", "/api/auth/verify")                              -> Set(NoContent, BadRequest),
+              ("POST", "/api/auth/verify")                               -> Set(NoContent, BadRequest),
               // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
-              ("POST", "/api/auth/verification/resend")                 -> Set(NoContent, BadRequest, TooManyRequests),
-              ("GET", "/api/me")                                        -> Set(Ok, Unauthorized),
-              ("PUT", "/api/me/theme")                                  -> Set(Ok, BadRequest, Unauthorized),
-              ("PUT", "/api/me/locale")                                 -> Set(Ok, BadRequest, Unauthorized),
-              ("GET", "/api/me/identities")                             -> Set(Ok, Unauthorized),
+              ("POST", "/api/auth/verification/resend")                  -> Set(NoContent, BadRequest, TooManyRequests),
+              // Minting a guest takes no input and is guarded by nothing, so the limiter's 429 is the only failure
+              // it can answer with. Redeeming a code adds the 400 its body can fail to decode with, and a 404 for a
+              // code that is unknown or revoked — one answer for both, so the code space cannot be probed.
+              ("POST", "/api/guest")                                     -> Set(Created, TooManyRequests),
+              ("POST", "/api/guest/claim")                               -> Set(Ok, BadRequest, NotFound, TooManyRequests),
+              // The two 403s outside login, and for the same reason: `AuthService` raises them for an account that is
+              // not a guest, which is an answer to a well-formed request rather than an aspect's rejection.
+              ("POST", "/api/guest/code")                                -> Set(Ok, Unauthorized, Forbidden),
+              ("POST", "/api/auth/upgrade")                              -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict),
+              // The vocabulary's two reads are the only operations in the API guarded by `optionalUser`: they answer
+              // for a visitor with no session, so neither declares a 401. The 400 is a query parameter or a path
+              // segment that fails to decode.
+              ("GET", "/api/words")                                      -> Set(Ok, BadRequest),
+              ("GET", "/api/words/{id}")                                 -> Set(Ok, BadRequest, NotFound),
+              ("POST", "/api/words")                                     -> Set(Created, BadRequest, Unauthorized),
+              ("POST", "/api/words/{id}/translations")                   ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/words/{id}/translations/{translationId}") ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("PUT", "/api/words/{id}/tags/{tagId}")                    -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("DELETE", "/api/words/{id}/tags/{tagId}")                 -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Listing tags takes no input, so it has no 400 to declare.
+              ("GET", "/api/tags")                                       -> Set(Ok, Unauthorized),
+              ("POST", "/api/tags")                                      -> Set(Created, BadRequest, Unauthorized, Conflict),
+              ("DELETE", "/api/tags/{tagId}")                            -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("GET", "/api/me")                                         -> Set(Ok, Unauthorized),
+              ("PUT", "/api/me/theme")                                   -> Set(Ok, BadRequest, Unauthorized),
+              ("PUT", "/api/me/locale")                                  -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/me/identities")                              -> Set(Ok, Unauthorized),
               // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
-              ("DELETE", "/api/me/identities/{provider}")               -> Set(NoContent, BadRequest, Unauthorized, Conflict),
-              ("PUT", "/api/me/password")                               -> Set(NoContent, BadRequest, Unauthorized),
-              ("GET", "/api/admin/users")                               -> Set(Ok, BadRequest, Unauthorized),
-              ("POST", "/api/admin/users")                              -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
-              ("GET", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("PUT", "/api/admin/users/{id}")                          -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/admin/users/{id}")                       -> Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/me/identities/{provider}")                -> Set(NoContent, BadRequest, Unauthorized, Conflict),
+              ("PUT", "/api/me/password")                                -> Set(NoContent, BadRequest, Unauthorized),
+              ("GET", "/api/admin/users")                                -> Set(Ok, BadRequest, Unauthorized),
+              ("POST", "/api/admin/users")                               -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users/{id}")                           -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("PUT", "/api/admin/users/{id}")                           -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/admin/users/{id}")                        -> Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               // The six account-diagnostic operations all go through `ApiFailures.admin`, so they carry its whole
               // union — the same residual slack the group endpoints have, and narrowing it means narrowing
               // `AdminService`'s signatures rather than these descriptions. The 409 is real on the unlink (last
               // credential) and only theoretical on the rest.
-              ("GET", "/api/admin/users/{id}/detail")                   -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("POST", "/api/admin/users/{id}/verify-email")            ->
+              ("GET", "/api/admin/users/{id}/detail")                    -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("POST", "/api/admin/users/{id}/verify-email")             ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
-              ("POST", "/api/admin/users/{id}/verification/resend")     ->
+              ("POST", "/api/admin/users/{id}/verification/resend")      ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/admin/users/{id}/sessions")              ->
+              ("DELETE", "/api/admin/users/{id}/sessions")               ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/admin/users/{id}/identities/{provider}") ->
+              ("DELETE", "/api/admin/users/{id}/identities/{provider}")  ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/admin/users/{id}/lockout")               ->
+              ("DELETE", "/api/admin/users/{id}/lockout")                ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               // The read-only operations declare only what they can actually answer: a 400 where a query
               // parameter can fail to decode (`ApiEndpoint.codecError`), and the aspect's 401. `rateLimits`,
               // `systemOverview` and `systemPrune` take no input at all, so they have no 400 to declare — which is
               // what the user list used to be, before paging gave it query parameters of its own.
-              ("GET", "/api/admin/audit")                               -> Set(Ok, BadRequest, Unauthorized),
-              ("GET", "/api/admin/login-attempts")                      -> Set(Ok, BadRequest, Unauthorized),
-              ("GET", "/api/admin/rate-limits")                         -> Set(Ok, Unauthorized),
-              ("POST", "/api/admin/rate-limits/clear")                  -> Set(NoContent, BadRequest, Unauthorized),
-              ("GET", "/api/admin/system")                              -> Set(Ok, Unauthorized),
-              ("POST", "/api/admin/system/prune")                       -> Set(Ok, Unauthorized),
+              ("GET", "/api/admin/audit")                                -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/admin/login-attempts")                       -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/admin/rate-limits")                          -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/rate-limits/clear")                   -> Set(NoContent, BadRequest, Unauthorized),
+              ("GET", "/api/admin/system")                               -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/system/prune")                        -> Set(Ok, Unauthorized),
             )
         )
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 74 across 27 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 109 across 37 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -206,15 +242,23 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 74,
+          declared == 109,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own
           // adds its paths here.
-          describes(Forbidden) == Set(("POST", "/api/auth/login")),
+          describes(Forbidden) ==
+            Set(("POST", "/api/auth/login"), ("POST", "/api/guest/code"), ("POST", "/api/auth/upgrade")),
           // The rate limiter wraps signup, login and the verification resend, and nothing else.
           describes(TooManyRequests) ==
-            Set(("POST", "/api/auth/signup"), ("POST", "/api/auth/login"), ("POST", "/api/auth/verification/resend")),
+            Set(
+              ("POST", "/api/auth/signup"),
+              ("POST", "/api/auth/login"),
+              ("POST", "/api/auth/verification/resend"),
+              // Both are anonymous and both write: one mints an account, the other hands out a session.
+              ("POST", "/api/guest"),
+              ("POST", "/api/guest/claim"),
+            ),
           describes(InternalServerError).isEmpty,
         )
       },
@@ -246,6 +290,12 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Both are reached by an account that cannot sign in yet, so neither can be behind the session.
               ("POST", "/api/auth/verify"),
               ("POST", "/api/auth/verification/resend"),
+              // A visitor with no session mints one here, or brings a transfer code to it.
+              ("POST", "/api/guest"),
+              ("POST", "/api/guest/claim"),
+              // The vocabulary reads, which are the whole reason the feature needs no sign-up.
+              ("GET", "/api/words"),
+              ("GET", "/api/words/{id}"),
             )
         )
       },
@@ -254,7 +304,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 6,
+          guarded.size == operations.size - 10,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

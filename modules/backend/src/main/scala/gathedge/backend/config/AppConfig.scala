@@ -28,6 +28,10 @@ object AppEnv {
   * its own rate-limit identity, and trusting nothing while a proxy *is* in front collapses every request onto the
   * proxy's address, which is what the limiter then locks out wholesale.
   */
+/** `guestRetentionDays` bounds only the *empty* guest accounts — one minted for a visitor who then tagged nothing. A
+  * guest holding words is never swept whatever this says, because a transfer code for it may be written down somewhere;
+  * see `SessionReaper.sweep`.
+  */
 final case class AppSection(
   env: String,
   serverHost: String,
@@ -36,6 +40,7 @@ final case class AppSection(
   requireEmailVerification: Boolean,
   trustedProxyHops: Int,
   loginAttemptRetentionDays: Int,
+  guestRetentionDays: Int,
 )
 
 /** `schema` is the Postgres schema this application owns, and it is one setting read by two independent things that

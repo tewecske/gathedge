@@ -22,8 +22,25 @@ trait UserRepository {
     createdAt: Long,
     emailVerifiedAt: Option[Long],
   ): Task[UserRow]
+
+  /** An account with no address and no password, minted the first time a visitor tags a word. */
+  def insertGuest(theme: String, locale: String, createdAt: Long): Task[UserRow]
+
+  /** Gives a guest account an address and a password, in place. Nothing it owns moves, which is the whole point.
+    * Returns rows affected, so a caller can tell a lost race from a success.
+    */
+  def upgradeGuest(id: Long, email: String, passwordHash: String, emailVerifiedAt: Option[Long]): Task[Long]
+
+  /** Cannot return a guest: their address is NULL, and nothing equals NULL. */
   def findByEmail(email: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
+
+  /** Guest accounts that have nothing on them and have been idle since `createdBefore`, oldest first.
+    *
+    * What `SessionReaper` sweeps. A guest holding tags is never in this list however long its session has been gone,
+    * because a transfer code may be written down on somebody's desk.
+    */
+  def findAbandonedGuests(createdBefore: Long, limit: Int): Task[List[Long]]
   def updateTheme(userId: Long, theme: String): Task[Unit]
   def updateLocale(userId: Long, locale: String): Task[Unit]
 
@@ -75,8 +92,22 @@ object UserRepository {
     )
   }
 
+  def insertGuest(theme: String, locale: String, createdAt: Long): RIO[UserRepository, UserRow] =
+    ZIO.serviceWithZIO[UserRepository](_.insertGuest(theme, locale, createdAt))
+
+  def upgradeGuest(
+    id: Long,
+    email: String,
+    passwordHash: String,
+    emailVerifiedAt: Option[Long],
+  ): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.upgradeGuest(id, email, passwordHash, emailVerifiedAt))
+
   def findByEmail(email: String): RIO[UserRepository, Option[UserRow]] =
     ZIO.serviceWithZIO[UserRepository](_.findByEmail(email))
+
+  def findAbandonedGuests(createdBefore: Long, limit: Int): RIO[UserRepository, List[Long]] =
+    ZIO.serviceWithZIO[UserRepository](_.findAbandonedGuests(createdBefore, limit))
 
   def findById(id: Long): RIO[UserRepository, Option[UserRow]] =
     ZIO.serviceWithZIO[UserRepository](_.findById(id))
@@ -146,6 +177,14 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   private inline def users = quote(querySchema[UserRow]("users"))
 
+  // Read-only views of tables `WordRepository` owns, for the one question only this repository can ask: which guest
+  // accounts have nothing on them. Reading another repository's tables is fine — what does not compose across
+  // repositories is a *transaction*, see `QuillRepository`.
+  private inline def tagRows         = quote(querySchema[TagRow]("tags"))
+  private inline def wordRows        = quote(querySchema[WordRow]("words"))
+  private inline def translationRows = quote(querySchema[WordTranslationRow]("word_translations"))
+  private inline def guestClaimCodes = quote(querySchema[GuestClaimCodeRow]("guest_claim_codes"))
+
   def insert(
     email: String,
     passwordHash: Option[String],
@@ -155,15 +194,41 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     createdAt: Long,
     emailVerifiedAt: Option[Long],
   ): Task[UserRow] = {
-    val row = UserRow(0L, email, passwordHash, isAdmin, theme, locale, createdAt, emailVerifiedAt)
+    val row = UserRow(0L, Some(email), passwordHash, isAdmin, theme, locale, createdAt, emailVerifiedAt, false)
     logged(run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))) {
       user =>
         s"users.insert id=${user.id} admin=$isAdmin verified=${emailVerifiedAt.isDefined}"
     }
   }
 
+  def insertGuest(theme: String, locale: String, createdAt: Long): Task[UserRow] = {
+    val row = UserRow(0L, None, None, false, theme, locale, createdAt, None, true)
+    logged(run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))) {
+      user => s"users.insertGuest id=${user.id}"
+    }
+  }
+
+  /** The lambda is `row`, not `user`, and that is not style: Quill names the SQL alias after the parameter, and `user`
+    * is a reserved word in Postgres — `UPDATE users AS user SET ...` is a syntax error there and perfectly fine on
+    * SQLite, so the whole SQLite suite passes while the real dialect refuses every call. The same rule applies to every
+    * quoted lambda in this file.
+    */
+  def upgradeGuest(id: Long, email: String, passwordHash: String, emailVerifiedAt: Option[Long]): Task[Long] = {
+    val q = quote(
+      users
+        .filter(row => row.id == lift(id) && row.isGuest)
+        .update(
+          _.email           -> lift(Option(email)),
+          _.passwordHash    -> lift(Option(passwordHash)),
+          _.emailVerifiedAt -> lift(emailVerifiedAt),
+          _.isGuest         -> lift(false),
+        )
+    )
+    logged(run(ctx.run(q)))(rows => s"users.upgradeGuest id=$id verified=${emailVerifiedAt.isDefined} rows=$rows")
+  }
+
   def findByEmail(email: String): Task[Option[UserRow]] = {
-    logged(run(ctx.run(quote(users.filter(_.email == lift(email))))).map(_.headOption)) { found =>
+    logged(run(ctx.run(quote(users.filter(_.email.contains(lift(email)))))).map(_.headOption)) { found =>
       s"users.findByEmail found=${found.isDefined}"
     }
   }
@@ -213,7 +278,29 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     */
   private def matching(emailContains: Option[String]): DynamicQuery[UserRow] = {
     dynamicQuerySchema[UserRow]("users")
-      .filterOpt(emailPattern(emailContains))((user, pattern) => quote(user.email.like(unquote(pattern))))
+      .filterOpt(emailPattern(emailContains))((row, pattern) =>
+        quote(row.email.exists(address => address.like(unquote(pattern))))
+      )
+  }
+
+  /** Guests with nothing on them: no tag, no word or translation they typed, and no transfer code anybody could still
+    * be holding. Ordered oldest first and bounded, since this is housekeeping rather than a listing.
+    */
+  def findAbandonedGuests(createdBefore: Long, limit: Int): Task[List[Long]] = {
+    val q = quote {
+      users
+        .filter(row => {
+          row.isGuest && row.createdAt < lift(createdBefore) &&
+          tagRows.filter(_.userId == row.id).isEmpty &&
+          wordRows.filter(_.createdBy.contains(row.id)).isEmpty &&
+          translationRows.filter(_.createdBy.contains(row.id)).isEmpty &&
+          guestClaimCodes.filter(_.userId == row.id).isEmpty
+        })
+        .sortBy(_.createdAt)(using Ord.asc)
+        .map(_.id)
+        .take(lift(limit))
+    }
+    logged(run(ctx.run(q)))(ids => s"users.findAbandonedGuests rows=${ids.size}")
   }
 
   /** The `dto.UserSort` vocabulary translated to an `ORDER BY`. The mapping lives here rather than in the service
@@ -262,7 +349,7 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long] = {
-    val q = quote(users.filter(_.id == lift(id)).update(_.email -> lift(email), _.isAdmin -> lift(isAdmin)))
+    val q = quote(users.filter(_.id == lift(id)).update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin)))
     logged(run(ctx.run(q)))(rows => s"users.updateProfile id=$id admin=$isAdmin rows=$rows")
   }
 
@@ -273,7 +360,7 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long] = {
     val profile = ctx.run(
-      quote(users.filter(_.id == lift(id)).update(_.email -> lift(email), _.isAdmin -> lift(isAdmin)))
+      quote(users.filter(_.id == lift(id)).update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin)))
     )
     val updated = {
       passwordHash match {

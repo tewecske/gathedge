@@ -4,12 +4,14 @@ import gathedge.backend.{TestAuthLayers, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
-  EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
   UserRepository,
+  WordRepository,
 }
 import gathedge.backend.security.PasswordHasher
 import gathedge.backend.service.{
@@ -21,6 +23,7 @@ import gathedge.backend.service.{
   OAuthClients,
   RateLimiter,
   SystemService,
+  WordService,
 }
 import zio.*
 import zio.http.*
@@ -42,7 +45,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++
-        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
     )
   }
 
@@ -55,7 +59,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
         TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live) >+> (AdminService.live ++ SystemService.live)
+    base >+> (AuthService.live ++ AuditTrail.live) >+> (AdminService.live ++ SystemService.live ++ WordService.live)
   }
 
   /** The one mutating body the CSRF cases are driven with. Its content is beside the point — what matters is that the
@@ -188,6 +192,24 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           body ==
             """{"error":{"key":"error.internal","args":[]},"message":"Internal server error","fieldErrors":{}}""",
           !body.contains("relation"),
+        )
+      },
+      // `optionalUser` is the one aspect that never refuses a request. The three cases it has to tell apart are no
+      // cookie at all, a cookie naming a session that does not exist, and a real one — the first two being the same
+      // answer, since neither identifies anybody.
+      test("the vocabulary reads answer with no session, with a junk one, and with a real one") {
+        for {
+          session   <- signUp("optional-user@example.com")
+          anonymous <- runRoutes(WordRoutes.routes, Request.get("/api/words"))
+          junk      <- runRoutes(WordRoutes.routes, withSession(Request.get("/api/words"), "not-a-session"))
+          real      <- runRoutes(WordRoutes.routes, withSession(Request.get("/api/words"), session))
+          // The writes on the same `Routes` value are still guarded, which is what makes the split worth pinning.
+          write     <- runRoutes(WordRoutes.routes, withCsrf(Request.get("/api/tags")))
+        } yield assertTrue(
+          anonymous.status == Status.Ok,
+          junk.status == Status.Ok,
+          real.status == Status.Ok,
+          write.status == Status.Unauthorized,
         )
       },
       // zio-http's own not-found response is `Response.error(NotFound, path)`: no JSON, and the requested path

@@ -6,6 +6,7 @@ import gathedge.backend.i18n.Messages
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
   SessionRepository,
@@ -23,7 +24,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test
     )
   }
 
@@ -49,7 +50,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
         created <- AdminService.createUser(AdminActor.system, "new@example.com", "password123", isAdmin = false)
         listed  <- AdminService.listUsers(page = Paging.firstPage, pageSize = 100, None, None, descending = false)
       } yield assertTrue(
-        created.email == "new@example.com",
+        created.email.contains("new@example.com"),
         !created.isAdmin,
         listed.items.exists(_.id == created.id),
         listed.total == listed.items.size.toLong,
@@ -75,7 +76,9 @@ object AdminServiceSpec extends ZIOSpecDefault {
       for {
         admin  <- AdminService.createUser(AdminActor.system, "self-admin@example.com", "password123", isAdmin = true)
         result <-
-          AdminService.updateUser(AdminActor(admin.id), admin.id, admin.email, isAdmin = false, password = None).either
+          AdminService
+            .updateUser(AdminActor(admin.id), admin.id, admin.email.getOrElse(""), isAdmin = false, password = None)
+            .either
       } yield assertTrue(result == Left(AdminFailure.SelfDemote))
     },
     test("an admin cannot delete their own account") {
@@ -101,7 +104,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
         updated <-
           AdminService
             .updateUser(AdminActor(admin.id), user.id, "keep-pw@example.com", isAdmin = false, password = Some(""))
-      } yield assertTrue(updated.email == "keep-pw@example.com")
+      } yield assertTrue(updated.email.contains("keep-pw@example.com"))
     },
     test("resetting a user's password revokes their existing sessions") {
       for {

@@ -4,12 +4,14 @@ import gathedge.backend.{TestAuthLayers, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailVerificationTokenRepository,
+  GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
-  EmailVerificationTokenRepository,
   OAuthIdentityRepository,
   SessionRepository,
   UserRepository,
+  WordRepository,
 }
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
 import gathedge.backend.service.{
@@ -22,16 +24,22 @@ import gathedge.backend.service.{
   OAuthClients,
   RateLimiter,
   SystemService,
+  WordService,
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{Theme, User}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Theme, User, WordLanguage}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
   AuthResponse,
+  ClaimCodeResponse,
+  ClaimRequest,
+  CreateTagRequest,
   CreateUserRequest,
+  CreateWordRequest,
   ErrorResponse,
+  NewTranslation,
   LoginRequest,
   Paging,
   ResendVerificationRequest,
@@ -41,6 +49,8 @@ import gathedge.shared.dto.{
   UpdateUserRequest,
   UserPage,
   VerifyEmailRequest,
+  WordDetail,
+  WordPage,
 }
 import zio.*
 import zio.http.*
@@ -63,8 +73,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   private val repos = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++
-        MetricsRepository.test
+        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++
+        AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
     )
   }
 
@@ -75,7 +85,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
           TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
-          (AdminService.live ++ SystemService.live)
+          (AdminService.live ++ SystemService.live ++ WordService.live)
       )
   }
 
@@ -120,7 +130,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
-            raw.fromJson[SignupResponse].map(_.user.email) == Right("new@example.com"),
+            raw.fromJson[SignupResponse].map(_.user.email) == Right(Some("new@example.com")),
             // False only where verification is mandatory; the test config leaves the gate off.
             raw.fromJson[SignupResponse].map(_.signedIn) == Right(true),
             !raw.contains("Set-Cookie"),
@@ -151,7 +161,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             badRaw  <- body(bad)
           } yield assertTrue(
             good.status == Status.Ok,
-            goodRaw.fromJson[AuthResponse].map(_.user.email) == Right("login@example.com"),
+            goodRaw.fromJson[AuthResponse].map(_.user.email) == Right(Some("login@example.com")),
             sessionCookie(good).exists(_.content.nonEmpty),
             bad.status == Status.Unauthorized,
             badRaw.fromJson[ErrorResponse].map(_.message) == Right("Invalid email or password"),
@@ -221,7 +231,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             response.status == Status.Ok,
             // A page, not a bare list: the count is what lets the browser number its buttons, so it is part of the
             // body the client decodes rather than a header the codecs would not describe.
-            raw.fromJson[UserPage].map(_.items.map(_.email)) == Right(List("list@example.com")),
+            raw.fromJson[UserPage].map(_.items.map(_.email)) == Right(List(Some("list@example.com"))),
             raw.fromJson[UserPage].map(_.total) == Right(1L),
           )
         },
@@ -236,7 +246,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
-            raw.fromJson[User].map(_.email) == Right("fresh@example.com"),
+            raw.fromJson[User].map(_.email) == Right(Some("fresh@example.com")),
             raw.fromJson[User].map(_.isAdmin) == Right(false),
           )
         },
@@ -303,9 +313,9 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             stillLogsIn <- orDieWithFailure(AuthService.login("renamed@example.com", "password123"))
           } yield assertTrue(
             response.status == Status.Ok,
-            raw.fromJson[User].map(_.email) == Right("renamed@example.com"),
+            raw.fromJson[User].map(_.email) == Right(Some("renamed@example.com")),
             raw.fromJson[User].map(_.isAdmin) == Right(true),
-            stillLogsIn._1.email == "renamed@example.com",
+            stillLogsIn._1.email.contains("renamed@example.com"),
           )
         },
         test("deleting a user is a 204 with an empty body") {
@@ -323,7 +333,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.NoContent,
             raw.isEmpty,
-            !remaining.items.exists(_.email == "doomed@example.com"),
+            !remaining.items.exists(_.email.contains("doomed@example.com")),
           )
         },
         test("an administrator still cannot delete their own account") {
@@ -355,7 +365,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Ok,
-            raw.fromJson[AdminUserDetail].map(_.user.email) == Right("detailed@example.com"),
+            raw.fromJson[AdminUserDetail].map(_.user.email) == Right(Some("detailed@example.com")),
             raw.fromJson[AdminUserDetail].map(_.hasPassword) == Right(true),
             raw.fromJson[AdminUserDetail].map(_.activeSessions) == Right(1),
             raw.fromJson[AdminUserDetail].map(_.lockout.maxAttempts) == Right(5),
@@ -424,6 +434,164 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             !raw.contains("changeme123"),
             !raw.toLowerCase.contains("\"password\""),
             !raw.toLowerCase.contains("secret"),
+          )
+        },
+      ),
+      // The vocabulary's two reads are the only endpoints in the API that answer with *and* without a session, so what
+      // is worth pinning on the wire is that both shapes are the same one — and that a guest is minted, cookie and all,
+      // by an endpoint nobody had to sign in to reach.
+      suite("words")(
+        test("the listing answers a visitor with no session, and marks no tags on it") {
+          for {
+            response <- runRoutes(WordRoutes.routes, getWithQuery("/api/words?lang=de&q=zz"))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[WordPage].map(_.items) == Right(Nil),
+            raw.fromJson[WordPage].map(_.total) == Right(0L),
+          )
+        },
+        test("a word is created, answered with its enums as bare strings, and found again by search") {
+          for {
+            session <- signUp("words-wire@example.com")
+            request  = Request.post(
+                         "/api/words",
+                         Body.fromString(
+                           CreateWordRequest(
+                             WordLanguage.De,
+                             "Haus",
+                             PartOfSpeech.Noun,
+                             Some(Gender.Das),
+                             List(NewTranslation(WordLanguage.Hu, "ház", None, None)),
+                             Nil,
+                           ).toJson
+                         ),
+                       )
+            created <- runRoutes(WordRoutes.routes, withCsrf(withSession(request, session)))
+            raw     <- body(created)
+            listed  <-
+              runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=hau&target=hu"), session))
+            listRaw <- body(listed)
+          } yield assertTrue(
+            created.status == Status.Created,
+            // zio-schema wrote the enums; zio-json is reading them. That the two agree is the point of this spec.
+            raw.contains("\"De\""),
+            raw.contains("\"Noun\""),
+            raw.contains("\"Das\""),
+            raw.fromJson[WordDetail].map(_.word.text) == Right("Haus"),
+            raw.fromJson[WordDetail].map(_.translations.map(_.word.text)) == Right(List("ház")),
+            listed.status == Status.Ok,
+            listRaw.fromJson[WordPage].map(_.items.map(_.word.text)) == Right(List("Haus")),
+            listRaw.fromJson[WordPage].map(_.items.flatMap(_.translations)) == Right(List("ház")),
+          )
+        },
+        test("an unparseable query parameter is the described 400, in the ordinary error shape") {
+          for {
+            response <- runRoutes(WordRoutes.routes, getWithQuery("/api/words?page=soon"))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            raw.fromJson[ErrorResponse].map(_.message) == Right("Malformed request"),
+          )
+        },
+        test("tagging answers a genuinely empty 204") {
+          for {
+            session <- signUp("words-tag@example.com")
+            tagReq   = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
+            tag     <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
+            tagRaw  <- body(tag)
+            tagId    = tagRaw.fromJson[Tag].map(_.id).getOrElse(0L)
+            wordReq  = Request.post(
+                         "/api/words",
+                         Body.fromString(
+                           CreateWordRequest(WordLanguage.De, "Buch", PartOfSpeech.Noun, None, Nil, Nil).toJson
+                         ),
+                       )
+            word    <- runRoutes(WordRoutes.routes, withCsrf(withSession(wordReq, session)))
+            wordRaw <- body(word)
+            wordId   = wordRaw.fromJson[WordDetail].map(_.word.id).getOrElse(0L)
+            tagged  <- runRoutes(
+                         WordRoutes.routes,
+                         withCsrf(withSession(Request.put(s"/api/words/$wordId/tags/$tagId", Body.empty), session)),
+                       )
+            empty   <- body(tagged)
+          } yield assertTrue(
+            tag.status == Status.Created,
+            tagged.status == Status.NoContent,
+            empty.isEmpty,
+            tagged.header(Header.ContentLength).isEmpty,
+          )
+        },
+        test("a word that is not there is the described 404") {
+          for {
+            response <- runRoutes(WordRoutes.routes, Request.get("/api/words/424242"))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.NotFound,
+            raw.fromJson[ErrorResponse].map(_.message) == Right("No such word"),
+          )
+        },
+        test("writing needs a session, reading does not") {
+          for {
+            read  <- runRoutes(WordRoutes.routes, Request.get("/api/words"))
+            write <- runRoutes(
+                       WordRoutes.routes,
+                       withCsrf(Request.post("/api/tags", Body.fromString(CreateTagRequest("nope").toJson))),
+                     )
+          } yield assertTrue(read.status == Status.Ok, write.status == Status.Unauthorized)
+        },
+      ),
+      suite("guest")(
+        test("minting a guest answers 201, a session cookie, and a user with no address") {
+          for {
+            response <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/guest", Body.empty)))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Created,
+            sessionCookie(response).exists(_.content.nonEmpty),
+            raw.fromJson[AuthResponse].map(_.user.email) == Right(None),
+            raw.fromJson[AuthResponse].map(_.user.isGuest) == Right(true),
+          )
+        },
+        test("a transfer code round-trips through the wire, and a wrong one is the described 404") {
+          for {
+            minted  <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/guest", Body.empty)))
+            session  = sessionCookie(minted).map(_.content).getOrElse("")
+            code    <- runRoutes(
+                         AuthRoutes.routes,
+                         withCsrf(withSession(Request.post("/api/guest/code", Body.empty), session)),
+                       )
+            codeRaw <- body(code)
+            value    = codeRaw.fromJson[ClaimCodeResponse].map(_.code).getOrElse("")
+            claimed <- runRoutes(
+                         AuthRoutes.routes,
+                         withCsrf(Request.post("/api/guest/claim", Body.fromString(ClaimRequest(value).toJson))),
+                       )
+            wrong   <- runRoutes(
+                         AuthRoutes.routes,
+                         withCsrf(
+                           Request.post("/api/guest/claim", Body.fromString(ClaimRequest("ZZZZ-ZZZZ").toJson))
+                         ),
+                       )
+          } yield assertTrue(
+            code.status == Status.Ok,
+            value.nonEmpty,
+            claimed.status == Status.Ok,
+            sessionCookie(claimed).exists(_.content.nonEmpty),
+            wrong.status == Status.NotFound,
+          )
+        },
+        test("a registered account cannot mint a transfer code: the described 403") {
+          for {
+            session  <- signUp("not-a-guest@example.com")
+            response <- runRoutes(
+                          AuthRoutes.routes,
+                          withCsrf(withSession(Request.post("/api/guest/code", Body.empty), session)),
+                        )
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Forbidden,
+            raw.fromJson[ErrorResponse].map(_.message) == Right("This account is already registered"),
           )
         },
       ),

@@ -1,6 +1,7 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
+import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -25,6 +26,38 @@ object Labels {
   /** Same arrangement for `audit_log.action`, and for the same reason. */
   def auditAction(action: String): String = {
     translatedOr(UiKeys.auditActionPrefix + action, action)
+  }
+
+  /** The study languages. Matched exhaustively rather than by suffix, since these are an enum in `shared` rather than a
+    * stored code that a newer build might widen.
+    *
+    * Note what is *not* here: the German article. `der`/`die`/`das` is part of the word being learned, so it is
+    * rendered as written and never translated.
+    */
+  def language(language: WordLanguage): String = {
+    I18n.t(UiKeys.languagePrefix + WordLanguage.code(language))
+  }
+
+  def partOfSpeech(pos: PartOfSpeech): String = {
+    pos match {
+      case PartOfSpeech.Noun      =>
+        I18n.t(UiKeys.posNoun)
+      case PartOfSpeech.Verb      =>
+        I18n.t(UiKeys.posVerb)
+      case PartOfSpeech.Adjective =>
+        I18n.t(UiKeys.posAdjective)
+      case PartOfSpeech.Adverb    =>
+        I18n.t(UiKeys.posAdverb)
+      case PartOfSpeech.Other     =>
+        I18n.t(UiKeys.posOtherKind)
+    }
+  }
+
+  /** Where a translation came from: what the dictionary states, what was inferred through English, what a reader typed.
+    * Keyed off the stored string, so a row written by a newer build still renders.
+    */
+  def translationOrigin(origin: String): String = {
+    translatedOr(UiKeys.originPrefix + origin, origin)
   }
 
   private def translatedOr(key: String, fallback: String): String = {

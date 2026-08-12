@@ -112,7 +112,7 @@ private class AdminUserDetailPage(userId: Long) {
           case Right(u)                       =>
             Var.set(
               userVar     -> Some(u),
-              formVar     -> EditUserForm(email = u.email, isAdmin = u.isAdmin),
+              formVar     -> EditUserForm(email = u.email.getOrElse(""), isAdmin = u.isAdmin),
               notFoundVar -> false,
               errorVar    -> None,
             )

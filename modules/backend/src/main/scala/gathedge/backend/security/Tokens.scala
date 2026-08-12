@@ -34,4 +34,48 @@ object Tokens {
       Base64.getUrlEncoder.withoutPadding.encodeToString(bytes)
     }
   }
+
+  /** Crockford's base32 alphabet: the digits and the letters, minus `I`, `L`, `O` and `U`. The first three go because
+    * they are unreadable next to `1` and `0` in the fonts people copy codes out of; `U` goes so a random string cannot
+    * spell an obscenity.
+    */
+  private val claimAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+  private val claimCodeLength = 16
+  private val claimGroupSize  = 4
+
+  /** A transfer code: [[claimCodeLength]] symbols of [[claimAlphabet]] — 80 bits — written in groups of four.
+    *
+    * Unlike a session id this is meant to be read off one screen and typed into another, hence the alphabet and the
+    * grouping; and unlike a session id it is not thrown away when a browser is closed, which is why it takes 80 bits
+    * rather than the 40-odd a throwaway would need. `256 % 32 == 0`, so masking a random byte with `0x1f` picks a
+    * symbol uniformly and no rejection sampling is needed.
+    */
+  def claimCode(): UIO[String] = {
+    ZIO.succeed {
+      val bytes   = new Array[Byte](claimCodeLength)
+      secureRandom.nextBytes(bytes)
+      val symbols = bytes.map(byte => claimAlphabet((byte & 0x1f).toInt)).mkString
+      symbols.grouped(claimGroupSize).mkString("-")
+    }
+  }
+
+  /** The canonical form of a code somebody has typed back in: upper-cased, regrouped, and with the four characters
+    * Crockford treats as confusable folded onto the symbol they are mistaken for.
+    *
+    * Stored codes are in this form, so a lookup is an equality test rather than a fuzzy match. Anything not in the
+    * alphabet is dropped rather than rejected here — a code that is wrong in some other way is answered by the same "no
+    * such code" as one that does not exist, so there is nothing to gain by being strict early.
+    */
+  def normalizeClaimCode(value: String): String = {
+    val folded = value.toUpperCase.map {
+      case 'I' | 'L' =>
+        '1'
+      case 'O'       =>
+        '0'
+      case other     =>
+        other
+    }
+    folded.filter(claimAlphabet.contains).grouped(claimGroupSize).mkString("-")
+  }
 }

@@ -4,6 +4,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   EmailVerificationTokenRepository,
   EmailVerificationTokenRow,
+  GuestClaimCodeRepository,
   LoginAttemptRepository,
   LoginAttemptRow,
   OAuthIdentityRepository,
@@ -54,6 +55,40 @@ enum AuthFailure {
     * the token space cannot be probed for near-misses.
     */
   case InvalidVerificationToken
+}
+
+/** The guest paths' failures, in three enums rather than one.
+  *
+  * Not tidiness: an endpoint declares exactly the statuses it can answer, and `ApiFailures` mappings return the *union*
+  * of what they can produce, so one enum spanning all four paths would force every one of its statuses onto every one
+  * of them — a 403 on minting, a 409 on redeeming a code. That is the same reasoning that gave `login` its own
+  * `ApiFailures.authLogin` rather than widening `auth`'s union, applied one level earlier: narrow the service's error
+  * type, not the description.
+  */
+enum GuestMintFailure {
+  case RateLimited
+}
+
+enum GuestClaimFailure {
+  case RateLimited
+
+  /** No such transfer code, or one that has been revoked — one case for both, so the code space cannot be probed. */
+  case InvalidCode
+}
+
+/** Issuing a transfer code can only be refused for one reason, and its endpoint declares only that status. */
+enum GuestCodeFailure {
+  case NotGuest
+}
+
+/** What can go wrong acting *on* a guest account: minting it a transfer code, or turning it into a real one. */
+enum GuestAccountFailure {
+
+  /** The caller has an address and a password already, so there is nothing to upgrade and no use for a bearer code. */
+  case NotGuest
+
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+  case EmailAlreadyRegistered
 }
 
 trait AuthService {
@@ -128,6 +163,32 @@ trait AuthService {
     * this — see `V8__user_locale.sql` for what the stored value is actually for.
     */
   def updateLocale(userId: Long, locale: Locale): Task[User]
+
+  /** Mints an account with no address and no password, and a session to go with it.
+    *
+    * Called on a visitor's first *write*, never on a page view: a session per visit would be a row per crawler. The
+    * session lasts a year (`SessionAuth.guestSessionDuration`) because a guest has no other way back in.
+    */
+  def createGuest(clientIp: Option[String], locale: Locale = Locale.default): IO[GuestMintFailure, (User, String)]
+
+  /** A fresh transfer code for a guest account, answered once and never again. Existing codes stay usable — a reader
+    * may want the same vocabulary on a phone and a laptop.
+    *
+    * Typed on the single case rather than on [[GuestAccountFailure]], because refusing a real account is the only way
+    * this can fail and the endpoint declares exactly that one status.
+    */
+  def issueClaimCode(userId: Long): IO[GuestCodeFailure, String]
+
+  /** Signs the caller in as the guest account a transfer code belongs to. */
+  def claimGuest(code: String, clientIp: Option[String] = None): IO[GuestClaimFailure, (User, String)]
+
+  /** Gives a guest account an address and a password, in place. Every tag and word it holds stays where it is, under
+    * the same id; the session the caller already holds keeps working.
+    */
+  def upgradeGuest(userId: Long, email: String, password: String, locale: Locale = Locale.default): IO[
+    GuestAccountFailure,
+    User,
+  ]
 }
 
 object AuthService {
@@ -192,6 +253,26 @@ object AuthService {
   def updateLocale(userId: Long, locale: Locale): RIO[AuthService, User] =
     ZIO.serviceWithZIO[AuthService](_.updateLocale(userId, locale))
 
+  def createGuest(
+    clientIp: Option[String],
+    locale: Locale = Locale.default,
+  ): ZIO[AuthService, GuestMintFailure, (User, String)] =
+    ZIO.serviceWithZIO[AuthService](_.createGuest(clientIp, locale))
+
+  def issueClaimCode(userId: Long): ZIO[AuthService, GuestCodeFailure, String] =
+    ZIO.serviceWithZIO[AuthService](_.issueClaimCode(userId))
+
+  def claimGuest(code: String, clientIp: Option[String] = None): ZIO[AuthService, GuestClaimFailure, (User, String)] =
+    ZIO.serviceWithZIO[AuthService](_.claimGuest(code, clientIp))
+
+  def upgradeGuest(
+    userId: Long,
+    email: String,
+    password: String,
+    locale: Locale = Locale.default,
+  ): ZIO[AuthService, GuestAccountFailure, User] =
+    ZIO.serviceWithZIO[AuthService](_.upgradeGuest(userId, email, password, locale))
+
   /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
     * [[gathedge.backend.security.PasswordHasher]] is configured with.
     */
@@ -204,7 +285,8 @@ object AuthService {
 
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      LoginAttemptRepository & PasswordHasher & RateLimiter & EmailSender & Messages & AppConfig,
+      LoginAttemptRepository & GuestClaimCodeRepository & PasswordHasher & RateLimiter & EmailSender & Messages &
+      AppConfig,
     AuthService,
   ] = ZLayer {
     for {
@@ -213,6 +295,7 @@ object AuthService {
       identityRepo        <- ZIO.service[OAuthIdentityRepository]
       tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
       attemptRepo         <- ZIO.service[LoginAttemptRepository]
+      claimCodeRepo       <- ZIO.service[GuestClaimCodeRepository]
       hasher              <- ZIO.service[PasswordHasher]
       rateLimiter         <- ZIO.service[RateLimiter]
       emailSender         <- ZIO.service[EmailSender]
@@ -225,6 +308,7 @@ object AuthService {
       identityRepo,
       tokenRepo,
       attemptRepo,
+      claimCodeRepo,
       hasher,
       rateLimiter,
       emailSender,
@@ -241,6 +325,7 @@ final case class AuthServiceLive(
   identityRepo: OAuthIdentityRepository,
   tokenRepo: EmailVerificationTokenRepository,
   attemptRepo: LoginAttemptRepository,
+  claimCodeRepo: GuestClaimCodeRepository,
   hasher: PasswordHasher,
   rateLimiter: RateLimiter,
   emailSender: EmailSender,
@@ -293,6 +378,7 @@ final case class AuthServiceLive(
       Locale.fromString(row.locale).getOrElse(Locale.default),
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
+      row.isGuest,
     )
   }
 
@@ -302,11 +388,11 @@ final case class AuthServiceLive(
     OAuthProvider.fromString(row.provider).map(p => LinkedIdentity(p, row.email, row.createdAt.toString))
   }
 
-  private def createSession(userId: Long): UIO[String] = {
+  private def createSession(userId: Long, duration: Duration = SessionAuth.sessionDuration): UIO[String] = {
     for {
       id  <- Tokens.urlSafe()
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _   <- sessionRepo.insert(SessionRow(id, userId, now, now + SessionAuth.sessionDuration.toMillis, None)).orDie
+      _   <- sessionRepo.insert(SessionRow(id, userId, now, now + duration.toMillis, None)).orDie
     } yield id
   }
 
@@ -515,7 +601,9 @@ final case class AuthServiceLive(
       _        <- ZIO.foreachDiscard(maybeRow.filter(_.emailVerifiedAt.isEmpty)) { row =>
                     // The account's own language, not the language of the browser asking. A resend can be
                     // requested from the sign-in page in either one, and the mail belongs to the account.
-                    issueVerification(row.id, row.email, localeOf(row))
+                    // `normalizedEmail` rather than `row.email`: the row was found *by* that address, and the
+                    // column is an `Option` only because a guest account has none.
+                    issueVerification(row.id, normalizedEmail, localeOf(row))
                   }
     } yield ()
   }
@@ -601,9 +689,9 @@ final case class AuthServiceLive(
             .findById(userId)
             .orDie
             .flatMap {
-              case Some(row) if row.emailVerifiedAt.isEmpty && row.email == identity.email.trim.toLowerCase =>
+              case Some(row) if row.emailVerifiedAt.isEmpty && row.email.contains(identity.email.trim.toLowerCase) =>
                 Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => userRepo.markEmailVerified(userId, now).orDie)
-              case _                                                                                        =>
+              case _                                                                                               =>
                 ZIO.unit
             }
         }
@@ -660,7 +748,12 @@ final case class AuthServiceLive(
                     if (ok)
                       ZIO.unit
                     else {
-                      logFailedAttempt(row.email, "wrong current password on password change") *>
+                      // An account with no address is named by its id. Unreachable for a guest in practice — one has
+                      // no password to get wrong — but the log line has to say who either way.
+                      logFailedAttempt(
+                        row.email.getOrElse(s"user id=${row.id}"),
+                        "wrong current password on password change",
+                      ) *>
                         ZIO.fail(
                           AuthFailure.ValidationError(
                             Map("currentPassword" -> MessageRef(MessageKeys.currentPasswordIncorrect))
@@ -712,6 +805,103 @@ final case class AuthServiceLive(
     for {
       _   <- userRepo.updateLocale(userId, locale.code)
       row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
+    } yield toDomain(row)
+  }
+
+  // -- Guest accounts ---------------------------------------------------------------------------
+
+  /** The row, if it is a guest. Everything below refuses to act on a real account rather than quietly doing something
+    * odd to it: a transfer code on an account with a password would be a second, weaker credential for it.
+    */
+  private def requireGuest(userId: Long): IO[Unit, UserRow] = {
+    // Fails with `Unit` and lets each caller name its own failure: the two callers answer the same condition under
+    // different enums, because their endpoints declare different statuses.
+    userRepo.findById(userId).orDie.someOrFail(()).filterOrFail(_.isGuest)(())
+  }
+
+  def createGuest(clientIp: Option[String], locale: Locale): IO[GuestMintFailure, (User, String)] = {
+    // Keyed on the address alone, because a guest has nothing else to key on — and every call counts, since a success
+    // is exactly what this budget exists to cap.
+    val keys = clientIp.map(RateLimitKey.guest).toList
+    for {
+      blocked   <- anyKeyBlocked(keys)
+      _         <- ZIO.when(blocked) {
+                     SecurityLog.warn(s"Rate limit exceeded minting a guest account from ${clientIp.getOrElse("?")}") *>
+                       ZIO.fail(GuestMintFailure.RateLimited)
+                   }
+      _         <- recordFailure(keys)
+      now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row       <- userRepo.insertGuest("light", locale.code, now).orDie
+      sessionId <- createSession(row.id, SessionAuth.guestSessionDuration)
+      _         <- SecurityLog.info(s"Minted guest account ${row.id}")
+    } yield (toDomain(row), sessionId)
+  }
+
+  def issueClaimCode(userId: Long): IO[GuestCodeFailure, String] = {
+    for {
+      _    <- requireGuest(userId).mapError(_ => GuestCodeFailure.NotGuest)
+      code <- Tokens.claimCode()
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _    <- claimCodeRepo.insert(userId, code, now).orDie
+      // The code itself never appears in a log line: it is the credential, like a session id.
+      _    <- SecurityLog.info(s"Issued a transfer code for guest account $userId")
+    } yield code
+  }
+
+  def claimGuest(code: String, clientIp: Option[String]): IO[GuestClaimFailure, (User, String)] = {
+    val normalized = Tokens.normalizeClaimCode(code)
+    val keys       = clientIp.map(RateLimitKey.claim).toList
+    for {
+      blocked   <- anyKeyBlocked(keys)
+      _         <- ZIO.when(blocked) {
+                     SecurityLog.warn(s"Rate limit exceeded redeeming a transfer code from ${clientIp.getOrElse("?")}") *>
+                       ZIO.fail(GuestClaimFailure.RateLimited)
+                   }
+      _         <- recordFailure(keys)
+      found     <- claimCodeRepo.findActive(normalized).orDie
+      claimed   <- found match {
+                     case None       =>
+                       SecurityLog.warn(s"Unknown transfer code offered from ${clientIp.getOrElse("?")}") *>
+                         ZIO.fail(GuestClaimFailure.InvalidCode)
+                     case Some(code) =>
+                       ZIO.succeed(code)
+                   }
+      // A code whose account has since been deleted answers the same "no such code" as one that never existed.
+      row       <- userRepo.findById(claimed.userId).orDie.someOrFail(GuestClaimFailure.InvalidCode)
+      now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _         <- claimCodeRepo.markUsed(claimed.id, now).orDie
+      sessionId <- createSession(row.id, SessionAuth.guestSessionDuration)
+      _         <- clearFailures(keys)
+      _         <- SecurityLog.info(s"Transfer code redeemed for account ${row.id}")
+    } yield (toDomain(row), sessionId)
+  }
+
+  def upgradeGuest(userId: Long, email: String, password: String, locale: Locale): IO[GuestAccountFailure, User] = {
+    val normalizedEmail = email.trim.toLowerCase
+    for {
+      _        <- requireGuest(userId).mapError(_ => GuestAccountFailure.NotGuest)
+      // `validateCredentials` is shared with signup and speaks `AuthFailure`; only its one validation case is
+      // reachable, and the catch-all keeps the match total without inventing a second failure.
+      _        <- validateCredentials(normalizedEmail, password).mapError {
+                    case AuthFailure.ValidationError(errors) =>
+                      GuestAccountFailure.ValidationError(errors)
+                    case _                                   =>
+                      GuestAccountFailure.ValidationError(Map.empty)
+                  }
+      existing <- userRepo.findByEmail(normalizedEmail).orDie
+      _        <- ZIO.when(existing.isDefined)(ZIO.fail(GuestAccountFailure.EmailAlreadyRegistered))
+      hash     <- hasher.hash(password).orDie
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      // Unverified like any fresh signup, and the link goes out the same way. The session the caller already holds
+      // keeps working — `app.require-email-verification` gates *signing in*, and throwing somebody out of the account
+      // they have just claimed would be a strange way to congratulate them.
+      _        <- userRepo.upgradeGuest(userId, normalizedEmail, hash, None).orDie
+      // Every transfer code goes: they were a way into an account with nothing to lose, and this one now has a
+      // password. Leaving them live would keep a weaker credential for a stronger account.
+      _        <- claimCodeRepo.revokeAllFor(userId, now).orDie
+      _        <- issueVerification(userId, normalizedEmail, locale)
+      row      <- userRepo.findById(userId).orDie.someOrFail(GuestAccountFailure.NotGuest)
+      _        <- SecurityLog.info(s"Guest account $userId became a registered account")
     } yield toDomain(row)
   }
 }

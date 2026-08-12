@@ -16,9 +16,11 @@ import gathedge.frontend.pages.{
   SignInPage,
   SignUpPage,
   VerifyEmailPage,
+  WordDetailPage,
+  WordsPage,
 }
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AuditQuery, UserQuery}
+import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
 import gathedge.shared.dto.AuthResponse
@@ -96,6 +98,12 @@ object App {
       .collectSignalPF[AuditQuery] { case (gate, page: Page.AdminAudit) if showsAdminScreen(gate) => page.query }(
         query => AdminAuditPage.render(query, onAdminAuditQuery)
       )
+      // The vocabulary listing has no gate at all: it renders for a visitor with no session, which is the whole point
+      // of it. `loaded` still matters, though — the page reads the user to decide whether to draw the tag controls,
+      // and drawing them for an instant and then taking them away would be worse than a spinner.
+      .collectSignalPF[WordQuery] { case (gate, page: Page.Words) if gate.loaded => page.query }(query =>
+        WordsPage.render(query, onWordQuery)
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -137,6 +145,21 @@ object App {
         }
       }
       navigate(Page.Admin(query), replace = refinesSearch)
+    }
+  }
+
+  /** Same rule as the user list: a search being typed out further replaces, everything else pushes. */
+  private val onWordQuery: Observer[WordQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.Words(previous) =>
+            query.refines(previous)
+          case _                    =>
+            false
+        }
+      }
+      navigate(Page.Words(query), replace = refinesSearch)
     }
   }
 
@@ -208,6 +231,11 @@ object App {
       // renderers above, which is the only way they keep their state across a query change.
       case Page.Admin(_) | Page.AdminAudit(_)       =>
         ForbiddenPage.render()
+      // Reached only before the session has loaded; the signal renderer above answers otherwise.
+      case Page.Words(query)                        =>
+        WordsPage.render(Val(query), onWordQuery)
+      case Page.WordDetail(id)                      =>
+        WordDetailPage.render(id)
       case Page.AdminUserDetail(id) if gate.isAdmin =>
         AdminUserDetailPage.render(id)
       case Page.AdminUserDetail(_)                  =>

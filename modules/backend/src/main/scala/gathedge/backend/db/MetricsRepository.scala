@@ -27,6 +27,10 @@ final case class TableCounts(
   unverifiedUsers: Long,
   usersWithoutPassword: Long,
   oauthIdentities: Long,
+  guests: Long,
+  words: Long,
+  wordTranslations: Long,
+  tags: Long,
 )
 
 /** The one repository that is not backed by a table of its own: it answers the aggregate questions the system overview
@@ -68,9 +72,12 @@ final class MetricsRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
     with MetricsRepository {
   import ctx._
 
-  private inline def users      = quote(querySchema[UserRow]("users"))
-  private inline def identities = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
-  private inline def flywayRows = quote(querySchema[MigrationRow]("flyway_schema_history"))
+  private inline def users        = quote(querySchema[UserRow]("users"))
+  private inline def identities   = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
+  private inline def wordRows     = quote(querySchema[WordRow]("words"))
+  private inline def wordEdgeRows = quote(querySchema[WordTranslationRow]("word_translations"))
+  private inline def tagRows      = quote(querySchema[TagRow]("tags"))
+  private inline def flywayRows   = quote(querySchema[MigrationRow]("flyway_schema_history"))
 
   def counts: Task[TableCounts] = {
     // One round trip per count rather than one wide SELECT: Quill has no cross-table aggregate combinator, and
@@ -86,12 +93,20 @@ final class MetricsRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy]
         unverifiedCount      <- run(ctx.run(quote(users.filter(_.emailVerifiedAt.isEmpty).size)))
         withoutPasswordCount <- run(ctx.run(quote(users.filter(_.passwordHash.isEmpty).size)))
         identityCount        <- run(ctx.run(quote(identities.size)))
+        guestCount           <- run(ctx.run(quote(users.filter(_.isGuest).size)))
+        wordCount            <- run(ctx.run(quote(wordRows.size)))
+        translationCount     <- run(ctx.run(quote(wordEdgeRows.size)))
+        tagCount             <- run(ctx.run(quote(tagRows.size)))
       } yield TableCounts(
         users = userCount,
         admins = adminCount,
         unverifiedUsers = unverifiedCount,
         usersWithoutPassword = withoutPasswordCount,
         oauthIdentities = identityCount,
+        guests = guestCount,
+        words = wordCount,
+        wordTranslations = translationCount,
+        tags = tagCount,
       )
     }
     logged(counted)(result => s"metrics.counts users=${result.users} identities=${result.oauthIdentities}")

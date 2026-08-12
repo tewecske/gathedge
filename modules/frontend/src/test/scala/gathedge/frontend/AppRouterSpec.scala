@@ -2,9 +2,10 @@ package gathedge.frontend
 
 import gathedge.frontend.components.SortHeader
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, UserQuery}
+import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
 import gathedge.shared.domain.Locale.urlPrefix
-import gathedge.shared.dto.{Paging, UserSort}
+import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
+import gathedge.shared.dto.{Paging, UserSort, WordSort}
 import zio.test._
 
 /** That every route carries the language prefix.
@@ -98,12 +99,57 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.router.pageForRelativeUrl(s"$prefix/admin/users?sort=shoe-size&dir=desc").contains(Page.Admin()),
         )
       },
+      // The vocabulary listing carries two things the admin ones do not: which language is being read and which one
+      // the translations are in. They are in the address because "German into Hungarian" is a screen worth sending to
+      // somebody, not a preference hidden in a menu.
+      test("the vocabulary's languages, filters and search survive a round trip through its URL") {
+        val page = Page.Words(
+          WordQuery(
+            page = 2,
+            sort = SortHeader.Sort.ascending(WordSort.text),
+            search = "hau",
+            language = WordLanguage.De,
+            target = WordLanguage.En,
+            partOfSpeech = Some(PartOfSpeech.Noun),
+            tagId = Some(4L),
+            mine = true,
+          )
+        )
+        val url  = AppRouter.router.relativeUrlForPage(page)
+
+        assertTrue(
+          url.startsWith(s"$prefix/words?"),
+          url.contains("target=en"),
+          url.contains("pos=noun"),
+          url.contains("tag=4"),
+          url.contains("mine=true"),
+          // The browsed language is the default here, so it writes no parameter at all.
+          !url.contains("lang="),
+          AppRouter.router.pageForRelativeUrl(url).contains(page),
+        )
+      },
+      test("the default vocabulary listing is the bare path, and its detail page takes an id") {
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.Words()) == s"$prefix/words",
+          AppRouter.router.relativeUrlForPage(Page.WordDetail(12)) == s"$prefix/words/12",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/words").contains(Page.Words()),
+          AppRouter.router.pageForRelativeUrl(s"$prefix/words/12").contains(Page.WordDetail(12)),
+          // A language nobody has heard of reads as the default rather than as Not Found: a stale link should still
+          // open a list of words.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/words?lang=xx").contains(Page.Words()),
+          AppRouter.router.pageForRelativeUrl(s"$prefix/words?tag=nonsense").contains(Page.Words()),
+        )
+      },
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the
       // query would answer the back button with the filter silently gone.
       test("the history tag carries the listing state too") {
-        val page = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
+        val page  = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
+        val words = Page.Words(WordQuery(search = "haus", target = WordLanguage.En, tagId = Some(9L)))
 
-        assertTrue(AppRouter.deserialize(AppRouter.serialize(page)) == page)
+        assertTrue(
+          AppRouter.deserialize(AppRouter.serialize(page)) == page,
+          AppRouter.deserialize(AppRouter.serialize(words)) == words,
+        )
       },
     )
   }

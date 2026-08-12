@@ -255,6 +255,7 @@ final case class AdminServiceLive(
       Locale.fromString(row.locale).getOrElse(Locale.default),
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
+      row.isGuest,
     )
   }
 
@@ -372,7 +373,7 @@ final case class AdminServiceLive(
           )
         }
       _           <-
-        ZIO.when(before.email != normalizedEmail) {
+        ZIO.when(!before.email.contains(normalizedEmail)) {
           auditTrail.recordUser(
             actor,
             AuditAction.userUpdate,
@@ -442,14 +443,22 @@ final case class AdminServiceLive(
     * report "not blocked" for a user who cannot sign in, and a clear button that cleared only that key would not unlock
     * them.
     */
-  private def lockoutKeysFor(email: String): UIO[List[String]] = {
-    for {
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      ips <- attemptRepo.distinctRecentIps(email, now - AdminService.lockoutOriginWindow.toMillis).orDie
-    } yield RateLimitKey.email(email) :: RateLimitKey.verification(email) :: ips.map(RateLimitKey.ip)
+  /** `None` is a guest account: it has no address, so no key can be holding failures against it and there is nothing to
+    * clear. Every dimension below is keyed on an address, which a guest never had.
+    */
+  private def lockoutKeysFor(email: Option[String]): UIO[List[String]] = {
+    email match {
+      case None          =>
+        ZIO.succeed(Nil)
+      case Some(address) =>
+        for {
+          now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          ips <- attemptRepo.distinctRecentIps(address, now - AdminService.lockoutOriginWindow.toMillis).orDie
+        } yield RateLimitKey.email(address) :: RateLimitKey.verification(address) :: ips.map(RateLimitKey.ip)
+    }
   }
 
-  private def lockoutStatus(email: String): UIO[LockoutStatus] = {
+  private def lockoutStatus(email: Option[String]): UIO[LockoutStatus] = {
     for {
       keys    <- lockoutKeysFor(email)
       entries <- ZIO.foreach(keys)(rateLimiter.status)
@@ -473,7 +482,11 @@ final case class AdminServiceLive(
       identities <- identityRepo.listForUser(id).orDie
       sessions   <- sessionRepo.listForUser(id).orDie
       tokens     <- tokenRepo.findForUser(id).orDie
-      attempts   <- attemptRepo.recentForEmail(row.email, AdminService.recentAttemptLimit).orDie
+      // A guest has no address, so nothing was ever attempted against it — an empty history rather than a query.
+      attempts   <- ZIO
+                      .foreach(row.email)(email => attemptRepo.recentForEmail(email, AdminService.recentAttemptLimit))
+                      .map(_.toList.flatten)
+                      .orDie
       lockout    <- lockoutStatus(row.email)
       sessionInfo = sessions.map(toSessionInfo(_, now))
     } yield AdminUserDetail(
@@ -512,7 +525,10 @@ final case class AdminServiceLive(
   def resendVerificationFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {
     for {
       row <- requireUser(id)
-      _   <- authService.issueVerificationFor(id, row.email, Locale.fromString(row.locale).getOrElse(Locale.default))
+      // Nothing to send to an account with no address; the audit line still records that it was asked for.
+      _   <- ZIO.foreachDiscard(row.email) { email =>
+               authService.issueVerificationFor(id, email, Locale.fromString(row.locale).getOrElse(Locale.default))
+             }
       _   <- auditTrail.recordUser(
                actor,
                AuditAction.userVerificationResend,

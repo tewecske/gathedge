@@ -1,7 +1,8 @@
 package gathedge.shared.api
 
-import gathedge.shared.domain.{Locale, OAuthProvider, Theme, User}
+import gathedge.shared.domain.{Gender, Locale, OAuthProvider, PartOfSpeech, Tag, Theme, User, Word, WordLanguage}
 import gathedge.shared.dto.{
+  AddTranslationRequest,
   AdminIdentityInfo,
   AdminSessionInfo,
   AdminUserDetail,
@@ -9,9 +10,13 @@ import gathedge.shared.dto.{
   AuditEntry,
   AuditPage,
   AuthResponse,
+  ClaimCodeResponse,
+  ClaimRequest,
   ClearRateLimitRequest,
   ConfigSummary,
+  CreateTagRequest,
   CreateUserRequest,
+  CreateWordRequest,
   DbStats,
   IdentitiesResponse,
   JobStatus,
@@ -20,6 +25,7 @@ import gathedge.shared.dto.{
   LoginAttemptEntry,
   LoginRequest,
   MigrationInfo,
+  NewTranslation,
   ProvidersResponse,
   PruneResult,
   RateLimitEntry,
@@ -29,11 +35,16 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  TranslationEntry,
   UpdateLocaleRequest,
   UpdateThemeRequest,
   UpdateUserRequest,
+  UpgradeRequest,
   UserPage,
   VerifyEmailRequest,
+  WordDetail,
+  WordPage,
+  WordSummary,
 }
 import zio.schema.{DeriveSchema, Schema}
 
@@ -54,8 +65,13 @@ object ApiSchemas {
   given Schema[Theme]         = DeriveSchema.gen[Theme]
   given Schema[Locale]        = DeriveSchema.gen[Locale]
   given Schema[OAuthProvider] = DeriveSchema.gen[OAuthProvider]
+  given Schema[WordLanguage]  = DeriveSchema.gen[WordLanguage]
+  given Schema[PartOfSpeech]  = DeriveSchema.gen[PartOfSpeech]
+  given Schema[Gender]        = DeriveSchema.gen[Gender]
 
   given Schema[User] = DeriveSchema.gen[User]
+  given Schema[Word] = DeriveSchema.gen[Word]
+  given Schema[Tag]  = DeriveSchema.gen[Tag]
 
   given Schema[AuthResponse]              = DeriveSchema.gen[AuthResponse]
   given Schema[SignupResponse]            = DeriveSchema.gen[SignupResponse]
@@ -69,6 +85,18 @@ object ApiSchemas {
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]
   given Schema[ProvidersResponse]         = DeriveSchema.gen[ProvidersResponse]
+
+  given Schema[ClaimCodeResponse] = DeriveSchema.gen[ClaimCodeResponse]
+  given Schema[ClaimRequest]      = DeriveSchema.gen[ClaimRequest]
+  given Schema[UpgradeRequest]    = DeriveSchema.gen[UpgradeRequest]
+
+  given Schema[WordSummary]           = DeriveSchema.gen[WordSummary]
+  given Schema[TranslationEntry]      = DeriveSchema.gen[TranslationEntry]
+  given Schema[WordDetail]            = DeriveSchema.gen[WordDetail]
+  given Schema[NewTranslation]        = DeriveSchema.gen[NewTranslation]
+  given Schema[CreateWordRequest]     = DeriveSchema.gen[CreateWordRequest]
+  given Schema[AddTranslationRequest] = DeriveSchema.gen[AddTranslationRequest]
+  given Schema[CreateTagRequest]      = DeriveSchema.gen[CreateTagRequest]
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]
@@ -86,6 +114,7 @@ object ApiSchemas {
   // a shared field name in exchange for a derivation that only ever has two instantiations.
   given Schema[UserPage]  = DeriveSchema.gen[UserPage]
   given Schema[AuditPage] = DeriveSchema.gen[AuditPage]
+  given Schema[WordPage]  = DeriveSchema.gen[WordPage]
 
   given Schema[ClearRateLimitRequest] = DeriveSchema.gen[ClearRateLimitRequest]
 

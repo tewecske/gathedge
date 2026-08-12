@@ -128,6 +128,18 @@ object RateLimitKey {
     * accepts by design (summary.md), and it still should not be free to probe at speed.
     */
   def signup(value: String): String = s"signup:${value.trim.toLowerCase}"
+
+  /** Minting a guest account writes a row and asks nobody for anything, so it is the cheapest thing an anonymous caller
+    * can ask this application to do and needs a budget of its own. Keyed on the client address, since a guest has no
+    * address of its own to key on.
+    */
+  def guest(value: String): String = s"guest:${value.trim.toLowerCase}"
+
+  /** Redeeming a transfer code is the one endpoint where guessing is worth an attacker's time — 80 bits is far out of
+    * reach, but a budget costs nothing and turns "out of reach" into "not worth starting". Its own namespace, so a
+    * burst of guesses cannot spend the sign-in budget of whoever is behind the same address.
+    */
+  def claim(value: String): String = s"claim:${value.trim.toLowerCase}"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single

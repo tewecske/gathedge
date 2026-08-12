@@ -39,8 +39,22 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private val currentUserSignal = AppState.currentUserSignal
   private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
   private val themeSignal       = AppState.themeSignal
-  private val emailSignal       = currentUserSignal.map(_.map(_.email).getOrElse("")).distinct
-  private val initialSignal     = emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
+
+  /** What the account menu is labelled with. A guest has no address, so it says so instead — the menu still has to name
+    * *something*, and "guest" is the true answer rather than an empty tooltip.
+    */
+  private val emailSignal = {
+    currentUserSignal
+      .map(_.map(user => user.email.getOrElse(I18n.t(UiKeys.guestAccountLabel))).getOrElse(""))
+      .distinct
+  }
+
+  private val initialSignal = {
+    emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
+  }
+
+  /** Whether the account has no credentials of its own — what the shell shows a "save your words" prompt for. */
+  private val isGuestSignal = currentUserSignal.map(_.exists(_.isGuest)).distinct
 
   private val (menuId, menuAnchor)       = Popover.nextIds("user-menu")
   private val (navMenuId, navMenuAnchor) = Popover.nextIds("nav-menu")
@@ -146,14 +160,17 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** Empty on the signed-out shell: every one of these needs a session. The admin link is left to the signal below,
-    * which is already `false` for a visitor with no account.
+  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; everything else here
+    * needs one. The admin link is left to the signal below, which is already `false` for a visitor with no account.
     */
   private def navLinks(): List[HtmlElement] = {
     if (isAuthenticated) {
-      List(navLink(Page.Home, I18n.t(UiKeys.navHome)))
+      List(
+        navLink(Page.Words(), I18n.t(UiKeys.navWords)),
+        navLink(Page.Home, I18n.t(UiKeys.navHome)),
+      )
     } else {
-      Nil
+      List(navLink(Page.Words(), I18n.t(UiKeys.navWords)))
     }
   }
 
@@ -163,21 +180,32 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     */
   private def navMenuItems(): List[HtmlElement] = {
     if (isAuthenticated) {
-      List(navMenuItem(Page.Home, I18n.t(UiKeys.navHome)))
+      List(
+        navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
+        navMenuItem(Page.Home, I18n.t(UiKeys.navHome)),
+      )
     } else {
-      Nil
+      List(navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)))
     }
   }
 
   /** The avatar and its menu are the part of the bar that means nothing without an account. Built as a pair so the
     * trigger and the popover it names can never be rendered one without the other.
+    *
+    * Gated on the *session* rather than on which shell this is: the vocabulary uses the authenticated shell and is
+    * reachable with no session at all, so an avatar drawn from `active.isDefined` would offer a visitor an account menu
+    * for an account they do not have. A signed-out visitor gets a sign-in link in its place.
     */
-  private def accountControls(): List[HtmlElement] = {
-    if (isAuthenticated) {
-      List(renderAccountMenuTrigger(), renderAccountMenu())
-    } else {
-      Nil
-    }
+  private def accountControls(): HtmlElement = {
+    div(
+      cls := "contents",
+      child <-- AppState.isSignedInSignal.map { signedIn =>
+        if (signedIn)
+          div(cls := "contents", renderAccountMenuTrigger(), renderAccountMenu())
+        else
+          a(cls   := "btn btn-sm btn-ghost", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.commonSignIn))
+      },
+    )
   }
 
   /** The nav is rendered twice and shown once: a dropdown under `lg`, a centred row of buttons at `lg` and up. Both are
@@ -213,15 +241,14 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   }
 
   /** The small-screen nav: the hamburger and the popover it names, as a pair so neither can be rendered without the
-    * other. Nothing at all on the signed-out shell, where the nav is empty — a button opening an empty menu is worse
-    * than no button.
+    * other.
+    *
+    * Rendered on the signed-out shell too, now that it has an entry — the vocabulary. A visitor who lands on the
+    * sign-in page has to have a way to the one screen that needs no account, and at a phone's width this dropdown is
+    * the only nav there is.
     */
   private def navDropdown(): List[HtmlElement] = {
-    if (isAuthenticated) {
-      List(renderNavMenuTrigger(), renderNavMenu())
-    } else {
-      Nil
-    }
+    List(renderNavMenuTrigger(), renderNavMenu())
   }
 
   private def renderNavMenuTrigger(): HtmlElement = {
@@ -349,20 +376,32 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       Popover.popoverAttr := "auto",
       idAttr              := menuId,
       styleAttr           := s"position-anchor:$menuAnchor",
+      // A guest has no address, no password and no linked providers, so the settings page has nothing to show it —
+      // what it needs instead is the way to become a real account, which lives on the vocabulary page's banner.
       li(
-        a(
-          cls := (
-            if (active.contains(Page.Settings))
-              "menu-active"
-            else
-              ""
-          ),
-          AppRouter.router.navigateTo(Page.Settings),
-          I18n.t(UiKeys.settingsTitle),
-          // Choosing "Account settings" while already on /settings does not rebuild the shell, and a
-          // popover is never light-dismissed by a click on its own item.
-          onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
-        )
+        child <-- isGuestSignal.map { isGuest =>
+          if (isGuest) {
+            a(
+              AppRouter.router.navigateTo(Page.Words()),
+              I18n.t(UiKeys.guestBannerTitle),
+              onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+            )
+          } else {
+            a(
+              cls := (
+                if (active.contains(Page.Settings))
+                  "menu-active"
+                else
+                  ""
+              ),
+              AppRouter.router.navigateTo(Page.Settings),
+              I18n.t(UiKeys.settingsTitle),
+              // Choosing "Account settings" while already on /settings does not rebuild the shell, and a
+              // popover is never light-dismissed by a click on its own item.
+              onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+            )
+          }
+        }
       ),
       // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
       li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
