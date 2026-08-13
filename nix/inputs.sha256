@@ -1,0 +1,7 @@
+# Written by scripts/release.sh. Each line records the digest of the files that determine one
+# fixed-output hash, as they stood when that hash was last computed.
+#
+# This is the only way to notice a stale hash without building: Nix evaluation accepts a wrong
+# fixed-output hash quite happily and fails much later, in the build that needs it.
+depsSha256 17c7c0d582e22420314ac1c8253db5c1acd7717f73ccb44328eea3d08e7ab2bc
+npmDepsHash f4367b6281aacedf92e252eb7c0a5daa26b071b8ac7396852fddbee4906c54d8

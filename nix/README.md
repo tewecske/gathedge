@@ -110,15 +110,68 @@ Either way, set `publicBaseUrl` to the `https://` URL and set `production = true
 cookie is never sent over plain HTTP, so from that point the app can only be signed into over the
 https origin: reaching it by bare IP will still load the SPA and then fail to authenticate.
 
+## Releasing a new version
+
+The server builds this repository *from its git remote*, at whatever revision the deployment's
+`flake.lock` names. **The push is the artifact** — there is no build output in between to test, so
+a release is three steps in two repositories:
+
+```
+this repo:      commit and push
+your NixOS cfg: nix flake update gathedge   (moves the locked revision), commit, push
+the server:     git pull && sudo nixos-rebuild switch --flake .
+```
+
+`scripts/release.sh` prepares the first of those and prints the other two:
+
+```
+./scripts/release.sh              # what changed, refresh hashes, build, smoke-test, next steps
+./scripts/release.sh --check      # ~3s, no build — the pre-push gate
+./scripts/release.sh --mark       # record this revision as released, once the server is up
+./scripts/release.sh --install-hook
+```
+
+**What "prepare" means depends on the diff, which is why the script computes it.** It diffs the
+newest `released/*` tag against `HEAD` and reports what that range implies: a hash to recompute, a
+migration to rehearse against real Postgres (`RUN_POSTGRES_TESTS=1`, plus a `pg_dump` on the server
+before switching), a new configuration key that may need to reach the deployment. Most releases
+need none of it and the script says so.
+
+It then builds both packages and asserts the four things that build green and fail at *runtime* —
+the catalogs being inside the backend jar, the launcher working with an empty `PATH`, the Tailwind
+scan having produced a real stylesheet, and the catalogs reaching `dist/locales`. Each of those has
+failed here at least once.
+
+`--install-hook` sets `core.hooksPath` to `scripts/githooks`, so every push runs `--check` on the
+commit being pushed (not on the working tree). That check reads the commit's blobs and evaluates
+the flake at that revision; it costs about three seconds and refuses a push whose fixed-output
+hashes are stale, whose `flake.lock` no longer satisfies `flake.nix`, or whose source filters drop
+a directory `build.sbt` reads. `git push --no-verify` skips it.
+
+**What it cannot tell you.** It proves the revision is buildable and self-consistent, not that your
+*host* can build it — the evaluation uses this repo's `flake.lock` nixpkgs while the server builds
+against its own. It knows nothing about the host either: a port already taken, a secret missing a
+key, a systemd unit's `PATH`. And its smoke tests run the packages, not the app, so Flyway against
+your real data is still first exercised on the server. That is what the `pg_dump` step and
+`nixos-rebuild --rollback` are for.
+
 ## Maintenance: the two hashes
 
-Both are fixed-output derivations, so both must be refreshed by hand.
+Both are fixed-output derivations, so both must be refreshed by hand — `scripts/release.sh` is that
+hand, and `nix/inputs.sha256` is how it (and the pre-push check) notice one has gone stale: it
+records the digest of each hash's inputs as they stood when that hash was last computed. Nix
+evaluation accepts a wrong fixed-output hash quite happily and only fails in the build that needs
+it, which on this deployment means on the server.
 
 - **`depsSha256` in `nix/scala.nix`** — whenever `build.sbt` or `project/plugins.sbt`
-  dependencies change. Set it to `lib.fakeSha256`, run `nix build .#backend`, copy the
-  `got:` value from the error.
+  dependencies change. The script runs the build and writes back the `got:` value from the
+  mismatch; by hand, set it to `lib.fakeSha256`, run `nix build .#backend`, copy the `got:` value.
 - **`npmDepsHash` in `nix/web.nix`** — whenever `web/package-lock.json` changes:
   `nix run nixpkgs#prefetch-npm-deps -- web/package-lock.json`.
+
+A nixpkgs bump can in principle move either, since it moves `sbt` and `nodejs` — the stamp
+deliberately does not track `flake.lock`, because tripping on every unrelated input bump would
+train everyone to ignore it. Both hashes fail loudly, so the build tells you.
 
 ## How the JDK is pinned
 

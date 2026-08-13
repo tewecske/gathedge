@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# Refuses a push of a commit that is not ready to be deployed.
+#
+# The NixOS deployment builds this repository from its git remote, so a push is what reaches the
+# server: there is no artifact in between to catch a stale fixed-output hash, a source filter that
+# drops a directory the build reads, or a flake.lock that no longer matches flake.nix. See the
+# header of scripts/release.sh for the two failures that motivated this.
+#
+# It costs about three seconds and evaluates the *pushed commit*, not the working tree. Install it
+# with `./scripts/release.sh --install-hook` (which sets core.hooksPath); skip it once with
+# `git push --no-verify`.
+#
+# stdin carries one line per pushed ref:  <local ref> <local sha> <remote ref> <remote sha>
+
+set -euo pipefail
+
+readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ZERO="0000000000000000000000000000000000000000"
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  # A branch deletion has nothing to check.
+  [ "$local_sha" = "$ZERO" ] && continue
+  "$REPO_ROOT/scripts/release.sh" --check "$local_sha"
+done
+
+exit 0
