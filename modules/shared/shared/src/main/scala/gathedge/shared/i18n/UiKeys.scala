@@ -417,6 +417,7 @@ object UiKeys {
   val wordsLanguageLabel: String     = key("ui.words.languageLabel")
   val wordsTargetLabel: String       = key("ui.words.targetLabel")
   val wordsPosLabel: String          = key("ui.words.posLabel")
+  val wordsSwapLanguages: String     = key("ui.words.swapLanguages")
   val wordsPosAny: String            = key("ui.words.posAny")
   val wordsOnlyMine: String          = key("ui.words.onlyMine")
   val wordsEmpty: String             = key("ui.words.empty")
@@ -440,6 +441,12 @@ object UiKeys {
     */
   val wordsPairAdd: String    = key("ui.words.pairAdd")
   val wordsPairRemove: String = key("ui.words.pairRemove")
+
+  /** Marked beside a word that is being learned with no answer chosen in the language the listing translates into — a
+    * tick alone leaves a practice screen with nothing to check against. Worded as the gap rather than as an
+    * instruction, since it is a state of the row and not something that failed.
+    */
+  val wordsNoPair: String = key("ui.words.noPair")
 
   /** The tag a tick files a word into. Deliberately worded as an action rather than as "Tag": the control next to it
     * narrows the listing instead, and the two used to be one select that did both.

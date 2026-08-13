@@ -23,6 +23,30 @@ object Pagination {
     */
   private val maxButtons = 7
 
+  /** How long a request may be out before the control admits to being busy.
+    *
+    * Every listing that draws this also reloads itself on writes that have nothing to do with paging — ticking a word,
+    * marking a translation, changing a filter — and those round trips are usually over in well under this. Disabling on
+    * the flag directly meant the buttons greyed out and back on every one of them: a flicker nobody could have acted on
+    * in the time it was showing, and the only thing about the interaction a reader actually noticed.
+    */
+  private val busyDelayMs = 300
+
+  /** The busy flag as the buttons should show it: `true` only once a request has been out for [[busyDelayMs]], `false`
+    * the moment one lands.
+    *
+    * Asymmetric on purpose — a pending "now busy" is dropped when the answer beats it, so a fast listing never greys
+    * out at all, while a slow one still locks before a reader can queue a second page onto the first. That guard is not
+    * load-bearing on its own in any current caller: each loads through `flatMapSwitch`, so a superseded request is
+    * cancelled rather than raced. It is here for what the reader sees, not for what the server is asked.
+    */
+  private def delayed(busy: Signal[Boolean]): Signal[Boolean] = {
+    busy.updates
+      .flatMapSwitch(out => if (out) EventStream.fromValue(true).delay(busyDelayMs) else EventStream.fromValue(false))
+      .toSignal(false)
+      .distinct
+  }
+
   /** A page number the caller can safely use, whatever it was holding. A listing that shrinks — a filter narrowing, a
     * row deleted — leaves the stored number pointing past the end, and clamping on read means no page has to watch for
     * that and write a corrected number back.
@@ -74,7 +98,8 @@ object Pagination {
     *   because a count of accounts and a count of audit entries are different sentences in a language with no generic
     *   plural noun to fall back on.
     * @param busy
-    *   disables the whole control while a request is out, so a second click cannot race the first.
+    *   whether a request is out. Disables the whole control, but only once the request has taken long enough to be
+    *   worth showing — see [[delayed]]; a caller passes the raw flag and gets no flicker off a quick one.
     */
   def render(
     page: Signal[Int],
@@ -87,12 +112,13 @@ object Pagination {
   ): HtmlElement = {
     val pageCount = total.combineWithFn(pageSize)(Paging.pageCount).distinct
     val current   = page.combineWithFn(pageCount)(clampPage).distinct
+    val shownBusy = delayed(busy)
 
     div(
       cls := "flex flex-wrap items-center justify-between gap-4 mt-4",
-      renderPageSize(pageSize, onPageSize, busy),
+      renderPageSize(pageSize, onPageSize, shownBusy),
       renderSummary(current, pageCount, summary),
-      renderPages(current, pageCount, onPage, busy),
+      renderPages(current, pageCount, onPage, shownBusy),
     )
   }
 

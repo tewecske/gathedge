@@ -429,6 +429,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         querySignal.map(_.language),
         Observer[WordLanguage](language => change(_.reset(_.copy(language = language)))),
       ),
+      renderSwap(),
       languageSelect(
         UiKeys.wordsTargetLabel,
         targetSignal,
@@ -452,6 +453,36 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       ),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
+    )
+  }
+
+  /** Reads the pair the other way round, in one click.
+    *
+    * A single edit rather than two, because either half alone can pass through a state the reader did not ask for —
+    * setting the target to what the source already is asks the server for a word translated into its own language, and
+    * costs a listing request to show it. Through `reset` like every other change to the direction: the rows are
+    * different rows, so the page number the reader was on means nothing against them.
+    *
+    * Sits between the two selects, since that is the only place it can say *which* pair it swaps. It is a button in a
+    * row of labelled controls, so it hangs off the bottom edge with them (`items-end` on the container) and lines its
+    * height up with `select-sm` rather than with the labels above them.
+    */
+  private def renderSwap(): HtmlElement = {
+    span(
+      // The tooltip has to be a wrapper: daisyUI's `.tooltip` is `display:inline-block`, which would undo the
+      // `inline-flex` that centres a `btn`'s icon.
+      cls             := "tooltip",
+      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
+      button(
+        typ        := "button",
+        cls        := "btn btn-ghost btn-sm btn-square",
+        // The tooltip is a `data-` attribute drawn by CSS, so it says nothing to a screen reader; this is what does.
+        aria.label := I18n.t(UiKeys.wordsSwapLanguages),
+        swapMark(),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          change(_.reset(query => query.copy(language = query.target, target = query.language)))
+        },
+      ),
     )
   }
 
@@ -805,6 +836,13 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
     val selectedSignal = row.combineWithFn(collectTagSignal)(WordsPage.selectedTranslationIds).distinct
 
+    // A word being learned with no answer marked in the language this listing translates into. Only ever asked of a
+    // tagged row: an untagged word has nothing marked either, and that is not a gap but a word nobody is learning.
+    // The row's `pairs` only ever carry marks on translations the row is showing, so an empty set here is exactly
+    // "nothing chosen in the target language" rather than "nothing chosen anywhere".
+    val unpairedSignal =
+      taggedSignal.combineWithFn(selectedSignal)((tagged, marked) => tagged && marked.isEmpty).distinct
+
     tr(
       cls := "hover",
       td(
@@ -832,10 +870,14 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         )
       ),
       td(
-        a(
-          cls := "link link-hover font-medium",
-          AppRouter.router.navigateTo(Page.WordDetail(id)),
-          child.text <-- row.map(summary => Word.display(summary.word)),
+        div(
+          cls := "flex items-center gap-1",
+          a(
+            cls := "link link-hover font-medium",
+            AppRouter.router.navigateTo(Page.WordDetail(id)),
+            child.text <-- row.map(summary => Word.display(summary.word)),
+          ),
+          child.maybe <-- unpairedSignal.map(Option.when(_)(renderPairWarning())),
         )
       ),
       td(
@@ -894,6 +936,58 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       span(cls := "flex invisible", aria.hidden := true, chipMark()),
       onClick.compose(_.sample(markedSignal)) -->
         Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked))),
+    )
+  }
+
+  /** Beside a tagged word whose translations are all unmarked: the tick says it is being learned, and nothing says what
+    * the answer to it is, so a practice screen would have the word and nothing to check against.
+    *
+    * It states the gap on hover and never blocks anything — the row is still perfectly usable, and marking a chip is
+    * the whole of the fix, which is a click away on the same row.
+    */
+  private def renderPairWarning(): HtmlElement = {
+    span(
+      cls             := "tooltip tooltip-error text-error leading-none",
+      dataAttr("tip") := I18n.t(UiKeys.wordsNoPair),
+      // Drawn by CSS off a `data-` attribute, which no screen reader announces — so the same sentence goes into the
+      // accessibility tree as text, the way the mark itself carries none.
+      span(cls := "sr-only", I18n.t(UiKeys.wordsNoPair)),
+      warningMark(),
+    )
+  }
+
+  /** The exclamation mark, drawn for the reason [[chipMark]] is: an SVG's box is its ink, so it sits on the word's
+    * centre line beside a link of any size rather than wherever the font puts a `!` inside its own line box.
+    */
+  private def warningMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4 shrink-0",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.circle(svg.cx := "12", svg.cy := "12", svg.r := "9"),
+      svg.path(svg.d    := "M12 7.5v5"),
+      svg.path(svg.d    := "M12 16.25h.01"),
+    )
+  }
+
+  /** The two arrows on the swap button: one running right over one running left, which is the shape a reader reads as
+    * "these two change places" without a word on it.
+    */
+  private def swapMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M4 9h15m0 0l-4-4m4 4l-4 4"),
+      svg.path(svg.d := "M20 15H5m0 0l4-4m-4 4l4 4"),
     )
   }
 
