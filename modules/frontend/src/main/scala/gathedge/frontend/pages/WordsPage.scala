@@ -389,6 +389,17 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     )
   }
 
+  /** What a tag `<select>` should be showing: the id, but only once the tag list holding its `<option>` has arrived.
+    *
+    * Emitting on the tag list as well as on the id is the whole point — a value set while its option is missing is
+    * dropped by the browser, and a signal that never emits again has no way to put it back.
+    */
+  private def selectedTagValue(selected: Signal[Option[Long]]): Signal[String] = {
+    selected.combineWithFn(tagsSignal)((id, tags) => {
+      id.filter(chosen => tags.exists(_.id == chosen)).map(_.toString).getOrElse("")
+    })
+  }
+
   /** Narrows the listing to one tag, and does nothing else — in particular it does not decide where a tick files. It
     * sits among the filters rather than in the collect card for exactly that reason, offers "all tags", and is the half
     * of the old single control that stayed in the URL.
@@ -404,7 +415,11 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
         ),
         controlled(
-          value <-- filterTagSignal.map(_.map(_.toString).getOrElse("")),
+          // Against the tag list, not the id alone: a `<select>` cannot hold a value whose `<option>` is
+          // not there yet, and the options arrive a request later than the URL does. Combining the two
+          // is what re-applies the value when they land — without it, opening a bookmarked `?tag=…`
+          // showed a listing that *was* narrowed under a control that said "all tags".
+          value <-- selectedTagValue(filterTagSignal),
           onChange.mapToValue --> Observer[String] { raw =>
             change(_.reset(_.copy(tagId = raw.toLongOption)))
           },
@@ -499,7 +514,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
         ),
         controlled(
-          value <-- collectTagSignal.map(_.map(_.toString).getOrElse("")),
+          value <-- selectedTagValue(collectTagSignal),
           onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
         ),
       ),

@@ -121,9 +121,12 @@ test('a tag files words under a name, and the filter is a separate control', asy
 
   // Creating a tag collects into it immediately — it is made in order to be used — but the address, which
   // is where the *filter* lives, is untouched.
-  await expect(page.getByLabel('Collect into')).toHaveValue(/\d+/);
+  // By name, not merely "some id": the account already had a tag, so any id would pass while the select
+  // still showed the old one — and the rest of this test would then be about that tag instead.
+  const collect = page.getByLabel('Collect into');
+  await expect(collect.locator('option:checked')).toHaveText(/^lesson1/);
   await expect(page).not.toHaveURL(/[?&]tag=\d+/);
-  const tagId = await page.getByLabel('Collect into').inputValue();
+  const tagId = await collect.inputValue();
 
   await page.locator('input[type=search]').fill('brot');
   await page.locator('tr', { hasText: 'das Brot' }).getByRole('button').click();
@@ -140,6 +143,9 @@ test('a tag files words under a name, and the filter is a separate control', asy
 
   // The whole listing state is in the address, so this is a link somebody could have been sent.
   await page.goto(page.url());
+  // Wait for the page to have read the address before touching another control: a write made while the
+  // query is still the default one is made *against* the default, and takes the filter out with it.
+  await expect(page.getByLabel('Filter by tag')).toHaveValue(tagId);
   await page.getByText('Only my words').click();
   await expect(page.locator('tr', { hasText: 'das Brot' })).toBeVisible();
 });
