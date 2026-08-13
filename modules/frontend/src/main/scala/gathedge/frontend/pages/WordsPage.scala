@@ -435,10 +435,10 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         Observer[WordLanguage](language => change(_.reset(_.copy(target = language)))),
       ),
       label(
-        cls := "form-control",
+        cls := "flex flex-col gap-1",
         span(cls := "label-text text-xs", I18n.t(UiKeys.wordsPosLabel)),
         select(
-          cls    := "select select-sm",
+          cls    := "select select-sm w-40",
           // The option's `value` stays the wire code; only its label is translated.
           option(value := "", I18n.t(UiKeys.wordsPosAny)),
           PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
@@ -472,10 +472,10 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     */
   private def renderTagFilter(): HtmlElement = {
     label(
-      cls := "form-control",
+      cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordsFilterTagLabel)),
       select(
-        cls    := "select select-sm",
+        cls    := "select select-sm w-52",
         option(value := "", I18n.t(UiKeys.wordsFilterTagAny)),
         children <-- tagsSignal.map(
           _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
@@ -509,16 +509,23 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     )
   }
 
+  /** Every `<select>` on this page carries a literal width, and that is deliberate — leaving them to size themselves
+    * moves the controls beside them as the page is used. daisyUI opts a `.select` into the browser's
+    * customizable-select rendering, which sizes the box to the *selected* option rather than to the widest one, so
+    * picking "Hungarian" after "German" widens it; and the two tag selects would move anyway, since their option labels
+    * carry a word count that grows a digit. The widths fit the longest option in both catalogs; a longer tag name
+    * ellipsizes, which `.select` already does on its own.
+    */
   private def languageSelect(
     labelKey: String,
     selected: Signal[WordLanguage],
     onPick: Observer[WordLanguage],
   ): HtmlElement = {
     label(
-      cls := "form-control",
+      cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
-        cls    := "select select-sm",
+        cls    := "select select-sm w-36",
         WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
         controlled(
           value <-- selected.map(WordLanguage.code),
@@ -551,7 +558,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
             noValidate := true,
             onSubmit.preventDefault.mapToUnit --> newTagBus.writer,
             label(
-              cls      := "form-control",
+              cls      := "flex flex-col gap-1",
               span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsTagNew)),
               input(
                 cls         := "input input-sm",
@@ -573,10 +580,10 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     */
   private def renderCollectSelect(): HtmlElement = {
     label(
-      cls := "form-control",
+      cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
       select(
-        cls    := "select select-sm select-primary",
+        cls    := "select select-sm select-primary w-52",
         children <-- tagsSignal.map(
           _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
         ),
@@ -652,10 +659,10 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           noValidate := true,
           onSubmit.preventDefault.mapTo(term) --> newWordBus.writer,
           label(
-            cls      := "form-control",
+            cls      := "flex flex-col gap-1",
             span(cls := "label-text text-xs", I18n.t(UiKeys.wordsPosLabel)),
             select(
-              cls    := "select select-sm",
+              cls    := "select select-sm w-40",
               PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
               controlled(
                 value <-- newWordPosVar.signal.map(PartOfSpeech.code),
@@ -698,7 +705,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   private def renderTranslationInput(language: WordLanguage): HtmlElement = {
     label(
-      cls := "form-control grow",
+      cls := "flex flex-col gap-1 grow",
       span(cls := "label-text text-xs", Labels.language(language)),
       div(
         cls    := "flex items-end gap-2",
@@ -723,10 +730,10 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   private def renderGenderSelect(target: Var[Option[Gender]]): HtmlElement = {
     label(
-      cls := "form-control",
+      cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddGender)),
       select(
-        cls    := "select select-sm",
+        cls    := "select select-sm w-24",
         option(value := "", I18n.t(UiKeys.wordsAddGenderNone)),
         // The article itself is the value *and* the label: `der` is part of the word being learned, not copy.
         Gender.all.map(gender => option(value := Gender.article(gender), Gender.article(gender))),
@@ -742,7 +749,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     div(
       cls := "flex flex-wrap items-end gap-2 mb-4",
       label(
-        cls := "form-control grow",
+        cls := "flex flex-col gap-1 grow",
         span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsSearchLabel)),
         input(
           cls         := "input w-full",
@@ -802,7 +809,8 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       cls := "hover",
       td(
         button(
-          cls := "btn btn-ghost btn-xs",
+          // A fixed box, because the two glyphs below are not the same width and the column would twitch on a tick.
+          cls := "btn btn-ghost btn-xs w-8 px-0",
           cls("text-success") <-- taggedSignal,
           typ := "button",
           aria.label <-- row.combineWithFn(taggedSignal) { (summary, tagged) =>
@@ -864,7 +872,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
     button(
       typ := "button",
-      cls := "badge badge-sm cursor-pointer",
+      cls := "badge badge-sm cursor-pointer gap-0.5 px-1",
       cls("badge-primary") <-- markedSignal,
       cls("badge-ghost") <-- markedSignal.map(!_),
       aria.pressed <-- markedSignal.map(_.toString),
@@ -877,14 +885,35 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         }
         I18n.t(key, translation.text)
       },
-      child.text <-- option.combineWithFn(markedSignal) { (translation, marked) =>
-        if (marked)
-          s"✓ ${translation.text}"
-        else
-          translation.text
-      },
+      // The tick keeps its box whether or not it is showing — `visibility:hidden` keeps the mark's width — so marking
+      // a chip recolours it without resizing it or nudging the chips after it along the row. It is smaller than the
+      // word and sits under a tighter gap, and the mirror after the word is what keeps the word itself centred: a mark
+      // only on the left reads as a chip padded wrong rather than as a chip with a mark.
+      span(cls := "flex", cls("invisible") <-- markedSignal.map(!_), chipMark()),
+      span(child.text <-- option.map(_.text)),
+      span(cls := "flex invisible", aria.hidden := true, chipMark()),
       onClick.compose(_.sample(markedSignal)) -->
         Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked))),
+    )
+  }
+
+  /** The tick on a chip, drawn rather than typed.
+    *
+    * A `✓` character sits wherever its font puts it inside a line box, and that box is proportional to the font size —
+    * so a mark this much smaller than the word beside it lands visibly above the middle however the line height is set,
+    * and moves again whenever the size is changed. An SVG's box *is* its ink, which the badge's `align-items:center`
+    * then centres exactly, at any size.
+    */
+  private def chipMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-[0.4rem] w-[0.47rem] shrink-0",
+      svg.viewBox        := "0 0 14 12",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M1 6.5L5 10.5L13 1.5"),
     )
   }
 }

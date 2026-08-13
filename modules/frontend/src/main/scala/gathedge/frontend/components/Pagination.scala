@@ -101,7 +101,9 @@ object Pagination {
       cls := "flex items-center gap-2",
       span(cls := "label-text text-xs", I18n.t(UiKeys.commonRowsPerPage)),
       select(
-        cls    := "select select-sm w-auto",
+        // Wide enough for the largest size on offer, rather than for the one chosen: a `.select` sizes itself to the
+        // selected option, so `w-auto` moved everything beside it whenever 20 became 100.
+        cls    := "select select-sm w-20",
         disabled <-- busy,
         Paging.pageSizes.map(size => option(value := size.toString, size.toString)),
         controlled(
