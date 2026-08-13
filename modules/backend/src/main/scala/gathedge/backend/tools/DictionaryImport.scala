@@ -33,6 +33,11 @@ import WiktextractParser.{ParsedPair, ParsedWord}
   *
   * # rebuild the committed sample from a dump
   * sbt "backend/runMain gathedge.backend.tools.DictionaryImport --raw ~/raw...gz --limit 2000 --export data/dictionary/seed.tsv"
+  *
+  * # load a seed built elsewhere (`--seed <path>`, `.gz` understood) — how a deployment gets the real
+  * # dictionary without the 2.6 GB dump ever reaching the server; scripts/build-dictionary-seed.sh
+  * # produces the file
+  * gathedge-dictionary-import --seed /tmp/seed-20000.tsv.gz
   * }}}
   *
   * '''Licence.''' The data is extracted from Wiktionary and is CC BY-SA 4.0. It carries an attribution requirement that
@@ -47,10 +52,15 @@ object DictionaryImport extends ZIOAppDefault {
     */
   private val batchSize = 500
 
+  /** Where a bare `--seed` reads from: relative to the repository root, which is what `Compile / run / baseDirectory`
+    * in build.sbt pins it to. A deployment has no repository, so `--seed <path>` is how it names a seed built
+    * elsewhere.
+    */
   private val defaultSeedPath = "data/dictionary/seed.tsv"
 
   final case class Options(
     seed: Boolean = false,
+    seedPath: Option[String] = None,
     raw: Option[String] = None,
     limit: Int = 50000,
     frequencies: Option[String] = None,
@@ -61,30 +71,35 @@ object DictionaryImport extends ZIOAppDefault {
   def parseArgs(args: List[String]): Either[String, Options] = {
     def loop(rest: List[String], options: Options): Either[String, Options] = {
       rest match {
-        case Nil                             =>
+        case Nil                                                =>
           Right(options)
-        case "--seed" :: tail                =>
+        // The path is optional, so the next token has to be looked at: anything beginning with `--`
+        // is the following option rather than this one's argument, which is what keeps
+        // `--seed --raw dump.gz` the mutually-exclusive error it has always been.
+        case "--seed" :: path :: tail if !path.startsWith("--") =>
+          loop(tail, options.copy(seed = true, seedPath = Some(path)))
+        case "--seed" :: tail                                   =>
           loop(tail, options.copy(seed = true))
-        case "--raw" :: path :: tail         =>
+        case "--raw" :: path :: tail                            =>
           loop(tail, options.copy(raw = Some(path)))
-        case "--limit" :: value :: tail      =>
+        case "--limit" :: value :: tail                         =>
           value.toIntOption match {
             case None        =>
               Left(s"--limit needs a number, got '$value'")
             case Some(limit) =>
               loop(tail, options.copy(limit = limit))
           }
-        case "--frequencies" :: path :: tail =>
+        case "--frequencies" :: path :: tail                    =>
           loop(tail, options.copy(frequencies = Some(path)))
-        case "--export" :: path :: tail      =>
+        case "--export" :: path :: tail                         =>
           loop(tail, options.copy(exportTo = Some(path)))
-        case "--languages" :: value :: tail  =>
+        case "--languages" :: value :: tail                     =>
           val parsed = value.split(',').toList.flatMap(code => WordLanguage.fromString(code.trim))
           if (parsed.isEmpty)
             Left(s"--languages needs codes out of en,de,hu; got '$value'")
           else
             loop(tail, options.copy(languages = parsed.toSet))
-        case unknown :: _                    =>
+        case unknown :: _                                       =>
           Left(s"Unrecognised argument '$unknown'")
       }
     }
@@ -364,6 +379,26 @@ object DictionaryImport extends ZIOAppDefault {
     )
   }
 
+  /** Collapses the words that differ only in case, keeping the commonest reading of each.
+    *
+    * `ParsedWord` compares on the text as written, but the database's identity is `text_norm` — the lowercased form —
+    * so `Grammy` and `grammy` are two values here and one row there. Inserting both in a single batch violates
+    * `words_language_text_norm_part_of_speech_gender_key`; across two batches it does not, because each batch reads
+    * what is already stored first, which is why this only shows up on a real dump. About one word in 250 of the English
+    * side collides.
+    *
+    * The best rank wins, as everywhere else in this importer, and the tie is broken on the text so that a run is
+    * reproducible — uppercase sorts first, which keeps `Sie` over `sie` and matches how a dictionary would print it.
+    */
+  def dedupeByKey(words: List[(ParsedWord, Int)]): List[(ParsedWord, Int)] = {
+    words
+      .groupBy { case (word, _) => word.key }
+      .values
+      .map(_.minBy { case (word, rank) => (rank, word.text) })
+      .toList
+      .sortBy { case (word, rank) => (rank, word.text) }
+  }
+
   /** Inserts the words that are not there yet, then answers every word's id.
     *
     * Idempotence without an `ON CONFLICT` clause, which the two dialects spell differently: read the batch's keys
@@ -375,7 +410,7 @@ object DictionaryImport extends ZIOAppDefault {
       .foreach(byLanguage.toList) { case (language, words) =>
         val code = WordLanguage.code(language)
         ZIO
-          .foreach(words.grouped(batchSize).toList) { batch =>
+          .foreach(dedupeByKey(words).grouped(batchSize).toList) { batch =>
             val norms = batch.map { case (word, _) => word.text.toLowerCase }.distinct
             for {
               existing <- WordRepository.findWordsByKeys(code, norms)
@@ -415,11 +450,14 @@ object DictionaryImport extends ZIOAppDefault {
         val sources = batch.flatMap { case (source, target) => List(source, target) }.distinct
         for {
           known <- WordRepository.existingTranslationPairs(sources).map(_.toSet)
-          rows   = batch.flatMap { case (source, target) =>
-                     List((source, target), (target, source))
-                       .filterNot(known.contains)
-                       .map { case (from, to) => WordTranslationRow(0L, from, to, origin, None, now) }
-                   }
+          // Distinct for the same reason dedupeByKey exists: `word_translations` is unique on
+          // (source_word_id, target_word_id, created_by), and two collected pairs can reach the same id pair once
+          // case variants have collapsed onto one row.
+          rows   = batch
+                     .flatMap { case (source, target) => List((source, target), (target, source)) }
+                     .distinct
+                     .filterNot(known.contains)
+                     .map { case (from, to) => WordTranslationRow(0L, from, to, origin, None, now) }
           _     <- WordRepository.insertTranslations(rows)
         } yield rows.size.toLong
       }
@@ -448,7 +486,7 @@ object DictionaryImport extends ZIOAppDefault {
   private def load(options: Options): Task[Collected] = {
     options.raw match {
       case None       =>
-        readSeed(defaultSeedPath)
+        readSeed(options.seedPath.getOrElse(defaultSeedPath))
       case Some(path) =>
         for {
           frequencies <- ZIO

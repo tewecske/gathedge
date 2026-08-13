@@ -92,6 +92,19 @@ let
         --set JAVA_HOME ${jdk} \
         --prefix PATH : ${lib.makeBinPath [ jdk coreutils gawk gnugrep gnused ]} \
         --add-flags "-Dlogback.configurationFile=${logbackConfig}"
+
+      # The dictionary loader, off the same staged classpath: sbt-native-packager's launcher takes
+      # `-main <classname>`, so this needs no second sbt output. It exists because the deployment has
+      # no repository and no dump — data/ is excluded from the source filter in flake.nix — so the
+      # only way words reach the server's database is a seed file built elsewhere and named with
+      # `--seed <path>`. See data/dictionary/README.md.
+      #
+      # Not a systemd unit: it is run by hand, once, with the DB_* variables the backend's unit sets.
+      makeWrapper ${scala}/bin/backend $out/bin/gathedge-dictionary-import \
+        --set JAVA_HOME ${jdk} \
+        --prefix PATH : ${lib.makeBinPath [ jdk coreutils gawk gnugrep gnused ]} \
+        --add-flags "-Dlogback.configurationFile=${logbackConfig}" \
+        --add-flags "-main gathedge.backend.tools.DictionaryImport"
     '';
 in
 # `backend.scala.js` is the Scala.js linker output, consumed by nix/web.nix.

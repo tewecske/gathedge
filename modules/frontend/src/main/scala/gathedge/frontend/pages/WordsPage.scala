@@ -10,7 +10,15 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, User, Word, WordLanguage}
-import gathedge.shared.dto.{CreateWordRequest, NewTranslation, WordDetail, WordPage, WordSort, WordSummary}
+import gathedge.shared.dto.{
+  CreateWordRequest,
+  NewTranslation,
+  TranslationOption,
+  WordDetail,
+  WordPage,
+  WordSort,
+  WordSummary,
+}
 import gathedge.shared.i18n.UiKeys
 
 /** Browse the dictionary and tag what you want to learn.
@@ -65,6 +73,24 @@ object WordsPage {
           dom.window.localStorage.removeItem(collectStorageKey)
       }
     } catch { case _: Throwable => () }
+  }
+
+  /** Which of a row's translations count as marked, given the tag the page is collecting into.
+    *
+    * A chip has to answer the question the *click* acts on — "is this marked under the collect tag" — and never "under
+    * any tag I have", which is the mistake that made a filtered listing look fully collected. `None` is only the moment
+    * before the tag list arrives, or a reader with no tags at all, where the honest answer is whatever they have.
+    *
+    * On the companion rather than in the class so it can be stated as a table in a test: the page has no seam for
+    * injecting rows, and this is the part of a chip that can be wrong.
+    */
+  def selectedTranslationIds(summary: WordSummary, collect: Option[Long]): Set[Long] = {
+    collect match {
+      case Some(tagId) =>
+        summary.pairs.filter(_.tagId == tagId).map(_.translationWordId).toSet
+      case None        =>
+        summary.pairs.map(_.translationWordId).toSet
+    }
   }
 }
 
@@ -124,6 +150,11 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   /** A row the reader clicked, with what should happen to it. The stream is what the guest-minting detour hangs off. */
   private val toggleBus = new EventBus[(Long, Boolean)]()
+
+  /** A translation chip the reader clicked: which row, which translation, and whether it was already marked. Its own
+    * bus for the reason [[toggleBus]] is one — the guest detour hangs off the stream, not off the click.
+    */
+  private val pairBus = new EventBus[(Long, Long, Boolean)]()
 
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal                   = errorVar.signal
@@ -226,13 +257,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           case Left(err)  =>
             errorVar.set(Some(err.message))
         },
-      toggleStream --> Observer[Either[ApiError, Unit]] {
-        case Right(_)  =>
-          reloadBus.emit(())
-          tagsBus.emit(())
-        case Left(err) =>
-          errorVar.set(Some(err.message))
-      },
+      EventStream.merge(toggleStream, pairStream) --> writeResult,
       newWordStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // Straight to the word: it exists now, and whatever anybody else has already recorded about it is on that
@@ -252,29 +277,51 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     )
   }
 
-  /** A row toggle, with the guest detour in front of it.
+  /** A per-account write, with the guest detour in front of it.
     *
-    * With no session the tag write cannot succeed, so it is preceded by minting a guest and retried against the session
-    * that creates. Signed in, the mint is skipped entirely.
+    * With no session no such write can succeed, so it is preceded by minting a guest and retried against the session
+    * that creates. Signed in, the mint is skipped entirely. The write is by-name because it must not be started before
+    * the session exists.
     */
+  private def asReader(write: () => EventStream[Either[ApiError, Unit]]): EventStream[Either[ApiError, Unit]] = {
+    readerVar.now() match {
+      case Some(_) =>
+        write()
+      case None    =>
+        ApiClient.createGuest.flatMapSwitch {
+          case Right(response) =>
+            AppState.setUser(response.user)
+            // The banner appears from here on: the reader now has an account, and nothing else has told them so.
+            noticeVar.set(Some(I18n.t(UiKeys.guestBannerHint)))
+            tagsBus.emit(())
+            write()
+          case Left(err)       =>
+            EventStream.fromValue(Left(err))
+        }
+    }
+  }
+
   private def toggleStream: EventStream[Either[ApiError, Unit]] = {
     toggleBus.events.flatMapSwitch { case (wordId, tagged) =>
-      readerVar.now() match {
-        case Some(_) =>
-          writeTag(wordId, tagged)
-        case None    =>
-          ApiClient.createGuest.flatMapSwitch {
-            case Right(response) =>
-              AppState.setUser(response.user)
-              // The banner appears from here on: the reader now has an account, and nothing else has told them so.
-              noticeVar.set(Some(I18n.t(UiKeys.guestBannerHint)))
-              tagsBus.emit(())
-              writeTag(wordId, tagged)
-            case Left(err)       =>
-              EventStream.fromValue(Left(err))
-          }
-      }
+      asReader(() => writeTag(wordId, tagged))
     }
+  }
+
+  private def pairStream: EventStream[Either[ApiError, Unit]] = {
+    pairBus.events.flatMapSwitch { case (wordId, translationWordId, marked) =>
+      asReader(() => writePair(wordId, translationWordId, marked))
+    }
+  }
+
+  /** What both writes do when they land. A chip moves tag counts as much as a tick does — marking a translation files
+    * that word under the tag too — so both refresh the listing and the tag list.
+    */
+  private val writeResult: Observer[Either[ApiError, Unit]] = Observer[Either[ApiError, Unit]] {
+    case Right(_)  =>
+      reloadBus.emit(())
+      tagsBus.emit(())
+    case Left(err) =>
+      errorVar.set(Some(err.message))
   }
 
   private def setCollectTag(tagId: Option[Long]): Unit = {
@@ -303,6 +350,25 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           WordApiClient.untagWord(wordId, tagId)
         else
           WordApiClient.tagWord(wordId, tagId)
+    }
+  }
+
+  /** Marks or unmarks the translation under the collect tag — the same `collectTagOrDefault` path a tick takes, so a
+    * first-ever click on a chip mints a tag the same way a first-ever tick does.
+    */
+  private def writePair(
+    wordId: Long,
+    translationWordId: Long,
+    marked: Boolean,
+  ): EventStream[Either[ApiError, Unit]] = {
+    collectTagOrDefault.flatMapSwitch {
+      case Left(err)    =>
+        EventStream.fromValue(Left(err))
+      case Right(tagId) =>
+        if (marked)
+          WordApiClient.deselectPair(wordId, tagId, translationWordId)
+        else
+          WordApiClient.selectPair(wordId, tagId, translationWordId)
     }
   }
 
@@ -497,6 +563,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
           ),
         ),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
+        p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsPairHint)),
       ),
     )
   }
@@ -729,6 +796,8 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       }
       .distinct
 
+    val selectedSignal = row.combineWithFn(collectTagSignal)(WordsPage.selectedTranslationIds).distinct
+
     tr(
       cls := "hover",
       td(
@@ -765,7 +834,57 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         cls := "text-sm opacity-70",
         child.text <-- row.map(summary => Labels.partOfSpeech(summary.word.partOfSpeech)),
       ),
-      td(child.text <-- row.map(_.translations.mkString(", "))),
+      td(
+        // The chips sit in a div rather than on the cell: `display:flex` on a `<td>` takes it out of the table's own
+        // layout and the column stops lining up with its heading.
+        div(
+          cls := "flex flex-wrap gap-1",
+          children <-- row
+            .map(_.translations)
+            .distinct
+            .splitSeq(_.wordId)(option => renderTranslationChip(id, option.key, option, selectedSignal)),
+        )
+      ),
+    )
+  }
+
+  /** One translation, as a control rather than as text.
+    *
+    * Clicking it says "this is the answer I want to be asked for", which also files both words under the collect tag —
+    * the tick files one word, this files a pair. Marked state is shown with a tick as well as with colour, since colour
+    * alone is not a difference every reader can see, and stated for a screen reader as `aria-pressed`.
+    */
+  private def renderTranslationChip(
+    wordId: Long,
+    translationWordId: Long,
+    option: Signal[TranslationOption],
+    selected: Signal[Set[Long]],
+  ): HtmlElement = {
+    val markedSignal = selected.map(_.contains(translationWordId)).distinct
+
+    button(
+      typ := "button",
+      cls := "badge badge-sm cursor-pointer",
+      cls("badge-primary") <-- markedSignal,
+      cls("badge-ghost") <-- markedSignal.map(!_),
+      aria.pressed <-- markedSignal.map(_.toString),
+      aria.label <-- option.combineWithFn(markedSignal) { (translation, marked) =>
+        val key = {
+          if (marked)
+            UiKeys.wordsPairRemove
+          else
+            UiKeys.wordsPairAdd
+        }
+        I18n.t(key, translation.text)
+      },
+      child.text <-- option.combineWithFn(markedSignal) { (translation, marked) =>
+        if (marked)
+          s"✓ ${translation.text}"
+        else
+          translation.text
+      },
+      onClick.compose(_.sample(markedSignal)) -->
+        Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked))),
     )
   }
 }

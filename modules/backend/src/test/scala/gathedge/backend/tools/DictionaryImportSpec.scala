@@ -1,5 +1,6 @@
 package gathedge.backend.tools
 
+import gathedge.backend.tools.WiktextractParser.ParsedWord
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import zio.test._
 
@@ -152,6 +153,39 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           DictionaryImport.parseArgs(List("--seed", "--raw", "dump.gz")).isLeft,
           DictionaryImport.parseArgs(Nil).isLeft,
           DictionaryImport.parseArgs(List("--nonsense")).isLeft,
+        )
+      },
+      test("words differing only in case are one row, and the commonest reading wins") {
+        val grammy    = ParsedWord(WordLanguage.En, "Grammy", PartOfSpeech.Noun, None)
+        val grammyLc  = ParsedWord(WordLanguage.En, "grammy", PartOfSpeech.Noun, None)
+        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        // Same spelling, different article: two words, and the dedupe must not touch them.
+        val seeLake   = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Der))
+        val seeSea    = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Die))
+        val deduped   = DictionaryImport.dedupeByKey(
+          List((grammyLc, 17940), (grammy, 17940), (haus, 12), (seeLake, 900), (seeSea, 901))
+        )
+        val byKeyOnce = deduped.map { case (word, _) => word.key }
+        assertTrue(
+          byKeyOnce.distinct.size == byKeyOnce.size,
+          deduped.map { case (word, _) => word.text }.contains("Grammy"),
+          !deduped.map { case (word, _) => word.text }.contains("grammy"),
+          deduped.exists { case (word, _) => word == seeLake },
+          deduped.exists { case (word, _) => word == seeSea },
+          // A rarer casing does not drag the word's rank down with it.
+          DictionaryImport
+            .dedupeByKey(List((grammy, 999999999), (grammyLc, 17940)))
+            .map { case (_, rank) => rank } == List(17940),
+        )
+      },
+      test("--seed takes an optional path, and does not swallow the option after it") {
+        assertTrue(
+          DictionaryImport.parseArgs(List("--seed")).map(_.seedPath) == Right(None),
+          DictionaryImport.parseArgs(List("--seed", "/tmp/x.tsv.gz")).map(_.seedPath) == Right(Some("/tmp/x.tsv.gz")),
+          // Without the guard this would read "--raw" as the seed path, and the two modes would stop
+          // being exclusive.
+          DictionaryImport.parseArgs(List("--seed", "--raw", "dump.gz")).isLeft,
+          DictionaryImport.parseArgs(List("--seed", "/tmp/x.tsv", "--limit", "10")).map(_.limit) == Right(10),
         )
       },
     )

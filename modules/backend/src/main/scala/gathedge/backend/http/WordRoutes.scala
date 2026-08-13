@@ -148,6 +148,22 @@ object WordRoutes {
     )
   }
 
+  private val selectPairRoute = {
+    WordEndpoints.selectPair.implementHandler(
+      handler { (wordId: Long, tagId: Long, translationWordId: Long) =>
+        userId.flatMap(id => WordService.selectPair(wordId, tagId, translationWordId, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val deselectPairRoute = {
+    WordEndpoints.deselectPair.implementHandler(
+      handler { (wordId: Long, tagId: Long, translationWordId: Long) =>
+        userId.flatMap(id => WordService.deselectPair(wordId, tagId, translationWordId, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   /** Two `Routes` values because they are guarded differently, `++`'d and then given the CSRF check together — the
     * arrangement `AuthRoutes` uses for the same reason.
     */
@@ -163,6 +179,8 @@ object WordRoutes {
       deleteTagRoute,
       tagWordRoute,
       untagWordRoute,
+      selectPairRoute,
+      deselectPairRoute,
     ) @@ RouteSupport.authenticated
   }
 

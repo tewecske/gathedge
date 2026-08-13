@@ -89,4 +89,15 @@ object WordApiClient {
   def untagWord(wordId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
     run(executor(WordEndpoints.untagWord(wordId, tagId)))
   }
+
+  /** Marks a translation as a practice answer for a word, inside the tag the page is collecting into. Idempotent for
+    * the reason [[tagWord]] is, and it files both words under the tag as a side effect.
+    */
+  def selectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
+    run(executor(WordEndpoints.selectPair(wordId, tagId, translationWordId)))
+  }
+
+  def deselectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
+    run(executor(WordEndpoints.deselectPair(wordId, tagId, translationWordId)))
+  }
 }

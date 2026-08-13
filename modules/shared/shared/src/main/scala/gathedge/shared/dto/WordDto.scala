@@ -3,16 +3,35 @@ package gathedge.shared.dto
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import zio.json.*
 
+/** One translation as the listing offers it: the id of the word it points at, and the text already rendered.
+  *
+  * The id names a **word**, not a translation edge, because that is what a practice answer is about — the edge belongs
+  * to whoever typed it, while the answer belongs to the reader's tag. `text` is `Word.display`, so a German noun
+  * arrives with its article on it.
+  */
+final case class TranslationOption(wordId: Long, text: String) derives JsonCodec
+
+/** One translation the reader has marked as a practice answer, and the tag they marked it in.
+  *
+  * Carried per row rather than resolved server-side, because '''the collect tag never reaches the server''': which tag
+  * a click files into is page-local state in `localStorage` (see `WordsPage.storedCollectTag`), so nobody can ask
+  * "which is selected for tag X". The row carries every one of the reader's marks on that word and the browser filters
+  * by the tag it is collecting into — the same shape [[WordSummary.tagIds]] has, for the same reason.
+  */
+final case class TaggedPair(tagId: Long, translationWordId: Long) derives JsonCodec
+
 /** One row of the browse-and-tag listing.
   *
-  * Carries its translations already rendered into the target language the caller asked for, and the ids of the reader's
-  * own tags on it — the two things the screen shows beside a word, both of which would otherwise be a query per row. A
-  * caller with no session gets an empty `tagIds`, which is what lets the listing be public.
+  * Carries its translations already rendered into the target language the caller asked for, the ids of the reader's own
+  * tags on it, and which of those translations they have marked as practice answers — the three things the screen shows
+  * beside a word, all of which would otherwise be a query per row. A caller with no session gets an empty `tagIds` and
+  * an empty `pairs`, which is what lets the listing be public.
   */
 final case class WordSummary(
   word: Word,
-  translations: List[String],
+  translations: List[TranslationOption],
   tagIds: List[Long],
+  pairs: List[TaggedPair],
 ) derives JsonCodec
 
 /** One translation edge, as the detail page shows it.

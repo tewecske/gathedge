@@ -433,11 +433,22 @@ object UiKeys {
   val wordsTagAdd: String    = key("ui.words.tagAdd")
   val wordsTagRemove: String = key("ui.words.tagRemove")
 
+  /** Read out on each translation chip, so the control says what it acts on. `{0}` is the translation.
+    *
+    * A chip is a toggle, not a label: clicking one says "this is the answer I want to be asked for", which is a
+    * different statement from the tick's "I am learning this word".
+    */
+  val wordsPairAdd: String    = key("ui.words.pairAdd")
+  val wordsPairRemove: String = key("ui.words.pairRemove")
+
   /** The tag a tick files a word into. Deliberately worded as an action rather than as "Tag": the control next to it
     * narrows the listing instead, and the two used to be one select that did both.
     */
   val wordsCollectLabel: String = key("ui.words.collectLabel")
   val wordsCollectHint: String  = key("ui.words.collectHint")
+
+  /** The second half of that hint: clicking a translation is the other thing this screen's rows can do. */
+  val wordsPairHint: String = key("ui.words.pairHint")
 
   /** The other half of that pair: which tag the listing is narrowed to, which changes nothing about where a tick files.
     */

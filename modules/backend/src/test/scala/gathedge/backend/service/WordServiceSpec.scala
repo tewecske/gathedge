@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.db.{WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
-import gathedge.shared.dto.{CreateWordRequest, NewTranslation, Paging, WordSort}
+import gathedge.shared.dto.{CreateWordRequest, NewTranslation, Paging, TaggedPair, WordSort}
 import zio._
 import zio.test._
 
@@ -50,21 +50,47 @@ object WordServiceSpec extends ZIOSpecDefault {
     } yield ()
   }
 
+  /** Every Hungarian translation of `Haus` the cap test needs, ranked so their order is decided rather than incidental.
+    * `ház` is already seeded at rank 1, so these are the second through fourth.
+    */
+  private def seedTranslations: RIO[WordRepository, List[Long]] = {
+    for {
+      haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das), rank = 1))
+      ids  <- ZIO.foreach(List("otthon" -> 2, "lakás" -> 3, "hajlék" -> 4)) { case (text, rank) =>
+                for {
+                  word <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, text, rank = rank))
+                  _    <- WordRepository.insertTranslationPair(
+                            haus.id,
+                            word.id,
+                            WordService.dictionaryOrigin,
+                            None,
+                            0L,
+                          )
+                } yield word.id
+              }
+    } yield ids
+  }
+
+  /** The listing, German into Hungarian by default — the direction the screen opens in. The languages are parameters
+    * because a practice pair is written in both directions, and the mirror is only visible from the other side.
+    */
   private def list(
     search: Option[String] = None,
     reader: Option[Long] = None,
     tagId: Option[Long] = None,
     mine: Boolean = false,
+    language: WordLanguage = WordLanguage.De,
+    target: WordLanguage = WordLanguage.Hu,
   ) = {
     WordService.list(
       page = Paging.firstPage,
       pageSize = 20,
-      language = Some(WordLanguage.De),
+      language = Some(language),
       search = search,
       partOfSpeech = None,
       tagId = tagId,
       mine = mine,
-      target = WordLanguage.Hu,
+      target = target,
       sort = None,
       descending = false,
       reader = reader,
@@ -81,7 +107,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           page.total == 3L,
           // Rank decides the order, which is what makes a two-letter search useful.
           page.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
-          page.items.head.translations == List("ház"),
+          page.items.head.translations.map(_.text) == List("ház"),
           // No reader, so no tags — and no failure either.
           page.items.forall(_.tagIds.isEmpty),
         )
@@ -218,6 +244,148 @@ object WordServiceSpec extends ZIOSpecDefault {
           theirs == Left(WordFailure.NotFound),
           dict == Left(WordFailure.NotFound),
           after.translations.map(_.word.text) == List("ház"),
+        )
+      },
+      test("marking a translation files both words under the tag and records the pair both ways") {
+        for {
+          _      <- seed
+          tag    <- WordService.createTag("lesson1", 1L)
+          page   <- list(search = Some("haus"), reader = Some(1L))
+          word    = page.items.head.word
+          haz     = page.items.head.translations.head.wordId
+          _      <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          after  <- list(search = Some("haus"), reader = Some(1L))
+          mirror <- list(search = Some("ház"), reader = Some(1L), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          after.items.head.pairs == List(TaggedPair(tag.id, haz)),
+          // The word is filed even though nobody ticked it: a chip is a first click too.
+          after.items.head.tagIds == List(tag.id),
+          // And so is the translation, in both the membership and the pair — a pair whose answer is not collected is a
+          // question with a missing half.
+          mirror.items.head.tagIds == List(tag.id),
+          mirror.items.head.pairs == List(TaggedPair(tag.id, word.id)),
+        )
+      },
+      test("marking twice is nothing to do, and unmarking leaves both words tagged") {
+        for {
+          _      <- seed
+          tag    <- WordService.createTag("lesson1", 1L)
+          page   <- list(search = Some("haus"), reader = Some(1L))
+          word    = page.items.head.word
+          haz     = page.items.head.translations.head.wordId
+          _      <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          _      <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          twice  <- list(search = Some("haus"), reader = Some(1L))
+          _      <- WordService.deselectPair(word.id, tag.id, haz, 1L)
+          _      <- WordService.deselectPair(word.id, tag.id, haz, 1L)
+          after  <- list(search = Some("haus"), reader = Some(1L))
+          mirror <- list(search = Some("ház"), reader = Some(1L), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          twice.items.head.pairs == List(TaggedPair(tag.id, haz)),
+          // Both directions of the pair go, and neither word leaves the tag: that is the tick's job.
+          after.items.head.pairs.isEmpty,
+          mirror.items.head.pairs.isEmpty,
+          after.items.head.tagIds == List(tag.id),
+          mirror.items.head.tagIds == List(tag.id),
+        )
+      },
+      test("a translation the word does not have is a NotFound, and so is somebody else's tag") {
+        for {
+          _        <- seed
+          tag      <- WordService.createTag("lesson1", 1L)
+          page     <- list(search = Some("hau"), reader = Some(1L))
+          word      = page.items.head.word
+          haz       = page.items.head.translations.head.wordId
+          unrelated = page.items.map(_.word.id).filterNot(_ == word.id).head
+          notEdge  <- WordService.selectPair(word.id, tag.id, unrelated, 1L).either
+          noWord   <- WordService.selectPair(4242L, tag.id, haz, 1L).either
+          theirs   <- WordService.selectPair(word.id, tag.id, haz, 2L).either
+          noTag    <- WordService.deselectPair(word.id, 9999L, haz, 1L).either
+        } yield assertTrue(
+          notEdge == Left(WordFailure.NotFound),
+          noWord == Left(WordFailure.NotFound),
+          theirs == Left(WordFailure.TagNotFound),
+          noTag == Left(WordFailure.TagNotFound),
+        )
+      },
+      test("a marked translation is carried even when it falls outside the three a row shows") {
+        for {
+          _        <- seed
+          extra    <- seedTranslations
+          tag      <- WordService.createTag("lesson1", 1L)
+          page     <- list(search = Some("haus"), reader = Some(1L))
+          word      = page.items.head.word
+          last      = extra.last
+          _        <- WordService.selectPair(word.id, tag.id, last, 1L)
+          reader   <- list(search = Some("haus"), reader = Some(1L))
+          stranger <- list(search = Some("haus"))
+        } yield assertTrue(
+          // The cap is what keeps the cell a line; the union with what the reader marked is what makes a chip
+          // reversible, since one they cannot see they can never unclick.
+          stranger.items.head.translations.size == 3,
+          reader.items.head.translations.size == 4,
+          reader.items.head.translations.map(_.wordId).contains(last),
+          reader.items.head.pairs == List(TaggedPair(tag.id, last)),
+        )
+      },
+      test("untagging a word clears its practice pairs in that tag, both ways round") {
+        for {
+          _      <- seed
+          tag    <- WordService.createTag("lesson1", 1L)
+          page   <- list(search = Some("haus"), reader = Some(1L))
+          word    = page.items.head.word
+          haz     = page.items.head.translations.head.wordId
+          _      <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          _      <- WordService.untagWord(word.id, tag.id, 1L)
+          after  <- list(search = Some("haus"), reader = Some(1L))
+          mirror <- list(search = Some("ház"), reader = Some(1L), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          after.items.head.tagIds.isEmpty,
+          after.items.head.pairs.isEmpty,
+          // The translation keeps the tag — only the word that left takes its pairs with it.
+          mirror.items.head.tagIds == List(tag.id),
+          mirror.items.head.pairs.isEmpty,
+        )
+      },
+      test("a reader sees only their own marks") {
+        for {
+          _     <- seed
+          mine  <- WordService.createTag("mine", 1L)
+          yours <- WordService.createTag("yours", 2L)
+          page  <- list(search = Some("haus"))
+          word   = page.items.head.word
+          haz    = page.items.head.translations.head.wordId
+          _     <- WordService.selectPair(word.id, mine.id, haz, 1L)
+          _     <- WordService.selectPair(word.id, yours.id, haz, 2L)
+          first <- list(search = Some("haus"), reader = Some(1L))
+          other <- list(search = Some("haus"), reader = Some(2L))
+        } yield assertTrue(
+          first.items.head.pairs == List(TaggedPair(mine.id, haz)),
+          other.items.head.pairs == List(TaggedPair(yours.id, haz)),
+        )
+      },
+      test("a word added with a translation is marked for practice under the tag it is filed in") {
+        for {
+          _      <- seed
+          tag    <- WordService.createTag("lesson1", 1L)
+          detail <- WordService.create(
+                      CreateWordRequest(
+                        WordLanguage.De,
+                        "Brot",
+                        PartOfSpeech.Noun,
+                        Some(Gender.Das),
+                        List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
+                        List(tag.id),
+                      ),
+                      userId = 1L,
+                    )
+          page   <- list(search = Some("brot"), reader = Some(1L))
+          kenyer  = detail.translations.find(_.word.text == "kenyér").map(_.word.id).getOrElse(0L)
+        } yield assertTrue(
+          // A translation somebody bothered to type is the clearest statement of "this is the answer I want", so the
+          // form produces the same state a chip click does.
+          page.items.head.pairs == List(TaggedPair(tag.id, kenyer)),
+          page.items.head.tagIds == List(tag.id),
         )
       },
       test("an unknown sort column falls back to the listing's own order rather than failing") {

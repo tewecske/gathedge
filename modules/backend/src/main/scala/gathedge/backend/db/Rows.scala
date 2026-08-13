@@ -126,6 +126,18 @@ final case class TagRow(id: Long, userId: Long, name: String, nameNorm: String, 
   */
 final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long)
 
+/** One translation of one word, marked as a practice answer inside one tag.
+  *
+  * A tag says the word is being learned; this says which of its translations the practice screen should check against,
+  * which is a different question — most words have several translations and only some are the sense being learned.
+  *
+  * Both directions are stored, like [[WordTranslationRow]]: the row `(Haus, lesson1, ház)` is always accompanied by
+  * `(ház, lesson1, Haus)`, so a prompt works either way round with no union. Both words also carry the tag, since a
+  * pair whose answer is not itself collected is a question with a missing half — which is why this is written through
+  * `WordRepository.pairTranslation` rather than a bare insert.
+  */
+final case class WordTagPairRow(id: Long, wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long)
+
 /** A guest account's transfer code. The `code` column *is* the bearer credential, like `SessionRow.id`: it must never
   * reach a log line, and it is answered to its owner exactly once, when it is minted.
   */

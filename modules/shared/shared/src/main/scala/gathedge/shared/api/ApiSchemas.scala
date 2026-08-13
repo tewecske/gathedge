@@ -35,7 +35,9 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  TaggedPair,
   TranslationEntry,
+  TranslationOption,
   UpdateLocaleRequest,
   UpdateThemeRequest,
   UpdateUserRequest,
@@ -90,6 +92,8 @@ object ApiSchemas {
   given Schema[ClaimRequest]      = DeriveSchema.gen[ClaimRequest]
   given Schema[UpgradeRequest]    = DeriveSchema.gen[UpgradeRequest]
 
+  given Schema[TranslationOption]     = DeriveSchema.gen[TranslationOption]
+  given Schema[TaggedPair]            = DeriveSchema.gen[TaggedPair]
   given Schema[WordSummary]           = DeriveSchema.gen[WordSummary]
   given Schema[TranslationEntry]      = DeriveSchema.gen[TranslationEntry]
   given Schema[WordDetail]            = DeriveSchema.gen[WordDetail]

@@ -8,7 +8,8 @@ import zio.*
 
 import javax.sql.DataSource
 
-/** The vocabulary's four tables — `words`, `word_translations`, `tags`, `word_tags` — in one repository.
+/** The vocabulary's five tables — `words`, `word_translations`, `tags`, `word_tags`, `word_tag_pairs` — in one
+  * repository.
   *
   * They are together rather than in four files because they are written together: adding a word with a translation has
   * to insert into two of them atomically, and a transaction does not compose across repositories (see
@@ -94,6 +95,10 @@ trait WordRepository {
     */
   def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit]
 
+  /** Removes the tag from the word — and with it every practice pair naming that word inside that tag, in both
+    * directions. A pair whose word is no longer in the tag is a question with a missing half, and it is invisible to
+    * the listing, so nothing else would ever offer to clear it.
+    */
   def untagWord(wordId: Long, tagId: Long): Task[Long]
 
   /** Which of those words the account has tagged, and with which of its tags. One query per page. */
@@ -101,6 +106,27 @@ trait WordRepository {
 
   /** The account's tags on one word, for the detail screen. */
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]]
+
+  // -- Practice pairs ---------------------------------------------------------------------------
+
+  /** Marks `translationWordId` as a practice answer for `wordId` inside `tagId`, as one unit of work: both words gain
+    * the tag, and the pair is recorded in both directions.
+    *
+    * The memberships are part of the same write rather than the caller's job, because a pair whose answer is not itself
+    * in the vocabulary is a question the reader could never have collected the answer to. Idempotent in every part, so
+    * a double-click is nothing to do rather than a conflict.
+    */
+  def pairTranslation(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit]
+
+  /** Removes the pair and its mirror. The two words keep the tag — taking a word out of a vocabulary is what
+    * [[untagWord]] is for. Returns rows affected.
+    */
+  def unpairTranslation(wordId: Long, tagId: Long, translationWordId: Long): Task[Long]
+
+  /** Which translations the account has marked, across a whole page of words. One query per page, the same shape as
+    * [[tagsFor]].
+    */
+  def pairsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagPairRow]]
 
   // -- The dictionary importer's bulk path ------------------------------------------------------
   // Batched and explicit-column, so no generated key has to come back: `getGeneratedKeys` after an
@@ -225,6 +251,20 @@ object WordRepository {
   def tagsOfWord(userId: Long, wordId: Long): RIO[WordRepository, List[TagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagsOfWord(userId, wordId))
 
+  def pairTranslation(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+  ): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.pairTranslation(wordId, tagId, translationWordId, createdAt))
+
+  def unpairTranslation(wordId: Long, tagId: Long, translationWordId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.unpairTranslation(wordId, tagId, translationWordId))
+
+  def pairsFor(userId: Long, wordIds: List[Long]): RIO[WordRepository, List[WordTagPairRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.pairsFor(userId, wordIds))
+
   def insertWords(rows: List[WordRow]): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.insertWords(rows))
 
@@ -258,6 +298,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def translations = quote(querySchema[WordTranslationRow]("word_translations"))
   private inline def tags         = quote(querySchema[TagRow]("tags"))
   private inline def wordTags     = quote(querySchema[WordTagRow]("word_tags"))
+  private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
 
   // -- Words ------------------------------------------------------------------------------------
 
@@ -265,7 +306,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val q = quote(
       words.filter(word => {
         word.language == lift(language) && word.textNorm == lift(textNorm) &&
-          word.partOfSpeech == lift(partOfSpeech) && word.gender == lift(gender)
+        word.partOfSpeech == lift(partOfSpeech) && word.gender == lift(gender)
       })
     )
     logged(run(ctx.run(q)).map(_.headOption))(found => s"words.findWord lang=$language found=${found.isDefined}")
@@ -426,7 +467,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val q = quote(
       translations.filter(edge => {
         edge.sourceWordId == lift(sourceWordId) && edge.targetWordId == lift(targetWordId) &&
-          edge.createdBy == lift(createdBy)
+        edge.createdBy == lift(createdBy)
       })
     )
     logged(run(ctx.run(q)).map(_.headOption))(found => s"wordTranslations.find found=${found.isDefined}")
@@ -468,9 +509,9 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                      val mirror = quote(
                        translations.filter(other => {
                          other.sourceWordId == lift(edge.targetWordId) &&
-                           other.targetWordId == lift(edge.sourceWordId) &&
-                           other.createdBy.contains(lift(ownerId))
-                      })
+                         other.targetWordId == lift(edge.sourceWordId) &&
+                         other.createdBy.contains(lift(ownerId))
+                       })
                      )
                      ctx.run(owned.delete).zipWith(ctx.run(mirror.delete))(_ + _)
                  }
@@ -519,21 +560,42 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"tags.delete id=$id user=$userId rows=$rows")
   }
 
-  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit] = {
+  /** One membership row, inserted only if it is not already there, and answering whether it was.
+    *
+    * Kept as a `ZIO[DataSource, …]` rather than a `Task` so it can take part in [[pairTranslation]]'s transaction:
+    * [[QuillRepository.run]] discharges the requirement, and a query that has already had its own environment supplied
+    * takes its own connection instead of the transaction's.
+    */
+  private def linkOnce(wordId: Long, tagId: Long, createdAt: Long): ZIO[DataSource, Throwable, Boolean] = {
     val existing = quote(wordTags.filter(link => link.wordId == lift(wordId) && link.tagId == lift(tagId)))
     val row      = WordTagRow(0L, wordId, tagId, createdAt)
-    val linked   = run(ctx.run(existing)).flatMap { found =>
+    ctx.run(existing).flatMap { found =>
       if (found.nonEmpty)
         ZIO.succeed(false)
       else
-        run(ctx.run(quote(wordTags.insertValue(lift(row)).returningGenerated(_.id)))).as(true)
+        ctx.run(quote(wordTags.insertValue(lift(row)).returningGenerated(_.id))).as(true)
     }
-    logged(linked)(added => s"wordTags.tag word=$wordId tag=$tagId added=$added").unit
+  }
+
+  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit] = {
+    logged(run(linkOnce(wordId, tagId, createdAt)))(added => s"wordTags.tag word=$wordId tag=$tagId added=$added").unit
   }
 
   def untagWord(wordId: Long, tagId: Long): Task[Long] = {
-    val q = quote(wordTags.filter(link => link.wordId == lift(wordId) && link.tagId == lift(tagId)).delete)
-    logged(run(ctx.run(q)))(rows => s"wordTags.untag word=$wordId tag=$tagId rows=$rows")
+    // The word's practice pairs in this tag go with it, in both directions: a pair naming a word the tag no longer
+    // holds is a question with a missing half, and it renders nowhere, so nothing would ever offer to clear it. Both
+    // tables belong to this repository, so the two deletes are one unit of work.
+    val pairs   = quote(
+      wordTagPairs
+        .filter(pair => {
+          pair.tagId == lift(tagId) &&
+          (pair.wordId == lift(wordId) || pair.translationWordId == lift(wordId))
+        })
+        .delete
+    )
+    val link    = quote(wordTags.filter(row => row.wordId == lift(wordId) && row.tagId == lift(tagId)).delete)
+    val removed = transaction(ctx.run(pairs) *> ctx.run(link))
+    logged(removed)(rows => s"wordTags.untag word=$wordId tag=$tagId rows=$rows")
   }
 
   def tagsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagRow]] = {
@@ -543,7 +605,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val q = quote {
         wordTags.filter(link => {
           liftQuery(wordIds).contains(link.wordId) &&
-            tags.filter(tag => tag.id == link.tagId && tag.userId == lift(userId)).nonEmpty
+          tags.filter(tag => tag.id == link.tagId && tag.userId == lift(userId)).nonEmpty
         })
       }
       logged(run(ctx.run(q)))(rows => s"wordTags.forWords user=$userId words=${wordIds.size} rows=${rows.size}")
@@ -554,10 +616,85 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val q = quote {
       tags.filter(tag => {
         tag.userId == lift(userId) &&
-          wordTags.filter(link => link.tagId == tag.id && link.wordId == lift(wordId)).nonEmpty
+        wordTags.filter(link => link.tagId == tag.id && link.wordId == lift(wordId)).nonEmpty
       })
     }
     logged(run(ctx.run(q)))(rows => s"tags.ofWord user=$userId word=$wordId rows=${rows.size}")
+  }
+
+  // -- Practice pairs ---------------------------------------------------------------------------
+
+  /** One pair row, inserted only if it is not already there. A `ZIO[DataSource, …]` for the reason [[linkOnce]] is. */
+  private def pairOnce(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+  ): ZIO[DataSource, Throwable, Unit] = {
+    val existing = quote(
+      wordTagPairs.filter(pair => {
+        pair.wordId == lift(wordId) && pair.tagId == lift(tagId) &&
+        pair.translationWordId == lift(translationWordId)
+      })
+    )
+    val row      = WordTagPairRow(0L, wordId, tagId, translationWordId, createdAt)
+    ctx.run(existing).flatMap { found =>
+      if (found.nonEmpty)
+        ZIO.unit
+      else
+        ctx.run(quote(wordTagPairs.insertValue(lift(row)).returningGenerated(_.id))).unit
+    }
+  }
+
+  def pairTranslation(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit] = {
+    // Four writes or none. A pair whose answer is not itself in the tag is a question the reader could never have
+    // collected the answer to, and a half-recorded pair would be answerable one way round and not the other.
+    val marked = transaction(
+      for {
+        _ <- linkOnce(wordId, tagId, createdAt)
+        _ <- linkOnce(translationWordId, tagId, createdAt)
+        _ <- pairOnce(wordId, tagId, translationWordId, createdAt)
+        _ <- pairOnce(translationWordId, tagId, wordId, createdAt)
+      } yield ()
+    )
+    logged(marked)(_ => s"wordTagPairs.pair word=$wordId tag=$tagId translation=$translationWordId")
+  }
+
+  def unpairTranslation(wordId: Long, tagId: Long, translationWordId: Long): Task[Long] = {
+    val forward = quote(
+      wordTagPairs
+        .filter(pair => {
+          pair.wordId == lift(wordId) && pair.tagId == lift(tagId) &&
+          pair.translationWordId == lift(translationWordId)
+        })
+        .delete
+    )
+    val back    = quote(
+      wordTagPairs
+        .filter(pair => {
+          pair.wordId == lift(translationWordId) && pair.tagId == lift(tagId) &&
+          pair.translationWordId == lift(wordId)
+        })
+        .delete
+    )
+    val removed = transaction(ctx.run(forward).zipWith(ctx.run(back))(_ + _))
+    logged(removed) { rows =>
+      s"wordTagPairs.unpair word=$wordId tag=$tagId translation=$translationWordId rows=$rows"
+    }
+  }
+
+  def pairsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagPairRow]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordTagPairs.filter(pair => {
+          liftQuery(wordIds).contains(pair.wordId) &&
+          tags.filter(tag => tag.id == pair.tagId && tag.userId == lift(userId)).nonEmpty
+        })
+      }
+      logged(run(ctx.run(q)))(rows => s"wordTagPairs.forWords user=$userId words=${wordIds.size} rows=${rows.size}")
+    }
   }
 
   // -- Bulk import ------------------------------------------------------------------------------

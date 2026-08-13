@@ -46,6 +46,7 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  TaggedPair,
   UpdateUserRequest,
   UserPage,
   VerifyEmailRequest,
@@ -482,7 +483,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw.fromJson[WordDetail].map(_.translations.map(_.word.text)) == Right(List("ház")),
             listed.status == Status.Ok,
             listRaw.fromJson[WordPage].map(_.items.map(_.word.text)) == Right(List("Haus")),
-            listRaw.fromJson[WordPage].map(_.items.flatMap(_.translations)) == Right(List("ház")),
+            listRaw.fromJson[WordPage].map(_.items.flatMap(_.translations.map(_.text))) == Right(List("ház")),
           )
         },
         test("an unparseable query parameter is the described 400, in the ordinary error shape") {
@@ -520,6 +521,51 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             tagged.status == Status.NoContent,
             empty.isEmpty,
             tagged.header(Header.ContentLength).isEmpty,
+          )
+        },
+        test("marking a translation for practice answers an empty 204, and the row carries the mark back") {
+          for {
+            session  <- signUp("words-pair@example.com")
+            tagReq    = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
+            tag      <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
+            tagRaw   <- body(tag)
+            tagId     = tagRaw.fromJson[Tag].map(_.id).getOrElse(0L)
+            wordReq   = Request.post(
+                          "/api/words",
+                          Body.fromString(
+                            CreateWordRequest(
+                              WordLanguage.De,
+                              "Brot",
+                              PartOfSpeech.Noun,
+                              Some(Gender.Das),
+                              List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
+                              Nil,
+                            ).toJson
+                          ),
+                        )
+            word     <- runRoutes(WordRoutes.routes, withCsrf(withSession(wordReq, session)))
+            wordRaw  <- body(word)
+            detail    = wordRaw.fromJson[WordDetail]
+            wordId    = detail.map(_.word.id).getOrElse(0L)
+            targetId  = detail.map(_.translations.map(_.word.id)).getOrElse(Nil).headOption.getOrElse(0L)
+            path      = s"/api/words/$wordId/tags/$tagId/translations/$targetId"
+            marked   <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.put(path, Body.empty), session)))
+            empty    <- body(marked)
+            listed   <-
+              runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
+            listRaw  <- body(listed)
+            unmarked <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.delete(path), session)))
+            after    <-
+              runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
+            afterRaw <- body(after)
+          } yield assertTrue(
+            marked.status == Status.NoContent,
+            empty.isEmpty,
+            // A 204 must not carry one, and the Scala.js body codec is what the absence is for — see AdminEndpoints.
+            marked.header(Header.ContentLength).isEmpty,
+            listRaw.fromJson[WordPage].map(_.items.flatMap(_.pairs)) == Right(List(TaggedPair(tagId, targetId))),
+            unmarked.status == Status.NoContent,
+            afterRaw.fromJson[WordPage].map(_.items.flatMap(_.pairs)) == Right(Nil),
           )
         },
         test("a word that is not there is the described 404") {

@@ -1,8 +1,17 @@
 package gathedge.backend.service
 
-import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTranslationRow}
+import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTranslationRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
-import gathedge.shared.dto.{CreateWordRequest, NewTranslation, TranslationEntry, WordDetail, WordPage, WordSummary}
+import gathedge.shared.dto.{
+  CreateWordRequest,
+  NewTranslation,
+  TaggedPair,
+  TranslationEntry,
+  TranslationOption,
+  WordDetail,
+  WordPage,
+  WordSummary,
+}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -66,6 +75,17 @@ trait WordService {
   /** Idempotent, both ways round: the listing's one-click toggle must be safe to click twice. */
   def tagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit]
   def untagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Marks one of a word's translations as a practice answer inside one of the caller's tags.
+    *
+    * Idempotent like [[tagWord]], and it files both words under the tag as a side effect — a pair whose answer is not
+    * itself collected is a question with a missing half. `NotFound` covers both a word that is not there and a
+    * translation the word does not have; `TagNotFound` covers somebody else's tag.
+    */
+  def selectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Unmarks it. Both words keep the tag: taking a word out of a vocabulary is the tick's job. */
+  def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
 }
 
 object WordService {
@@ -129,6 +149,22 @@ object WordService {
   def untagWord(wordId: Long, tagId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.untagWord(wordId, tagId, userId))
 
+  def selectPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.selectPair(wordId, tagId, translationWordId, userId))
+
+  def deselectPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
+
   val live: URLayer[WordRepository, WordService] = ZLayer.fromFunction(WordServiceLive.apply)
 
   /** What a word row a user typed is marked as, against the dictionary's own. */
@@ -180,6 +216,29 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
     rows.sortBy { case (edge, word) => (rankOf(edge), word.frequencyRank, word.textNorm) }
   }
 
+  /** The translations a listing row offers: the best few, plus every one the reader has already marked as a practice
+    * answer.
+    *
+    * The cap is what keeps the cell a line rather than a dictionary entry — the detail page is where the rest are. But
+    * a marked translation falling outside it would be a choice the reader made, cannot see, and can no longer undo, so
+    * the union is not a nicety: it is what makes the chip reversible.
+    *
+    * Deduplicated on the rendered text rather than on the word id, keeping the best-ranked of each: two `words` rows
+    * can render alike, and the row used to show one entry per distinct string. Each survivor's id is then unique, which
+    * is what a chip acts on.
+    */
+  private def translationsShown(
+    rows: List[(WordTranslationRow, WordRow)],
+    marked: List[WordTagPairRow],
+  ): List[Word] = {
+    val selected = marked.map(_.translationWordId).toSet
+    val options  = rows.map { case (_, word) => toDomain(word) }.distinctBy(Word.display)
+    options.zipWithIndex.collect {
+      case (word, index) if index < WordService.translationsPerRow || selected.contains(word.id) =>
+        word
+    }
+  }
+
   def list(
     page: Int,
     pageSize: Int,
@@ -225,21 +284,28 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
                           )
                           .orDie
         ids           = rows.map(_.id)
-        // Two batch queries for the whole page rather than two per row.
+        // Three batch queries for the whole page rather than three per row.
         translations <- repo.translationsOf(ids, WordLanguage.code(target)).orDie
         links        <- ZIO.foreach(reader)(userId => repo.tagsFor(userId, ids)).map(_.toList.flatten).orDie
+        marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, ids)).map(_.toList.flatten).orDie
         byWord        = sortTranslations(translations).groupBy { case (edge, _) => edge.sourceWordId }
         tagsByWord    = links.groupBy(_.wordId)
+        pairsByWord   = marked.groupBy(_.wordId)
       } yield WordPage(
         items = rows.map { row =>
+          val rowPairs = pairsByWord.getOrElse(row.id, Nil)
+          val offered  = translationsShown(byWord.getOrElse(row.id, Nil), rowPairs)
+          val shownIds = offered.map(_.id).toSet
           WordSummary(
             word = toDomain(row),
-            translations = byWord
-              .getOrElse(row.id, Nil)
-              .map { case (_, word) => Word.display(toDomain(word)) }
-              .distinct
-              .take(WordService.translationsPerRow),
+            translations = offered.map(word => TranslationOption(word.id, Word.display(word))),
             tagIds = tagsByWord.getOrElse(row.id, Nil).map(_.tagId),
+            // Only the marks this row can render: one whose answer is in a language the listing is not translating
+            // into would otherwise ship to a client with no chip to put it on.
+            pairs = rowPairs
+              .filter(pair => shownIds.contains(pair.translationWordId))
+              .map(pair => TaggedPair(pair.tagId, pair.translationWordId))
+              .distinct,
           )
         },
         total = total,
@@ -318,7 +384,18 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
     } yield row
   }
 
-  private def link(source: WordRow, translation: NewTranslation, userId: Long): IO[WordFailure, Unit] = {
+  /** The target word of a translation the caller is adding, and whether the edge was new.
+    *
+    * `false` means they had already recorded it — still the translation they mean, which is why this answers the word
+    * rather than failing. [[addTranslation]] turns that into the 409; [[create]] does not, because a duplicate is no
+    * reason to refuse a request that is about adding a *word*, and it still needs the word's id to mark it for
+    * practice.
+    */
+  private def linkOrExisting(
+    source: WordRow,
+    translation: NewTranslation,
+    userId: Long,
+  ): IO[WordFailure, (WordRow, Boolean)] = {
     for {
       target <- ensure(
                   translation.language,
@@ -330,26 +407,46 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
                 )
       _      <- ZIO.when(target.id == source.id)(ZIO.fail(WordFailure.ValidationError(Map.empty)))
       known  <- repo.findTranslation(source.id, target.id, Some(userId)).orDie
-      _      <- ZIO.when(known.isDefined)(ZIO.fail(WordFailure.DuplicateTranslation))
-      now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _      <- repo.insertTranslationPair(source.id, target.id, WordService.userOrigin, Some(userId), now).orDie
-    } yield ()
+      added  <- ZIO
+                  .when(known.isEmpty)(
+                    for {
+                      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                      _   <- repo
+                               .insertTranslationPair(source.id, target.id, WordService.userOrigin, Some(userId), now)
+                               .orDie
+                    } yield ()
+                  )
+                  .map(_.isDefined)
+    } yield (target, added)
+  }
+
+  private def link(source: WordRow, translation: NewTranslation, userId: Long): IO[WordFailure, Unit] = {
+    linkOrExisting(source, translation, userId).flatMap { case (_, added) =>
+      if (added)
+        ZIO.unit
+      else
+        ZIO.fail(WordFailure.DuplicateTranslation)
+    }
   }
 
   private def decode(code: String): PartOfSpeech = PartOfSpeech.fromString(code).getOrElse(PartOfSpeech.Other)
 
   def create(request: CreateWordRequest, userId: Long): IO[WordFailure, WordDetail] = {
     for {
-      row    <- ensure(request.language, request.text, request.partOfSpeech, request.gender, userId)
+      row     <- ensure(request.language, request.text, request.partOfSpeech, request.gender, userId)
       // A translation the caller has already recorded is not a reason to refuse the whole request: they are adding a
       // word, and the duplicate simply already says what they meant.
-      _      <- ZIO.foreachDiscard(request.translations)(translation => {
-                  link(row, translation, userId).catchSome { case WordFailure.DuplicateTranslation =>
-                    ZIO.unit
-                  }
-           })
-      _      <- ZIO.foreachDiscard(request.tagIds)(tagId => tagWord(row.id, tagId, userId))
-      detail <- detailOf(row, Some(userId))
+      targets <- ZIO.foreach(request.translations)(translation => {
+                   linkOrExisting(row, translation, userId).map { case (target, _) => target }
+                 })
+      _       <- ZIO.foreachDiscard(request.tagIds)(tagId => tagWord(row.id, tagId, userId))
+      // A translation somebody bothered to type is the answer they want to be asked for, so it is marked as one
+      // straight away — the same state clicking its chip on the listing produces. `tagWord` above has already checked
+      // each tag belongs to the caller.
+      _       <- ZIO.foreachDiscard(request.tagIds)(tagId => {
+                   ZIO.foreachDiscard(targets)(target => pairInTag(row.id, tagId, target.id))
+                 })
+      detail  <- detailOf(row, Some(userId))
     } yield detail
   }
 
@@ -422,6 +519,50 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
       _ <- requireOwnTag(tagId, userId)
       // Removing a tag that is not on the word is nothing to do, not a failure — the same rule as putting one on.
       _ <- repo.untagWord(wordId, tagId).orDie
+    } yield ()
+  }
+
+  /** The translation has to be one the word actually has: an arbitrary pair of word ids is not a translation, and the
+    * practice screen would be asking a question with nothing behind it. Reuses `allTranslationsOf`, which also proves
+    * the translation word exists, so there is no second lookup.
+    */
+  private def requireTranslationOf(wordId: Long, translationWordId: Long): IO[WordFailure, Unit] = {
+    repo
+      .allTranslationsOf(wordId)
+      .orDie
+      .flatMap(edges => {
+        ZIO.unless(edges.exists { case (edge, _) => edge.targetWordId == translationWordId })(
+          ZIO.fail(WordFailure.NotFound)
+        )
+      })
+      .unit
+  }
+
+  /** The write itself, with the checks already done — shared with [[create]], which has just inserted the edge it would
+    * otherwise re-read.
+    */
+  private def pairInTag(wordId: Long, tagId: Long, translationWordId: Long): UIO[Unit] = {
+    for {
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _   <- repo.pairTranslation(wordId, tagId, translationWordId, now).orDie
+    } yield ()
+  }
+
+  def selectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit] = {
+    for {
+      _ <- requireOwnTag(tagId, userId)
+      _ <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      _ <- requireTranslationOf(wordId, translationWordId)
+      _ <- pairInTag(wordId, tagId, translationWordId)
+    } yield ()
+  }
+
+  def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit] = {
+    for {
+      _ <- requireOwnTag(tagId, userId)
+      // Unmarking something that is not marked is nothing to do, not a failure — the rule `untagWord` follows, and what
+      // lets the chip be safe to double-click.
+      _ <- repo.unpairTranslation(wordId, tagId, translationWordId).orDie
     } yield ()
   }
 }

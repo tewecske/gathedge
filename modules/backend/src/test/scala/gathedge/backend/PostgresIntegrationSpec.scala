@@ -28,6 +28,7 @@ import gathedge.backend.service.{
   EmailSender,
   RateLimiter,
   SessionReaper,
+  WordService,
 }
 import gathedge.shared.dto.Paging
 import zio._
@@ -90,7 +91,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
     repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
-      (AuthService.live ++ AuditTrail.live) >+> AdminService.live
+      (AuthService.live ++ AuditTrail.live) >+> AdminService.live >+> WordService.live
   }
 
   def spec = {
@@ -143,7 +144,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // reference declared without an ON DELETE action instead raises
       // "update or delete on table \"users\" violates foreign key constraint", which `deleteById`'s `.orDie` turns
       // into a bare 500. Any new table that references `users` belongs in this test.
-      test("deleting a user cascades to its sessions, linked identities, tokens, tags and transfer codes") {
+      test("deleting a user cascades to its sessions, identities, tokens, tags, practice pairs and transfer codes") {
         for {
           admin      <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
           signup     <- AuthService.signup("pgdeltarget@example.com", "password123")
@@ -160,6 +161,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           spoon      <- WordRepository.ensureWord(WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L))
           _          <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
           _          <- WordRepository.tagWord(word.id, tag.id, 0L)
+          // `word_tag_pairs` reaches `users` only through `tags`, but that is the path that breaks: declared without an
+          // ON DELETE action, the cascade *into* `tags` would raise a violation and `deleteUser` would answer 500.
+          _          <- WordRepository.pairTranslation(word.id, tag.id, spoon.id, 0L)
           _          <- GuestClaimCodeRepository.insert(target.id, "PGDE-LETE-CODE-0001", 0L)
           _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone       <- AdminService.getUser(target.id).either
@@ -167,6 +171,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           identities <- OAuthIdentityRepository.listForUser(target.id)
           tokens     <- EmailVerificationTokenRepository.findForUser(target.id)
           tags       <- WordRepository.listTags(target.id)
+          pairs      <- WordRepository.pairsFor(target.id, List(word.id, spoon.id))
           codes      <- GuestClaimCodeRepository.countFor(target.id)
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
           stillThere <- WordRepository.findWordById(word.id)
@@ -177,6 +182,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           identities.isEmpty,
           tokens.isEmpty,
           tags.isEmpty,
+          pairs.isEmpty,
           codes == 0L,
           stillThere.isDefined,
           stillThere.flatMap(_.createdBy).isEmpty,
@@ -243,6 +249,38 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           upgraded.email.contains("pgguest@example.com"),
           signedIn._1.id == guest.id,
           codeGone.isLeft,
+        )
+      },
+      // Three SQL shapes reach the real dialect here for the first time: `pairTranslation`'s four-statement transaction
+      // with `returningGenerated`, `unpairTranslation`'s two-statement one, and the `||` inside the `DELETE` that
+      // `untagWord` grew. SQLite would pass whatever any of them rendered to.
+      test("marking and unmarking a practice answer round-trips on the real dialect") {
+        for {
+          reader  <- AuthService.createGuest(Some("10.9.2.1")).map(_._1)
+          tag     <- WordService.createTag("pglesson", reader.id)
+          word    <- WordRepository.ensureWord(
+                       WordRow(0L, "de", "Gabel", "gabel", "noun", "die", 1, "user", Some(reader.id), 0L)
+                     )
+          fork    <- WordRepository.ensureWord(WordRow(0L, "hu", "villa", "villa", "noun", "", 1, "user", None, 0L))
+          _       <- WordRepository.insertTranslationPair(word.id, fork.id, "user", Some(reader.id), 0L)
+          _       <- WordService.selectPair(word.id, tag.id, fork.id, reader.id)
+          marked  <- WordRepository.pairsFor(reader.id, List(word.id, fork.id))
+          links   <- WordRepository.tagsFor(reader.id, List(word.id, fork.id))
+          _       <- WordService.deselectPair(word.id, tag.id, fork.id, reader.id)
+          cleared <- WordRepository.pairsFor(reader.id, List(word.id, fork.id))
+          _       <- WordService.selectPair(word.id, tag.id, fork.id, reader.id)
+          _       <- WordService.untagWord(word.id, tag.id, reader.id)
+          swept   <- WordRepository.pairsFor(reader.id, List(word.id, fork.id))
+          left    <- WordRepository.tagsFor(reader.id, List(word.id, fork.id))
+        } yield assertTrue(
+          // Both directions of the pair, and both words filed under the tag.
+          marked.map(row => (row.wordId, row.translationWordId)).toSet ==
+            Set((word.id, fork.id), (fork.id, word.id)),
+          links.map(_.wordId).toSet == Set(word.id, fork.id),
+          cleared.isEmpty,
+          // Untagging the word takes its pairs in that tag with it, both ways round, and leaves the translation filed.
+          swept.isEmpty,
+          left.map(_.wordId) == List(fork.id),
         )
       },
       test("the reaper's sweep runs, and takes only the guests with nothing on them") {

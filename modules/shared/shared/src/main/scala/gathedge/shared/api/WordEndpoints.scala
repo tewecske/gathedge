@@ -26,6 +26,12 @@ object WordEndpoints {
   private val tagId         = PathCodec.long("tagId")
   private val translationId = PathCodec.long("translationId")
 
+  /** A `words.id`, and deliberately not the same thing as [[translationId]] above, which is a `word_translations.id` —
+    * an edge somebody recorded. A practice answer names the word itself, because the answer belongs to the reader's tag
+    * while the edge belongs to whoever typed it. Two similar-looking paths, two different keys.
+    */
+  private val translationWordId = PathCodec.long("translationWordId")
+
   private val noContent = HttpCodec.status(Status.NoContent)
 
   // Optional rather than defaulted, for the reason recorded on `AdminEndpoints`: a defaulted codec writes the default
@@ -150,6 +156,39 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
+  /** Marks one of the word's translations as an answer the practice screen should check against, inside one of the
+    * caller's tags — the chip on the listing's translations column.
+    *
+    * Idempotent like [[tagWord]], and it puts *both* words under the tag as a side effect, since a pair whose answer is
+    * not itself collected is a question with a missing half. Several translations may be marked for the same word and
+    * tag — a word usually has more than one sense worth learning — which is why the translation is a path segment
+    * rather than a field on the tag link.
+    *
+    * The tag is in the path but never in the address bar: which tag a click files into is page-local browser state, so
+    * it is the client that decides, and the server is never asked what is selected "for the current tag".
+    *
+    * 404 answers three things at once — no such word, no such translation of it, and a tag that is not the caller's —
+    * because which of them it was is not something an account may learn by trying.
+    */
+  val selectPair = {
+    Endpoint(
+      Method.PUT / "api" / "words" / wordId / "tags" / tagId / "translations" / translationWordId
+    ).withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Unmarks it. Both directions of the pair go; the two words stay under the tag, since taking a word out of a
+    * vocabulary is what the row's tick is for.
+    */
+  val deselectPair = {
+    Endpoint(
+      Method.DELETE / "api" / "words" / wordId / "tags" / tagId / "translations" / translationWordId
+    ).withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection. */
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
     List(
@@ -163,6 +202,8 @@ object WordEndpoints {
       deleteTag,
       tagWord,
       untagWord,
+      selectPair,
+      deselectPair,
     )
   }
 

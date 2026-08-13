@@ -32,6 +32,11 @@ Under that sits the part of an application that is the same every time and tedio
 `/en/words` is the whole of it: pick a tag, type, and click the rows worth learning. There is no save
 button — a click is the entire action.
 
+A row's translations are clickable too. Ticking a word says you are learning it; clicking one of its
+translations says *that* is the answer you want to be asked for, which is what the practice screen
+will check against. Several translations may be marked for one word, and the one you mark joins the
+tag as a word in its own right, so the pair works in both directions.
+
 The dictionary is imported rather than typed. Load the committed sample once, and the dev stack has
 real words in it:
 
@@ -39,8 +44,9 @@ real words in it:
 sbt "backend/runMain gathedge.backend.tools.DictionaryImport --seed"
 ```
 
-The real thing is a 2.6 GB wiktextract dump of the English Wiktionary; see
-[`data/dictionary/README.md`](data/dictionary/README.md) for that, for the frequency lists that
+The real thing is a 2.6 GB wiktextract dump of the English Wiktionary, turned into a few-megabyte
+seed file by `./scripts/build-dictionary-seed.sh` — a server is given that, never the dump. See
+[`data/dictionary/README.md`](data/dictionary/README.md) for both, for the frequency lists that
 decide search ranking, and for how German–Hungarian translations are derived (no free source states
 them directly). Word data is **CC BY-SA 4.0**, which the word list attributes on screen.
 
