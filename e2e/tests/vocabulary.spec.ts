@@ -217,3 +217,32 @@ test('the detail page adds a translation in the language still missing', async (
   // And the form is still there, on the same word, for whatever is added next.
   await expect(page.getByRole('heading', { name: 'Add a translation' })).toBeVisible();
 });
+
+// The same two actions the listing offers, on the screen that shows every language at once — which is the
+// only place a translation outside the listing's target language can be marked at all. One collect tag
+// stands behind both screens, so a tick here is a tick there.
+test('the detail page collects the word and marks a translation', async () => {
+  // Still on the word from the previous test. It was added through the listing's form, so it arrived filed
+  // under the collect tag: the tick here answers the same question the row's does.
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+
+  const chip = page.getByRole('button', { name: /^plum/ });
+  await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  await chip.click();
+  await expect(page.getByRole('button', { name: /^plum/ })).toHaveAttribute('aria-pressed', 'true');
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^plum/ })).toHaveAttribute('aria-pressed', 'true');
+
+  // Out of the vocabulary and back in: the tick is a control here, not a read-out of one.
+  await page.getByRole('button', { name: /my vocabulary/ }).click();
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('+');
+  await page.getByRole('button', { name: /my vocabulary/ }).click();
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+
+  // And the listing agrees, because there is one collect tag and not one per screen.
+  await page.goto(`/en/words?lang=de&target=en&q=${newWord}`);
+  await expect(
+    page.locator('tr', { hasText: newWord }).getByRole('button', { name: /my vocabulary/ }),
+  ).toContainText('✓');
+});

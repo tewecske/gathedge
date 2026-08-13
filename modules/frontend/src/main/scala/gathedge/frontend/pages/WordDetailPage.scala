@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels}
+import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
@@ -15,6 +15,11 @@ import gathedge.shared.i18n.UiKeys
   *
   * Public, like the listing — a visitor sees the word and everybody's translations, and simply has no tags of their
   * own. Adding a translation needs a session, so the form appears only with one.
+  *
+  * It collects the same way the listing does, through the same [[WordCollect]] and the same collect tag: the tick
+  * beside the word files it, and each translation is a chip that marks it as the answer to practise. This is the only
+  * screen that shows every language at once, so it is where a translation outside the listing's target language can be
+  * marked at all — and a click here files into exactly the tag a click there would.
   */
 object WordDetailPage {
 
@@ -32,10 +37,40 @@ private class WordDetailPage(id: Long) {
 
   private val errorVar: Var[Option[String]] = Var(None)
 
+  private val noticeVar: Var[Option[String]] = Var(None)
+
   private val inFlightVar    = Var(false)
   private val inFlightSignal = inFlightVar.signal
 
   private val signedInSignal = AppState.isSignedInSignal
+
+  private val loadBus   = new EventBus[Unit]()
+  private val addBus    = new EventBus[Unit]()
+  private val removeBus = new EventBus[Long]()
+
+  /** The tick, the chips and the tag they file into — the listing's, verbatim. A landed write re-fetches the word,
+    * which is what refreshes the tick, the chips and the read-only tag list below them in one go.
+    */
+  private val collect = new WordCollect(
+    onError = errorVar.writer,
+    onNotice = noticeVar.writer.contramap[String](Some(_)),
+    onWritten = Observer[Unit](_ => loadBus.emit(())),
+  )
+
+  /** Derived from the page's own signal rather than from the loaded value, so that changing the collect tag in the bar
+    * recolours the tick and the chips at once instead of at the next load.
+    */
+  private val tagIdsSignal = detailSignal.map(_.map(_.tags.map(_.id)).getOrElse(Nil)).distinct
+  private val pairsSignal  = detailSignal.map(_.map(_.pairs).getOrElse(Nil)).distinct
+
+  private val taggedSignal   = collect.taggedSignal(tagIdsSignal)
+  private val selectedSignal = collect.selectedSignal(pairsSignal)
+
+  /** A word being learned with nothing marked as its answer — the same gap the listing marks, asked across all of the
+    * word's translations rather than only the ones one listing was showing.
+    */
+  private val unpairedSignal =
+    taggedSignal.combineWithFn(selectedSignal)((tagged, marked) => tagged && marked.isEmpty).distinct
 
   private val textVar   = Var("")
   private val genderVar = Var(Option.empty[Gender])
@@ -45,16 +80,16 @@ private class WordDetailPage(id: Long) {
     */
   private val languageVar = Var(Option.empty[WordLanguage])
 
-  private val loadBus   = new EventBus[Unit]()
-  private val addBus    = new EventBus[Unit]()
-  private val removeBus = new EventBus[Long]()
-
   def render(): HtmlElement = {
     div(
       cls := "max-w-2xl mx-auto",
       a(cls := "link link-hover text-sm", AppRouter.router.navigateTo(Page.Words()), I18n.t(UiKeys.wordDetailBack)),
       Alert.maybeError(errorVar.signal),
+      Alert.maybeInfo(noticeVar.signal),
       child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.wordDetailNotFound)))),
+      // Above the word for the reason it sits above the table on the listing: it says where a tick goes, and reading
+      // that after clicking is reading it too late.
+      child.maybe <-- signedInSignal.map(Option.when(_)(collect.renderBar())),
       child.maybe <-- detailSignal.map(_.map(renderWord)),
       EventStream.unit().mergeWith(loadBus.events).flatMapSwitch(_ => WordApiClient.get(id)) -->
         Observer[Either[ApiError, WordDetail]] {
@@ -82,6 +117,10 @@ private class WordDetailPage(id: Long) {
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
+      // The reader may have arrived here with no account at all: a tick or a chip mints them a guest, and this is what
+      // says so afterwards, exactly as on the listing.
+      child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
+      collect.bindings,
     )
   }
 
@@ -118,7 +157,12 @@ private class WordDetailPage(id: Long) {
       cls := "card bg-base-100 shadow mt-4",
       div(
         cls := "card-body",
-        h1(cls := "card-title text-2xl", Word.display(detail.word)),
+        div(
+          cls  := "flex items-center gap-2",
+          collect.renderTick(detail.word.id, Val(Word.display(detail.word)), tagIdsSignal),
+          h1(cls := "card-title text-2xl", Word.display(detail.word)),
+          child.maybe <-- unpairedSignal.map(Option.when(_)(collect.renderPairWarning())),
+        ),
         p(
           cls  := "text-sm opacity-70",
           s"${Labels.language(detail.word.language)} · ${Labels.partOfSpeech(detail.word.partOfSpeech)}",
@@ -147,16 +191,22 @@ private class WordDetailPage(id: Long) {
           if (group.isEmpty)
             p(cls   := "text-sm opacity-60 mt-1", I18n.t(UiKeys.wordDetailNoTranslations))
           else
-            div(cls := "flex flex-col gap-1 mt-1", group.map(renderEntry)),
+            div(cls := "flex flex-col gap-1 mt-1", group.map(entry => renderEntry(word, entry))),
         )
       }),
     )
   }
 
-  private def renderEntry(entry: TranslationEntry): HtmlElement = {
+  /** The word itself is the chip — a control, not text beside one — for the reason the listing's cell is: a click on it
+    * says "this is the answer I want to be asked for", and files both words under the collect tag.
+    *
+    * Two edges may point at the same word (one from the dictionary, one somebody typed), which renders two chips that
+    * mark and unmark together. They say the same thing about the same pair, so that is what they should do.
+    */
+  private def renderEntry(word: Word, entry: TranslationEntry): HtmlElement = {
     div(
       cls := "flex items-center gap-2",
-      span(Word.display(entry.word)),
+      collect.renderChip(word.id, entry.word.id, Val(Word.display(entry.word)), pairsSignal),
       // Marked rather than hidden: a pair inferred through English is worth having and worth knowing about.
       span(cls := "text-xs opacity-60", Labels.translationOrigin(entry.origin)),
       if (entry.ownedByMe) {

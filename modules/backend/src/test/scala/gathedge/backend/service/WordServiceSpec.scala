@@ -256,8 +256,15 @@ object WordServiceSpec extends ZIOSpecDefault {
           _      <- WordService.selectPair(word.id, tag.id, haz, 1L)
           after  <- list(search = Some("haus"), reader = Some(1L))
           mirror <- list(search = Some("ház"), reader = Some(1L), language = WordLanguage.Hu, target = WordLanguage.De)
+          detail <- WordService.detail(word.id, Some(1L))
+          seen   <- WordService.detail(word.id, None)
         } yield assertTrue(
           after.items.head.pairs == List(TaggedPair(tag.id, haz)),
+          // The word page marks the same chips as the listing, which is what it needs the marks for.
+          detail.pairs == List(TaggedPair(tag.id, haz)),
+          detail.tags.map(_.name) == List("lesson1"),
+          // A visitor has no marks, the way they have no tags — the page is public.
+          seen.pairs.isEmpty,
           // The word is filed even though nobody ticked it: a chip is a first click too.
           after.items.head.tagIds == List(tag.id),
           // And so is the translation, in both the membership and the pair — a pair whose answer is not collected is a

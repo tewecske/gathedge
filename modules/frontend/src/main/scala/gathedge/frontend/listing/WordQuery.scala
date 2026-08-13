@@ -14,9 +14,9 @@ import gathedge.shared.dto.{Paging, WordSort}
   * makes `de → hu` a link somebody can bookmark or send.
   *
   * `tagId` narrows the listing to one tag, and that is '''all''' it does. Where a tick files a word is a separate,
-  * page-local choice remembered in `localStorage` (see `WordsPage.storedCollectTag`) — the two were one field, and one
-  * select, until narrowing to `lesson1` was found to silently redirect every subsequent tick into it. The filter is in
-  * the URL because it is a view of the data worth bookmarking and sending; the collect tag is working state nobody
+  * page-local choice remembered in `localStorage` (see `WordCollect.storedCollectTag`) — the two were one field, and
+  * one select, until narrowing to `lesson1` was found to silently redirect every subsequent tick into it. The filter is
+  * in the URL because it is a view of the data worth bookmarking and sending; the collect tag is working state nobody
   * wants to send anybody.
   */
 final case class WordQuery(

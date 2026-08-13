@@ -554,6 +554,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             listed   <-
               runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
             listRaw  <- body(listed)
+            shown    <- runRoutes(WordRoutes.routes, withSession(Request.get(s"/api/words/$wordId"), session))
+            shownRaw <- body(shown)
             unmarked <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.delete(path), session)))
             after    <-
               runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
@@ -564,6 +566,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             // A 204 must not carry one, and the Scala.js body codec is what the absence is for — see AdminEndpoints.
             marked.header(Header.ContentLength).isEmpty,
             listRaw.fromJson[WordPage].map(_.items.flatMap(_.pairs)) == Right(List(TaggedPair(tagId, targetId))),
+            // The word page needs the same marks, and gets them on the body it already asks for.
+            shownRaw.fromJson[WordDetail].map(_.pairs) == Right(List(TaggedPair(tagId, targetId))),
             unmarked.status == Status.NoContent,
             afterRaw.fromJson[WordPage].map(_.items.flatMap(_.pairs)) == Right(Nil),
           )

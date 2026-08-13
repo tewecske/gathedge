@@ -4,8 +4,7 @@ import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.listing.WordQuery
-import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{TaggedPair, TranslationOption, WordSummary}
+import gathedge.shared.domain.WordLanguage
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -120,25 +119,6 @@ object WordsPageSpec extends ZIOSpecDefault {
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.
           !text.contains(UiKeys.wordsOnlyMine),
-        )
-      },
-      // The rows themselves cannot be reached under jsdom — every request fails, so the table is empty and a mounted
-      // chip does not exist. What can be wrong is the rule behind it, which is stated here as a table.
-      test("a chip is selected by the collect tag, not by any tag the reader has") {
-        val summary = WordSummary(
-          word = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das)),
-          translations = List(TranslationOption(2L, "ház"), TranslationOption(3L, "otthon")),
-          tagIds = List(10L, 11L),
-          pairs = List(TaggedPair(10L, 2L), TaggedPair(11L, 3L)),
-        )
-        assertTrue(
-          WordsPage.selectedTranslationIds(summary, Some(10L)) == Set(2L),
-          WordsPage.selectedTranslationIds(summary, Some(11L)) == Set(3L),
-          // A tag the word is not marked under shows nothing marked — reading "any tag I have" is the mistake that
-          // made a filtered listing look fully collected.
-          WordsPage.selectedTranslationIds(summary, Some(12L)) == Set.empty[Long],
-          // Only before the tag list arrives, or for a reader with no tags at all.
-          WordsPage.selectedTranslationIds(summary, None) == Set(2L, 3L),
         )
       },
       // Every request fails under jsdom, which is the same shape as a listing that matched nothing.

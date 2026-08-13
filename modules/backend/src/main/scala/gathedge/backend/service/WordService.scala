@@ -317,6 +317,7 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
     for {
       translations <- repo.allTranslationsOf(row.id).orDie
       tags         <- ZIO.foreach(reader)(userId => repo.tagsOfWord(userId, row.id)).map(_.toList.flatten).orDie
+      marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, List(row.id))).map(_.toList.flatten).orDie
       // Carried with a count of zero: the detail screen renders these as chips on one word, where "lesson1 (37)"
       // would be answering a question nobody asked. The tag bar gets the real counts from `listTags`.
       counted       = tags.map(tag => toTag(tag, 0L))
@@ -331,6 +332,9 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
         )
       },
       tags = counted,
+      // Every mark on this word, in whichever tag: this screen shows every translation, so unlike the listing
+      // (which narrows them to the three it offers) there is no chip a mark could arrive without.
+      pairs = marked.map(pair => TaggedPair(pair.tagId, pair.translationWordId)).distinct,
     )
   }
 

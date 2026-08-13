@@ -14,7 +14,7 @@ final case class TranslationOption(wordId: Long, text: String) derives JsonCodec
 /** One translation the reader has marked as a practice answer, and the tag they marked it in.
   *
   * Carried per row rather than resolved server-side, because '''the collect tag never reaches the server''': which tag
-  * a click files into is page-local state in `localStorage` (see `WordsPage.storedCollectTag`), so nobody can ask
+  * a click files into is page-local state in `localStorage` (see `WordCollect.storedCollectTag`), so nobody can ask
   * "which is selected for tag X". The row carries every one of the reader's marks on that word and the browser filters
   * by the tag it is collecting into — the same shape [[WordSummary.tagIds]] has, for the same reason.
   */
@@ -48,13 +48,18 @@ final case class TranslationEntry(
   ownedByMe: Boolean,
 ) derives JsonCodec
 
-/** Everything the word screen shows about one word: the word itself, every translation anybody has recorded for it, and
-  * the reader's own tags on it.
+/** Everything the word screen shows about one word: the word itself, every translation anybody has recorded for it, the
+  * reader's own tags on it, and which of those translations they have marked as practice answers.
+  *
+  * `pairs` is carried for the reason [[WordSummary.pairs]] is, and filtered by the browser the same way: the tag a
+  * click files into is page-local state that never reaches the server. Unlike the listing's, it is not narrowed to the
+  * translations being shown — this screen shows every one of them, in both other languages.
   */
 final case class WordDetail(
   word: Word,
   translations: List[TranslationEntry],
   tags: List[Tag],
+  pairs: List[TaggedPair],
 ) derives JsonCodec
 
 /** One page of the vocabulary, counted the way [[UserPage]] is: `total` counts what the filter matches, not what the
