@@ -439,7 +439,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         cls := "flex flex-col gap-1",
         span(cls := "label-text text-xs", I18n.t(UiKeys.wordsPosLabel)),
         select(
-          cls    := "select select-sm w-40",
+          cls    := "select select-sm w-28",
           // The option's `value` stays the wire code; only its label is translated.
           option(value := "", I18n.t(UiKeys.wordsPosAny)),
           PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
@@ -556,7 +556,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
-        cls    := "select select-sm w-36",
+        cls    := "select select-sm w-28",
         WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
         controlled(
           value <-- selected.map(WordLanguage.code),
@@ -592,7 +592,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
               cls      := "flex flex-col gap-1",
               span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsTagNew)),
               input(
-                cls         := "input input-sm",
+                cls         := "input input-sm w-52",
                 placeholder := I18n.t(UiKeys.wordsTagNewPlaceholder),
                 controlled(value <-- newTagVar.signal, onInput.mapToValue --> newTagVar.writer),
               ),
