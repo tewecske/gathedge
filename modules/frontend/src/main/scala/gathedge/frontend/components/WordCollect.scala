@@ -18,10 +18,15 @@ import gathedge.shared.i18n.UiKeys
   * the other.
   *
   * A page constructs one, splices [[bindings]] into its root element (the streams only run while mounted) and renders
-  * the pieces it wants. What a write *means* stays with the page: the listing re-asks the server for its rows, the word
-  * page re-fetches the word, and each keeps its own alerts — hence the three observers rather than an error `Var` here.
+  * the pieces it wants. What a write *means* stays with the page: the listing applies what changed to its local state,
+  * the word page does the same, and each keeps its own alerts — hence the three observers rather than an error `Var`
+  * here.
   */
 object WordCollect {
+
+  sealed trait Change
+  final case class TagChange(wordId: Long, tagId: Long, tagged: Boolean) extends Change
+  final case class PairChange(wordId: Long, tagId: Long, translationWordId: Long, marked: Boolean) extends Change
 
   /** The tag a word goes under when the reader has chosen none. Data rather than copy: it becomes a row in `tags` that
     * they can rename or delete, so it is not translated — a tag created in Hungarian and then read in English would
@@ -95,12 +100,12 @@ object WordCollect {
   * @param onNotice
   *   where "you now have a guest account" goes, once the detour has minted one.
   * @param onWritten
-  *   what the page does when a tick or a chip lands: ask the server for whatever it is showing, again.
+  *   what the page does when a tick or a chip lands: apply what changed to its local state.
   */
 final class WordCollect(
   onError: Observer[Option[String]],
   onNotice: Observer[String],
-  onWritten: Observer[Unit],
+  onWritten: Observer[WordCollect.Change],
 ) {
 
   private val tagsVar = Var(List.empty[Tag])
@@ -194,7 +199,7 @@ final class WordCollect(
     * that creates. Signed in, the mint is skipped entirely. The write is by-name because it must not be started before
     * the session exists.
     */
-  private def asReader(write: () => EventStream[Either[ApiError, Unit]]): EventStream[Either[ApiError, Unit]] = {
+  private def asReader[A](write: () => EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
     readerVar.now() match {
       case Some(_) =>
         write()
@@ -212,13 +217,13 @@ final class WordCollect(
     }
   }
 
-  private def toggleStream: EventStream[Either[ApiError, Unit]] = {
+  private def toggleStream: EventStream[Either[ApiError, WordCollect.Change]] = {
     toggleBus.events.flatMapSwitch { case (wordId, tagged) =>
       asReader(() => writeTag(wordId, tagged))
     }
   }
 
-  private def pairStream: EventStream[Either[ApiError, Unit]] = {
+  private def pairStream: EventStream[Either[ApiError, WordCollect.Change]] = {
     pairBus.events.flatMapSwitch { case (wordId, translationWordId, marked) =>
       asReader(() => writePair(wordId, translationWordId, marked))
     }
@@ -227,24 +232,26 @@ final class WordCollect(
   /** What both writes do when they land. A chip moves tag counts as much as a tick does — marking a translation files
     * that word under the tag too — so both refresh the page and the tag list.
     */
-  private val writeResult: Observer[Either[ApiError, Unit]] = Observer[Either[ApiError, Unit]] {
-    case Right(_)  =>
-      onWritten.onNext(())
+  private val writeResult: Observer[Either[ApiError, WordCollect.Change]] = Observer[Either[ApiError, WordCollect.Change]] {
+    case Right(change) =>
+      onWritten.onNext(change)
       tagsBus.emit(())
-    case Left(err) =>
+    case Left(err)     =>
       onError.onNext(Some(err.message))
   }
 
   /** Puts the word under the collect tag, or under the reader's default one when they have not chosen. */
-  private def writeTag(wordId: Long, tagged: Boolean): EventStream[Either[ApiError, Unit]] = {
+  private def writeTag(wordId: Long, tagged: Boolean): EventStream[Either[ApiError, WordCollect.Change]] = {
     collectTagOrDefault.flatMapSwitch {
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
-        if (tagged)
-          WordApiClient.untagWord(wordId, tagId)
-        else
-          WordApiClient.tagWord(wordId, tagId)
+        val result: EventStream[Either[ApiError, Unit]] =
+          if (tagged)
+            WordApiClient.untagWord(wordId, tagId)
+          else
+            WordApiClient.tagWord(wordId, tagId)
+        result.map(_.map(_ => WordCollect.TagChange(wordId, tagId, !tagged)))
     }
   }
 
@@ -255,15 +262,17 @@ final class WordCollect(
     wordId: Long,
     translationWordId: Long,
     marked: Boolean,
-  ): EventStream[Either[ApiError, Unit]] = {
+  ): EventStream[Either[ApiError, WordCollect.Change]] = {
     collectTagOrDefault.flatMapSwitch {
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
-        if (marked)
-          WordApiClient.deselectPair(wordId, tagId, translationWordId)
-        else
-          WordApiClient.selectPair(wordId, tagId, translationWordId)
+        val result: EventStream[Either[ApiError, Unit]] =
+          if (marked)
+            WordApiClient.deselectPair(wordId, tagId, translationWordId)
+          else
+            WordApiClient.selectPair(wordId, tagId, translationWordId)
+        result.map(_.map(_ => WordCollect.PairChange(wordId, tagId, translationWordId, !marked)))
     }
   }
 

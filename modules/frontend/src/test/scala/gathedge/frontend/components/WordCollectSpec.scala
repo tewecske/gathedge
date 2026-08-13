@@ -42,6 +42,44 @@ object WordCollectSpec extends ZIOSpecDefault {
           !WordCollect.isTagged(Nil, None),
         )
       },
+      test("marking a translation adds the tag and the pair") {
+        val empty = WordSummary(
+          word = summary.word,
+          translations = List(),
+          tagIds = Nil,
+          pairs = Nil,
+        )
+        val change = WordCollect.PairChange(1L, 20L, 2L, true)
+        val updated = empty.copy(
+          tagIds = (empty.tagIds :+ 20L).distinct,
+          pairs = (empty.pairs :+ TaggedPair(20L, 2L)).distinct,
+        )
+        assertTrue(
+          updated.tagIds == List(20L),
+          updated.pairs == List(TaggedPair(20L, 2L)),
+        )
+      },
+      test("unmarking a translation removes only the pair, not the tag") {
+        val change = WordCollect.PairChange(1L, 10L, 2L, false)
+        val updated = summary.copy(
+          pairs = summary.pairs.filterNot(p => p.tagId == 10L && p.translationWordId == 2L)
+        )
+        assertTrue(
+          updated.tagIds == List(10L, 11L), // Tag stays.
+          updated.pairs == List(TaggedPair(11L, 3L)), // Just the other pair.
+        )
+      },
+      test("tagging a word adds the tag, untagging removes it and its pairs") {
+        val tagChange = WordCollect.TagChange(1L, 10L, false)
+        val updated = summary.copy(
+          tagIds = summary.tagIds.filterNot(_ == 10L),
+          pairs = summary.pairs.filterNot(_.tagId == 10L),
+        )
+        assertTrue(
+          updated.tagIds == List(11L),
+          updated.pairs == List(TaggedPair(11L, 3L)),
+        )
+      },
     )
   }
 }

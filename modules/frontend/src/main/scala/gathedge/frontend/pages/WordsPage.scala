@@ -9,7 +9,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{CreateWordRequest, NewTranslation, WordDetail, WordPage, WordSort, WordSummary}
+import gathedge.shared.dto.{CreateWordRequest, NewTranslation, TaggedPair, WordDetail, WordPage, WordSort, WordSummary}
 import gathedge.shared.i18n.UiKeys
 
 /** Browse the dictionary and tag what you want to learn.
@@ -84,13 +84,13 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
   private val loadingSignal = loadingVar.signal
 
   /** The tick, the chips, the collect tag they file into and the guest detour in front of them — shared verbatim with
-    * the word page, which offers the same two writes on one word. A landed write asks for the listing again, since a
-    * tick or a chip changes what a row shows and what the tag counts say.
+    * the word page, which offers the same two writes on one word. A landed write applies what changed to this page's
+    * local state without refetching.
     */
   private val collect = new WordCollect(
     onError = errorVar.writer,
     onNotice = noticeVar.writer.contramap[String](Some(_)),
-    onWritten = Observer[Unit](_ => reloadBus.emit(())),
+    onWritten = Observer[WordCollect.Change](change => wordsVar.update(_.map(applyChange(_, change)))),
   )
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
@@ -192,6 +192,32 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       tagId = query.tagId,
       mine = Option.when(query.mine)(true),
     )
+  }
+
+  private def applyChange(row: WordSummary, change: WordCollect.Change): WordSummary = {
+    change match {
+      case WordCollect.TagChange(wordId, tagId, tagged) if row.word.id == wordId =>
+        if (tagged)
+          row.copy(tagIds = (row.tagIds :+ tagId).distinct)
+        else
+          // Untagging removes the tag id and all pairs filed under that tag.
+          row.copy(
+            tagIds = row.tagIds.filterNot(_ == tagId),
+            pairs = row.pairs.filterNot(_.tagId == tagId),
+          )
+      case WordCollect.PairChange(wordId, tagId, translationWordId, marked) if row.word.id == wordId =>
+        if (marked)
+          // Marking a pair also files the word under the tag.
+          row.copy(
+            tagIds = (row.tagIds :+ tagId).distinct,
+            pairs = (row.pairs :+ TaggedPair(tagId, translationWordId)).distinct,
+          )
+        else
+          // Unmarking removes just this one pair.
+          row.copy(pairs = row.pairs.filterNot(p => p.tagId == tagId && p.translationWordId == translationWordId))
+      case _ =>
+        row
+    }
   }
 
   private def summaryOf(total: Long): String = {

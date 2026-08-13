@@ -8,7 +8,7 @@ import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, WordC
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
-import gathedge.shared.dto.{NewTranslation, TranslationEntry, WordDetail}
+import gathedge.shared.dto.{NewTranslation, TaggedPair, TranslationEntry, WordDetail}
 import gathedge.shared.i18n.UiKeys
 
 /** One word: what it is, what it means in the other two languages, and which of the reader's tags it carries.
@@ -48,13 +48,13 @@ private class WordDetailPage(id: Long) {
   private val addBus    = new EventBus[Unit]()
   private val removeBus = new EventBus[Long]()
 
-  /** The tick, the chips and the tag they file into — the listing's, verbatim. A landed write re-fetches the word,
-    * which is what refreshes the tick, the chips and the read-only tag list below them in one go.
+  /** The tick, the chips and the tag they file into — the listing's, verbatim. A landed write applies what changed to
+    * this page's local state without refetching — except for removing a translation, which changes the row set.
     */
   private val collect = new WordCollect(
     onError = errorVar.writer,
     onNotice = noticeVar.writer.contramap[String](Some(_)),
-    onWritten = Observer[Unit](_ => loadBus.emit(())),
+    onWritten = Observer[WordCollect.Change](change => applyChange(change)),
   )
 
   /** Derived from the page's own signal rather than from the loaded value, so that changing the collect tag in the bar
@@ -80,6 +80,9 @@ private class WordDetailPage(id: Long) {
     */
   private val languageVar = Var(Option.empty[WordLanguage])
 
+  /** Mirrors the tag list so applyChange can read it when adding a tag. */
+  private val tagsVar = Var(List.empty[Tag])
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-2xl mx-auto",
@@ -103,6 +106,7 @@ private class WordDetailPage(id: Long) {
             else
               errorVar.set(Some(err.message))
         },
+      collect.tagsSignal --> tagsVar.writer,
       addStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // The form stays where it is and keeps its language: adding one translation is usually the first of two.
@@ -134,6 +138,62 @@ private class WordDetailPage(id: Long) {
     val allowed = otherLanguages(detail.word)
     if (!languageVar.now().exists(allowed.contains)) {
       languageVar.set(allowed.headOption)
+    }
+  }
+
+  private def applyChange(change: WordCollect.Change): Unit = {
+    change match {
+      case WordCollect.TagChange(wordId, tagId, tagged) =>
+        detailVar.update {
+          case Some(detail) if detail.word.id == wordId =>
+            if (tagged) {
+              // Add the tag id. Look up the tag name from the tag list; if it's not there yet (tag just created),
+              // it will be added by the tagsBus refresh moments later.
+              val newTag = tagsVar.now().find(_.id == tagId)
+              newTag match {
+                case Some(tag) =>
+                  Some(detail.copy(tags = (detail.tags :+ tag).distinct))
+                case None =>
+                  Some(detail) // Tag not in the list yet; tagsBus will refresh it.
+              }
+            } else {
+              // Remove the tag and its pairs.
+              Some(
+                detail.copy(
+                  tags = detail.tags.filterNot(_.id == tagId),
+                  pairs = detail.pairs.filterNot(_.tagId == tagId),
+                )
+              )
+            }
+          case other =>
+            other
+        }
+      case WordCollect.PairChange(wordId, tagId, translationWordId, marked) =>
+        detailVar.update {
+          case Some(detail) if detail.word.id == wordId =>
+            if (marked) {
+              // Add the pair and the tag.
+              val newTag = tagsVar.now().find(_.id == tagId)
+              Some(
+                detail.copy(
+                  tags = newTag match {
+                    case Some(tag) => (detail.tags :+ tag).distinct
+                    case None      => detail.tags // Will be added by tagsBus.
+                  },
+                  pairs = (detail.pairs :+ TaggedPair(tagId, translationWordId)).distinct,
+                )
+              )
+            } else {
+              // Remove just this pair.
+              Some(
+                detail.copy(
+                  pairs = detail.pairs.filterNot(p => p.tagId == tagId && p.translationWordId == translationWordId)
+                )
+              )
+            }
+          case other =>
+            other
+        }
     }
   }
 
