@@ -203,7 +203,27 @@ check_mode() {
   #    is the catalog bug stated as a rule rather than as one remembered path.
   check_source_roots "$sha"
 
-  # 5. The revision evaluates — with its own lock, which is what --no-update-lock-file asserts.
+  # 5. Every Nix file parses. This exists for nix/module.nix, which nothing else here reaches:
+  #    the packages do not import it, so a broken NixOS module evaluates fine from this side and
+  #    breaks the *host's* rebuild instead. A parse is the half of that which is cheap — an
+  #    undefined variable or a bad option in the module still only surfaces on the server.
+  local parse_dir parse_ok=yes nix_files
+  parse_dir="$(mktemp -d)"
+  nix_files="$(git -C "$REPO_ROOT" ls-tree -r --name-only "$sha" -- flake.nix nix)"
+  while IFS= read -r file; do
+    [[ "$file" == *.nix ]] || continue
+    mkdir -p "$parse_dir/$(dirname "$file")"
+    git -C "$REPO_ROOT" show "$sha:$file" >"$parse_dir/$file"
+    if ! nix-instantiate --parse "$parse_dir/$file" >/dev/null 2>"$parse_dir/err"; then
+      bad "$file does not parse:"
+      sed 's/^/        /' "$parse_dir/err" >&2
+      parse_ok=no
+    fi
+  done <<<"$nix_files"
+  [ "$parse_ok" = yes ] && ok "every .nix file parses (including the NixOS module)"
+  rm -rf "$parse_dir"
+
+  # 6. The revision evaluates — with its own lock, which is what --no-update-lock-file asserts.
   #    Catches a Nix-level error anywhere in flake.nix or nix/*.nix, and a lock that no longer
   #    satisfies flake.nix's inputs. About 2.5s warm; it is the whole cost of this mode.
   local system flake_ref target
@@ -220,7 +240,7 @@ check_mode() {
     rm -f "$REPO_ROOT/.release-eval.log"
   done
 
-  # 6. Advisory: what was built locally is not what is being pushed.
+  # 7. Advisory: what was built locally is not what is being pushed.
   if ! git -C "$REPO_ROOT" diff --quiet "$sha" -- "${BUILD_ROOTS[@]}" 2>/dev/null; then
     warn "the working tree differs from this commit under ${BUILD_ROOTS[*]} — what you built locally is not what the server will build"
   fi
