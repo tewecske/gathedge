@@ -364,6 +364,7 @@
   "ui.guest.claimSubmit": "Tovább",
   "ui.guest.claimLink": "Van átviteli kódod?",
   "ui.guest.accountLabel": "Vendég",
+  "ui.guest.signInWarning": "Ha másik fiókkal jelentkezel be, az ezen az eszközön gyűjtött szavak itt maradnak. Kérj előbb átviteli kódot, ha meg szeretnéd tartani őket?",
   "field.word": "Szó",
   "field.tag": "Címke",
   "words.notFound": "Nincs ilyen szó",

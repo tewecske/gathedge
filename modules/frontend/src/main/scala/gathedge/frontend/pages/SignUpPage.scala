@@ -2,7 +2,7 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
-import gathedge.frontend.components.{AppShell, OAuthButtons}
+import gathedge.frontend.components.{AppShell, ClaimCodeForm, OAuthButtons}
 import gathedge.frontend.state.AppState
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.domain.{OAuthProvider, User}
@@ -93,6 +93,7 @@ private class SignUpPage {
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignUp)),
           ),
           child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
+          Option.when(!isGuestSignedIn)(ClaimCodeForm.render()),
           p(
             cls  := "text-sm mt-2",
             I18n.t(UiKeys.signUpHaveAccount),

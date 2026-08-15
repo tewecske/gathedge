@@ -364,6 +364,7 @@
   "ui.guest.claimSubmit": "Continue",
   "ui.guest.claimLink": "Have a transfer code?",
   "ui.guest.accountLabel": "Guest",
+  "ui.guest.signInWarning": "Signing in to a different account leaves this device's words behind. Get a transfer code first if you want to keep them?",
   "field.word": "Word",
   "field.tag": "Tag",
   "words.notFound": "No such word",

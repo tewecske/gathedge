@@ -61,9 +61,6 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
   }
 
-  /** Whether the account has no credentials of its own — what the shell shows a "save your words" prompt for. */
-  private val isGuestSignal = currentUserSignal.map(_.exists(_.isGuest)).distinct
-
   private val (menuId, menuAnchor)       = Popover.nextIds("user-menu")
   private val (navMenuId, navMenuAnchor) = Popover.nextIds("nav-menu")
 
@@ -176,18 +173,16 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; everything else here
-    * needs one. The admin link is left to the signal below, which is already `false` for a visitor with no account.
+  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; Home is too, now,
+    * for the same reason [[navHome]] is not gated on it either — a visitor who lands on the sign-in page still needs a
+    * way back to it, even though `Home` itself is `RequireAuth` and bounces a signed-out click straight back here. The
+    * admin link is left to the signal below, which is already `false` for a visitor with no account.
     */
   private def navLinks(): List[HtmlElement] = {
-    if (isAuthenticated) {
-      List(
-        navLink(Page.Words(), I18n.t(UiKeys.navWords)),
-        navLink(Page.Home, I18n.t(UiKeys.navHome)),
-      )
-    } else {
-      List(navLink(Page.Words(), I18n.t(UiKeys.navWords)))
-    }
+    List(
+      navLink(Page.Words(), I18n.t(UiKeys.navWords)),
+      navLink(Page.Home, I18n.t(UiKeys.navHome)),
+    )
   }
 
   /** The same entries as [[navLinks]], as menu items. Built separately rather than reused: a Laminar element belongs to
@@ -195,33 +190,18 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     * displayed, which is the whole of the responsive behaviour.
     */
   private def navMenuItems(): List[HtmlElement] = {
-    if (isAuthenticated) {
-      List(
-        navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
-        navMenuItem(Page.Home, I18n.t(UiKeys.navHome)),
-      )
-    } else {
-      List(navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)))
-    }
+    List(
+      navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
+      navMenuItem(Page.Home, I18n.t(UiKeys.navHome)),
+    )
   }
 
-  /** The avatar and its menu are the part of the bar that means nothing without an account. Built as a pair so the
-    * trigger and the popover it names can never be rendered one without the other.
-    *
-    * Gated on the *session* rather than on which shell this is: the vocabulary uses the authenticated shell and is
-    * reachable with no session at all, so an avatar drawn from `active.isDefined` would offer a visitor an account menu
-    * for an account they do not have. A signed-out visitor gets a sign-in link in its place.
+  /** The avatar and its menu are the part of the bar that means nothing without an account — except there is always
+    * one to open, whoever is looking. A signed-out visitor gets Sign in/Sign up in place of Get code/Upgrade or
+    * Settings/Log out: the widget is one shape everywhere, and only its contents move with the session.
     */
   private def accountControls(): HtmlElement = {
-    div(
-      cls := "contents",
-      child <-- AppState.isSignedInSignal.map { signedIn =>
-        if (signedIn)
-          div(cls := "contents", renderAccountMenuTrigger(), renderAccountMenu())
-        else
-          a(cls   := "btn btn-sm btn-ghost", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.commonSignIn))
-      },
-    )
+    div(cls := "contents", renderAccountMenuTrigger(), renderAccountMenu())
   }
 
   /** The nav is rendered twice and shown once: a dropdown under `lg`, a centred row of buttons at `lg` and up. Both are
@@ -392,11 +372,30 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       Popover.popoverAttr := "auto",
       idAttr              := menuId,
       styleAttr           := s"position-anchor:$menuAnchor",
-      // A guest has no address, no password and no linked providers, so the settings page has nothing to show it —
-      // what it needs instead are the two ways out of being one: the transfer code, and creating a real account. A
-      // guest never performed an explicit sign-in, so it gets neither branch's Settings link nor Logout below.
-      children <-- isGuestSignal.map { isGuest =>
-        if (isGuest) {
+      // Three shapes, not two: a visitor with no session at all gets Sign in/Sign up; a guest — no address, no
+      // password, no linked providers, so Settings has nothing to show it — gets the two ways out of being one
+      // (transfer code, real account) plus Sign in (to a *different*, already-existing account) and Log out, since a
+      // guest does hold a real session even though it never performed an explicit sign-in; a full account keeps
+      // Settings/Log out.
+      children <-- currentUserSignal.map {
+        case None                         =>
+          List(
+            li(
+              a(
+                AppRouter.router.navigateTo(Page.SignIn),
+                I18n.t(UiKeys.commonSignIn),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+            li(
+              a(
+                AppRouter.router.navigateTo(Page.SignUp),
+                I18n.t(UiKeys.commonSignUp),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+          )
+        case Some(user) if user.isGuest   =>
           List(
             li(
               button(
@@ -413,8 +412,25 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
                 onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
               )
             ),
+            li(
+              // Not `navigateTo`: signing into a different, already-existing account abandons this guest's tagged
+              // words (a sign-in swaps the session, it does not merge one account into another), so the navigation
+              // itself is gated on a confirmation rather than being unconditional like every other item here.
+              button(
+                typ := "button",
+                I18n.t(UiKeys.commonSignIn),
+                onClick.mapToUnit --> Observer[Unit] { _ =>
+                  Popover.hide(menuId)
+                  if (dom.window.confirm(I18n.t(UiKeys.guestSignInWarning))) {
+                    AppRouter.router.pushState(Page.SignIn)
+                  }
+                },
+              )
+            ),
+            // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
+            li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
           )
-        } else {
+        case Some(_)                      =>
           List(
             li(
               a(
@@ -434,7 +450,6 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
             li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
           )
-        }
       },
     )
   }

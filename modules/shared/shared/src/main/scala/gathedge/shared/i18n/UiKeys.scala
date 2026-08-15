@@ -542,6 +542,11 @@ object UiKeys {
   /** What the account menu says instead of an address, for an account that has none. */
   val guestAccountLabel: String = key("ui.guest.accountLabel")
 
+  /** Shown as a browser `confirm()` before a guest's "Sign in" menu item navigates away — signing into a different,
+    * already-existing account abandons this guest's words rather than merging them.
+    */
+  val guestSignInWarning: String = key("ui.guest.signInWarning")
+
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there
   // is followed by the singular, always — which is what `MessageCatalog.plural` exists to express.
