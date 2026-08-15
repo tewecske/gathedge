@@ -32,6 +32,11 @@ npm --prefix e2e install && npm --prefix e2e test   # needs the full stack runni
 
 Verify loop before finishing a change: `sbt scalafmtAll && sbt test` (plus `npm --prefix web run typecheck`).
 
+## Writing style
+
+Write in ASD-STE100 Simplified Technical English and follow Zinsser's four principles: **simplicity,
+brevity, clarity, humanity**. Short sentences. One idea per sentence. Active voice. No needless words.
+
 ## Build-wide gotchas (all compile-time traps)
 
 - **`-noindent` is set.** Significant-indentation Scala 3 (`object Foo:`, braceless `for`/`match`) does
