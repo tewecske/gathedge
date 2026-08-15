@@ -33,6 +33,11 @@ object AppState {
     */
   def currentTheme: Theme = themeVar.now()
 
+  /** The signed-in user right now, read outside a subscription — for [[gathedge.frontend.pages.SignUpPage]], which
+    * decides once at render time (not reactively) whether this is a guest's in-place upgrade or an ordinary signup.
+    */
+  def currentUser: Option[User] = currentUserVar.now()
+
   private def themeName(theme: Theme): String = {
     theme match {
       case Theme.Light =>

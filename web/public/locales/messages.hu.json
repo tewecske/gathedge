@@ -359,7 +359,6 @@
   "ui.guest.codeClose": "Elrejtés",
   "ui.guest.upgradeTitle": "Fiók létrehozása",
   "ui.guest.upgradeHint": "A szavaid pontosan ott maradnak, ahol vannak.",
-  "ui.guest.upgradeDone": "A fiókod elkészült. A cím megerősítéséhez nézd meg az e-mailjeidet.",
   "ui.guest.claimHint": "Add meg a másik eszközödön kapott átviteli kódot.",
   "ui.guest.claimPlaceholder": "XXXX-XXXX-XXXX-XXXX",
   "ui.guest.claimSubmit": "Tovább",

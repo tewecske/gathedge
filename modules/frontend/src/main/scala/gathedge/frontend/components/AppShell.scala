@@ -408,7 +408,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             ),
             li(
               a(
-                AppRouter.router.navigateTo(Page.Words()),
+                AppRouter.router.navigateTo(Page.SignUp),
                 I18n.t(UiKeys.guestUpgrade),
                 onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
               )
@@ -450,7 +450,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       p(cls := "text-sm", I18n.t(UiKeys.guestCodeOnce)),
       div(
         cls := "flex flex-wrap items-center gap-2",
-        code(cls := "font-mono text-lg tracking-wider", transferCode),
+        code(cls := "font-mono text-lg tracking-wider whitespace-nowrap", transferCode),
         button(
           cls    := "btn btn-xs",
           typ    := "button",

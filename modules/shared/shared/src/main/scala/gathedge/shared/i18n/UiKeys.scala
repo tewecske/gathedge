@@ -533,7 +533,6 @@ object UiKeys {
 
   val guestUpgradeTitle: String = key("ui.guest.upgradeTitle")
   val guestUpgradeHint: String  = key("ui.guest.upgradeHint")
-  val guestUpgradeDone: String  = key("ui.guest.upgradeDone")
 
   val guestClaimHint: String        = key("ui.guest.claimHint")
   val guestClaimPlaceholder: String = key("ui.guest.claimPlaceholder")

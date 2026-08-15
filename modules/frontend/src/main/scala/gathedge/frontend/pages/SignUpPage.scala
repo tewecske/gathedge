@@ -5,8 +5,8 @@ import gathedge.frontend.api.{ApiClient, ApiError}
 import gathedge.frontend.components.{AppShell, OAuthButtons}
 import gathedge.frontend.state.AppState
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{ProvidersResponse, SignupRequest, SignupResponse}
+import gathedge.shared.domain.{OAuthProvider, User}
+import gathedge.shared.dto.{ProvidersResponse, SignupRequest}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.validation.Validation
@@ -39,6 +39,12 @@ private class SignUpPage {
 
   private val submitBus = new EventBus[Unit]()
 
+  /** Read once per render, not reactively: an in-place upgrade always ends in `AppState.setUser` clearing the guest
+    * flag, which flips the `RequireAnon` guard and navigates this page away before a second submit could ever see the
+    * flag change underneath it.
+    */
+  private val isGuestSignedIn: Boolean = AppState.currentUser.exists(_.isGuest)
+
   // Client-side validation happens in a pure `map`; the effects (error message, in-flight flag,
   // the request itself) all hang off the resulting stream as observers.
   private val validatedStream = submitBus.events.filterWith(inFlightSignal.not).map(_ => validate())
@@ -52,7 +58,18 @@ private class SignUpPage {
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         div(
           cls := "card-body",
-          h1(cls := "card-title", I18n.t(UiKeys.signUpTitle)),
+          h1(
+            cls := "card-title",
+            I18n.t(
+              if (isGuestSignedIn)
+                UiKeys.guestUpgradeTitle
+              else
+                UiKeys.signUpTitle
+            ),
+          ),
+          // The reassurance a plain signup does not need: this form reuses this browser's guest account rather than
+          // creating an empty one, and the reader has words on it already.
+          Option.when(isGuestSignedIn)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.guestUpgradeHint))),
           child.maybe <-- errorSignal.map(_.map(renderError)),
           fieldSet(
             cls  := "fieldset",
@@ -101,20 +118,28 @@ private class SignUpPage {
         .collect { case Right(request) =>
           request
         }
-        .flatMapSwitch(request => ApiClient.signup(request)) -->
-        Observer[Either[ApiError, SignupResponse]] {
+        // A guest upgrading is always signed in on success — there is no unverified-address wait, since the
+        // account (and its session) already existed.
+        .flatMapSwitch { request =>
+          if (isGuestSignedIn)
+            ApiClient.upgradeGuest(request.email, request.password).map(_.map(res => (res.user, true)))
+          else
+            ApiClient.signup(request).map(_.map(res => (res.user, res.signedIn)))
+        } -->
+        Observer[Either[ApiError, (User, Boolean)]] {
           // `signedIn` is false when the deployment requires a verified address: the account
           // exists but has no session, so there is nothing to put in AppState and nowhere to go
           // but the "check your inbox" page.
-          case Right(res) if !res.signedIn =>
+          case Right((_, false))   =>
             inFlightVar.set(false)
             AppRouter.router.pushState(Page.CheckInbox)
-          case Right(res)                  =>
+          case Right((user, true)) =>
             inFlightVar.set(false)
-            // As in SignInPage: the `RequireAnon` guard navigates to Home off this write. Doing it
-            // here too would emit Home twice and remount the landing page.
-            AppState.setUser(res.user)
-          case Left(err)                   =>
+            // As in SignInPage: the `RequireAnon` guard navigates to Home off this write (guest or not — an
+            // upgraded account is no longer a guest, so the same guard fires here too). Doing it here as well
+            // would emit Home twice and remount the landing page.
+            AppState.setUser(user)
+          case Left(err)           =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
     )

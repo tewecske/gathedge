@@ -39,12 +39,12 @@ object App {
     * in-flight requests and half-typed form input. Everything else user-dependent is read reactively by
     * [[gathedge.frontend.components.AppShell]] from [[AppState.currentUserSignal]].
     */
-  private final case class Gate(loaded: Boolean, signedIn: Boolean, isAdmin: Boolean)
+  private final case class Gate(loaded: Boolean, signedIn: Boolean, isAdmin: Boolean, isGuest: Boolean)
 
   private val gateSignal: Signal[Gate] = {
     sessionLoadedVar.signal
       .combineWithFn(AppState.currentUserSignal)((loaded, user) =>
-        Gate(loaded, signedIn = user.isDefined, isAdmin = user.exists(_.isAdmin))
+        Gate(loaded, signedIn = user.isDefined, isAdmin = user.exists(_.isAdmin), isGuest = user.exists(_.isGuest))
       )
       .distinct
   }
@@ -193,11 +193,13 @@ object App {
       None
     } else {
       Page.guardFor(page) match {
-        case Page.AuthGuard.RequireAuth if !gate.signedIn =>
+        case Page.AuthGuard.RequireAuth if !gate.signedIn                 =>
           Some(Page.SignIn)
-        case Page.AuthGuard.RequireAnon if gate.signedIn  =>
+        // A guest has no address and no password, i.e. no identity of its own yet — `RequireAnon` exempts it so
+        // Page.SignUp can offer the in-place upgrade instead of bouncing it back to Home unseen.
+        case Page.AuthGuard.RequireAnon if gate.signedIn && !gate.isGuest =>
           Some(Page.Home)
-        case _                                            =>
+        case _                                                            =>
           None
       }
     }

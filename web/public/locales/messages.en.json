@@ -359,7 +359,6 @@
   "ui.guest.codeClose": "Hide",
   "ui.guest.upgradeTitle": "Create account",
   "ui.guest.upgradeHint": "Your words stay exactly where they are.",
-  "ui.guest.upgradeDone": "Your account is ready. Check your email to confirm the address.",
   "ui.guest.claimHint": "Enter the transfer code from your other device.",
   "ui.guest.claimPlaceholder": "XXXX-XXXX-XXXX-XXXX",
   "ui.guest.claimSubmit": "Continue",

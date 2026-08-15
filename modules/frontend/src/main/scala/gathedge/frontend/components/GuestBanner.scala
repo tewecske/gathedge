@@ -3,10 +3,9 @@ package gathedge.frontend.components
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.state.AppState
-import gathedge.shared.dto.{AuthResponse, ClaimCodeResponse}
-import gathedge.shared.i18n.{MessageKeys, UiKeys}
-import gathedge.shared.validation.Validation
+import gathedge.frontend.{AppRouter, Page}
+import gathedge.shared.dto.ClaimCodeResponse
+import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
 /** What a guest is told, and the two ways out of being one.
@@ -29,31 +28,10 @@ private class GuestBanner {
   private val codeVar    = Var(Option.empty[String])
   private val codeSignal = codeVar.signal
 
-  private val upgradingVar = Var(false)
-
-  private val emailVar    = Var("")
-  private val passwordVar = Var("")
-
   private val errorVar: Var[Option[String]]  = Var(None)
   private val noticeVar: Var[Option[String]] = Var(None)
 
-  private val inFlightVar    = Var(false)
-  private val inFlightSignal = inFlightVar.signal
-
-  private val codeBus    = new EventBus[Unit]()
-  private val upgradeBus = new EventBus[Unit]()
-
-  /** Validation runs before anything is sent, and produces the same messages the server would: both sides call
-    * `shared`'s `Validation`.
-    */
-  private def validate(): Either[String, (String, String)] = {
-    for {
-      email    <- Validation.validateEmail(emailVar.now()).left.map(I18n.resolve)
-      password <- Validation.validatePassword(passwordVar.now()).left.map(I18n.resolve)
-    } yield (email, password)
-  }
-
-  private val upgradeStream = upgradeBus.events.filterWith(inFlightSignal.not).map(_ => validate())
+  private val codeBus = new EventBus[Unit]()
 
   def render(): HtmlElement = {
     div(
@@ -69,43 +47,24 @@ private class GuestBanner {
           button(
             cls := "btn btn-sm",
             typ := "button",
-            disabled <-- inFlightSignal,
             I18n.t(UiKeys.guestGetCode),
             onClick.mapToUnit --> codeBus.writer,
           ),
-          button(
+          // The upgrade itself happens on Page.SignUp, guest-aware there: it reuses this account in place rather than
+          // starting a new one, and the `RequireAnon` guard is what lets a guest reach that page at all.
+          a(
             cls := "btn btn-sm btn-primary",
-            typ := "button",
+            AppRouter.router.navigateTo(Page.SignUp),
             I18n.t(UiKeys.guestUpgrade),
-            onClick.mapToUnit --> Observer[Unit](_ => upgradingVar.update(!_)),
           ),
         ),
         child.maybe <-- codeSignal.map(_.map(renderCode)),
-        child.maybe <-- upgradingVar.signal.map(Option.when(_)(renderUpgradeForm())),
-        codeBus.events.filterWith(inFlightSignal.not).flatMapSwitch(_ => ApiClient.guestCode) -->
+        codeBus.events.flatMapSwitch(_ => ApiClient.guestCode) -->
           Observer[Either[ApiError, ClaimCodeResponse]] {
             case Right(response) =>
               Var.set(codeVar -> Some(response.code), errorVar -> None)
             case Left(err)       =>
               errorVar.set(Some(err.message))
-          },
-        upgradeStream --> Observer[Either[String, (String, String)]] {
-          case Left(message) =>
-            errorVar.set(Some(message))
-          case Right(_)      =>
-            Var.set(inFlightVar -> true, errorVar -> None)
-        },
-        upgradeStream
-          .collect { case Right(credentials) => credentials }
-          .flatMapSwitch { case (email, password) => ApiClient.upgradeGuest(email, password) } -->
-          Observer[Either[ApiError, AuthResponse]] {
-            case Right(response) =>
-              // The account is no longer a guest, so the banner unmounts itself: `AppState` is what the page reads to
-              // decide whether to render it at all.
-              AppState.setUser(response.user)
-              Var.set(inFlightVar -> false, upgradingVar -> false, noticeVar -> Some(I18n.t(UiKeys.guestUpgradeDone)))
-            case Left(err)       =>
-              Var.set(inFlightVar -> false, errorVar -> Some(err.message))
           },
       ),
     )
@@ -118,7 +77,7 @@ private class GuestBanner {
       p(cls := "text-sm", I18n.t(UiKeys.guestCodeOnce)),
       div(
         cls := "flex flex-wrap items-center gap-2",
-        code(cls := "font-mono text-lg tracking-wider", transferCode),
+        code(cls := "font-mono text-lg tracking-wider whitespace-nowrap", transferCode),
         button(
           cls    := "btn btn-xs",
           typ    := "button",
@@ -146,32 +105,5 @@ private class GuestBanner {
         noticeVar.set(Some(I18n.t(UiKeys.guestCodeCopied)))
       }
     } catch { case _: Throwable => () }
-  }
-
-  private def renderUpgradeForm(): HtmlElement = {
-    form(
-      cls        := "flex flex-wrap items-end gap-2",
-      noValidate := true,
-      onSubmit.preventDefault.mapToUnit --> upgradeBus.writer,
-      p(cls         := "basis-full text-sm opacity-70", I18n.t(UiKeys.guestUpgradeHint)),
-      input(
-        cls         := "input input-sm",
-        typ         := "email",
-        placeholder := I18n.t(MessageKeys.fieldEmail),
-        controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
-      ),
-      input(
-        cls         := "input input-sm",
-        typ         := "password",
-        placeholder := I18n.t(MessageKeys.fieldPassword),
-        controlled(value <-- passwordVar.signal, onInput.mapToValue --> passwordVar.writer),
-      ),
-      button(
-        cls         := "btn btn-sm btn-primary",
-        typ         := "submit",
-        disabled <-- inFlightSignal,
-        I18n.t(UiKeys.guestUpgradeTitle),
-      ),
-    )
   }
 }
