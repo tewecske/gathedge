@@ -210,6 +210,12 @@ final class WordCollect(
         ApiClient.createGuest.flatMapSwitch {
           case Right(response) =>
             AppState.setUser(response.user)
+            // A freshly minted guest owns no tags yet, so any collect tag remembered in this browser's localStorage —
+            // left over from a previous account on the same device — cannot be theirs. Forgetting it here is what
+            // makes `collectTagOrDefault` mint a fresh one instead of writing against a foreign or deleted id and
+            // failing with `TagNotFound`. `reconcileCollectTag` would fix this too, but only once the tag list it
+            // reacts to has actually come back, which is later than the `write()` below.
+            setCollectTag(None)
             // The banner appears from here on: the reader now has an account, and nothing else has told them so.
             onNotice.onNext(I18n.t(UiKeys.guestBannerHint))
             tagsBus.emit(())

@@ -46,8 +46,8 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
 
   /** Open state of the guest "sign in to a different account" confirm dialog. A plain `Var` rather than the native
     * `<dialog>`/popover forms of a daisyUI modal — those close over imperative `showModal()`/`.close()` calls or a
-    * `popovertarget` id, neither of which fits a reactively-rendered element as well as toggling a class off a
-    * signal, and `HTMLDialogElement.showModal` is unimplemented in jsdom, which the frontend specs run under.
+    * `popovertarget` id, neither of which fits a reactively-rendered element as well as toggling a class off a signal,
+    * and `HTMLDialogElement.showModal` is unimplemented in jsdom, which the frontend specs run under.
     */
   private val confirmSignInOpenVar = Var(false)
 
@@ -204,8 +204,8 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** The avatar and its menu are the part of the bar that means nothing without an account — except there is always
-    * one to open, whoever is looking. A signed-out visitor gets Sign in/Sign up in place of Get code/Upgrade or
+  /** The avatar and its menu are the part of the bar that means nothing without an account — except there is always one
+    * to open, whoever is looking. A signed-out visitor gets Sign in/Sign up in place of Get code/Upgrade or
     * Settings/Log out: the widget is one shape everywhere, and only its contents move with the session.
     */
   private def accountControls(): HtmlElement = {
@@ -386,7 +386,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       // guest does hold a real session even though it never performed an explicit sign-in; a full account keeps
       // Settings/Log out.
       children <-- currentUserSignal.map {
-        case None                         =>
+        case None                       =>
           List(
             li(
               a(
@@ -403,7 +403,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
               )
             ),
           )
-        case Some(user) if user.isGuest   =>
+        case Some(user) if user.isGuest =>
           List(
             li(
               button(
@@ -437,7 +437,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
             li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
           )
-        case Some(_)                      =>
+        case Some(_)                    =>
           List(
             li(
               a(
@@ -470,7 +470,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       cls := "modal",
       cls("modal-open") <-- confirmSignInOpenVar.signal,
       div(
-        cls := "modal-box",
+        cls   := "modal-box",
         p(I18n.t(UiKeys.guestSignInWarning)),
         div(
           cls := "modal-action",
