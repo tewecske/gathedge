@@ -91,6 +91,19 @@ object MessageKeys {
   val wordTranslationExists: String = key("words.translationExists")
   val wordNotOwn: String            = key("words.notOwn")
 
+  // -- Usage quotas ------------------------------------------------------------------------------
+  // Two independent per-account caps (`AppConfig.quotas`): how many tags one account may own, and
+  // how many `word_tag_pairs` rows it may own summed across every tag it holds. Each has a soft
+  // threshold, which only warns, and a hard one, which blocks — see `WordService.checkQuota`. Both
+  // `*Warning` keys take the count reached and the hard limit as `{0}`/`{1}`; both `*Exceeded` keys
+  // take only the hard limit, and are phrased so the number never sits beside an article — Hungarian
+  // alternates `a`/`az` by the sound that follows, which no placeholder can carry.
+
+  val wordTagQuotaWarning: String   = key("words.tagQuotaWarning")
+  val wordTagQuotaExceeded: String  = key("words.tagQuotaExceeded")
+  val wordPairQuotaWarning: String  = key("words.pairQuotaWarning")
+  val wordPairQuotaExceeded: String = key("words.pairQuotaExceeded")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.

@@ -84,11 +84,40 @@ trait WordRepository {
 
   def findTranslation(sourceWordId: Long, targetWordId: Long, createdBy: Option[Long]): Task[Option[WordTranslationRow]]
 
-  def listTags(userId: Long): Task[List[(TagRow, Long)]]
+  /** Every tag in the system, not only `viewerId`'s own — tags are globally visible for filtering and copying, even
+    * though only the owner may attach or detach words with one. Each row carries the count every account's writes
+    * contribute (a tag's word count is not per-viewer) and whether `viewerId` is the one who made it, which is what the
+    * two tag dropdowns mark and sort on.
+    */
+  def listTags(viewerId: Long): Task[List[(TagRow, Long, Boolean)]]
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]]
   def findTagById(id: Long): Task[Option[TagRow]]
   def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): Task[TagRow]
   def deleteTag(id: Long, userId: Long): Task[Long]
+
+  /** How many tags `userId` owns — one half of `WordService.checkQuota`'s tag limit. */
+  def countTagsOwnedBy(userId: Long): Task[Long]
+
+  /** How many `word_tag_pairs` rows `userId` owns, summed across every tag they own — the other half, for the pair
+    * limit. Counts rows, not marks: [[pairTranslation]] writes one per direction, so a single chip click contributes
+    * two.
+    */
+  def countPairsOwnedBy(userId: Long): Task[Long]
+
+  /** How many `word_tag_pairs` rows one tag carries, whoever owns it — what [[WordService.copyTag]] checks the pair
+    * quota against before copying them, since that is exactly how many new rows the copy would add.
+    */
+  def countPairsInTag(tagId: Long): Task[Long]
+
+  /** Seeds `name`/`nameNorm` as a new tag owned by `userId`, and copies `sourceId`'s word memberships and practice
+    * pairs into it — a snapshot, not a live link: the copy and the source are independent from the moment this returns.
+    * Answers the new tag along with how many words and how many pair rows it copied, which is what
+    * `WordService.copyTag` checks the caller's quotas against before deciding whether to call this at all.
+    *
+    * One unit of work for the reason [[untagWord]] is: three tables belong to this repository, and a copy that inserted
+    * the tag but not what it holds would leave an orphan behind if a later statement in it failed.
+    */
+  def copyTag(sourceId: Long, userId: Long, name: String, nameNorm: String, createdAt: Long): Task[(TagRow, Long, Long)]
 
   /** Idempotent: tagging a word that already carries the tag is nothing to do, not a conflict. That is what lets the
     * listing's one-click toggle be safe to double-click.
@@ -224,8 +253,8 @@ object WordRepository {
   ): RIO[WordRepository, Option[WordTranslationRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findTranslation(sourceWordId, targetWordId, createdBy))
 
-  def listTags(userId: Long): RIO[WordRepository, List[(TagRow, Long)]] =
-    ZIO.serviceWithZIO[WordRepository](_.listTags(userId))
+  def listTags(viewerId: Long): RIO[WordRepository, List[(TagRow, Long, Boolean)]] =
+    ZIO.serviceWithZIO[WordRepository](_.listTags(viewerId))
 
   def findTag(userId: Long, nameNorm: String): RIO[WordRepository, Option[TagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findTag(userId, nameNorm))
@@ -238,6 +267,24 @@ object WordRepository {
 
   def deleteTag(id: Long, userId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteTag(id, userId))
+
+  def countTagsOwnedBy(userId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.countTagsOwnedBy(userId))
+
+  def countPairsOwnedBy(userId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.countPairsOwnedBy(userId))
+
+  def countPairsInTag(tagId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.countPairsInTag(tagId))
+
+  def copyTag(
+    sourceId: Long,
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+  ): RIO[WordRepository, (TagRow, Long, Long)] =
+    ZIO.serviceWithZIO[WordRepository](_.copyTag(sourceId, userId, name, nameNorm, createdAt))
 
   def tagWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Unit] =
     ZIO.serviceWithZIO[WordRepository](_.tagWord(wordId, tagId, createdAt))
@@ -522,20 +569,17 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   // -- Tags -------------------------------------------------------------------------------------
 
-  def listTags(userId: Long): Task[List[(TagRow, Long)]] = {
-    val ownTags = quote(tags.filter(_.userId == lift(userId)).sortBy(_.nameNorm)(using Ord.asc))
-    val counts  = quote {
-      wordTags
-        .filter(link => tags.filter(tag => tag.id == link.tagId && tag.userId == lift(userId)).nonEmpty)
-        .groupBy(_.tagId)
-        .map { case (tagId, links) => (tagId, links.size) }
-    }
+  def listTags(viewerId: Long): Task[List[(TagRow, Long, Boolean)]] = {
+    val allTags = quote(tags.sortBy(_.nameNorm)(using Ord.asc))
+    // Not joined against `tags` by owner: a `word_tags` row's `tag_id` already names a tag one particular account
+    // owns, so grouping it alone already answers "how many words carry this tag" for every tag at once.
+    val counts  = quote(wordTags.groupBy(_.tagId).map { case (tagId, links) => (tagId, links.size) })
     val listed  = for {
-      rows   <- run(ctx.run(ownTags))
+      rows   <- run(ctx.run(allTags))
       byTag  <- run(ctx.run(counts))
       counted = byTag.toMap
-    } yield rows.map(tag => (tag, counted.getOrElse(tag.id, 0L)))
-    logged(listed)(rows => s"tags.list user=$userId rows=${rows.size}")
+    } yield rows.map(tag => (tag, counted.getOrElse(tag.id, 0L), tag.userId == viewerId))
+    logged(listed)(rows => s"tags.list viewer=$viewerId rows=${rows.size}")
   }
 
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]] = {
@@ -558,6 +602,64 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def deleteTag(id: Long, userId: Long): Task[Long] = {
     val q = quote(tags.filter(tag => tag.id == lift(id) && tag.userId == lift(userId)).delete)
     logged(run(ctx.run(q)))(rows => s"tags.delete id=$id user=$userId rows=$rows")
+  }
+
+  def countTagsOwnedBy(userId: Long): Task[Long] = {
+    val q = quote(tags.filter(_.userId == lift(userId)).size)
+    logged(run(ctx.run(q)))(count => s"tags.countOwnedBy user=$userId count=$count")
+  }
+
+  def countPairsOwnedBy(userId: Long): Task[Long] = {
+    val q = quote {
+      wordTagPairs.filter(pair => tags.filter(tag => tag.id == pair.tagId && tag.userId == lift(userId)).nonEmpty).size
+    }
+    logged(run(ctx.run(q)))(count => s"wordTagPairs.countOwnedBy user=$userId count=$count")
+  }
+
+  def countPairsInTag(tagId: Long): Task[Long] = {
+    val q = quote(wordTagPairs.filter(_.tagId == lift(tagId)).size)
+    logged(run(ctx.run(q)))(count => s"wordTagPairs.countInTag tag=$tagId count=$count")
+  }
+
+  def copyTag(
+    sourceId: Long,
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+  ): Task[(TagRow, Long, Long)] = {
+    val newTag = TagRow(0L, userId, name, nameNorm, createdAt)
+    val copied = transaction(
+      for {
+        newId       <- ctx.run(quote(tags.insertValue(lift(newTag)).returningGenerated(_.id)))
+        sourceWords <- ctx.run(quote(wordTags.filter(_.tagId == lift(sourceId))))
+        sourcePairs <- ctx.run(quote(wordTagPairs.filter(_.tagId == lift(sourceId))))
+        newLinks     = sourceWords.map(link => WordTagRow(0L, link.wordId, newId, createdAt))
+        newPairs     = sourcePairs.map(pair => WordTagPairRow(0L, pair.wordId, newId, pair.translationWordId, createdAt))
+        _           <- ZIO.unless(newLinks.isEmpty) {
+                         ctx.run(quote {
+                           liftQuery(newLinks).foreach(row => {
+                             wordTags.insert(_.wordId -> row.wordId, _.tagId -> row.tagId, _.createdAt -> row.createdAt)
+                           })
+                         })
+                       }
+        _           <- ZIO.unless(newPairs.isEmpty) {
+                         ctx.run(quote {
+                           liftQuery(newPairs).foreach(row => {
+                             wordTagPairs.insert(
+                               _.wordId            -> row.wordId,
+                               _.tagId             -> row.tagId,
+                               _.translationWordId -> row.translationWordId,
+                               _.createdAt         -> row.createdAt,
+                             )
+                           })
+                         })
+                       }
+      } yield (newTag.copy(id = newId), newLinks.size.toLong, newPairs.size.toLong)
+    )
+    logged(copied) { case (tag, words, pairs) =>
+      s"tags.copy source=$sourceId id=${tag.id} user=$userId words=$words pairs=$pairs"
+    }
   }
 
   /** One membership row, inserted only if it is not already there, and answering whether it was.

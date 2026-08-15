@@ -74,6 +74,26 @@ final case class SmtpSection(host: String, port: Int, username: String, password
 
 final case class MailSection(from: String, smtp: SmtpSection)
 
+/** Two independent, standing per-account caps on the vocabulary — not time-windowed like `RateLimiter`, so they get
+  * their own section rather than a `RateLimitKey` namespace: a tag count and a pair count do not reset after a window,
+  * they only ever go up or down with what the account still owns.
+  *
+  * Each has a *soft* threshold, which only warns (see `dto.TagResponse.warning`), and a *hard* one, which blocks (see
+  * `WordFailure.TagQuotaExceeded`/`PairQuotaExceeded`). `WordService.checkQuota` states the boundary precisely: an
+  * account may hold up to the hard limit; the write that would push it past that is refused, and one that would only
+  * reach or pass the soft limit still succeeds, with a warning.
+  *
+  * `wordPairs*` counts `word_tag_pairs` **rows**, summed across every tag the account owns — not marks, since
+  * [[gathedge.backend.db.WordRepository.pairTranslation]] writes one row per direction, so a single chip click adds two
+  * toward it.
+  */
+final case class QuotaSection(
+  tagsPerUserSoft: Int,
+  tagsPerUserHard: Int,
+  wordPairsPerUserSoft: Int,
+  wordPairsPerUserHard: Int,
+)
+
 /** `maxThreads` is handed straight to Netty's event loop group, where 0 means "decide for me" (2× available
   * processors), so that is the default here too.
   */
@@ -87,6 +107,7 @@ final case class AppConfig(
   oauth: OAuthSection,
   mail: MailSection,
   netty: NettySection,
+  quotas: QuotaSection,
 ) {
   def appEnv: AppEnv        = AppEnv.parse(app.env)
   def isProduction: Boolean = appEnv == AppEnv.Production

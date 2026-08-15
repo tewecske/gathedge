@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Tag, User}
-import gathedge.shared.dto.TaggedPair
+import gathedge.shared.dto.{TagResponse, TaggedPair}
 import gathedge.shared.i18n.UiKeys
 
 /** Everything "this word is in my vocabulary" is made of, shared by the two screens that offer it.
@@ -102,18 +102,39 @@ object WordCollect {
     * same tag name rendered twice for every write that lands between two refreshes.
     */
   def withTag(tags: List[Tag], tag: Tag): List[Tag] = tags.filterNot(_.id == tag.id) :+ tag
+
+  /** Both tag `<select>`s, grouped the way [[Tag.sorted]] orders them: the reader's own tags under one heading,
+    * everyone else's under another. An `<option>` cannot carry a badge or a colour, so the group heading — an
+    * `<optgroup label>`, which every screen reader announces — is the marking the two dropdowns show, not an icon on
+    * each row. A group with nothing in it is left out rather than rendered empty, most often "My tags" for a reader who
+    * owns none yet.
+    */
+  def tagOptionGroups(tags: List[Tag]): List[HtmlElement] = {
+    val (mine, others) = Tag.sorted(tags).partition(_.ownedByMe)
+    List(
+      Option.when(mine.nonEmpty)(optGroup(labelAttr := I18n.t(UiKeys.wordsTagsMineGroup), mine.map(tagOption))),
+      Option.when(others.nonEmpty)(optGroup(labelAttr := I18n.t(UiKeys.wordsTagsOthersGroup), others.map(tagOption))),
+    ).flatten
+  }
+
+  private def tagOption(tag: Tag): HtmlElement = option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})")
 }
 
 /** @param onError
   *   the page's own alert: a failed write's message, and `None` where a success clears it.
   * @param onNotice
   *   where "you now have a guest account" goes, once the detour has minted one.
+  * @param onWarning
+  *   where a soft-quota warning goes — a tag or pair write that still succeeded, but pushed the account's usage to or
+  *   past `AppConfig.quotas`' soft threshold. Separate from [[onNotice]] because the two read differently: a notice is
+  *   informational, a warning is worth the page's attention (`Alert.warning` rather than `Alert.info`).
   * @param onWritten
   *   what the page does when a tick or a chip lands: apply what changed to its local state.
   */
 final class WordCollect(
   onError: Observer[Option[String]],
   onNotice: Observer[String],
+  onWarning: Observer[String],
   onWritten: Observer[WordCollect.Change],
 ) {
 
@@ -140,6 +161,9 @@ final class WordCollect(
   private val newTagBus = new EventBus[Unit]()
   private val tagsBus   = new EventBus[Unit]()
 
+  /** A tag id the reader asked to copy — the collect select's "copy" button, offered on a tag that is not theirs. */
+  private val copyTagBus = new EventBus[Long]()
+
   /** A word the reader clicked, with what should happen to it. The stream is what the guest-minting detour hangs off.
     */
   private val toggleBus = new EventBus[(Long, Boolean)]()
@@ -158,7 +182,7 @@ final class WordCollect(
       tagsBus.events.filterWith(signedInSignal).flatMapSwitch(_ => WordApiClient.listTags) -->
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>
-            tagsVar.set(tags)
+            setTags(tags)
             reconcileCollectTag(tags)
           case Left(_)     =>
             tagsVar.set(Nil)
@@ -167,17 +191,34 @@ final class WordCollect(
         .map(_ => newTagVar.now().trim)
         .filter(_.nonEmpty)
         .flatMapSwitch(name => asReader(() => WordApiClient.createTag(name))) -->
-        Observer[Either[ApiError, Tag]] {
-          case Right(tag) =>
+        Observer[Either[ApiError, TagResponse]] {
+          case Right(response) =>
+            val tag = response.tag
             // Straight to filing under it: creating a tag is something a reader does *in order to* use it. The listing
             // is deliberately *not* narrowed to it — that is the filter's job, and one control doing both is what made
             // the two indistinguishable. Held locally as well as re-fetched, so the select has the new name at once.
             newTagVar.set("")
             onError.onNext(None)
-            tagsVar.update(_ :+ tag)
+            tagsVar.update(existing => Tag.sorted(existing :+ tag))
             setCollectTag(Some(tag.id))
+            response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
             tagsBus.emit(())
-          case Left(err)  =>
+          case Left(err)       =>
+            onError.onNext(Some(err.message))
+        },
+      copyTagBus.events.flatMapSwitch(tagId => asReader(() => WordApiClient.copyTag(tagId))) -->
+        Observer[Either[ApiError, TagResponse]] {
+          case Right(response) =>
+            val tag = response.tag
+            // Straight to collecting under the copy: a reader copies a tag *in order to* file words under it, and the
+            // original stays exactly as narrowable-but-unwritable as it was.
+            onError.onNext(None)
+            tagsVar.update(existing => Tag.sorted(existing :+ tag))
+            setCollectTag(Some(tag.id))
+            onNotice.onNext(I18n.t(UiKeys.wordsTagCopied, tag.name))
+            response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
+            tagsBus.emit(())
+          case Left(err)       =>
             onError.onNext(Some(err.message))
         },
       EventStream.merge(toggleStream, pairStream) --> writeResult,
@@ -189,17 +230,32 @@ final class WordCollect(
   /** Asks for the reader's tags again — what a page calls when something outside a tick may have changed them. */
   def reloadTags(): Unit = tagsBus.emit(())
 
+  /** Seeds a tag of the caller's own from `tagId`'s name — the write behind the collect select's "copy" button. Public
+    * for the same reason [[collectTagOrDefault]] is: the page renders the button, this owns the write.
+    */
+  def copyTag(tagId: Long): Unit = copyTagBus.emit(tagId)
+
   private def setCollectTag(tagId: Option[Long]): Unit = {
     collectTagVar.set(tagId)
     WordCollect.storeCollectTag(tagId)
   }
 
+  /** [[Tag.sorted]] applied wherever the tag list changes, so a caller reading [[tagsSignal]] never has to re-derive
+    * the order the two dropdowns show it in.
+    */
+  private def setTags(tags: List[Tag]): Unit = tagsVar.set(Tag.sorted(tags))
+
   /** Keeps the collect tag on a tag that still exists, and chooses one for a reader who has never picked — including a
     * guest, whose first tag is minted by their first tick. A tag deleted on another device would otherwise leave every
     * tick failing against an id nobody owns.
+    *
+    * The fallback is the reader's own first tag, never merely the list's first — the list is global now, and a reader
+    * with none of their own who inherited somebody else's id here would have every first tick fail with `TagNotFound`.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
-    val kept = collectTagVar.now().filter(id => tags.exists(_.id == id)).orElse(tags.headOption.map(_.id))
+    val kept = {
+      collectTagVar.now().filter(id => tags.exists(_.id == id)).orElse(tags.find(_.ownedByMe).map(_.id))
+    }
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
     }
@@ -288,35 +344,46 @@ final class WordCollect(
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
-        val result: EventStream[Either[ApiError, Unit]] = {
-          if (marked)
-            WordApiClient.deselectPair(wordId, tagId, translationWordId)
-          else
-            WordApiClient.selectPair(wordId, tagId, translationWordId)
+        if (marked) {
+          WordApiClient
+            .deselectPair(wordId, tagId, translationWordId)
+            .map(_.map(_ => WordCollect.PairChange(wordId, tagId, translationWordId, !marked)))
+        } else {
+          WordApiClient
+            .selectPair(wordId, tagId, translationWordId)
+            .map(_.map { response =>
+              // Fired here rather than surfaced through `writeResult`, which only ever sees the `Change` a write
+              // produced — `deselectPair` never warns, so widening that shared shape to carry an optional one for the
+              // sake of this one branch would be a wider change for a narrower reason.
+              response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
+              WordCollect.PairChange(wordId, tagId, translationWordId, !marked)
+            })
         }
-        result.map(_.map(_ => WordCollect.PairChange(wordId, tagId, translationWordId, !marked)))
     }
   }
 
-  /** The tag a click files under: the collect tag, else whichever the reader already has, else a fresh one.
+  /** The tag a click files under: the collect tag, else the reader's own first tag, else a fresh one.
     *
     * Clicking without having chosen a tag has to mean something — it is the first thing a new reader does — so the page
-    * creates one on their behalf rather than refusing the click. Public because adding a word is filed the same way.
+    * creates one on their behalf rather than refusing the click. The fallback is the first tag `ownedByMe`, not merely
+    * the list's first: the list is global, and picking a stranger's tag here would write against an id the caller
+    * cannot use and fail with `TagNotFound`. Public because adding a word is filed the same way.
     */
   def collectTagOrDefault: EventStream[Either[ApiError, Long]] = {
     collectTagVar.now() match {
       case Some(id) =>
         EventStream.fromValue(Right(id))
       case None     =>
-        tagsVar.now().headOption match {
+        tagsVar.now().find(_.ownedByMe) match {
           case Some(tag) =>
             EventStream.fromValue(Right(tag.id))
           case None      =>
             WordApiClient
               .createTag(WordCollect.defaultTagName)
-              .map(_.map(created => {
-                setCollectTag(Some(created.id))
-                created.id
+              .map(_.map(response => {
+                response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
+                setCollectTag(Some(response.tag.id))
+                response.tag.id
               }))
         }
     }
@@ -373,22 +440,39 @@ final class WordCollect(
   }
 
   /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
-    * the reader to discover that the empty entry silently meant "the first one".
+    * the reader to discover that the empty entry silently meant "the first one". Grouped by ownership like the filter —
+    * see [[WordCollect.tagOptionGroups]] — and followed by a "copy" button whenever the choice lands on a tag that is
+    * not the reader's own, since a tick against it would otherwise fail with no visible way to fix that.
     */
   private def renderCollectSelect(): HtmlElement = {
+    val selectedTag = {
+      collectTagSignal.combineWithFn(tagsSignal)((id, tags) => id.flatMap(i => tags.find(_.id == i))).distinct
+    }
     label(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
-      select(
-        cls    := "select select-sm select-primary w-52",
-        children <-- tagsSignal.map(
-          _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
+      div(
+        cls    := "flex items-center gap-1",
+        select(
+          cls := "select select-sm select-primary w-52",
+          children <-- tagsSignal.map(WordCollect.tagOptionGroups),
+          controlled(
+            value <-- selectedTagValue(collectTagSignal),
+            onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
+          ),
         ),
-        controlled(
-          value <-- selectedTagValue(collectTagSignal),
-          onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
-        ),
+        child.maybe <-- selectedTag.map(_.filterNot(_.ownedByMe).map(renderCopyButton)),
       ),
+    )
+  }
+
+  /** Seeds the reader's own copy of `tag`'s name, and files the collect tag on it once it exists. */
+  private def renderCopyButton(tag: Tag): HtmlElement = {
+    button(
+      typ := "button",
+      cls := "btn btn-ghost btn-xs",
+      I18n.t(UiKeys.wordsTagCopy, tag.name),
+      onClick.mapTo(tag.id) --> Observer[Long](copyTag),
     )
   }
 

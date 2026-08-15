@@ -1,9 +1,11 @@
 package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
+import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
 import gathedge.shared.dto.{CreateWordRequest, NewTranslation, Paging, TaggedPair, WordSort}
+import gathedge.shared.i18n.MessageKeys
 import zio._
 import zio.test._
 
@@ -14,7 +16,36 @@ import zio.test._
   */
 object WordServiceSpec extends ZIOSpecDefault {
 
-  private val layer = (TestDataSource.sqlite >>> WordRepository.test) >+> WordService.live
+  private val layer = (TestDataSource.sqlite >>> WordRepository.test) ++ AppConfig.live >+> WordService.live
+
+  /** `AppConfig.live` with `quotas` overridden — the tests below need thresholds small enough to reach in a handful of
+    * calls, and this is `TestAuthLayers.configWith`'s pattern for the same reason.
+    */
+  private def layerWithQuotas(tagsSoft: Int, tagsHard: Int, pairsSoft: Int, pairsHard: Int) = {
+    val config = AppConfig.live.project(cfg => {
+      cfg.copy(quotas = {
+        cfg.quotas.copy(
+          tagsPerUserSoft = tagsSoft,
+          tagsPerUserHard = tagsHard,
+          wordPairsPerUserSoft = pairsSoft,
+          wordPairsPerUserHard = pairsHard,
+        )
+      })
+    })
+    (TestDataSource.sqlite >>> WordRepository.test) ++ config >+> WordService.live
+  }
+
+  /** Unwraps [[WordService.createTag]]'s [[gathedge.shared.dto.TagResponse]] down to the [[Tag]] most tests only need —
+    * the quota tests below are what actually reads the wrapper. Shadowing the name rather than calling it something
+    * else keeps the rest of this file's calls unchanged.
+    */
+  private def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, Tag] = {
+    WordService.createTag(name, userId).map(_.tag)
+  }
+
+  private def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Tag] = {
+    WordService.copyTag(tagId, userId).map(_.tag)
+  }
 
   /** A dictionary row, as the importer would write it: no author, and a rank that decides where it lands in a search.
     */
@@ -97,8 +128,8 @@ object WordServiceSpec extends ZIOSpecDefault {
     )
   }
 
-  def spec = {
-    suite("WordService (SQLite)")(
+  private def coreSpec = {
+    suite("core")(
       test("a search is a prefix of the word, commonest first, and carries its translations") {
         for {
           _    <- seed
@@ -164,7 +195,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("tagging is idempotent, and untagging something untagged is nothing to do") {
         for {
           _     <- seed
-          tag   <- WordService.createTag("lesson1", 1L)
+          tag   <- createTag("lesson1", 1L)
           word  <- list(search = Some("haus")).map(_.items.head.word)
           _     <- WordService.tagWord(word.id, tag.id, 1L)
           _     <- WordService.tagWord(word.id, tag.id, 1L)
@@ -182,7 +213,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("somebody else's tag answers the same as one that does not exist") {
         for {
           _      <- seed
-          tag    <- WordService.createTag("theirs", 1L)
+          tag    <- createTag("theirs", 1L)
           word   <- list(search = Some("haus")).map(_.items.head.word)
           denied <- WordService.tagWord(word.id, tag.id, 2L).either
           absent <- WordService.tagWord(word.id, 9999L, 2L).either
@@ -190,16 +221,77 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("a tag name is unique per account, case-insensitively, and may not be one the practice screen reserves") {
         for {
-          _         <- WordService.createTag("Lesson1", 1L)
-          duplicate <- WordService.createTag("lesson1", 1L).either
-          otherUser <- WordService.createTag("lesson1", 2L).either
-          reserved  <- WordService.createTag("all_unknown", 1L).either
-          blank     <- WordService.createTag("   ", 1L).either
+          _         <- createTag("Lesson1", 1L)
+          duplicate <- createTag("lesson1", 1L).either
+          otherUser <- createTag("lesson1", 2L).either
+          reserved  <- createTag("all_unknown", 1L).either
+          blank     <- createTag("   ", 1L).either
         } yield assertTrue(
           duplicate == Left(WordFailure.DuplicateTag),
           otherUser.isRight,
           reserved.isLeft,
           blank.isLeft,
+        )
+      },
+      test("listing tags answers every account's, own first, each marked whether the caller owns it") {
+        for {
+          _      <- createTag("zebra", 2L)
+          mine   <- createTag("apple", 1L)
+          seen   <- WordService.listTags(1L)
+          theirs <- WordService.listTags(2L)
+        } yield assertTrue(
+          // Both tags are visible to both accounts — the whole point of global visibility — but each sees their own
+          // marked and sorted ahead of the other's, regardless of alphabetical order.
+          seen.map(_.name) == List("apple", "zebra"),
+          seen.map(_.ownedByMe) == List(true, false),
+          theirs.map(_.name) == List("zebra", "apple"),
+          theirs.map(_.ownedByMe) == List(true, false),
+          mine.ownedByMe,
+        )
+      },
+      test("copying a tag copies its word memberships and marked pairs as an independent snapshot") {
+        for {
+          _                       <- seed
+          shared                  <- createTag("shared", 1L)
+          page                    <- list(search = Some("haus"), reader = Some(1L))
+          word                     = page.items.head.word
+          haz                      = page.items.head.translations.head.wordId
+          _                       <- WordService.selectPair(word.id, shared.id, haz, 1L)
+          copy                    <- copyTag(shared.id, 2L)
+          seenBy2                 <- WordService.listTags(2L)
+          snapshot                <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
+          write                   <- WordService.tagWord(word.id, copy.id, 2L).either
+          // Independence, both directions: a later change to either tag must not reach the other.
+          _                       <- WordService.deselectPair(word.id, shared.id, haz, 1L)
+          copyAfterSourceMutation <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
+          _                       <- WordService.untagWord(word.id, copy.id, 2L)
+          sourceAfterCopyMutation <- list(search = Some("haus"), reader = Some(1L), tagId = Some(shared.id))
+        } yield assertTrue(
+          copy.id != shared.id,
+          copy.name == "shared",
+          copy.ownedByMe,
+          // The snapshot carried both words the mark filed under the source tag over, not an empty tag — marking a
+          // pair puts the translation under the tag as well as the word, which `wordCount` counts.
+          copy.wordCount == 2L,
+          snapshot.items.head.pairs == List(TaggedPair(copy.id, haz)),
+          seenBy2.find(_.id == copy.id).exists(_.ownedByMe),
+          // The copy is the copier's own to write through, unlike the original.
+          write.isRight,
+          // Unmarking the source's pair afterward leaves the copy's mark exactly as it was at copy time.
+          copyAfterSourceMutation.items.head.pairs == List(TaggedPair(copy.id, haz)),
+          // And untagging the word from the copy afterward leaves the source's own membership untouched.
+          sourceAfterCopyMutation.items.map(_.word.id) == List(word.id),
+        )
+      },
+      test("copying answers TagNotFound for a missing source, and DuplicateTag for a name the copier already has") {
+        for {
+          original  <- createTag("theirs", 1L)
+          _         <- createTag("theirs", 2L) // the copier already has this name
+          absent    <- copyTag(9999L, 2L).either
+          collision <- copyTag(original.id, 2L).either
+        } yield assertTrue(
+          absent == Left(WordFailure.TagNotFound),
+          collision == Left(WordFailure.DuplicateTag),
         )
       },
       test("'only mine' with no session is an empty answer rather than the whole dictionary") {
@@ -212,8 +304,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("only what the reader tagged is theirs, whoever else tagged it") {
         for {
           _     <- seed
-          mine  <- WordService.createTag("mine", 1L)
-          yours <- WordService.createTag("yours", 2L)
+          mine  <- createTag("mine", 1L)
+          yours <- createTag("yours", 2L)
           words <- list().map(_.items.map(_.word.id))
           _     <- WordService.tagWord(words.head, mine.id, 1L)
           _     <- WordService.tagWord(words(1), yours.id, 2L)
@@ -249,7 +341,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("marking a translation files both words under the tag and records the pair both ways") {
         for {
           _      <- seed
-          tag    <- WordService.createTag("lesson1", 1L)
+          tag    <- createTag("lesson1", 1L)
           page   <- list(search = Some("haus"), reader = Some(1L))
           word    = page.items.head.word
           haz     = page.items.head.translations.head.wordId
@@ -276,7 +368,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("marking twice is nothing to do, and unmarking leaves both words tagged") {
         for {
           _      <- seed
-          tag    <- WordService.createTag("lesson1", 1L)
+          tag    <- createTag("lesson1", 1L)
           page   <- list(search = Some("haus"), reader = Some(1L))
           word    = page.items.head.word
           haz     = page.items.head.translations.head.wordId
@@ -299,7 +391,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a translation the word does not have is a NotFound, and so is somebody else's tag") {
         for {
           _        <- seed
-          tag      <- WordService.createTag("lesson1", 1L)
+          tag      <- createTag("lesson1", 1L)
           page     <- list(search = Some("hau"), reader = Some(1L))
           word      = page.items.head.word
           haz       = page.items.head.translations.head.wordId
@@ -319,7 +411,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           _        <- seed
           extra    <- seedTranslations
-          tag      <- WordService.createTag("lesson1", 1L)
+          tag      <- createTag("lesson1", 1L)
           page     <- list(search = Some("haus"), reader = Some(1L))
           word      = page.items.head.word
           last      = extra.last
@@ -338,7 +430,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("untagging a word clears its practice pairs in that tag, both ways round") {
         for {
           _      <- seed
-          tag    <- WordService.createTag("lesson1", 1L)
+          tag    <- createTag("lesson1", 1L)
           page   <- list(search = Some("haus"), reader = Some(1L))
           word    = page.items.head.word
           haz     = page.items.head.translations.head.wordId
@@ -357,8 +449,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a reader sees only their own marks") {
         for {
           _     <- seed
-          mine  <- WordService.createTag("mine", 1L)
-          yours <- WordService.createTag("yours", 2L)
+          mine  <- createTag("mine", 1L)
+          yours <- createTag("yours", 2L)
           page  <- list(search = Some("haus"))
           word   = page.items.head.word
           haz    = page.items.head.translations.head.wordId
@@ -374,7 +466,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a word added with a translation is marked for practice under the tag it is filed in") {
         for {
           _      <- seed
-          tag    <- WordService.createTag("lesson1", 1L)
+          tag    <- createTag("lesson1", 1L)
           detail <- WordService.create(
                       CreateWordRequest(
                         WordLanguage.De,
@@ -429,6 +521,106 @@ object WordServiceSpec extends ZIOSpecDefault {
           byText.items.map(_.word.text).headOption.contains("Haus"),
         )
       },
-    ).provide(layer) @@ TestAspect.timeout(60.seconds)
+    ).provide(layer)
   }
+
+  /** The two standing quotas (`AppConfig.quotas`), each run against thresholds small enough to reach in a handful of
+    * calls — the shipped defaults (20/50 tags, 500/2000 pairs) would make the same tests impractically long. Every test
+    * here gets its own [[layerWithQuotas]], so one test's tags never count toward another's threshold.
+    */
+  private def quotaSpec = {
+    suite("usage quotas")(
+      test("creating tags: no warning below the soft threshold, one from it to the hard one, and a block past it") {
+        for {
+          t1 <- WordService.createTag("t1", 1L)
+          t2 <- WordService.createTag("t2", 1L)
+          t3 <- WordService.createTag("t3", 1L)
+          t4 <- WordService.createTag("t4", 1L)
+          t5 <- WordService.createTag("t5", 1L)
+          t6 <- WordService.createTag("t6", 1L).either
+        } yield assertTrue(
+          // Soft is 3: the first two tags (totals 1, 2) carry no warning.
+          t1.warning.isEmpty,
+          t2.warning.isEmpty,
+          // From the third tag on (total 3, 4, 5) the write still succeeds, now with a warning — the account may hold
+          // up to the hard limit itself before anything is refused.
+          t3.warning.exists(_.key == MessageKeys.wordTagQuotaWarning),
+          t4.warning.isDefined,
+          t5.warning.isDefined,
+          // Hard is 5: the sixth tag would make the total 6, past it, and is refused rather than warned.
+          t6 == Left(WordFailure.TagQuotaExceeded(5)),
+        )
+      }.provide(layerWithQuotas(tagsSoft = 3, tagsHard = 5, pairsSoft = 1000, pairsHard = 1000)),
+      test("marking pairs: no warning below the soft threshold, one from it to the hard one, and a block past it") {
+        for {
+          _     <- seed
+          extra <- seedTranslations
+          tag   <- createTag("lesson1", 1L)
+          page  <- list(search = Some("haus"), reader = Some(1L))
+          word   = page.items.head.word
+          haz    = page.items.head.translations.head.wordId
+          // Each mark writes two rows (one per direction), so four distinct translations cover the boundary in as
+          // few calls as the tag test above needed tags.
+          r1    <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          r2    <- WordService.selectPair(word.id, tag.id, extra.head, 1L)
+          r3    <- WordService.selectPair(word.id, tag.id, extra(1), 1L)
+          r4    <- WordService.selectPair(word.id, tag.id, extra(2), 1L).either
+        } yield assertTrue(
+          // Soft is 4: the first mark (total 2) carries no warning.
+          r1.warning.isEmpty,
+          // The second and third marks (total 4, 6) still succeed, now with a warning.
+          r2.warning.exists(_.key == MessageKeys.wordPairQuotaWarning),
+          r3.warning.isDefined,
+          // Hard is 6: the fourth mark would make the total 8, past it, and is refused rather than warned.
+          r4 == Left(WordFailure.PairQuotaExceeded(6)),
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1000, tagsHard = 1000, pairsSoft = 4, pairsHard = 6)),
+      test("a copy that would cross the pair quota's hard limit fails entirely, and leaves nothing written") {
+        for {
+          _           <- seed
+          extra       <- seedTranslations
+          shared      <- createTag("shared", 1L)
+          page        <- list(search = Some("haus"), reader = Some(1L))
+          word         = page.items.head.word
+          haz          = page.items.head.translations.head.wordId
+          // One mark under the source tag writes two pair rows — within the hard limit for the account that made it,
+          // which is what proves the copy is blocked by the *copier's own total*, not by the source having too many.
+          _           <- WordService.selectPair(word.id, shared.id, haz, 1L)
+          // The copier already carries two rows of their own, under a tag of their own — close enough to the hard
+          // limit that the two more rows the copy would add push them past it.
+          mine        <- createTag("mine", 2L)
+          _           <- WordService.selectPair(word.id, mine.id, extra.head, 2L)
+          tagsBefore  <- WordRepository.countTagsOwnedBy(2L)
+          pairsBefore <- WordRepository.countPairsOwnedBy(2L)
+          blocked     <- WordService.copyTag(shared.id, 2L).either
+          tagsAfter   <- WordRepository.countTagsOwnedBy(2L)
+          pairsAfter  <- WordRepository.countPairsOwnedBy(2L)
+        } yield assertTrue(
+          blocked == Left(WordFailure.PairQuotaExceeded(3)),
+          tagsBefore == 1L,
+          pairsBefore == 2L,
+          // Still just the one tag and its two rows — the check ran before the write, not as a rollback.
+          tagsAfter == 1L,
+          pairsAfter == 2L,
+        )
+      }.provide(layerWithQuotas(tagsSoft = 100, tagsHard = 100, pairsSoft = 100, pairsHard = 3)),
+      test("a copy that would cross the tag quota's hard limit fails entirely, and leaves nothing written") {
+        for {
+          _          <- seed
+          shared     <- createTag("shared", 1L)
+          _          <- createTag("existing", 2L) // the copier already owns one tag, and the hard limit is one
+          tagsBefore <- WordRepository.countTagsOwnedBy(2L)
+          blocked    <- WordService.copyTag(shared.id, 2L).either
+          tagsAfter  <- WordRepository.countTagsOwnedBy(2L)
+        } yield assertTrue(
+          blocked == Left(WordFailure.TagQuotaExceeded(1)),
+          tagsBefore == 1L,
+          // Still just the one tag: the tag half of the check ran, and refused, before any pair was even counted.
+          tagsAfter == 1L,
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1, tagsHard = 1, pairsSoft = 100, pairsHard = 100)),
+    )
+  }
+
+  def spec = suite("WordService (SQLite)")(coreSpec, quotaSpec) @@ TestAspect.timeout(60.seconds)
 }

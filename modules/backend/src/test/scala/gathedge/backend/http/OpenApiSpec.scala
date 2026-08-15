@@ -87,6 +87,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/{id}/tags/{tagId}/translations/{translationWordId}",
               "/api/tags",
               "/api/tags/{tagId}",
+              "/api/tags/{tagId}/copy",
               "/api/me",
               "/api/me/theme",
               "/api/me/locale",
@@ -191,15 +192,26 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("DELETE", "/api/words/{id}/tags/{tagId}")                                  -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // Marking a translation as a practice answer. One 404 for a word that is not there, a translation the
               // word does not have, and a tag that is not the caller's alike — none of which an account may learn by
-              // trying.
+              // trying. 409 is the account already owning as many word_tag_pairs rows as the pair quota's hard
+              // threshold allows. `Ok` rather than `NoContent`: the body may carry a non-fatal warning when the write
+              // only crossed the quota's *soft* threshold.
               ("PUT", "/api/words/{id}/tags/{tagId}/translations/{translationWordId}")    ->
-                Set(NoContent, BadRequest, Unauthorized, NotFound),
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/tags/{tagId}/translations/{translationWordId}") ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
               // Listing tags takes no input, so it has no 400 to declare.
               ("GET", "/api/tags")                                                        -> Set(Ok, Unauthorized),
+              // 409 covers a name the account already has *and* already owning as many tags as the quota's hard
+              // threshold allows — `error.key` tells the two apart. The body may carry a warning instead when the
+              // write only crossed the *soft* threshold.
               ("POST", "/api/tags")                                                       -> Set(Created, BadRequest, Unauthorized, Conflict),
               ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Copying seeds a tag of the caller's own from any tag's name, including one they do not own, and copies
+              // its word/pair snapshot with it: 404 for a source tag that does not exist, 409 for the ordinary
+              // already-have-one-by-that-name case *and* for either quota's hard threshold — checked before anything
+              // is written, so a blocked copy leaves nothing behind.
+              ("POST", "/api/tags/{tagId}/copy")                                          ->
+                Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
               ("GET", "/api/me")                                                          -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
@@ -260,7 +272,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 119,
+          declared == 124,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own

@@ -2,16 +2,22 @@ package gathedge.shared.domain
 
 import zio.json.*
 
-/** A label one account puts on words, and the only notion of ownership the vocabulary has: a word is in your collection
-  * if and only if you have tagged it.
+/** A label one account puts on words. Tagging is still the only notion of "mine" the vocabulary has — a word is in your
+  * collection if and only if you have tagged it — but the tag itself is visible to every account, not only the one that
+  * made it: a reader may filter by anybody's tag, or copy its name into one of their own, even though only the owner
+  * may attach or detach words with it.
   *
   * An entity with an id rather than a string on a word, because a name may contain anything a reader types and the tag
-  * bar has to list them anyway. Names are unique per account, case-insensitively.
+  * bar has to list them anyway. Names are unique per account, case-insensitively — not globally, since two accounts
+  * copying the same idea (or the default "saved") is expected, not a collision.
   *
   * @param wordCount
   *   how many words currently carry it, which is what the tag picker shows next to each name.
+  * @param ownedByMe
+  *   whether the caller is the account that made it — the only thing that decides whether they may attach or detach
+  *   words with it, and what the two tag dropdowns mark and sort on.
   */
-final case class Tag(id: Long, name: String, wordCount: Long) derives JsonCodec
+final case class Tag(id: Long, name: String, wordCount: Long, ownedByMe: Boolean) derives JsonCodec
 
 object Tag {
 
@@ -41,4 +47,10 @@ object Tag {
   def normalize(name: String): String = name.trim.toLowerCase
 
   def isReserved(name: String): Boolean = reservedNames.contains(normalize(name))
+
+  /** The order both tag dropdowns show: the reader's own tags first, then everyone else's, alphabetically within each
+    * group. Applied wherever a tag list is about to be rendered rather than trusted from the wire, so the rule holds
+    * even if a caller's own sort gets out of step with it.
+    */
+  def sorted(tags: List[Tag]): List[Tag] = tags.sortBy(tag => (!tag.ownedByMe, tag.name.toLowerCase))
 }

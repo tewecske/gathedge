@@ -30,4 +30,8 @@ object Alert {
   def maybeInfo(signal: Signal[Option[String]]): Modifier[HtmlElement] = {
     child.maybe <-- signal.map(_.map(info))
   }
+
+  def maybeWarning(signal: Signal[Option[String]]): Modifier[HtmlElement] = {
+    child.maybe <-- signal.map(_.map(warning))
+  }
 }

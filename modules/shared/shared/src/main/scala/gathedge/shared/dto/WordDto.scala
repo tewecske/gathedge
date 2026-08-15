@@ -1,6 +1,7 @@
 package gathedge.shared.dto
 
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.i18n.MessageRef
 import zio.json.*
 
 /** One translation as the listing offers it: the id of the word it points at, and the text already rendered.
@@ -95,6 +96,23 @@ final case class NewTranslation(
 final case class AddTranslationRequest(translation: NewTranslation) derives JsonCodec
 
 final case class CreateTagRequest(name: String) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.createTag]]/`.copyTag`'s answer: the tag itself, plus a non-fatal warning when
+  * the write pushed the caller's own usage past one of `AppConfig.quotas`' *soft* thresholds — how many tags they own,
+  * for `createTag`, or that count together with how many `word_tag_pairs` rows [[copyTag]]'s snapshot added.
+  *
+  * `None` is the ordinary case; crossing a *hard* threshold instead answers 409 and never reaches here — see
+  * `WordFailure.TagQuotaExceeded`/`PairQuotaExceeded`.
+  */
+final case class TagResponse(tag: Tag, warning: Option[MessageRef]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.selectPair]]'s answer — no useful payload of its own (unlike [[TagResponse]],
+  * marking a pair does not mint anything the caller needs the id of), but the same non-fatal warning when it pushed the
+  * caller's total pair count past the soft threshold. The reason this endpoint answers a body at all rather than the
+  * 204 every other idempotent toggle here does: a 204 must never carry one (RFC 9110 §8.6), and a warning is exactly
+  * that.
+  */
+final case class PairSelectionResponse(warning: Option[MessageRef]) derives JsonCodec
 
 /** The columns `GET /api/words` will order by.
   *

@@ -1,10 +1,13 @@
 package gathedge.backend.service
 
+import gathedge.backend.config.{AppConfig, QuotaSection}
 import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTranslationRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
+  PairSelectionResponse,
+  TagResponse,
   TaggedPair,
   TranslationEntry,
   TranslationOption,
@@ -12,7 +15,7 @@ import gathedge.shared.dto.{
   WordPage,
   WordSummary,
 }
-import gathedge.shared.i18n.MessageRef
+import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import gathedge.shared.validation.Validation
 import zio.*
 
@@ -30,6 +33,16 @@ enum WordFailure {
     * translations are per-account and additive.
     */
   case DuplicateTranslation
+
+  /** The account already owns as many tags as `limit` (`AppConfig.quotas.tagsPerUserHard`) allows. Carries the limit
+    * itself, since `ApiFailures` mints no signature that takes an `AppConfig` to look it up.
+    */
+  case TagQuotaExceeded(limit: Int)
+
+  /** The account's tags already carry as many `word_tag_pairs` rows, summed across every tag it owns, as `limit`
+    * (`AppConfig.quotas.wordPairsPerUserHard`) allows.
+    */
+  case PairQuotaExceeded(limit: Int)
 }
 
 /** Browsing the shared dictionary, and the per-account layer on top of it: tags, and translations somebody typed.
@@ -43,6 +56,10 @@ enum WordFailure {
   *     exactly while one of its tags is on it.
   *   - '''Reading needs no account.''' Every read here takes an `Option[Long]` reader; `None` is a visitor with no
   *     session, who sees the same words and no tags.
+  *
+  * A tag itself is visible to every account once created — [[listTags]] answers the whole table, marking which rows the
+  * caller owns — but writing through one is not: [[tagWord]], [[untagWord]], [[selectPair]] and [[deselectPair]] all go
+  * through [[requireOwnTag]], so a reader may filter or [[copyTag]] somebody else's tag but never attach a word to it.
   */
 trait WordService {
 
@@ -69,8 +86,21 @@ trait WordService {
   def removeTranslation(wordId: Long, translationId: Long, userId: Long): IO[WordFailure, Unit]
 
   def listTags(userId: Long): UIO[List[Tag]]
-  def createTag(name: String, userId: Long): IO[WordFailure, Tag]
+
+  /** `TagQuotaExceeded` is the hard half of the tag quota; a write that only crosses the soft threshold succeeds with
+    * [[gathedge.shared.dto.TagResponse.warning]] set instead.
+    */
+  def createTag(name: String, userId: Long): IO[WordFailure, TagResponse]
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Seeds a new tag of the caller's own from another account's name, and copies the source tag's word memberships and
+    * practice pairs into it as a snapshot — independent of the source from the moment this returns. `TagNotFound`
+    * covers a source tag that does not exist; `DuplicateTag` covers the ordinary case of the copier already having a
+    * tag by that name; `TagQuotaExceeded`/`PairQuotaExceeded` cover the copy's one new tag and its copied pairs pushing
+    * the copier past a *hard* quota threshold, checked before anything is written so a blocked copy leaves nothing
+    * behind. A *soft* threshold instead succeeds, with a warning.
+    */
+  def copyTag(tagId: Long, userId: Long): IO[WordFailure, TagResponse]
 
   /** Idempotent, both ways round: the listing's one-click toggle must be safe to click twice. */
   def tagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit]
@@ -80,9 +110,17 @@ trait WordService {
     *
     * Idempotent like [[tagWord]], and it files both words under the tag as a side effect — a pair whose answer is not
     * itself collected is a question with a missing half. `NotFound` covers both a word that is not there and a
-    * translation the word does not have; `TagNotFound` covers somebody else's tag.
+    * translation the word does not have; `TagNotFound` covers somebody else's tag; `PairQuotaExceeded` is the hard half
+    * of the pair quota. A pair already marked is nothing new to write, so it never counts against the quota, and a
+    * write that only crosses the *soft* threshold succeeds with [[gathedge.shared.dto.PairSelectionResponse.warning]]
+    * set.
     */
-  def selectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
+  def selectPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    userId: Long,
+  ): IO[WordFailure, PairSelectionResponse]
 
   /** Unmarks it. Both words keep the tag: taking a word out of a vocabulary is the tick's job. */
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
@@ -137,11 +175,14 @@ object WordService {
   def listTags(userId: Long): URIO[WordService, List[Tag]] =
     ZIO.serviceWithZIO[WordService](_.listTags(userId))
 
-  def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, Tag] =
+  def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.createTag(name, userId))
 
   def deleteTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deleteTag(tagId, userId))
+
+  def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
+    ZIO.serviceWithZIO[WordService](_.copyTag(tagId, userId))
 
   def tagWord(wordId: Long, tagId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.tagWord(wordId, tagId, userId))
@@ -154,7 +195,7 @@ object WordService {
     tagId: Long,
     translationWordId: Long,
     userId: Long,
-  ): ZIO[WordService, WordFailure, Unit] =
+  ): ZIO[WordService, WordFailure, PairSelectionResponse] =
     ZIO.serviceWithZIO[WordService](_.selectPair(wordId, tagId, translationWordId, userId))
 
   def deselectPair(
@@ -165,7 +206,9 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
 
-  val live: URLayer[WordRepository, WordService] = ZLayer.fromFunction(WordServiceLive.apply)
+  val live: URLayer[WordRepository & AppConfig, WordService] = {
+    ZLayer.fromFunction((repo: WordRepository, config: AppConfig) => WordServiceLive(repo, config.quotas))
+  }
 
   /** What a word row a user typed is marked as, against the dictionary's own. */
   val userSource       = "user"
@@ -184,7 +227,7 @@ object WordService {
   val unrankedFrequency = 999999999
 }
 
-final case class WordServiceLive(repo: WordRepository) extends WordService {
+final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection) extends WordService {
 
   private def toDomain(row: WordRow): Word = {
     Word(
@@ -196,7 +239,9 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
     )
   }
 
-  private def toTag(row: TagRow, wordCount: Long): Tag = Tag(row.id, row.name, wordCount)
+  private def toTag(row: TagRow, wordCount: Long, ownedByMe: Boolean): Tag = {
+    Tag(row.id, row.name, wordCount, ownedByMe)
+  }
 
   /** Dictionary entries first, then what somebody typed, and pivoted pairs last — the order of how much each is worth
     * trusting. Ties break on frequency, so the everyday word leads.
@@ -319,8 +364,9 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
       tags         <- ZIO.foreach(reader)(userId => repo.tagsOfWord(userId, row.id)).map(_.toList.flatten).orDie
       marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, List(row.id))).map(_.toList.flatten).orDie
       // Carried with a count of zero: the detail screen renders these as chips on one word, where "lesson1 (37)"
-      // would be answering a question nobody asked. The tag bar gets the real counts from `listTags`.
-      counted       = tags.map(tag => toTag(tag, 0L))
+      // would be answering a question nobody asked. The tag bar gets the real counts from `listTags`. `tagsOfWord`
+      // only ever answers the reader's own tags, so every one of them is owned.
+      counted       = tags.map(tag => toTag(tag, 0L, ownedByMe = true))
     } yield WordDetail(
       word = toDomain(row),
       translations = sortTranslations(translations).map { case (edge, word) =>
@@ -474,10 +520,16 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
   }
 
   def listTags(userId: Long): UIO[List[Tag]] = {
-    repo.listTags(userId).orDie.map(_.map { case (row, count) => toTag(row, count) })
+    repo
+      .listTags(userId)
+      .orDie
+      .map(rows => Tag.sorted(rows.map { case (row, count, ownedByMe) => toTag(row, count, ownedByMe) }))
   }
 
-  def createTag(name: String, userId: Long): IO[WordFailure, Tag] = {
+  /** The name-half of creating a tag, shared by [[createTag]] and [[copyTag]]: valid, and not already the caller's,
+    * before either goes anywhere near a quota or a write.
+    */
+  private def prepareTagName(name: String, userId: Long): IO[WordFailure, (String, String)] = {
     for {
       valid    <- ZIO
                     .fromEither(Validation.validateTagName(name))
@@ -485,9 +537,92 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
       normal    = Tag.normalize(valid)
       existing <- repo.findTag(userId, normal).orDie
       _        <- ZIO.when(existing.isDefined)(ZIO.fail(WordFailure.DuplicateTag))
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row      <- repo.insertTag(userId, valid, normal, now).orDie
-    } yield toTag(row, 0L)
+    } yield (valid, normal)
+  }
+
+  /** The arithmetic behind every quota check here, so tags and pairs are blocked and warned by exactly the same rule:
+    * an account may hold up to `hard` items total; a write whose resulting total (`currentCount + adding`) would exceed
+    * it is refused outright, and one that would only reach or pass `soft` still succeeds, carrying a warning.
+    *
+    * `Left` names nothing — the caller already knows which quota it is checking, and picks the failure case and the
+    * `MessageRef` itself, since the same rule feeds two different [[WordFailure]] cases.
+    */
+  private def checkQuota(currentCount: Long, adding: Long, soft: Int, hard: Int): Either[Unit, Boolean] = {
+    val newTotal = currentCount + adding
+    if (newTotal > hard)
+      Left(())
+    else
+      Right(newTotal >= soft)
+  }
+
+  private def tagQuota(currentCount: Long, adding: Long): IO[WordFailure, Option[MessageRef]] = {
+    checkQuota(currentCount, adding, quotas.tagsPerUserSoft, quotas.tagsPerUserHard) match {
+      case Left(())      =>
+        ZIO.fail(WordFailure.TagQuotaExceeded(quotas.tagsPerUserHard))
+      case Right(warned) =>
+        ZIO.succeed(
+          Option.when(warned)(
+            MessageRef(
+              MessageKeys.wordTagQuotaWarning,
+              List((currentCount + adding).toString, quotas.tagsPerUserHard.toString),
+            )
+          )
+        )
+    }
+  }
+
+  private def pairQuota(currentCount: Long, adding: Long): IO[WordFailure, Option[MessageRef]] = {
+    checkQuota(currentCount, adding, quotas.wordPairsPerUserSoft, quotas.wordPairsPerUserHard) match {
+      case Left(())      =>
+        ZIO.fail(WordFailure.PairQuotaExceeded(quotas.wordPairsPerUserHard))
+      case Right(warned) =>
+        ZIO.succeed(
+          Option.when(warned)(
+            MessageRef(
+              MessageKeys.wordPairQuotaWarning,
+              List((currentCount + adding).toString, quotas.wordPairsPerUserHard.toString),
+            )
+          )
+        )
+    }
+  }
+
+  def createTag(name: String, userId: Long): IO[WordFailure, TagResponse] = {
+    for {
+      prepared       <- prepareTagName(name, userId)
+      (valid, normal) = prepared
+      owned          <- repo.countTagsOwnedBy(userId).orDie
+      warning        <- tagQuota(owned, 1)
+      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row            <- repo.insertTag(userId, valid, normal, now).orDie
+    } yield TagResponse(toTag(row, 0L, ownedByMe = true), warning)
+  }
+
+  /** A snapshot copy: every word the source tag carries and every practice pair marked inside it travel into the new
+    * tag as one unit of work ([[gathedge.backend.db.WordRepository.copyTag]]), and the two are independent from that
+    * moment on.
+    *
+    * Both quotas are checked '''before''' that write — one new tag, and as many new pair rows as the source tag carries
+    * — so a copy that would cross either *hard* threshold fails with nothing written at all, rather than a tag left
+    * behind with half its pairs. Crossing only a *soft* one still succeeds; if both did, the tag warning wins, since
+    * [[gathedge.shared.dto.TagResponse]] carries one.
+    */
+  def copyTag(tagId: Long, userId: Long): IO[WordFailure, TagResponse] = {
+    for {
+      source          <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      prepared        <- prepareTagName(source.name, userId)
+      (valid, normal)  = prepared
+      ownedTags       <- repo.countTagsOwnedBy(userId).orDie
+      ownedPairs      <- repo.countPairsOwnedBy(userId).orDie
+      copiedPairCount <- repo.countPairsInTag(tagId).orDie
+      tagWarning      <- tagQuota(ownedTags, 1)
+      pairWarning     <- pairQuota(ownedPairs, copiedPairCount)
+      now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      copied          <- repo.copyTag(tagId, userId, valid, normal, now).orDie
+    } yield {
+      val (row, wordCount, _) = copied
+      TagResponse(toTag(row, wordCount, ownedByMe = true), tagWarning.orElse(pairWarning))
+    }
   }
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {
@@ -552,13 +687,33 @@ final case class WordServiceLive(repo: WordRepository) extends WordService {
     } yield ()
   }
 
-  def selectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit] = {
+  /** Whether `translationWordId` is already marked for `wordId` inside `tagId` — reusing [[WordRepository.pairsFor]]
+    * rather than adding a lookup of its own, since it already answers exactly that filtered to one owner. Idempotent
+    * writes never count against the pair quota: [[WordRepository.pairTranslation]] adds nothing when the pair is
+    * already there, so there is nothing new to charge for.
+    */
+  private def pairAlreadyMarked(userId: Long, wordId: Long, tagId: Long, translationWordId: Long): UIO[Boolean] = {
+    repo
+      .pairsFor(userId, List(wordId))
+      .orDie
+      .map(_.exists(pair => pair.tagId == tagId && pair.translationWordId == translationWordId))
+  }
+
+  def selectPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    userId: Long,
+  ): IO[WordFailure, PairSelectionResponse] = {
     for {
-      _ <- requireOwnTag(tagId, userId)
-      _ <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      _ <- requireTranslationOf(wordId, translationWordId)
-      _ <- pairInTag(wordId, tagId, translationWordId)
-    } yield ()
+      _       <- requireOwnTag(tagId, userId)
+      _       <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      _       <- requireTranslationOf(wordId, translationWordId)
+      already <- pairAlreadyMarked(userId, wordId, tagId, translationWordId)
+      // `pairTranslation` writes one row per direction, so a genuinely new mark adds two.
+      warning <- if (already) ZIO.succeed(None) else repo.countPairsOwnedBy(userId).orDie.flatMap(pairQuota(_, 2))
+      _       <- pairInTag(wordId, tagId, translationWordId)
+    } yield PairSelectionResponse(warning)
   }
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit] = {

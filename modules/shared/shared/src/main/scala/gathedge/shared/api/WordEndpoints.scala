@@ -1,7 +1,15 @@
 package gathedge.shared.api
 
 import gathedge.shared.domain.Tag
-import gathedge.shared.dto.{AddTranslationRequest, CreateTagRequest, CreateWordRequest, WordDetail, WordPage}
+import gathedge.shared.dto.{
+  AddTranslationRequest,
+  CreateTagRequest,
+  CreateWordRequest,
+  PairSelectionResponse,
+  TagResponse,
+  WordDetail,
+  WordPage,
+}
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
@@ -124,14 +132,17 @@ object WordEndpoints {
     Endpoint(Method.GET / "api" / "tags").out[List[Tag]].outFailure(failure.unauthorized)
   }
 
-  /** 409 is a name the account already has, compared case-insensitively; 400 covers a blank one, one over the column's
-    * width, and one of the names the practice screen reserves for itself.
+  /** 409 covers two things a caller cannot tell apart from the status alone — a name the account already has, compared
+    * case-insensitively, and the account already owning as many tags as `AppConfig.quotas` allows — so `error.key`
+    * (`words.tagExists` vs `words.tagQuotaExceeded`) is what a form branches on. 400 covers a blank name, one over the
+    * column's width, and one of the names the practice screen reserves for itself. The answer carries a warning instead
+    * of failing when the write only crossed the quota's *soft* threshold.
     */
   val createTag = {
     Endpoint(Method.POST / "api" / "tags")
       .in[CreateTagRequest]
       .withCodecError
-      .out[Tag](Status.Created)
+      .out[TagResponse](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
   }
 
@@ -139,6 +150,23 @@ object WordEndpoints {
     Endpoint(Method.DELETE / "api" / "tags" / tagId).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Seeds a tag of the caller's own from any tag's name, including one they do not own — the only write in this
+    * resource that takes somebody else's id and succeeds. It is a *snapshot* copy: every word the source tag carries
+    * and every practice pair marked inside it are copied into the new tag as one unit of work, and the two are
+    * independent from that moment on — a later change to either tag leaves the other exactly as it was.
+    *
+    * 404 is a source tag that does not exist. 409 covers three things a caller cannot tell apart from the status alone
+    * — the caller already having a tag by that name, the copy's one new tag pushing them past `AppConfig.quotas`' tag
+    * limit, or its copied pairs pushing them past the pair limit — distinguished the same way [[createTag]]'s is, by
+    * `error.key`. Both limits are checked before anything is written, so a copy that would cross either *hard*
+    * threshold writes nothing at all; crossing only a *soft* one still succeeds, with a warning on the answer.
+    */
+  val copyTag = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "copy").withCodecError
+      .out[TagResponse](Status.Created)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Puts a tag on a word — the one-click action the listing is built around, which is why it is idempotent: clicking a
@@ -168,14 +196,18 @@ object WordEndpoints {
     * it is the client that decides, and the server is never asked what is selected "for the current tag".
     *
     * 404 answers three things at once — no such word, no such translation of it, and a tag that is not the caller's —
-    * because which of them it was is not something an account may learn by trying.
+    * because which of them it was is not something an account may learn by trying. 409 is the account already owning as
+    * many `word_tag_pairs` rows, summed across every tag it holds, as `AppConfig.quotas` allows; marking a pair already
+    * there is idempotent and never counts against it, since nothing new is written. Answers `Ok` rather than the
+    * `NoContent` every other idempotent toggle here does, because the body may carry a warning when the write only
+    * crossed the quota's *soft* threshold — a 204 must never carry one (RFC 9110 §8.6).
     */
   val selectPair = {
     Endpoint(
       Method.PUT / "api" / "words" / wordId / "tags" / tagId / "translations" / translationWordId
     ).withCodecError
-      .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .out[PairSelectionResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Unmarks it. Both directions of the pair go; the two words stay under the tag, since taking a word out of a
@@ -200,6 +232,7 @@ object WordEndpoints {
       listTags,
       createTag,
       deleteTag,
+      copyTag,
       tagWord,
       untagWord,
       selectPair,

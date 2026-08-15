@@ -29,7 +29,7 @@ import gathedge.backend.service.{
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Theme, User, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Theme, User, WordLanguage}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
@@ -43,12 +43,14 @@ import gathedge.shared.dto.{
   ForgotPasswordRequest,
   NewTranslation,
   LoginRequest,
+  PairSelectionResponse,
   Paging,
   ResendVerificationRequest,
   ResetPasswordRequest,
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  TagResponse,
   TaggedPair,
   UpdateThemeRequest,
   UpdateUserRequest,
@@ -544,7 +546,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             tagReq   = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
             tag     <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
             tagRaw  <- body(tag)
-            tagId    = tagRaw.fromJson[Tag].map(_.id).getOrElse(0L)
+            tagId    = tagRaw.fromJson[TagResponse].map(_.tag.id).getOrElse(0L)
             wordReq  = Request.post(
                          "/api/words",
                          Body.fromString(
@@ -566,48 +568,48 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             tagged.header(Header.ContentLength).isEmpty,
           )
         },
-        test("marking a translation for practice answers an empty 204, and the row carries the mark back") {
+        test("marking a translation for practice answers 200 with no warning, and the row carries the mark back") {
           for {
-            session  <- signUp("words-pair@example.com")
-            tagReq    = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
-            tag      <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
-            tagRaw   <- body(tag)
-            tagId     = tagRaw.fromJson[Tag].map(_.id).getOrElse(0L)
-            wordReq   = Request.post(
-                          "/api/words",
-                          Body.fromString(
-                            CreateWordRequest(
-                              WordLanguage.De,
-                              "Brot",
-                              PartOfSpeech.Noun,
-                              Some(Gender.Das),
-                              List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
-                              Nil,
-                            ).toJson
-                          ),
-                        )
-            word     <- runRoutes(WordRoutes.routes, withCsrf(withSession(wordReq, session)))
-            wordRaw  <- body(word)
-            detail    = wordRaw.fromJson[WordDetail]
-            wordId    = detail.map(_.word.id).getOrElse(0L)
-            targetId  = detail.map(_.translations.map(_.word.id)).getOrElse(Nil).headOption.getOrElse(0L)
-            path      = s"/api/words/$wordId/tags/$tagId/translations/$targetId"
-            marked   <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.put(path, Body.empty), session)))
-            empty    <- body(marked)
-            listed   <-
+            session   <- signUp("words-pair@example.com")
+            tagReq     = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
+            tag       <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
+            tagRaw    <- body(tag)
+            tagId      = tagRaw.fromJson[TagResponse].map(_.tag.id).getOrElse(0L)
+            wordReq    = Request.post(
+                           "/api/words",
+                           Body.fromString(
+                             CreateWordRequest(
+                               WordLanguage.De,
+                               "Brot",
+                               PartOfSpeech.Noun,
+                               Some(Gender.Das),
+                               List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
+                               Nil,
+                             ).toJson
+                           ),
+                         )
+            word      <- runRoutes(WordRoutes.routes, withCsrf(withSession(wordReq, session)))
+            wordRaw   <- body(word)
+            detail     = wordRaw.fromJson[WordDetail]
+            wordId     = detail.map(_.word.id).getOrElse(0L)
+            targetId   = detail.map(_.translations.map(_.word.id)).getOrElse(Nil).headOption.getOrElse(0L)
+            path       = s"/api/words/$wordId/tags/$tagId/translations/$targetId"
+            marked    <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.put(path, Body.empty), session)))
+            markedRaw <- body(marked)
+            listed    <-
               runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
-            listRaw  <- body(listed)
-            shown    <- runRoutes(WordRoutes.routes, withSession(Request.get(s"/api/words/$wordId"), session))
-            shownRaw <- body(shown)
-            unmarked <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.delete(path), session)))
-            after    <-
+            listRaw   <- body(listed)
+            shown     <- runRoutes(WordRoutes.routes, withSession(Request.get(s"/api/words/$wordId"), session))
+            shownRaw  <- body(shown)
+            unmarked  <- runRoutes(WordRoutes.routes, withCsrf(withSession(Request.delete(path), session)))
+            after     <-
               runRoutes(WordRoutes.routes, withSession(getWithQuery("/api/words?lang=de&q=brot&target=hu"), session))
-            afterRaw <- body(after)
+            afterRaw  <- body(after)
           } yield assertTrue(
-            marked.status == Status.NoContent,
-            empty.isEmpty,
-            // A 204 must not carry one, and the Scala.js body codec is what the absence is for — see AdminEndpoints.
-            marked.header(Header.ContentLength).isEmpty,
+            // Ok rather than NoContent, since the body may carry a warning — the shipped quota defaults are nowhere
+            // near reachable here, so it carries none.
+            marked.status == Status.Ok,
+            markedRaw.fromJson[PairSelectionResponse] == Right(PairSelectionResponse(None)),
             listRaw.fromJson[WordPage].map(_.items.flatMap(_.pairs)) == Right(List(TaggedPair(tagId, targetId))),
             // The word page needs the same marks, and gets them on the body it already asks for.
             shownRaw.fromJson[WordDetail].map(_.pairs) == Right(List(TaggedPair(tagId, targetId))),

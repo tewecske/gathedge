@@ -132,6 +132,12 @@ object WordRoutes {
     )
   }
 
+  private val copyTagRoute = {
+    WordEndpoints.copyTag.implementHandler(
+      handler((tagId: Long) => userId.flatMap(id => WordService.copyTag(tagId, id).mapError(ApiFailures.word)))
+    )
+  }
+
   private val tagWordRoute = {
     WordEndpoints.tagWord.implementHandler(
       handler { (wordId: Long, tagId: Long) =>
@@ -177,6 +183,7 @@ object WordRoutes {
       listTagsRoute,
       createTagRoute,
       deleteTagRoute,
+      copyTagRoute,
       tagWordRoute,
       untagWordRoute,
       selectPairRoute,

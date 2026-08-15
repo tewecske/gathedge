@@ -80,6 +80,9 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
   private val noticeVar: Var[Option[String]] = Var(None)
   private val noticeSignal                   = noticeVar.signal
 
+  private val warningVar: Var[Option[String]] = Var(None)
+  private val warningSignal                   = warningVar.signal
+
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
 
@@ -90,6 +93,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
   private val collect = new WordCollect(
     onError = errorVar.writer,
     onNotice = noticeVar.writer.contramap[String](Some(_)),
+    onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => wordsVar.update(_.map(applyChange(_, change)))),
   )
 
@@ -128,6 +132,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
+      Alert.maybeWarning(warningSignal),
       renderDirection(),
       collect.renderBar(),
       renderSearch(),
@@ -308,9 +313,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       select(
         cls    := "select select-sm w-52",
         option(value := "", I18n.t(UiKeys.wordsFilterTagAny)),
-        children <-- collect.tagsSignal.map(
-          _.map(tag => option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})"))
-        ),
+        children <-- collect.tagsSignal.map(WordCollect.tagOptionGroups),
         controlled(
           // Against the tag list, not the id alone: a `<select>` cannot hold a value whose `<option>` is
           // not there yet, and the options arrive a request later than the URL does. Combining the two

@@ -85,7 +85,7 @@ object WordCollectSpec extends ZIOSpecDefault {
       // second translation as an answer for the same word genuinely adds a word to the tag. A second, third, fourth
       // chip click for the same word and the same collect tag must still show that one tag once, not once per click.
       test("re-marking translations under the same tag replaces the stale copy instead of piling one up per click") {
-        val tag         = Tag(10L, "saved", wordCount = 3)
+        val tag         = Tag(10L, "saved", wordCount = 3, ownedByMe = true)
         val afterClick1 = WordCollect.withTag(Nil, tag)
         val refreshed   = tag.copy(wordCount = 4) // the tag-list refresh that lands between two clicks
         val afterClick2 = WordCollect.withTag(afterClick1, refreshed)
@@ -95,6 +95,19 @@ object WordCollectSpec extends ZIOSpecDefault {
           afterClick2 == List(refreshed),
           afterClick3.map(_.id) == List(10L),
           afterClick3.size == 1,
+        )
+      },
+      // Both dropdowns share one grouping rule: the reader's own tags in one `<optgroup>`, everyone else's in another,
+      // own first — the marking `<option>` itself cannot carry. A reader with none of their own gets no "My tags"
+      // group at all rather than an empty one.
+      test("both tag dropdowns group the reader's own tags ahead of everyone else's") {
+        val mine   = Tag(1L, "mine", wordCount = 2, ownedByMe = true)
+        val theirs = Tag(2L, "theirs", wordCount = 5, ownedByMe = false)
+        assertTrue(
+          WordCollect.tagOptionGroups(List(theirs, mine)).size == 2,
+          WordCollect.tagOptionGroups(List(mine)).size == 1,
+          WordCollect.tagOptionGroups(List(theirs)).size == 1,
+          WordCollect.tagOptionGroups(Nil).isEmpty,
         )
       },
     )

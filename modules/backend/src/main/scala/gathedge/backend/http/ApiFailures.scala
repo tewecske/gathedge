@@ -232,6 +232,16 @@ object ApiFailures {
           MessageRef(MessageKeys.wordTranslationExists),
           "You have already added that translation",
         )
+      case WordFailure.TagQuotaExceeded(limit)      =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTagQuotaExceeded, List(limit.toString)),
+          s"You've reached the maximum of $limit tags for your account",
+        )
+      case WordFailure.PairQuotaExceeded(limit)     =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
+          s"You've reached the maximum of $limit practice pairs for your account",
+        )
     }
   }
 

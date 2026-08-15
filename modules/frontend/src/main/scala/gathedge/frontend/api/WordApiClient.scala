@@ -8,6 +8,8 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateWordRequest,
   NewTranslation,
+  PairSelectionResponse,
+  TagResponse,
   WordDetail,
   WordPage,
 }
@@ -73,12 +75,19 @@ object WordApiClient {
     run(executor(WordEndpoints.listTags(())))
   }
 
-  def createTag(name: String): EventStream[Either[ApiError, Tag]] = {
+  def createTag(name: String): EventStream[Either[ApiError, TagResponse]] = {
     run(executor(WordEndpoints.createTag(CreateTagRequest(name))))
   }
 
   def deleteTag(tagId: Long): EventStream[Either[ApiError, Unit]] = {
     run(executor(WordEndpoints.deleteTag(tagId)))
+  }
+
+  /** Seeds a tag of the caller's own from another tag's name, whoever owns it, and copies its word/pair snapshot with
+    * it.
+    */
+  def copyTag(tagId: Long): EventStream[Either[ApiError, TagResponse]] = {
+    run(executor(WordEndpoints.copyTag(tagId)))
   }
 
   /** Idempotent, which is what lets the listing's row toggle fire on every click without tracking what is in flight. */
@@ -93,7 +102,11 @@ object WordApiClient {
   /** Marks a translation as a practice answer for a word, inside the tag the page is collecting into. Idempotent for
     * the reason [[tagWord]] is, and it files both words under the tag as a side effect.
     */
-  def selectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
+  def selectPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+  ): EventStream[Either[ApiError, PairSelectionResponse]] = {
     run(executor(WordEndpoints.selectPair(wordId, tagId, translationWordId)))
   }
 

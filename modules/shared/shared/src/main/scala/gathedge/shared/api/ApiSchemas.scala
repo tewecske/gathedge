@@ -27,6 +27,7 @@ import gathedge.shared.dto.{
   LoginRequest,
   MigrationInfo,
   NewTranslation,
+  PairSelectionResponse,
   ProvidersResponse,
   PruneResult,
   RateLimitEntry,
@@ -37,6 +38,7 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   SystemOverview,
+  TagResponse,
   TaggedPair,
   TranslationEntry,
   TranslationOption,
@@ -51,6 +53,10 @@ import gathedge.shared.dto.{
   WordSummary,
 }
 import zio.schema.{DeriveSchema, Schema}
+
+// `MessageRef`'s schema lives on `ApiFailure`'s companion, the same instance `ApiFailure.BadRequest.fieldErrors`
+// embeds — `TagResponse`/`PairSelectionResponse` are the first *success* bodies to carry one.
+import ApiFailure.given
 
 /** The zio-schema instances the endpoint descriptions are built from.
   *
@@ -105,6 +111,8 @@ object ApiSchemas {
   given Schema[CreateWordRequest]     = DeriveSchema.gen[CreateWordRequest]
   given Schema[AddTranslationRequest] = DeriveSchema.gen[AddTranslationRequest]
   given Schema[CreateTagRequest]      = DeriveSchema.gen[CreateTagRequest]
+  given Schema[TagResponse]           = DeriveSchema.gen[TagResponse]
+  given Schema[PairSelectionResponse] = DeriveSchema.gen[PairSelectionResponse]
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]

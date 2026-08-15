@@ -258,7 +258,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       test("marking and unmarking a practice answer round-trips on the real dialect") {
         for {
           reader  <- AuthService.createGuest(Some("10.9.2.1")).map(_._1)
-          tag     <- WordService.createTag("pglesson", reader.id)
+          tag     <- WordService.createTag("pglesson", reader.id).map(_.tag)
           word    <- WordRepository.ensureWord(
                        WordRow(0L, "de", "Gabel", "gabel", "noun", "die", 1, "user", Some(reader.id), 0L)
                      )

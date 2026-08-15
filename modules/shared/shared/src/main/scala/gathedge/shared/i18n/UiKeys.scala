@@ -481,6 +481,16 @@ object UiKeys {
   val wordsTagNew: String            = key("ui.words.tagNew")
   val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
 
+  /** The two groups both tag dropdowns split into, own tags first — see `Tag.sorted`. */
+  val wordsTagsMineGroup: String   = key("ui.words.tagsMineGroup")
+  val wordsTagsOthersGroup: String = key("ui.words.tagsOthersGroup")
+
+  /** Offered on the collect select when the chosen tag is not the reader's own: seeds an empty tag of theirs with the
+    * same name, since only an owner may file words under it. `{0}` is the tag's name.
+    */
+  val wordsTagCopy: String   = key("ui.words.tagCopy")
+  val wordsTagCopied: String = key("ui.words.tagCopied")
+
   /** Offered when the search matches nothing: `{0}` is what the reader typed. */
   val wordsAddMissing: String = key("ui.words.addMissing")
 
