@@ -72,7 +72,7 @@ private class GuestBanner {
 
   private def renderCode(transferCode: String): HtmlElement = {
     div(
-      cls  := "alert alert-info flex-col items-start gap-2",
+      cls  := "alert alert-info flex flex-col items-start gap-2",
       role := "status",
       p(cls := "text-sm", I18n.t(UiKeys.guestCodeOnce)),
       div(

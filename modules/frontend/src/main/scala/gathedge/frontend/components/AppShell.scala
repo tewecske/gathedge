@@ -502,7 +502,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     */
   private def renderCodePanel(transferCode: String): HtmlElement = {
     div(
-      cls  := "fixed top-16 right-4 z-50 alert alert-info flex-col items-start gap-2 w-auto max-w-sm shadow-lg",
+      cls  := "fixed top-16 right-4 z-50 alert alert-info flex flex-col items-start gap-2 w-auto max-w-sm shadow-lg",
       role := "status",
       p(cls := "text-sm", I18n.t(UiKeys.guestCodeOnce)),
       div(
