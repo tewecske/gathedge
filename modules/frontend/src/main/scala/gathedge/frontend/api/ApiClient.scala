@@ -8,6 +8,7 @@ import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
   AuthResponse,
+  CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
   ForgotPasswordRequest,
@@ -54,8 +55,8 @@ object ApiClient {
   }
 
   /** Answers the same whether or not the address has an account, so a page can only ever report "sent". */
-  def resendVerification(email: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AuthEndpoints.resendVerification(ResendVerificationRequest(email)))).map(_.map(_ => ()))
+  def resendVerification(email: String, captchaToken: Option[String] = None): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.resendVerification(ResendVerificationRequest(email, captchaToken)))).map(_.map(_ => ()))
   }
 
   def login(request: LoginRequest): EventStream[Either[ApiError, AuthResponse]] = {
@@ -63,8 +64,8 @@ object ApiClient {
   }
 
   /** Answers the same whether or not the address has an account, same non-committal shape as [[resendVerification]]. */
-  def forgotPassword(email: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AuthEndpoints.forgotPassword(ForgotPasswordRequest(email)))).map(_.map(_ => ()))
+  def forgotPassword(email: String, captchaToken: Option[String] = None): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.forgotPassword(ForgotPasswordRequest(email, captchaToken)))).map(_.map(_ => ()))
   }
 
   /** Redeems a password-reset link. No session comes back — this proves the address controls the reset link, not that
@@ -118,8 +119,12 @@ object ApiClient {
   }
 
   /** Turns the caller's guest account into a real one, keeping everything on it. */
-  def upgradeGuest(email: String, password: String): EventStream[Either[ApiError, AuthResponse]] = {
-    run(executor(AuthEndpoints.upgradeGuest(UpgradeRequest(email, password))))
+  def upgradeGuest(
+    email: String,
+    password: String,
+    captchaToken: Option[String] = None,
+  ): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.upgradeGuest(UpgradeRequest(email, password, captchaToken))))
   }
 
   // --- Account settings ---------------------------------------------------------------------------------------
@@ -129,6 +134,13 @@ object ApiClient {
     */
   def providers: EventStream[Either[ApiError, ProvidersResponse]] = {
     run(executor(AuthEndpoints.providers(())))
+  }
+
+  /** Tells a captcha-gated form whether to render the Turnstile widget (the site key) and, for the sign-in form,
+    * whether this address has crossed the threshold of failed attempts that turns it on.
+    */
+  def captchaStatus: EventStream[Either[ApiError, CaptchaStatusResponse]] = {
+    run(executor(AuthEndpoints.captchaStatus(())))
   }
 
   def identities: EventStream[Either[ApiError, IdentitiesResponse]] = {

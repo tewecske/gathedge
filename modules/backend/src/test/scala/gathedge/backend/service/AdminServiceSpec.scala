@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.{RecordingEmailSender, SentEmails, TestDataSource}
+import gathedge.backend.{RecordingEmailSender, SentEmails, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.i18n.Messages
 import gathedge.backend.db.{
@@ -41,7 +41,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
   private val layer = {
     (
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ AppConfig.live ++ RecordingEmailSender.live ++
-        Messages.live >+>
+        Messages.live ++ TestCaptchaService.live >+>
         (AuthService.live ++ AuditTrail.live)
     ) >+> AdminService.live
   }

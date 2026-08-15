@@ -110,6 +110,16 @@ object ApiFailures {
         // `resetPassword` can raise it, and it uses `resetPassword` below instead. Mapped anyway to
         // keep the match total.
         passwordResetTokenInvalid
+      case AuthFailure.CaptchaRequired              =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.captchaRequired),
+          "Please complete the captcha verification",
+        )
+      case AuthFailure.CaptchaFailed                =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.captchaFailed),
+          "Captcha verification failed. Please try again.",
+        )
     }
   }
 
@@ -287,6 +297,16 @@ object ApiFailures {
         validationFailed(fieldErrors)
       case GuestAccountFailure.EmailAlreadyRegistered       =>
         emailAlreadyRegistered
+      case GuestAccountFailure.CaptchaRequired              =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.captchaRequired),
+          "Please complete the captcha verification",
+        )
+      case GuestAccountFailure.CaptchaFailed                =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.captchaFailed),
+          "Captcha verification failed. Please try again.",
+        )
     }
   }
 }

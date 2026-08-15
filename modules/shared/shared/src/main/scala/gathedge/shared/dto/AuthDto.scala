@@ -4,8 +4,17 @@ import zio.json.*
 import gathedge.shared.domain.{Locale, OAuthProvider, Theme, User}
 import gathedge.shared.i18n.MessageRef
 
-final case class SignupRequest(email: String, password: String) derives JsonCodec
-final case class LoginRequest(email: String, password: String) derives JsonCodec
+/** `captchaToken` is optional because captcha is a deployment choice, not a wire contract: when `captcha` is
+  * unconfigured the frontend sends no token and the server never asks for one. When it is configured, signup always
+  * requires it, so the field is filled on every real request.
+  */
+final case class SignupRequest(email: String, password: String, captchaToken: Option[String] = None) derives JsonCodec
+
+/** `captchaToken` is optional for the opposite reason: login only demands a captcha once the same client address has
+  * made `captcha.login-threshold` failed attempts. Until then it is absent.
+  */
+final case class LoginRequest(email: String, password: String, captchaToken: Option[String] = None) derives JsonCodec
+
 final case class UpdateThemeRequest(theme: Theme) derives JsonCodec
 
 /** Records the language the account has chosen. Note this does *not* change what the caller sees: the language of a
@@ -30,12 +39,12 @@ final case class VerifyEmailRequest(token: String) derives JsonCodec
 /** Asks for a fresh verification link. Carries the address rather than reading it off a session: the account that needs
   * one is typically the account that cannot sign in.
   */
-final case class ResendVerificationRequest(email: String) derives JsonCodec
+final case class ResendVerificationRequest(email: String, captchaToken: Option[String] = None) derives JsonCodec
 
 /** Asks for a password-reset link. Answers the same for an unknown address and a known one alike, per
   * [[gathedge.shared.api.AuthEndpoints.forgotPassword]].
   */
-final case class ForgotPasswordRequest(email: String) derives JsonCodec
+final case class ForgotPasswordRequest(email: String, captchaToken: Option[String] = None) derives JsonCodec
 
 /** The token out of a password-reset link, plus the password it should set. Carries the token rather than reading a
   * session, because the whole point is that the caller has no session yet — possibly no memory of the old password
@@ -67,6 +76,18 @@ final case class SetPasswordRequest(currentPassword: Option[String], newPassword
   * session yet and so cannot get the same list from [[IdentitiesResponse]].
   */
 final case class ProvidersResponse(providers: List[OAuthProvider]) derives JsonCodec
+
+/** What the captcha-gated forms need to decide whether to render the Turnstile widget.
+  *
+  * `siteKey` is `None` when captcha is unconfigured, and every form then skips the widget. When it is present the
+  * sign-up, forgot-password and resend forms always render it, while the sign-in form only does once `loginFailures`
+  * (the client address's failed-attempt count inside the rate-limit window) reaches `loginThreshold`.
+  *
+  * `loginFailures` is the caller's own address's count, not somebody else's, so there is nothing sensitive to hide by
+  * rounding it.
+  */
+final case class CaptchaStatusResponse(siteKey: Option[String], loginFailures: Int, loginThreshold: Int)
+    derives JsonCodec
 
 /** RFC-7807-flavored problem response for validation/auth errors.
   *

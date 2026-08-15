@@ -10,6 +10,7 @@ import gathedge.shared.dto.{
   AuditEntry,
   AuditPage,
   AuthResponse,
+  CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
   ClearRateLimitRequest,
@@ -98,9 +99,10 @@ object ApiSchemas {
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]
   given Schema[ProvidersResponse]         = DeriveSchema.gen[ProvidersResponse]
 
-  given Schema[ClaimCodeResponse] = DeriveSchema.gen[ClaimCodeResponse]
-  given Schema[ClaimRequest]      = DeriveSchema.gen[ClaimRequest]
-  given Schema[UpgradeRequest]    = DeriveSchema.gen[UpgradeRequest]
+  given Schema[ClaimCodeResponse]     = DeriveSchema.gen[ClaimCodeResponse]
+  given Schema[ClaimRequest]          = DeriveSchema.gen[ClaimRequest]
+  given Schema[UpgradeRequest]        = DeriveSchema.gen[UpgradeRequest]
+  given Schema[CaptchaStatusResponse] = DeriveSchema.gen[CaptchaStatusResponse]
 
   given Schema[TranslationOption]     = DeriveSchema.gen[TranslationOption]
   given Schema[TaggedPair]            = DeriveSchema.gen[TaggedPair]

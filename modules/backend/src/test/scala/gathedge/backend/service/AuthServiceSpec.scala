@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestDataSource}
+import gathedge.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
@@ -39,13 +39,25 @@ object AuthServiceSpec extends ZIOSpecDefault {
   private def authServiceLayer(requireEmailVerification: Boolean): ZLayer[Any, Throwable, AuthService & SentEmails] = {
     val support = {
       PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
-        TestAuthLayers.configWith(requireEmailVerification)
+        TestCaptchaService.live ++ TestAuthLayers.configWith(requireEmailVerification)
     }
     val built   = repoLayers ++ support
     built >>> (AuthService.live ++ ZLayer.service[SentEmails])
   }
 
-  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite, passwordResetSuite)
+  /** Like [[authServiceLayer]], but with captcha turned on and a controllable [[TestCaptchaService]] behind it. */
+  private def captchaAuthServiceLayer(
+    loginThreshold: Int = 2
+  ): ZLayer[Any, Throwable, AuthService & SentEmails] = {
+    val support = {
+      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
+        TestCaptchaService.live ++ TestAuthLayers.configWithCaptcha(loginThreshold = loginThreshold)
+    }
+    val built   = repoLayers ++ support
+    built >>> (AuthService.live ++ ZLayer.service[SentEmails])
+  }
+
+  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite, passwordResetSuite, captchaSuite)
 
   private val coreSuite = suite("core")(
     test("signup, currentUser via session, login, logout invalidates the session") {
@@ -480,6 +492,95 @@ object AuthServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(result.isRight)
       },
     ).provide(authServiceLayer(requireEmailVerification = false))
+  }
+
+  /** Captcha is off in the shipped config, so these run against [[TestAuthLayers.configWithCaptcha]] and
+    * [[TestCaptchaService]] — the token space is `valid-token` vs. everything else, which is enough to prove the gate.
+    */
+  private val captchaSuite = {
+    suite("captcha")(
+      test("signup without a token is refused, and with a wrong token too") {
+        for {
+          missing <- AuthService.signup("cap-1@example.com", "password123", captchaToken = None).either
+          wrong   <- AuthService.signup("cap-1@example.com", "password123", captchaToken = Some("bogus")).either
+        } yield assertTrue(
+          missing == Left(AuthFailure.CaptchaRequired),
+          wrong == Left(AuthFailure.CaptchaFailed),
+        )
+      },
+      test("signup with a valid token succeeds, and still enforces the rest") {
+        for {
+          created <-
+            AuthService.signup("cap-2@example.com", "password123", captchaToken = Some(TestCaptchaService.validToken))
+          dup     <- AuthService
+                       .signup("cap-2@example.com", "password123", captchaToken = Some(TestCaptchaService.validToken))
+                       .either
+        } yield assertTrue(
+          created._1.email.contains("cap-2@example.com"),
+          dup == Left(AuthFailure.EmailAlreadyRegistered),
+        )
+      },
+      test("a password reset request needs a token when captcha is configured") {
+        for {
+          missing <- AuthService.forgotPassword("cap-3@example.com", captchaToken = None).either
+          ok      <- AuthService
+                       .forgotPassword("cap-3@example.com", captchaToken = Some(TestCaptchaService.validToken))
+                       .either
+        } yield assertTrue(missing == Left(AuthFailure.CaptchaRequired), ok == Right(()))
+      },
+      test("a verification resend needs a token when captcha is configured") {
+        for {
+          missing <- AuthService.resendVerification("cap-4@example.com", captchaToken = None).either
+          ok      <- AuthService
+                       .resendVerification("cap-4@example.com", captchaToken = Some(TestCaptchaService.validToken))
+                       .either
+        } yield assertTrue(missing == Left(AuthFailure.CaptchaRequired), ok == Right(()))
+      },
+      test("login demands a captcha only once the same address has crossed the threshold") {
+        for {
+          _      <- AuthService.signup(
+                      "cap-login@example.com",
+                      "password123",
+                      captchaToken = Some(TestCaptchaService.validToken),
+                    )
+          // Below the threshold: the captcha is not demanded, and a wrong password fails as usual.
+          first  <- AuthService.login("cap-login@example.com", "nope12345", Some("198.51.100.7")).either
+          second <- AuthService.login("cap-login@example.com", "nope12345", Some("198.51.100.7")).either
+          // At the threshold, the next attempt must present a token.
+          third  <- AuthService.login("cap-login@example.com", "nope12345", Some("198.51.100.7")).either
+          // With a token the password check still runs and still answers the same for a wrong one.
+          wrong  <-
+            AuthService
+              .login("cap-login@example.com", "nope12345", Some("198.51.100.7"), Some(TestCaptchaService.validToken))
+              .either
+          // And the correct password with a token signs in.
+          ok     <-
+            AuthService
+              .login("cap-login@example.com", "password123", Some("198.51.100.7"), Some(TestCaptchaService.validToken))
+              .either
+        } yield assertTrue(
+          first == Left(AuthFailure.InvalidCredentials),
+          second == Left(AuthFailure.InvalidCredentials),
+          third == Left(AuthFailure.CaptchaRequired),
+          wrong == Left(AuthFailure.InvalidCredentials),
+          ok.isRight,
+        )
+      },
+      test("a failed attempt from one address does not demand a captcha from another") {
+        for {
+          _     <- AuthService.signup(
+                     "cap-iso@example.com",
+                     "password123",
+                     captchaToken = Some(TestCaptchaService.validToken),
+                   )
+          _     <- ZIO.foreachDiscard(1 to 3) { _ =>
+                     AuthService.login("cap-iso@example.com", "nope12345", Some("198.51.100.7")).either
+                   }
+          // A different address is below its own threshold, so no token is asked of it.
+          fresh <- AuthService.login("cap-iso@example.com", "nope12345", Some("203.0.113.44")).either
+        } yield assertTrue(fresh == Left(AuthFailure.InvalidCredentials))
+      },
+    ).provide(captchaAuthServiceLayer())
   }
 
   private def identity(provider: OAuthProvider, subject: String, email: String): OAuthIdentity = {

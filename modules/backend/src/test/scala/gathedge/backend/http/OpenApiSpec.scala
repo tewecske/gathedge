@@ -71,6 +71,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/login",
               "/api/auth/logout",
               "/api/auth/providers",
+              "/api/auth/captcha-status",
               "/api/auth/verify",
               "/api/auth/verification/resend",
               "/api/auth/password/forgot",
@@ -159,6 +160,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/logout")                                                -> Set(NoContent),
               // Public, no input, no aspect: the one operation in the API that documents no failure status at all.
               ("GET", "/api/auth/providers")                                              -> Set(Ok),
+              // Same shape as providers: public, no input, no aspect, so no failure status. The request context it
+              // reads (the client address) is supplied by an aspect rather than described.
+              ("GET", "/api/auth/captcha-status")                                         -> Set(Ok),
               // One 400 for an unknown, spent or expired token alike; nothing else is reachable.
               ("POST", "/api/auth/verify")                                                -> Set(NoContent, BadRequest),
               // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
@@ -319,6 +323,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/login"),
               ("POST", "/api/auth/logout"),
               ("GET", "/api/auth/providers"),
+              ("GET", "/api/auth/captcha-status"),
               // Both are reached by an account that cannot sign in yet, so neither can be behind the session.
               ("POST", "/api/auth/verify"),
               ("POST", "/api/auth/verification/resend"),
@@ -340,7 +345,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 12,
+          guarded.size == operations.size - 13,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

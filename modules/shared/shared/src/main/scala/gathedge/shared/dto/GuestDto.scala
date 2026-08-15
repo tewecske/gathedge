@@ -17,6 +17,7 @@ final case class ClaimRequest(code: String) derives JsonCodec
 /** Turns the guest account the caller is signed in as into a real one.
   *
   * Nothing is copied: the address and the password land on the same row, so every tag, word and translation the guest
-  * built up is still there afterwards under the same id.
+  * built up is still there afterwards under the same id. `captchaToken` is required when captcha is configured — this
+  * creates a real account and mints an address, the same surface as signup, and it is rendered by the same form.
   */
-final case class UpgradeRequest(email: String, password: String) derives JsonCodec
+final case class UpgradeRequest(email: String, password: String, captchaToken: Option[String] = None) derives JsonCodec

@@ -1,6 +1,6 @@
 package gathedge.backend.http
 
-import gathedge.backend.{TestAuthLayers, TestDataSource}
+import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
@@ -58,7 +58,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   // has to be constructible.
   private val layer = {
     val base = {
-      repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
+      repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
         TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
     base >+> (AuthService.live ++ AuditTrail.live) >+> (AdminService.live ++ SystemService.live ++ WordService.live)

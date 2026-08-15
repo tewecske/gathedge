@@ -2,6 +2,7 @@ package gathedge.shared.api
 
 import gathedge.shared.dto.{
   AuthResponse,
+  CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
   ForgotPasswordRequest,
@@ -173,6 +174,18 @@ object AuthEndpoints {
     Endpoint(Method.GET / "api" / "auth" / "providers").out[ProvidersResponse]
   }
 
+  /** Tells the captcha-gated forms whether to render the Turnstile widget, and — for the sign-in form — whether this
+    * client address has already crossed `captcha.login-threshold` failed attempts.
+    *
+    * Public and guarded by no aspect, like [[providers]]: it is read before any session exists, and everything it
+    * answers is either public config (the site key) or the caller's own address's count. It takes no input, so it
+    * declares no failure status — the one case where the request context is supplied by the `requestContext` aspect
+    * rather than by the description, for the reason recorded on [[RouteSupport.RequestContext]].
+    */
+  val captchaStatus = {
+    Endpoint(Method.GET / "api" / "auth" / "captcha-status").out[CaptchaStatusResponse]
+  }
+
   /** Carried as a plain string rather than a codec over `OAuthProvider`, so an unknown segment is a 400 the handler
     * raises with a message naming what it wanted, rather than a path that simply fails to match and falls through to
     * the catch-all 404.
@@ -285,6 +298,7 @@ object AuthEndpoints {
       updateTheme,
       updateLocale,
       providers,
+      captchaStatus,
       identities,
       unlinkIdentity,
       setPassword,

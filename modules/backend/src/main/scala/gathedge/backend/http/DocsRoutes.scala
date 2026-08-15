@@ -39,6 +39,7 @@ object DocsRoutes {
       AuthEndpoints.login,
       AuthEndpoints.logout,
       AuthEndpoints.providers,
+      AuthEndpoints.captchaStatus,
       AuthEndpoints.verifyEmail,
       AuthEndpoints.resendVerification,
       AuthEndpoints.forgotPassword,

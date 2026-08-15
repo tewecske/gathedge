@@ -2,7 +2,7 @@ package gathedge.backend
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.i18n.Messages
-import gathedge.backend.service.EmailSender
+import gathedge.backend.service.{CaptchaFailure, CaptchaService, EmailSender}
 import zio.*
 
 /** One outgoing message, as [[RecordingEmailSender]] saw it. */
@@ -90,6 +90,21 @@ object TestAuthLayers {
       .project(config => config.copy(app = config.app.copy(requireEmailVerification = requireEmailVerification)))
   }
 
+  /** `AppConfig` with captcha turned on, for the specs that exercise the captcha gate. The keys are placeholders — the
+    * test [[CaptchaService]] never reaches Cloudflare — but non-empty, which is what flips `isCaptchaConfigured`.
+    */
+  def configWithCaptcha(
+    requireEmailVerification: Boolean = false,
+    loginThreshold: Int = 2,
+  ): ZLayer[Any, Config.Error, AppConfig] = {
+    AppConfig.live.project { config =>
+      config.copy(
+        app = config.app.copy(requireEmailVerification = requireEmailVerification),
+        captcha = config.captcha.copy(siteKey = "site-key", secret = "secret", loginThreshold = loginThreshold),
+      )
+    }
+  }
+
   /** The non-repository half of `AuthService.live`'s requirements: a config, the logging mailer it selects, and the
     * message catalogs that mailer's subjects and bodies come out of.
     *
@@ -100,4 +115,23 @@ object TestAuthLayers {
   val emailAndConfig: ZLayer[Any, Throwable, EmailSender & Messages & AppConfig] = {
     AppConfig.live ++ (AppConfig.live >>> EmailSender.live) ++ Messages.live
   }
+}
+
+/** A [[CaptchaService]] for specs: accepts [[validToken]] and rejects everything else.
+  *
+  * The specs that never mention captcha still need the service in the environment, because `AuthService.live` always
+  * requires one — but they run against `application.conf`, where captcha is unconfigured, so `AuthService`
+  * short-circuits verification and this is never called.
+  */
+object TestCaptchaService {
+  val validToken: String = "valid-token"
+
+  val live: ULayer[CaptchaService] = ZLayer.succeed(new CaptchaService {
+    def verify(token: String, remoteIp: Option[String]): IO[CaptchaFailure, Unit] = {
+      if (token == validToken)
+        ZIO.unit
+      else
+        ZIO.fail(CaptchaFailure.VerificationFailed)
+    }
+  })
 }

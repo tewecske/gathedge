@@ -1,6 +1,6 @@
 package gathedge.backend.http
 
-import gathedge.backend.{TestAuthLayers, TestDataSource}
+import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
@@ -39,7 +39,7 @@ object AuthFlowSpec extends ZIOSpecDefault {
       )
     }
     AppConfig.live ++ (
-      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++ TestAuthLayers.emailAndConfig) >>>
         AuthService.live
     ) ++
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
@@ -164,6 +164,7 @@ object AuthFlowSpec extends ZIOSpecDefault {
       },
     ).provide(
       services,
+      RateLimiter.live,
       TestServer.layer,
       Client.default,
       NettyDriver.customized,

@@ -2,13 +2,14 @@ package gathedge.backend.http
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.security.{SessionAuth, Tokens}
-import gathedge.backend.service.{AuthFailure, AuthService, OAuthClients}
+import gathedge.backend.service.{AuthFailure, AuthService, OAuthClients, RateLimiter, RateLimitKey}
 import gathedge.shared.api.AuthEndpoints
 import gathedge.shared.domain.{Locale, OAuthProvider, User}
 import gathedge.shared.domain.Locale.{code, urlPrefix}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import gathedge.shared.dto.{
   AuthResponse,
+  CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
   ForgotPasswordRequest,
@@ -74,7 +75,7 @@ object AuthRoutes {
         handler { (body: SignupRequest) =>
           withContext { (context: RequestContext, cfg: AppConfig) =>
             AuthService
-              .signup(body.email, body.password, context.clientIp, context.locale)
+              .signup(body.email, body.password, context.clientIp, context.locale, body.captchaToken)
               .mapError(ApiFailures.auth)
               // No session id means verification is mandatory here: the account exists but stays
               // signed out until the emailed link is followed, so there is no cookie to set.
@@ -92,7 +93,7 @@ object AuthRoutes {
         handler { (body: LoginRequest) =>
           withContext { (context: RequestContext, cfg: AppConfig) =>
             AuthService
-              .login(body.email, body.password, context.clientIp)
+              .login(body.email, body.password, context.clientIp, body.captchaToken)
               .mapError(ApiFailures.authLogin)
               .map { case (user, sessionId) => (AuthResponse(user), sessionCookie(sessionId, cfg)) }
           }
@@ -160,7 +161,7 @@ object AuthRoutes {
         handler { (body: UpgradeRequest) =>
           withContext { (user: User, context: RequestContext) =>
             AuthService
-              .upgradeGuest(user.id, body.email, body.password, context.locale)
+              .upgradeGuest(user.id, body.email, body.password, context.locale, context.clientIp, body.captchaToken)
               .mapError(ApiFailures.guestUpgrade)
               .map(AuthResponse.apply)
           }
@@ -180,7 +181,9 @@ object AuthRoutes {
       .implementHandler(
         handler { (body: ResendVerificationRequest) =>
           withContext { (context: RequestContext) =>
-            AuthService.resendVerification(body.email, context.clientIp).mapError(ApiFailures.resendVerification)
+            AuthService
+              .resendVerification(body.email, context.clientIp, body.captchaToken)
+              .mapError(ApiFailures.resendVerification)
           }
         }
       )
@@ -191,7 +194,9 @@ object AuthRoutes {
       .implementHandler(
         handler { (body: ForgotPasswordRequest) =>
           withContext { (context: RequestContext) =>
-            AuthService.forgotPassword(body.email, context.clientIp).mapError(ApiFailures.forgotPassword)
+            AuthService
+              .forgotPassword(body.email, context.clientIp, body.captchaToken)
+              .mapError(ApiFailures.forgotPassword)
           }
         }
       )
@@ -254,6 +259,33 @@ object AuthRoutes {
     AuthEndpoints.providers
       .implementHandler(
         handler((_: Unit) => withContext((cfg: AppConfig) => ProvidersResponse(cfg.configuredOAuthProviders)))
+      )
+  }
+
+  /** What the sign-in, sign-up and forgot-password forms read before rendering a captcha widget: whether one is
+    * configured (the site key), and how many failed sign-ins this address already has against the threshold that turns
+    * the sign-in form's widget on. The count comes from the rate limiter's login budget for the address, the same
+    * window that later hard-blocks it — so the captcha appears at `login-threshold` and the lockout at `maxAttempts`.
+    */
+  private val captchaStatusRoute = {
+    AuthEndpoints.captchaStatus
+      .implementHandler(
+        handler { (_: Unit) =>
+          withContext { (context: RequestContext, cfg: AppConfig) =>
+            for {
+              failures <- context.clientIp match {
+                            case None     =>
+                              ZIO.succeed(0)
+                            case Some(ip) =>
+                              RateLimiter.status(RateLimitKey.ip(ip)).map(_.attempts)
+                          }
+            } yield CaptchaStatusResponse(
+              siteKey = Option.when(cfg.isCaptchaConfigured)(cfg.captcha.siteKey),
+              loginFailures = failures,
+              loginThreshold = cfg.captcha.loginThreshold,
+            )
+          }
+        }
       )
   }
 
@@ -548,6 +580,7 @@ object AuthRoutes {
       resendVerificationRoute,
       forgotPasswordRoute,
       resetPasswordRoute,
+      captchaStatusRoute,
       // Both mint a session for somebody who has none: one for a brand-new guest, one for a guest arriving on a
       // second machine with a transfer code. Both are rate-limited on the client address, which is what they need
       // `requestContext` for.
@@ -580,7 +613,7 @@ object AuthRoutes {
     Routes(oauthStartRoute, oauthCallbackRoute)
   }
 
-  val routes: Routes[AuthService & OAuthClients & AppConfig, Response] = {
+  val routes: Routes[AuthService & OAuthClients & AppConfig & RateLimiter, Response] = {
     (anonymousRoutes ++ publicRoutes ++ sessionRoutes ++ guestSessionRoutes ++ oauthRoutes) @@ RouteSupport.csrf
   }
 }

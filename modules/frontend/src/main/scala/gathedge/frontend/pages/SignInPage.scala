@@ -2,12 +2,12 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
-import gathedge.frontend.components.{AppShell, ClaimCodeForm, OAuthButtons, OAuthMessages}
+import gathedge.frontend.components.{AppShell, CaptchaField, ClaimCodeForm, OAuthButtons, OAuthMessages}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{AuthResponse, LoginRequest, ProvidersResponse}
+import gathedge.shared.dto.{AuthResponse, CaptchaStatusResponse, LoginRequest, ProvidersResponse}
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 
 object SignInPage {
@@ -53,6 +53,31 @@ private class SignInPage {
   private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
   private val providersSignal                        = providersVar.signal
   private val hasProvidersSignal                     = providersSignal.map(_.nonEmpty).distinct
+
+  /** The captcha state. `captchaTokenVar` holds the single-use token the widget last produced; `captchaResetBus` asks
+    * the widget for a fresh one (a spent token must not be re-sent), and `refreshCaptchaBus` re-reads the
+    * failed-attempt count from the server, which is what turns the widget on after the threshold is crossed.
+    */
+  private val captchaStatusVar: Var[Option[CaptchaStatusResponse]] = Var(None)
+  private val captchaTokenVar: Var[Option[String]]                 = Var(None)
+  private val captchaResetBus                                      = new EventBus[Unit]()
+  private val refreshCaptchaBus                                    = new EventBus[Unit]()
+
+  /** The sign-in form shows the widget once this address has crossed the failed-attempt threshold, or once a resend is
+    * on offer (the resend endpoint is captcha-gated always, so the widget has to be present for its token to come
+    * from).
+    */
+  private val captchaSiteKeySignal: Signal[Option[String]] = {
+    captchaStatusVar.signal
+      .combineWithFn(canResendVar.signal) { (status, canResend) =>
+        for {
+          s   <- status
+          key <- s.siteKey
+          if s.loginFailures >= s.loginThreshold || canResend
+        } yield key
+      }
+      .distinct
+  }
 
   private lazy val socialBlock: HtmlElement = {
     div(div(cls := "divider text-xs", I18n.t(UiKeys.commonOr)), OAuthButtons.render(providersSignal))
@@ -103,6 +128,7 @@ private class SignInPage {
               a(cls := "link", AppRouter.router.navigateTo(Page.ForgotPassword), I18n.t(UiKeys.signInForgotPassword)),
             ),
           ),
+          child.maybe <-- captchaSiteKeySignal.map(_.map(renderCaptcha)),
           div(
             cls  := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignIn)),
@@ -126,6 +152,8 @@ private class SignInPage {
             // The password form still works; offering no social buttons is the right degraded state.
             providersVar.set(Nil)
         },
+      ApiClient.captchaStatus --> captchaStatusObserver,
+      refreshCaptchaBus.events.flatMapSwitch(_ => ApiClient.captchaStatus) --> captchaStatusObserver,
       submitStream -->
         Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None, canResendVar -> false)),
       submitStream.flatMapSwitch(_ => login()) -->
@@ -145,8 +173,12 @@ private class SignInPage {
               // not verified. Anything else is a reason a resend would not help with.
               canResendVar -> (err.status == 403),
             )
+            // The captcha token (if one was sent) is single-use, and a failure may have just crossed the
+            // threshold that turns the widget on. Reset the spent challenge and re-read the count.
+            captchaResetBus.writer.onNext(())
+            refreshCaptchaBus.writer.onNext(())
         },
-      resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(emailVar.now())) -->
+      resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(emailVar.now(), captchaTokenVar.now())) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             Var.set(
@@ -154,10 +186,24 @@ private class SignInPage {
               errorVar     -> None,
               noticeVar    -> Some(I18n.t(UiKeys.verificationResent)),
             )
+            captchaResetBus.writer.onNext(())
           case Left(err) =>
             errorVar.set(Some(err.message))
+            captchaResetBus.writer.onNext(())
         },
     )
+  }
+
+  private val captchaStatusObserver = Observer[Either[ApiError, CaptchaStatusResponse]] {
+    case Right(status) =>
+      captchaStatusVar.set(Some(status))
+    case Left(_)       =>
+      // Captcha unconfigured or the status call failed: no site key, no widget, no token.
+      captchaStatusVar.set(None)
+  }
+
+  private def renderCaptcha(siteKey: String): HtmlElement = {
+    new CaptchaField(siteKey, captchaTokenVar.writer, captchaResetBus.events).render()
   }
 
   /** Deliberately not wired to the notice above: a resend only ever reports that *something* was sent, never whether
@@ -176,7 +222,7 @@ private class SignInPage {
   }
 
   private def login(): EventStream[Either[ApiError, AuthResponse]] = {
-    ApiClient.login(LoginRequest(emailVar.now(), passwordVar.now()))
+    ApiClient.login(LoginRequest(emailVar.now(), passwordVar.now(), captchaTokenVar.now()))
   }
 
   private def renderError(message: String): HtmlElement = {

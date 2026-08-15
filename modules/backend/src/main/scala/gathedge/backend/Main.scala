@@ -25,6 +25,7 @@ import gathedge.backend.service.{
   AuditTrail,
   AuthService,
   BackgroundJobs,
+  CaptchaService,
   EmailSender,
   OAuthClients,
   RateLimiter,
@@ -99,6 +100,7 @@ object Main extends ZIOAppDefault {
     OAuthClients.live,
     // The outbound half of zio-http: the providers' token and tokeninfo endpoints are the only calls this server makes.
     Client.default,
+    CaptchaService.live,
     WordService.live,
     AdminService.live,
     SystemService.live,

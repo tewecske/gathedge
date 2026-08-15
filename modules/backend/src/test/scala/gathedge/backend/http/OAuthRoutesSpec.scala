@@ -1,6 +1,6 @@
 package gathedge.backend.http
 
-import gathedge.backend.{TestAuthLayers, TestDataSource}
+import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
@@ -72,7 +72,7 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
       )
     }
     AppConfig.live ++ stubClients ++ (
-      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig) >>>
+      (repos ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++ TestAuthLayers.emailAndConfig) >>>
         AuthService.live
     )
   }
@@ -324,6 +324,6 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
           response <- runRoutes(AuthRoutes.routes, withSession(Request.delete("/api/me/identities/google"), created._2))
         } yield assertTrue(response.status == Status.Forbidden)
       },
-    ).provide(layer, Scope.default) @@ TestAspect.sequential
+    ).provide(layer, RateLimiter.live, Scope.default) @@ TestAspect.sequential
   }
 }

@@ -21,6 +21,8 @@
   "auth.lastCredential": "Set a password first — this is the only way left to sign in to this account",
   "auth.passwordResetTokenInvalid": "This password reset link is invalid, expired, or already used",
   "auth.passwordResetSendFailed": "Could not send a password reset link",
+  "auth.captchaRequired": "Please complete the captcha verification",
+  "auth.captchaFailed": "Captcha verification failed. Please try again.",
   "oauth.failed": "Sign-in failed: {0}",
   "oauth.accountExists": "An account with this email already exists. Sign in with your password, then link {0} from Settings.",
   "oauth.alreadyLinked": "That account is already linked",

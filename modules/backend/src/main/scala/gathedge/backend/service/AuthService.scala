@@ -37,6 +37,14 @@ enum AuthFailure {
   case RateLimited
   case OAuthFailed(reason: String)
 
+  /** Captcha is configured but this request carried no token — the browser has not rendered the widget yet. */
+  case CaptchaRequired
+
+  /** The token the browser sent did not verify, or the provider could not be reached. One case for both: either way the
+    * caller cannot proceed and should present a fresh challenge.
+    */
+  case CaptchaFailed
+
   /** A social sign-in succeeded at the provider, but its email already belongs to an account that has never linked that
     * provider. Deliberately not a login: see [[AuthService.loginWithOAuth]].
     */
@@ -96,6 +104,12 @@ enum GuestAccountFailure {
 
   case ValidationError(fieldErrors: Map[String, MessageRef])
   case EmailAlreadyRegistered
+
+  /** Captcha is configured but this request carried no token. */
+  case CaptchaRequired
+
+  /** The token did not verify, or the provider could not be reached. */
+  case CaptchaFailed
 }
 
 trait AuthService {
@@ -114,8 +128,14 @@ trait AuthService {
     password: String,
     clientIp: Option[String] = None,
     locale: Locale = Locale.default,
+    captchaToken: Option[String] = None,
   ): IO[AuthFailure, (User, Option[String])]
-  def login(email: String, password: String, clientIp: Option[String] = None): IO[AuthFailure, (User, String)]
+  def login(
+    email: String,
+    password: String,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): IO[AuthFailure, (User, String)]
 
   /** Redeems a verification link. Single-use: the token is marked consumed whether or not the account was already
     * verified.
@@ -128,7 +148,11 @@ trait AuthService {
     * account-enumeration oracle. The one failure is [[AuthFailure.RateLimited]], so the form can say why nothing
     * happened.
     */
-  def resendVerification(email: String, clientIp: Option[String] = None): IO[AuthFailure, Unit]
+  def resendVerification(
+    email: String,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): IO[AuthFailure, Unit]
 
   /** Issues a fresh link for a named account, unconditionally.
     *
@@ -146,7 +170,11 @@ trait AuthService {
     * `RateLimitKey` namespace: sharing one with signup or login would let an attacker spend somebody else's budget
     * merely by knowing their address, which is exactly the incident `RateLimitKey.signup` exists to prevent recurring.
     */
-  def forgotPassword(email: String, clientIp: Option[String] = None): IO[AuthFailure, Unit]
+  def forgotPassword(
+    email: String,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): IO[AuthFailure, Unit]
 
   /** Redeems a password-reset link: sets `newPassword` and marks the token spent.
     *
@@ -216,7 +244,14 @@ trait AuthService {
   /** Gives a guest account an address and a password, in place. Every tag and word it holds stays where it is, under
     * the same id; the session the caller already holds keeps working.
     */
-  def upgradeGuest(userId: Long, email: String, password: String, locale: Locale = Locale.default): IO[
+  def upgradeGuest(
+    userId: Long,
+    email: String,
+    password: String,
+    locale: Locale = Locale.default,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): IO[
     GuestAccountFailure,
     User,
   ]
@@ -228,27 +263,37 @@ object AuthService {
     password: String,
     clientIp: Option[String] = None,
     locale: Locale = Locale.default,
+    captchaToken: Option[String] = None,
   ): ZIO[AuthService, AuthFailure, (User, Option[String])] =
-    ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp, locale))
+    ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp, locale, captchaToken))
 
   def login(
     email: String,
     password: String,
     clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
   ): ZIO[AuthService, AuthFailure, (User, String)] =
-    ZIO.serviceWithZIO[AuthService](_.login(email, password, clientIp))
+    ZIO.serviceWithZIO[AuthService](_.login(email, password, clientIp, captchaToken))
 
   def verifyEmail(token: String): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.verifyEmail(token))
 
-  def resendVerification(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
-    ZIO.serviceWithZIO[AuthService](_.resendVerification(email, clientIp))
+  def resendVerification(
+    email: String,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.resendVerification(email, clientIp, captchaToken))
 
   def issueVerificationFor(userId: Long, email: String, locale: Locale): URIO[AuthService, Unit] =
     ZIO.serviceWithZIO[AuthService](_.issueVerificationFor(userId, email, locale))
 
-  def forgotPassword(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
-    ZIO.serviceWithZIO[AuthService](_.forgotPassword(email, clientIp))
+  def forgotPassword(
+    email: String,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
+  ): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.forgotPassword(email, clientIp, captchaToken))
 
   def resetPassword(token: String, newPassword: String): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.resetPassword(token, newPassword))
@@ -308,8 +353,10 @@ object AuthService {
     email: String,
     password: String,
     locale: Locale = Locale.default,
+    clientIp: Option[String] = None,
+    captchaToken: Option[String] = None,
   ): ZIO[AuthService, GuestAccountFailure, User] =
-    ZIO.serviceWithZIO[AuthService](_.upgradeGuest(userId, email, password, locale))
+    ZIO.serviceWithZIO[AuthService](_.upgradeGuest(userId, email, password, locale, clientIp, captchaToken))
 
   /** Hashed once at startup rather than kept as a literal, so the work factor always matches whatever
     * [[gathedge.backend.security.PasswordHasher]] is configured with.
@@ -324,7 +371,7 @@ object AuthService {
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
       PasswordResetTokenRepository & LoginAttemptRepository & GuestClaimCodeRepository & PasswordHasher & RateLimiter &
-      EmailSender & Messages & AppConfig,
+      EmailSender & Messages & AppConfig & CaptchaService,
     AuthService,
   ] = ZLayer {
     for {
@@ -340,6 +387,7 @@ object AuthService {
       emailSender         <- ZIO.service[EmailSender]
       messages            <- ZIO.service[Messages]
       config              <- ZIO.service[AppConfig]
+      captcha             <- ZIO.service[CaptchaService]
       timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
     } yield AuthServiceLive(
       userRepo,
@@ -354,6 +402,7 @@ object AuthService {
       emailSender,
       messages,
       config,
+      captcha,
       timingEqualizerHash,
     ): AuthService
   }
@@ -372,6 +421,7 @@ final case class AuthServiceLive(
   emailSender: EmailSender,
   messages: Messages,
   config: AppConfig,
+  captcha: CaptchaService,
   /** Hash of a fixed throwaway string, verified against on the login paths that have no real hash to check, so that "no
     * such account" costs the same as "wrong password". Skipping the bcrypt work there made response time a reliable
     * oracle for which email addresses have accounts.
@@ -469,6 +519,69 @@ final case class AuthServiceLive(
     RateLimitKey.passwordReset(normalizedEmail) :: clientIp.map(RateLimitKey.passwordReset).toList
   }
 
+  /** Whether the sign-in form must present a captcha for this address: captcha is configured, and the address's failed
+    * sign-in count inside the rate-limit window has reached the threshold. A `None` address is a client the proxies
+    * could not resolve; it gets the benefit of the doubt rather than a hard refusal it cannot satisfy.
+    */
+  private def loginCaptchaRequired(clientIp: Option[String]): UIO[Boolean] = {
+    if (!config.isCaptchaConfigured) {
+      ZIO.succeed(false)
+    } else {
+      clientIp match {
+        case None     =>
+          ZIO.succeed(false)
+        case Some(ip) =>
+          rateLimiter.status(RateLimitKey.ip(ip)).map(_.attempts >= config.captcha.loginThreshold)
+      }
+    }
+  }
+
+  /** Verifies the captcha token when captcha is on, and is a no-op when it is not — the switch that keeps `sbt test`
+    * and the e2e suite running with no keys. A missing token and a failed one are two cases so the form can tell "you
+    * have not solved it yet" from "that one did not check out".
+    */
+  private def verifyCaptchaToken(
+    token: Option[String],
+    clientIp: Option[String],
+  ): IO[AuthFailure, Unit] = {
+    if (!config.isCaptchaConfigured) {
+      ZIO.unit
+    } else {
+      token match {
+        case None    =>
+          ZIO.fail(AuthFailure.CaptchaRequired)
+        case Some(t) =>
+          captcha.verify(t, clientIp).mapError {
+            case CaptchaFailure.VerificationFailed => AuthFailure.CaptchaFailed
+            case CaptchaFailure.ProviderError      => AuthFailure.CaptchaFailed
+          }
+      }
+    }
+  }
+
+  /** [[verifyCaptchaToken]] in the guest upgrade's failure vocabulary. Duplicated rather than shared through a wider
+    * error type: the endpoint declares exactly `GuestAccountFailure`'s union, so the captcha failure has to land on
+    * that enum rather than on `AuthFailure`.
+    */
+  private def verifyCaptchaTokenForUpgrade(
+    token: Option[String],
+    clientIp: Option[String],
+  ): IO[GuestAccountFailure, Unit] = {
+    if (!config.isCaptchaConfigured) {
+      ZIO.unit
+    } else {
+      token match {
+        case None    =>
+          ZIO.fail(GuestAccountFailure.CaptchaRequired)
+        case Some(t) =>
+          captcha.verify(t, clientIp).mapError {
+            case CaptchaFailure.VerificationFailed => GuestAccountFailure.CaptchaFailed
+            case CaptchaFailure.ProviderError      => GuestAccountFailure.CaptchaFailed
+          }
+      }
+    }
+  }
+
   private def anyKeyBlocked(keys: List[String]): UIO[Boolean] = {
     ZIO.exists(keys)(rateLimiter.isBlocked)
   }
@@ -535,6 +648,7 @@ final case class AuthServiceLive(
     password: String,
     clientIp: Option[String],
     locale: Locale,
+    captchaToken: Option[String],
   ): IO[AuthFailure, (User, Option[String])] = {
     val normalizedEmail = email.trim.toLowerCase
     val keys            = signupRateLimitKeys(normalizedEmail, clientIp)
@@ -542,6 +656,7 @@ final case class AuthServiceLive(
       _         <- validateCredentials(normalizedEmail, password)
       blocked   <- anyKeyBlocked(keys)
       _         <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      _         <- verifyCaptchaToken(captchaToken, clientIp)
       existing  <- userRepo.findByEmail(normalizedEmail).orDie
       _         <-
         ZIO.when(existing.isDefined) {
@@ -560,7 +675,12 @@ final case class AuthServiceLive(
     } yield (toDomain(row), sessionId)
   }
 
-  def login(email: String, password: String, clientIp: Option[String]): IO[AuthFailure, (User, String)] = {
+  def login(
+    email: String,
+    password: String,
+    clientIp: Option[String],
+    captchaToken: Option[String],
+  ): IO[AuthFailure, (User, String)] = {
     val normalizedEmail                                           = email.trim.toLowerCase
     val keys                                                      = loginRateLimitKeys(normalizedEmail, clientIp)
     // Every exit from this method records exactly one `login_attempts` row, including the successful one — an
@@ -571,14 +691,19 @@ final case class AuthServiceLive(
     }
 
     for {
-      blocked   <- anyKeyBlocked(keys)
-      _         <-
+      blocked       <- anyKeyBlocked(keys)
+      _             <-
         ZIO.when(blocked) {
           attempt(None, LoginOutcome.rateLimited) *> logRateLimited(normalizedEmail) *>
             ZIO.fail(AuthFailure.RateLimited)
         }
-      maybeRow  <- userRepo.findByEmail(normalizedEmail).orDie
-      row       <-
+      // After the lockout check: a hard-locked address is told "rate limited", not "solve a captcha". Before the
+      // email lookup: the captcha is the gate that stops an automated spray from enumerating addresses, so it must
+      // sit ahead of anything that reveals whether one exists.
+      captchaNeeded <- loginCaptchaRequired(clientIp)
+      _             <- ZIO.when(captchaNeeded)(verifyCaptchaToken(captchaToken, clientIp))
+      maybeRow      <- userRepo.findByEmail(normalizedEmail).orDie
+      row           <-
         maybeRow match {
           case None    =>
             equalizeTiming *> recordFailure(keys) *> attempt(None, LoginOutcome.unknownEmail) *>
@@ -586,7 +711,7 @@ final case class AuthServiceLive(
           case Some(r) =>
             ZIO.succeed(r)
         }
-      _         <-
+      _             <-
         row.passwordHash match {
           case None       =>
             equalizeTiming *> recordFailure(keys) *> attempt(Some(row.id), LoginOutcome.noPassword) *>
@@ -607,16 +732,16 @@ final case class AuthServiceLive(
         }
       // Deliberately after the password check: refusing an unverified account before knowing the
       // password would tell an attacker which addresses have accounts.
-      _         <-
+      _             <-
         ZIO.when(config.app.requireEmailVerification && row.emailVerifiedAt.isEmpty) {
           // Recorded, but still not counted against the rate limit: the credentials were right, and the account is
           // being told to go and read its email, not being defended against.
           attempt(Some(row.id), LoginOutcome.emailNotVerified) *>
             logFailedAttempt(normalizedEmail, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
         }
-      sessionId <- createSession(row.id)
-      _         <- clearFailures(keys)
-      _         <- attempt(Some(row.id), LoginOutcome.success)
+      sessionId     <- createSession(row.id)
+      _             <- clearFailures(keys)
+      _             <- attempt(Some(row.id), LoginOutcome.success)
     } yield (toDomain(row), sessionId)
   }
 
@@ -631,7 +756,11 @@ final case class AuthServiceLive(
     } yield ()
   }
 
-  def resendVerification(email: String, clientIp: Option[String]): IO[AuthFailure, Unit] = {
+  def resendVerification(
+    email: String,
+    clientIp: Option[String],
+    captchaToken: Option[String],
+  ): IO[AuthFailure, Unit] = {
     val normalizedEmail = email.trim.toLowerCase
     // Both keys go through the verification namespace, so asking for links neither consumes nor is
     // consumed by the login budget for the same address or address family.
@@ -639,6 +768,7 @@ final case class AuthServiceLive(
     for {
       blocked  <- anyKeyBlocked(keys)
       _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      _        <- verifyCaptchaToken(captchaToken, clientIp)
       // Every request counts, not just the ones that find an account — the limiter's only counter
       // is `recordFailure`, and counting successes is exactly what caps resends here.
       _        <- recordFailure(keys)
@@ -687,12 +817,17 @@ final case class AuthServiceLive(
     } yield ()
   }
 
-  def forgotPassword(email: String, clientIp: Option[String]): IO[AuthFailure, Unit] = {
+  def forgotPassword(
+    email: String,
+    clientIp: Option[String],
+    captchaToken: Option[String],
+  ): IO[AuthFailure, Unit] = {
     val normalizedEmail = email.trim.toLowerCase
     val keys            = passwordResetRateLimitKeys(normalizedEmail, clientIp)
     for {
       blocked  <- anyKeyBlocked(keys)
       _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      _        <- verifyCaptchaToken(captchaToken, clientIp)
       // Every request counts, not just the ones that find an account — same reasoning as `resendVerification`.
       _        <- recordFailure(keys)
       maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
@@ -999,7 +1134,14 @@ final case class AuthServiceLive(
     } yield (toDomain(row), sessionId)
   }
 
-  def upgradeGuest(userId: Long, email: String, password: String, locale: Locale): IO[GuestAccountFailure, User] = {
+  def upgradeGuest(
+    userId: Long,
+    email: String,
+    password: String,
+    locale: Locale,
+    clientIp: Option[String],
+    captchaToken: Option[String],
+  ): IO[GuestAccountFailure, User] = {
     val normalizedEmail = email.trim.toLowerCase
     for {
       _        <- requireGuest(userId).mapError(_ => GuestAccountFailure.NotGuest)
@@ -1011,6 +1153,9 @@ final case class AuthServiceLive(
                     case _                                   =>
                       GuestAccountFailure.ValidationError(Map.empty)
                   }
+      // Same gate as signup: this creates a real account and mints an address, which is the surface captcha exists to
+      // protect. Checked after validation so a malformed body fails locally before a network round trip.
+      _        <- verifyCaptchaTokenForUpgrade(captchaToken, clientIp)
       existing <- userRepo.findByEmail(normalizedEmail).orDie
       _        <- ZIO.when(existing.isDefined)(ZIO.fail(GuestAccountFailure.EmailAlreadyRegistered))
       hash     <- hasher.hash(password).orDie

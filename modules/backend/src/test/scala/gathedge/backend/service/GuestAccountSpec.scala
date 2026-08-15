@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.{RecordingEmailSender, TestAuthLayers, TestDataSource}
+import gathedge.backend.{RecordingEmailSender, TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
@@ -38,7 +38,7 @@ object GuestAccountSpec extends ZIOSpecDefault {
   private val layer = {
     (
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
-        TestAuthLayers.configWith(requireEmailVerification = false)
+        TestCaptchaService.live ++ TestAuthLayers.configWith(requireEmailVerification = false)
     ) >+> (AuthService.live ++ WordService.live)
   }
 

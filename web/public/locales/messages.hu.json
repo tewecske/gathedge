@@ -21,6 +21,8 @@
   "auth.lastCredential": "Előbb állíts be jelszót — jelenleg ez az egyetlen módja, hogy belépj ebbe a fiókba",
   "auth.passwordResetTokenInvalid": "Ez a jelszó-visszaállító link érvénytelen, lejárt, vagy már felhasználták",
   "auth.passwordResetSendFailed": "Nem sikerült elküldeni a jelszó-visszaállító linket",
+  "auth.captchaRequired": "Kérlek, végezd el a captcha-ellenőrzést",
+  "auth.captchaFailed": "A captcha-ellenőrzés nem sikerült. Próbáld újra.",
   "oauth.failed": "A bejelentkezés sikertelen: {0}",
   "oauth.accountExists": "Ezzel az e-mail címmel már létezik fiók. Jelentkezz be a jelszavaddal, majd a Beállításokban kapcsold össze a következővel: {0}.",
   "oauth.alreadyLinked": "Ez a fiók már össze van kapcsolva",

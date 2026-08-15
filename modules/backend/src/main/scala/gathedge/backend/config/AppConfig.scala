@@ -74,6 +74,24 @@ final case class SmtpSection(host: String, port: Int, username: String, password
 
 final case class MailSection(from: String, smtp: SmtpSection)
 
+/** Cloudflare Turnstile, which gates the anonymous account-taking and email-sending endpoints against bots.
+  *
+  * An empty `siteKey` or `secret` switches the whole feature off, exactly the way an empty SMTP host or OAuth client id
+  * does: the captcha-status endpoint answers "not required", the frontend renders no widget, and the auth endpoints
+  * skip verification. That is what keeps `sbt test` and the e2e suite green with no keys configured, and what lets a
+  * private deployment run without bot protection.
+  *
+  * `siteKey` is public — it is handed to the browser so it can render the widget — while `secret` is server-only and
+  * must never leave this process.
+  *
+  * `loginThreshold` is how many failed sign-in attempts one address may make before the sign-in form demands a captcha.
+  * It sits below `RateLimiter`'s hard lockout (`InMemoryRateLimiter.maxAttempts`), so a human gets a captcha challenge
+  * while an automated spray still hits the lockout. The count comes from the login rate-limit budget keyed on the
+  * client address (`RateLimitKey.ip`), not from `login_attempts` — it is the same in-memory window that later
+  * hard-blocks.
+  */
+final case class CaptchaSection(siteKey: String, secret: String, loginThreshold: Int)
+
 /** Two independent, standing per-account caps on the vocabulary — not time-windowed like `RateLimiter`, so they get
   * their own section rather than a `RateLimitKey` namespace: a tag count and a pair count do not reset after a window,
   * they only ever go up or down with what the account still owns.
@@ -106,6 +124,7 @@ final case class AppConfig(
   bootstrapAdmin: BootstrapAdminSection,
   oauth: OAuthSection,
   mail: MailSection,
+  captcha: CaptchaSection,
   netty: NettySection,
   quotas: QuotaSection,
 ) {
@@ -130,6 +149,9 @@ final case class AppConfig(
     * stdout, and refused in production by [[productionIssues]] once verification is mandatory.
     */
   def isMailConfigured: Boolean = mail.smtp.host.nonEmpty
+
+  /** Captcha is on only when both halves of the Turnstile credential are set. */
+  def isCaptchaConfigured: Boolean = captcha.siteKey.nonEmpty && captcha.secret.nonEmpty
 
   /** Settings that are fine for local development but unsafe in production. `Main` refuses to start while this is
     * non-empty, so a missing `${?ENV_VAR}` override can't silently downgrade a production deployment to development

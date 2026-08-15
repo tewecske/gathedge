@@ -91,7 +91,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // `>+>` rather than `>>>` so the repositories stay in the environment alongside the services: the delete-user test
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
-    repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestAuthLayers.emailAndConfig >+>
+    repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++ TestAuthLayers.emailAndConfig >+>
       (AuthService.live ++ AuditTrail.live) >+> AdminService.live >+> WordService.live
   }
 

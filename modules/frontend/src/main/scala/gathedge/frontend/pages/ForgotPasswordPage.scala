@@ -2,9 +2,10 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
-import gathedge.frontend.components.AppShell
+import gathedge.frontend.components.{AppShell, CaptchaField}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.{AppRouter, Page}
+import gathedge.shared.dto.CaptchaStatusResponse
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 
 /** Where "Forgot your password?" on [[SignInPage]] leads: an email address in, a password-reset link out, always
@@ -23,6 +24,11 @@ private class ForgotPasswordPage {
   private val inFlightSignal                 = inFlightVar.signal
   private val submitBus                      = new EventBus[Unit]()
   private val submitStream                   = submitBus.events.filterWith(inFlightSignal.not)
+
+  private val captchaStatusVar: Var[Option[CaptchaStatusResponse]] = Var(None)
+  private val captchaTokenVar: Var[Option[String]]                 = Var(None)
+  private val captchaResetBus                                      = new EventBus[Unit]()
+  private val captchaSiteKeySignal                                 = captchaStatusVar.signal.map(_.flatMap(_.siteKey)).distinct
 
   def render(): HtmlElement = {
     div(
@@ -46,6 +52,7 @@ private class ForgotPasswordPage {
               controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
             ),
           ),
+          child.maybe <-- captchaSiteKeySignal.map(_.map(renderCaptcha)),
           div(
             cls  := "card-actions justify-end mt-4",
             button(
@@ -62,7 +69,7 @@ private class ForgotPasswordPage {
         ),
       ),
       submitStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
-      submitStream.flatMapSwitch(_ => ApiClient.forgotPassword(emailVar.now())) -->
+      submitStream.flatMapSwitch(_ => ApiClient.forgotPassword(emailVar.now(), captchaTokenVar.now())) -->
         Observer[Either[ApiError, Unit]] {
           // Deliberately non-committal: the server answers the same for an unknown address and a
           // known one, and this copy must not say more than that.
@@ -70,8 +77,21 @@ private class ForgotPasswordPage {
             Var.set(inFlightVar -> false, noticeVar -> Some(I18n.t(UiKeys.forgotPasswordSent)))
           case Left(err) =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+            // The captcha token is single-use; whatever failed spent it, so ask for a fresh challenge.
+            captchaResetBus.writer.onNext(())
+        },
+      ApiClient.captchaStatus -->
+        Observer[Either[ApiError, CaptchaStatusResponse]] {
+          case Right(status) =>
+            captchaStatusVar.set(Some(status))
+          case Left(_)       =>
+            captchaStatusVar.set(None)
         },
     )
+  }
+
+  private def renderCaptcha(siteKey: String): HtmlElement = {
+    new CaptchaField(siteKey, captchaTokenVar.writer, captchaResetBus.events).render()
   }
 
   private def renderError(message: String): HtmlElement = {

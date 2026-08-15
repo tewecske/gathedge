@@ -65,6 +65,8 @@ object MessageKeys {
   val lastCredential: String            = key("auth.lastCredential")
   val passwordResetTokenInvalid: String = key("auth.passwordResetTokenInvalid")
   val passwordResetSendFailed: String   = key("auth.passwordResetSendFailed")
+  val captchaRequired: String           = key("auth.captchaRequired")
+  val captchaFailed: String             = key("auth.captchaFailed")
 
   // -- Social sign-in --------------------------------------------------------------------------
   // `oauthFailed` takes the provider's reason as {0}; `oauthAccountExists` takes its display name.

@@ -1,6 +1,6 @@
 package gathedge.backend.http
 
-import gathedge.backend.{TestAuthLayers, TestDataSource}
+import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
@@ -34,6 +34,7 @@ import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
   AuthResponse,
+  CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
   CreateTagRequest,
@@ -90,7 +91,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       ((AppConfig.live ++ Client.default) >>> OAuthClients.live) ++ (
         // AdminService and SystemService both sit on top of AuthService/AuditTrail now, so the stack is built in
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
-        repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++
+        repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
           TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
           (AdminService.live ++ SystemService.live ++ WordService.live)
       )
@@ -225,6 +226,17 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("verification link")),
+          )
+        },
+        // Public and read before any session exists, same as `providers`. With captcha unconfigured (the shipped
+        // default) it answers no site key, which is what keeps the forms from loading the Turnstile script.
+        test("the captcha status endpoint answers the unconfigured deployment with no site key") {
+          for {
+            response <- runRoutes(AuthRoutes.routes, Request.get("/api/auth/captcha-status"))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[CaptchaStatusResponse] == Right(CaptchaStatusResponse(None, 0, 2)),
           )
         },
         // Same non-committal shape as the verification resend: a known address and an unknown one both answer an

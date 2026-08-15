@@ -2,11 +2,11 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
-import gathedge.frontend.components.{AppShell, ClaimCodeForm, OAuthButtons}
+import gathedge.frontend.components.{AppShell, CaptchaField, ClaimCodeForm, OAuthButtons}
 import gathedge.frontend.state.AppState
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.domain.{OAuthProvider, User}
-import gathedge.shared.dto.{ProvidersResponse, SignupRequest}
+import gathedge.shared.dto.{CaptchaStatusResponse, ProvidersResponse, SignupRequest}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.validation.Validation
@@ -29,6 +29,14 @@ private class SignUpPage {
   private val providersVar: Var[List[OAuthProvider]] = Var(Nil)
   private val providersSignal                        = providersVar.signal
   private val hasProvidersSignal                     = providersSignal.map(_.nonEmpty).distinct
+
+  /** The Turnstile widget's site key, once `/api/auth/captcha-status` has answered with one. `None` means captcha is
+    * unconfigured, so no widget renders and the token stays empty — the server then never asks for one either.
+    */
+  private val captchaStatusVar: Var[Option[CaptchaStatusResponse]] = Var(None)
+  private val captchaTokenVar: Var[Option[String]]                 = Var(None)
+  private val captchaResetBus                                      = new EventBus[Unit]()
+  private val captchaSiteKeySignal                                 = captchaStatusVar.signal.map(_.flatMap(_.siteKey)).distinct
 
   /** The same buttons as the sign-in form, and deliberately not labelled differently: the provider flow creates the
     * account when there is none and signs in when there is, so "sign up with" and "sign in with" are one button.
@@ -88,6 +96,9 @@ private class SignUpPage {
             ),
             p(cls         := "label", I18n.t(UiKeys.commonPasswordHint, Validation.minPasswordLength)),
           ),
+          // Rendered only when the deployment has captcha configured. The site key is read from the status endpoint,
+          // so a deployment without one never loads the Turnstile script.
+          child.maybe <-- captchaSiteKeySignal.map(_.map(renderCaptcha)),
           div(
             cls := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignUp)),
@@ -108,6 +119,14 @@ private class SignUpPage {
           case Left(_)    =>
             providersVar.set(Nil)
         },
+      ApiClient.captchaStatus -->
+        Observer[Either[ApiError, CaptchaStatusResponse]] {
+          case Right(status) =>
+            captchaStatusVar.set(Some(status))
+          case Left(_)       =>
+            // Captcha unconfigured or the status call failed: no site key, no widget, no token.
+            captchaStatusVar.set(None)
+        },
       validatedStream -->
         Observer[Either[String, SignupRequest]] {
           case Left(err) =>
@@ -122,9 +141,11 @@ private class SignUpPage {
         // A guest upgrading is always signed in on success — there is no unverified-address wait, since the
         // account (and its session) already existed.
         .flatMapSwitch { request =>
-          if (isGuestSignedIn)
-            ApiClient.upgradeGuest(request.email, request.password).map(_.map(res => (res.user, true)))
-          else
+          if (isGuestSignedIn) {
+            ApiClient
+              .upgradeGuest(request.email, request.password, request.captchaToken)
+              .map(_.map(res => (res.user, true)))
+          } else
             ApiClient.signup(request).map(_.map(res => (res.user, res.signedIn)))
         } -->
         Observer[Either[ApiError, (User, Boolean)]] {
@@ -142,6 +163,8 @@ private class SignUpPage {
             AppState.setUser(user)
           case Left(err)           =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+            // The captcha token is single-use, so whatever failed just spent it: ask for a fresh challenge.
+            captchaResetBus.writer.onNext(())
         },
     )
   }
@@ -154,7 +177,11 @@ private class SignUpPage {
     (for {
       validEmail    <- Validation.validateEmail(email)
       validPassword <- Validation.validatePassword(password)
-    } yield SignupRequest(validEmail, validPassword)).left.map(I18n.resolve)
+    } yield SignupRequest(validEmail, validPassword, captchaTokenVar.now())).left.map(I18n.resolve)
+  }
+
+  private def renderCaptcha(siteKey: String): HtmlElement = {
+    new CaptchaField(siteKey, captchaTokenVar.writer, captchaResetBus.events).render()
   }
 
   private def renderError(message: String): HtmlElement = {

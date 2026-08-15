@@ -3,10 +3,10 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError}
 import gathedge.frontend.Page
-import gathedge.frontend.components.{AppShell, OAuthButtons, OAuthMessages}
+import gathedge.frontend.components.{AppShell, CaptchaField, OAuthButtons, OAuthMessages}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{IdentitiesResponse, LinkedIdentity, SetPasswordRequest}
+import gathedge.shared.dto.{CaptchaStatusResponse, IdentitiesResponse, LinkedIdentity, SetPasswordRequest}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.UiKeys
 import gathedge.shared.validation.Validation
@@ -52,6 +52,14 @@ private class SettingsPage {
   private val unlinkBus         = new EventBus[OAuthProvider]()
   private val passwordSubmitBus = new EventBus[Unit]()
   private val resendBus         = new EventBus[Unit]()
+
+  /** The resend endpoint is the anonymous `/api/auth/verification/resend`, which is captcha-gated — so this page has to
+    * present the widget and carry its token too, the same as the sign-in page's resend block.
+    */
+  private val captchaStatusVar: Var[Option[CaptchaStatusResponse]] = Var(None)
+  private val captchaTokenVar: Var[Option[String]]                 = Var(None)
+  private val captchaResetBus                                      = new EventBus[Unit]()
+  private val captchaSiteKeySignal                                 = captchaStatusVar.signal.map(_.flatMap(_.siteKey)).distinct
 
   /** The email card is driven off the session state rather than a fetch of its own: `/api/me` already carries
     * `emailVerified`, and this page is only reachable with a session.
@@ -119,12 +127,21 @@ private class SettingsPage {
         .collect { case Some(email) =>
           email
         }
-        .flatMapSwitch(ApiClient.resendVerification) -->
+        .flatMapSwitch(email => ApiClient.resendVerification(email, captchaTokenVar.now())) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             Var.set(errorVar -> None, noticeVar -> Some(I18n.t(UiKeys.settingsVerificationSent)))
+            captchaResetBus.writer.onNext(())
           case Left(err) =>
             Var.set(errorVar -> Some(err.message), noticeVar -> None)
+            captchaResetBus.writer.onNext(())
+        },
+      ApiClient.captchaStatus -->
+        Observer[Either[ApiError, CaptchaStatusResponse]] {
+          case Right(status) =>
+            captchaStatusVar.set(Some(status))
+          case Left(_)       =>
+            captchaStatusVar.set(None)
         },
     )
   }
@@ -175,7 +192,12 @@ private class SettingsPage {
         onClick.mapToUnit --> resendBus.writer,
         I18n.t(UiKeys.verificationResendButton),
       ),
+      child.maybe <-- captchaSiteKeySignal.map(_.map(renderCaptcha)),
     )
+  }
+
+  private def renderCaptcha(siteKey: String): HtmlElement = {
+    new CaptchaField(siteKey, captchaTokenVar.writer, captchaResetBus.events).render()
   }
 
   private def renderIdentities(): HtmlElement = {
