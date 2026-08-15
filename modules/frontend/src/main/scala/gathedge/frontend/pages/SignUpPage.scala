@@ -72,7 +72,7 @@ private class SignUpPage {
           Option.when(isGuestSignedIn)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.guestUpgradeHint))),
           child.maybe <-- errorSignal.map(_.map(renderError)),
           fieldSet(
-            cls  := "fieldset",
+            cls := "fieldset",
             legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
             input(
               cls         := "input w-full",
@@ -89,13 +89,13 @@ private class SignUpPage {
             p(cls         := "label", I18n.t(UiKeys.commonPasswordHint, Validation.minPasswordLength)),
           ),
           div(
-            cls  := "card-actions justify-end mt-4",
+            cls := "card-actions justify-end mt-4",
             button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSignUp)),
           ),
           child.maybe <-- hasProvidersSignal.map(Option.when(_)(socialBlock)),
           Option.when(!isGuestSignedIn)(ClaimCodeForm.render()),
           p(
-            cls  := "text-sm mt-2",
+            cls := "text-sm mt-2",
             I18n.t(UiKeys.signUpHaveAccount),
             a(cls := "link", AppRouter.router.navigateTo(Page.SignIn), I18n.t(UiKeys.commonSignIn)),
           ),

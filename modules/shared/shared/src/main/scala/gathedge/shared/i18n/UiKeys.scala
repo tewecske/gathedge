@@ -110,10 +110,12 @@ object UiKeys {
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
-  val signInVerified: String    = key("ui.signin.verified")
-  val signInNoAccount: String   = key("ui.signin.noAccount")
-  val signUpTitle: String       = key("ui.signup.title")
-  val signUpHaveAccount: String = key("ui.signup.haveAccount")
+  val signInVerified: String       = key("ui.signin.verified")
+  val signInPasswordReset: String  = key("ui.signin.passwordReset")
+  val signInNoAccount: String      = key("ui.signin.noAccount")
+  val signInForgotPassword: String = key("ui.signin.forgotPassword")
+  val signUpTitle: String          = key("ui.signup.title")
+  val signUpHaveAccount: String    = key("ui.signup.haveAccount")
 
   // -- Email confirmation ----------------------------------------------------------------------
 
@@ -133,6 +135,20 @@ object UiKeys {
   val verifyTitle: String        = key("ui.verify.title")
   val verifyResend: String       = key("ui.verify.resend")
   val verifyBackToSignIn: String = key("ui.verify.backToSignIn")
+
+  // -- Forgot / reset password -------------------------------------------------------------------
+
+  val forgotPasswordTitle: String  = key("ui.forgotPassword.title")
+  val forgotPasswordBody: String   = key("ui.forgotPassword.body")
+  val forgotPasswordSubmit: String = key("ui.forgotPassword.submit")
+
+  /** Deliberately non-committal, like [[verificationResent]]: the endpoint answers the same for an unknown address and
+    * a known one, so this copy must not say more than that.
+    */
+  val forgotPasswordSent: String = key("ui.forgotPassword.sent")
+
+  val resetPasswordTitle: String  = key("ui.resetPassword.title")
+  val resetPasswordSubmit: String = key("ui.resetPassword.submit")
 
   // -- Social sign-in --------------------------------------------------------------------------
   // `{0}` is the provider's display name throughout, and every frame is phrased so the name lands

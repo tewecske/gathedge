@@ -4,10 +4,12 @@ import gathedge.shared.dto.{
   AuthResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
   ResendVerificationRequest,
+  ResetPasswordRequest,
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
@@ -28,8 +30,8 @@ import ApiSchemas.given
   * The two Google OAuth routes are *not* here. They are top-level browser navigations whose success and failure are
   * both redirects rather than bodies, so they stay on the imperative DSL in `AuthRoutes` — see the note there.
   *
-  * These are the only endpoints in the API that declare 429: the rate limiter lives in `AuthService` and signup, login
-  * and the verification resend are all that go through it.
+  * These are the only endpoints in the API that declare 429: the rate limiter lives in `AuthService` and signup, login,
+  * the verification resend and the password-reset request are all that go through it.
   *
   * [[login]] is the API's only path that declares 403, and it does so for the reason those do: the *service* raises it
   * rather than an aspect. `AuthFailure.EmailNotVerified` is an answer to a well-formed request with the right password,
@@ -85,6 +87,31 @@ object AuthEndpoints {
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
       .outErrors(failure.badRequest, failure.tooManyRequests)
+  }
+
+  /** Sends a password-reset link. Public, and answers 204 for an unknown address and a known one alike — the same
+    * non-committal shape as [[resendVerification]], for the same reason: reporting which is which would make this an
+    * account-enumeration oracle. Its own `RateLimitKey` namespace, since sharing one with signup or login would let an
+    * attacker spend somebody else's budget just by knowing their address — see `RateLimitKey.passwordReset`.
+    */
+  val forgotPassword = {
+    Endpoint(Method.POST / "api" / "auth" / "password" / "forgot")
+      .in[ForgotPasswordRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outErrors(failure.badRequest, failure.tooManyRequests)
+  }
+
+  /** Redeems a password-reset link, setting a new password. 400 covers a token that is unknown, spent or expired — one
+    * answer for all three, so the token space cannot be probed, exactly as [[verifyEmail]] — as well as a new password
+    * that fails validation, reported the same way [[setPassword]] reports one.
+    */
+  val resetPassword = {
+    Endpoint(Method.POST / "api" / "auth" / "password" / "reset")
+      .in[ResetPasswordRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outFailure(failure.badRequest)
   }
 
   /** Answers 204 whether or not there was a session to end, and always sends the already-expired cookie back.
@@ -263,6 +290,8 @@ object AuthEndpoints {
       setPassword,
       verifyEmail,
       resendVerification,
+      forgotPassword,
+      resetPassword,
       createGuest,
       guestCode,
       claimGuest,

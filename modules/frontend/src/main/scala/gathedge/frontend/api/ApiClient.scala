@@ -10,10 +10,12 @@ import gathedge.shared.dto.{
   AuthResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
   ResendVerificationRequest,
+  ResetPasswordRequest,
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
@@ -58,6 +60,18 @@ object ApiClient {
 
   def login(request: LoginRequest): EventStream[Either[ApiError, AuthResponse]] = {
     run(executor(AuthEndpoints.login(request))).map(_.map(_._1))
+  }
+
+  /** Answers the same whether or not the address has an account, same non-committal shape as [[resendVerification]]. */
+  def forgotPassword(email: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.forgotPassword(ForgotPasswordRequest(email)))).map(_.map(_ => ()))
+  }
+
+  /** Redeems a password-reset link. No session comes back — this proves the address controls the reset link, not that
+    * whoever clicked it meant to sign in on this device, the same reasoning [[verifyEmail]] follows.
+    */
+  def resetPassword(token: String, newPassword: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AuthEndpoints.resetPassword(ResetPasswordRequest(token, newPassword)))).map(_.map(_ => ()))
   }
 
   def logout: EventStream[Either[ApiError, Unit]] = {

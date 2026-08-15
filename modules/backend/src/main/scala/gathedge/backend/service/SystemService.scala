@@ -7,6 +7,7 @@ import gathedge.backend.db.{
   LoginAttemptRepository,
   MetricsRepository,
   MigrationRow,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
 }
@@ -70,28 +71,31 @@ object SystemService {
 
   /** Captures the process start instant as the layer is built, which for this layer is startup. */
   val live: URLayer[
-    AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository &
-      UserRepository & AuditLogRepository & AuditTrail & RateLimiter & BackgroundJobs,
+    AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository &
+      PasswordResetTokenRepository & LoginAttemptRepository & UserRepository & AuditLogRepository & AuditTrail &
+      RateLimiter & BackgroundJobs,
     SystemService,
   ] = ZLayer {
     for {
-      config      <- ZIO.service[AppConfig]
-      metrics     <- ZIO.service[MetricsRepository]
-      sessionRepo <- ZIO.service[SessionRepository]
-      tokenRepo   <- ZIO.service[EmailVerificationTokenRepository]
-      attemptRepo <- ZIO.service[LoginAttemptRepository]
-      userRepo    <- ZIO.service[UserRepository]
-      auditRepo   <- ZIO.service[AuditLogRepository]
-      auditTrail  <- ZIO.service[AuditTrail]
-      rateLimiter <- ZIO.service[RateLimiter]
-      jobs        <- ZIO.service[BackgroundJobs]
-      startedAt   <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      statsCache  <- Ref.make(Option.empty[(Long, DbStats)])
+      config         <- ZIO.service[AppConfig]
+      metrics        <- ZIO.service[MetricsRepository]
+      sessionRepo    <- ZIO.service[SessionRepository]
+      tokenRepo      <- ZIO.service[EmailVerificationTokenRepository]
+      resetTokenRepo <- ZIO.service[PasswordResetTokenRepository]
+      attemptRepo    <- ZIO.service[LoginAttemptRepository]
+      userRepo       <- ZIO.service[UserRepository]
+      auditRepo      <- ZIO.service[AuditLogRepository]
+      auditTrail     <- ZIO.service[AuditTrail]
+      rateLimiter    <- ZIO.service[RateLimiter]
+      jobs           <- ZIO.service[BackgroundJobs]
+      startedAt      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      statsCache     <- Ref.make(Option.empty[(Long, DbStats)])
     } yield SystemServiceLive(
       config,
       metrics,
       sessionRepo,
       tokenRepo,
+      resetTokenRepo,
       attemptRepo,
       userRepo,
       auditRepo,
@@ -118,6 +122,7 @@ final case class SystemServiceLive(
   metrics: MetricsRepository,
   sessionRepo: SessionRepository,
   tokenRepo: EmailVerificationTokenRepository,
+  resetTokenRepo: PasswordResetTokenRepository,
   attemptRepo: LoginAttemptRepository,
   userRepo: UserRepository,
   auditRepo: AuditLogRepository,
@@ -267,7 +272,9 @@ final case class SystemServiceLive(
     for {
       // The reaper's own body, not a copy of it, so the button and the hourly loop cannot remove different things.
       swept <- SessionReaper.sweep
-                 .provideEnvironment(ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config))
+                 .provideEnvironment(
+                   ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config).add(resetTokenRepo)
+                 )
                  .orDie
       // Stale keys only: this is housekeeping, and it must not quietly unblock an account that is being brute-forced
       // right now. Unblocking is `clearRateLimits`, which is a separate, audited action.
@@ -275,11 +282,21 @@ final case class SystemServiceLive(
       // This is the one operation that changes the counts from inside this service, so it is also the one that has to
       // drop the memo — an administrator who prunes and sees the same numbers would reasonably conclude it did not work.
       _     <- statsCache.set(None)
-      result = PruneResult(swept.sessions, swept.verificationTokens, swept.loginAttempts, swept.guests, keys)
+      // `PruneResult` still has one token count on the wire; folding the reset tokens into it here rather than adding
+      // a fifth field keeps the admin screen's "removed …" sentence at four items instead of rippling a wire change
+      // through `ConfigSummary`'s UI and both locale catalogs for a count nobody has asked to see split out.
+      result = PruneResult(
+                 swept.sessions,
+                 swept.verificationTokens + swept.passwordResetTokens,
+                 swept.loginAttempts,
+                 swept.guests,
+                 keys,
+               )
       _     <- auditTrail.recordSystem(
                  actor,
                  AuditAction.systemPrune,
                  s"pruned ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
+                   s"${swept.passwordResetTokens} password reset token(s), " +
                    s"${swept.loginAttempts} sign-in attempt record(s), ${swept.guests} abandoned guest(s) and " +
                    s"$keys rate-limit key(s)",
                )

@@ -11,10 +11,12 @@ import gathedge.shared.dto.{
   AuthResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
   ProvidersResponse,
   ResendVerificationRequest,
+  ResetPasswordRequest,
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
@@ -180,6 +182,26 @@ object AuthRoutes {
           withContext { (context: RequestContext) =>
             AuthService.resendVerification(body.email, context.clientIp).mapError(ApiFailures.resendVerification)
           }
+        }
+      )
+  }
+
+  private val forgotPasswordRoute = {
+    AuthEndpoints.forgotPassword
+      .implementHandler(
+        handler { (body: ForgotPasswordRequest) =>
+          withContext { (context: RequestContext) =>
+            AuthService.forgotPassword(body.email, context.clientIp).mapError(ApiFailures.forgotPassword)
+          }
+        }
+      )
+  }
+
+  private val resetPasswordRoute = {
+    AuthEndpoints.resetPassword
+      .implementHandler(
+        handler { (body: ResetPasswordRequest) =>
+          AuthService.resetPassword(body.token, body.newPassword).mapError(ApiFailures.resetPassword)
         }
       )
   }
@@ -524,6 +546,8 @@ object AuthRoutes {
       logoutRoute,
       verifyEmailRoute,
       resendVerificationRoute,
+      forgotPasswordRoute,
+      resetPasswordRoute,
       // Both mint a session for somebody who has none: one for a brand-new guest, one for a guest arriving on a
       // second machine with a transfer code. Both are rate-limited on the client address, which is what they need
       // `requestContext` for.

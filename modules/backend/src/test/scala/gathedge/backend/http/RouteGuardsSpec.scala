@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   LoginAttemptRepository,
   MetricsRepository,
   OAuthIdentityRepository,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
   WordRepository,
@@ -45,8 +46,9 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++
-        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
+        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
+        LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
+        MetricsRepository.test ++ WordRepository.test
     )
   }
 

@@ -73,6 +73,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/providers",
               "/api/auth/verify",
               "/api/auth/verification/resend",
+              "/api/auth/password/forgot",
+              "/api/auth/password/reset",
               "/api/auth/upgrade",
               "/api/guest",
               "/api/guest/code",
@@ -160,6 +162,12 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/verify")                                                -> Set(NoContent, BadRequest),
               // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
               ("POST", "/api/auth/verification/resend")                                   -> Set(NoContent, BadRequest, TooManyRequests),
+              // Same non-committal shape as the verification resend, and the same reason: reporting which
+              // addresses have accounts would make this an enumeration oracle.
+              ("POST", "/api/auth/password/forgot")                                       -> Set(NoContent, BadRequest, TooManyRequests),
+              // One 400 for a token that is unknown, spent or expired alike, or for a new password that fails
+              // validation — nothing else is reachable.
+              ("POST", "/api/auth/password/reset")                                        -> Set(NoContent, BadRequest),
               // Minting a guest takes the visitor's current theme as input, so its 400 is only the body's codec
               // error; the limiter's 429 is its only handler-raised failure. Redeeming a code adds the same 400 and
               // a 404 for a code that is unknown or revoked — one answer for both, so the code space cannot be probed.
@@ -252,19 +260,21 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 116,
+          declared == 119,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own
           // adds its paths here.
           describes(Forbidden) ==
             Set(("POST", "/api/auth/login"), ("POST", "/api/guest/code"), ("POST", "/api/auth/upgrade")),
-          // The rate limiter wraps signup, login and the verification resend, and nothing else.
+          // The rate limiter wraps signup, login, the verification resend and the password-reset request, and
+          // nothing else.
           describes(TooManyRequests) ==
             Set(
               ("POST", "/api/auth/signup"),
               ("POST", "/api/auth/login"),
               ("POST", "/api/auth/verification/resend"),
+              ("POST", "/api/auth/password/forgot"),
               // Both are anonymous and both write: one mints an account, the other hands out a session.
               ("POST", "/api/guest"),
               ("POST", "/api/guest/claim"),
@@ -300,6 +310,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Both are reached by an account that cannot sign in yet, so neither can be behind the session.
               ("POST", "/api/auth/verify"),
               ("POST", "/api/auth/verification/resend"),
+              // Both are reached by a visitor with no session by definition — asking for the link and
+              // redeeming it are the whole of the recovery path for an account that cannot sign in.
+              ("POST", "/api/auth/password/forgot"),
+              ("POST", "/api/auth/password/reset"),
               // A visitor with no session mints one here, or brings a transfer code to it.
               ("POST", "/api/guest"),
               ("POST", "/api/guest/claim"),
@@ -314,7 +328,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 10,
+          guarded.size == operations.size - 12,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

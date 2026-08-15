@@ -14,6 +14,7 @@ import gathedge.backend.db.{
   LoginAttemptRepository,
   OAuthIdentityRepository,
   OAuthIdentityRow,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
   WordRepository,
@@ -82,8 +83,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   private val repoLayer = {
     containerDataSource >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ LoginAttemptRepository.live ++ AuditLogRepository.live ++
-        GuestClaimCodeRepository.live ++ WordRepository.live
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        AuditLogRepository.live ++ GuestClaimCodeRepository.live ++ WordRepository.live
     )
   }
 

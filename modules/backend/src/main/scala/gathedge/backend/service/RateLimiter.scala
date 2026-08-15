@@ -129,6 +129,12 @@ object RateLimitKey {
     */
   def signup(value: String): String = s"signup:${value.trim.toLowerCase}"
 
+  /** Separate from [[email]] and [[verification]] for the reason recorded on [[signup]]: sharing a namespace with login
+    * or signup would let an attacker who only knows an address spend that account's login budget, for free, by asking
+    * for reset links against it.
+    */
+  def passwordReset(value: String): String = s"pwreset:${value.trim.toLowerCase}"
+
   /** Minting a guest account writes a row and asks nobody for anything, so it is the cheapest thing an anonymous caller
     * can ask this application to do and needs a budget of its own. Keyed on the client address, since a guest has no
     * address of its own to key on.

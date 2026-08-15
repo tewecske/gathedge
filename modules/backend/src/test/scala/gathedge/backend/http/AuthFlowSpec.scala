@@ -8,6 +8,7 @@ import gathedge.backend.db.{
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
 }
@@ -33,8 +34,8 @@ object AuthFlowSpec extends ZIOSpecDefault {
     val repos = {
       TestDataSource.sqlite >>> (
         UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ AuditLogRepository.test ++
-          GuestClaimCodeRepository.test
+          EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
+          AuditLogRepository.test ++ GuestClaimCodeRepository.test
       )
     }
     AppConfig.live ++ (

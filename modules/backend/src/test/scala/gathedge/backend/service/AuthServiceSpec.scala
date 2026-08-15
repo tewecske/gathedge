@@ -7,6 +7,7 @@ import gathedge.backend.db.{
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
 }
@@ -27,7 +28,8 @@ object AuthServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test
+        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test
     )
   }
 
@@ -43,7 +45,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
     built >>> (AuthService.live ++ ZLayer.service[SentEmails])
   }
 
-  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite)
+  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite, passwordResetSuite)
 
   private val coreSuite = suite("core")(
     test("signup, currentUser via session, login, logout invalidates the session") {
@@ -386,6 +388,98 @@ object AuthServiceSpec extends ZIOSpecDefault {
         },
       ).provide(authServiceLayer(requireEmailVerification = false)),
     )
+  }
+
+  /** Mint token, redeem it, confirm the password changed and the token cannot be reused; expiry and the namespace
+    * isolation of `RateLimitKey.passwordReset` get their own tests below.
+    */
+  private val passwordResetSuite = {
+    suite("password reset")(
+      test("a reset link changes the password, invalidates the token, and revokes existing sessions") {
+        for {
+          signedUp   <- AuthService.signup("forgetful@example.com", "password123")
+          session     = signedUp._2.get
+          _          <- AuthService.forgotPassword("forgetful@example.com")
+          token      <- SentEmails.lastPasswordResetToken
+          _          <- AuthService.resetPassword(token.get, "newpassword456")
+          stillOld   <- AuthService.login("forgetful@example.com", "password123").either
+          withNew    <- AuthService.login("forgetful@example.com", "newpassword456")
+          stillValid <- AuthService.currentUser(session)
+        } yield assertTrue(
+          stillOld == Left(AuthFailure.InvalidCredentials),
+          withNew._1.email.contains("forgetful@example.com"),
+          stillValid.isEmpty,
+        )
+      },
+      test("a reset token is single-use") {
+        for {
+          _     <- AuthService.signup("reset-once@example.com", "password123")
+          _     <- AuthService.forgotPassword("reset-once@example.com")
+          token <- SentEmails.lastPasswordResetToken
+          _     <- AuthService.resetPassword(token.get, "brandnewpass1")
+          again <- AuthService.resetPassword(token.get, "anothernewpass").either
+        } yield assertTrue(again == Left(AuthFailure.InvalidPasswordResetToken))
+      },
+      test("an unknown token is refused the same way a spent one is") {
+        for {
+          result <- AuthService.resetPassword("not-a-real-token", "somenewpass1").either
+        } yield assertTrue(result == Left(AuthFailure.InvalidPasswordResetToken))
+      },
+      // `authServiceLayer` builds `AuthService` through `>>>`, which drops `AppConfig` out of the environment this
+      // suite can reach — so the 6 hours here is `application.conf`'s `app.password-reset-token-validity-hours`
+      // default, read back rather than derived, the same way `InMemoryRateLimiter.maxAttempts` is used as a constant
+      // above rather than plumbed through `AppConfig`.
+      test("a token past its configured expiry is refused") {
+        for {
+          _      <- AuthService.signup("reset-stale@example.com", "password123")
+          _      <- AuthService.forgotPassword("reset-stale@example.com")
+          token  <- SentEmails.lastPasswordResetToken
+          _      <- TestClock.adjust(6.hours.plus(1.minute))
+          result <- AuthService.resetPassword(token.get, "somenewpass1").either
+        } yield assertTrue(result == Left(AuthFailure.InvalidPasswordResetToken))
+      },
+      test("requesting for an unknown address succeeds silently and sends nothing") {
+        for {
+          result <- AuthService.forgotPassword("no-such-account@example.com").either
+          sent   <- SentEmails.all
+        } yield assertTrue(result == Right(()), sent.isEmpty)
+      },
+      test("a weak new password is refused without consuming the token") {
+        for {
+          _      <- AuthService.signup("reset-weak@example.com", "password123")
+          _      <- AuthService.forgotPassword("reset-weak@example.com")
+          token  <- SentEmails.lastPasswordResetToken
+          weak   <- AuthService.resetPassword(token.get, "short").either
+          strong <- AuthService.resetPassword(token.get, "longenoughpass").either
+        } yield assertTrue(weak.isLeft, strong.isRight)
+      },
+      // Pins `RateLimitKey.passwordReset` as its own namespace: tripping it must not spend the
+      // `email:` budget `login` checks, nor the `verify:` one `resendVerification` checks, and
+      // neither of those must spend this one either — see the incident recorded on `RateLimitKey.signup`.
+      test("the password-reset budget is isolated from login's and from the verification resend's") {
+        for {
+          _         <- AuthService.signup("reset-isolated@example.com", "password123")
+          _         <-
+            ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts + 1) { _ =>
+              AuthService.forgotPassword("reset-isolated@example.com").either
+            }
+          blocked   <- AuthService.forgotPassword("reset-isolated@example.com").either
+          stillLogs <- AuthService.login("reset-isolated@example.com", "password123").either
+          stillGets <- AuthService.resendVerification("reset-isolated@example.com").either
+        } yield assertTrue(blocked == Left(AuthFailure.RateLimited), stillLogs.isRight, stillGets.isRight)
+      },
+      test("failed logins and verification resends do not spend the password-reset budget") {
+        for {
+          _      <- AuthService.signup("reset-untouched@example.com", "password123")
+          _      <-
+            ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+              AuthService.login("reset-untouched@example.com", "nope12345").either
+            }
+          _      <- AuthService.resendVerification("reset-untouched@example.com")
+          result <- AuthService.forgotPassword("reset-untouched@example.com").either
+        } yield assertTrue(result.isRight)
+      },
+    ).provide(authServiceLayer(requireEmailVerification = false))
   }
 
   private def identity(provider: OAuthProvider, subject: String, email: String): OAuthIdentity = {

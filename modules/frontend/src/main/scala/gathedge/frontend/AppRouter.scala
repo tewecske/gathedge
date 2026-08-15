@@ -21,6 +21,14 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
+  /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
+  case object ForgotPassword extends Page
+
+  /** Where a password-reset link lands. Public for the same reason [[VerifyEmail]] is: the account it resets usually
+    * has no session either.
+    */
+  final case class ResetPassword(token: String) extends Page
+
   /** The vocabulary: the shared dictionary, and the reader's own tags on it.
     *
     * Public, and the only listing in the application that is. A visitor with no session sees the same words and none of
@@ -60,18 +68,18 @@ object Page {
 
   def guardFor(page: Page): AuthGuard = {
     page match {
-      case SignIn | SignUp                                    =>
+      case SignIn | SignUp | ForgotPassword                                      =>
         AuthGuard.RequireAnon
-      case VerifyEmail(_) | CheckInbox | Forbidden | NotFound =>
+      case VerifyEmail(_) | CheckInbox | ResetPassword(_) | Forbidden | NotFound =>
         AuthGuard.Public
       // The whole point of the vocabulary is that it is usable before signing up for anything.
-      case Words(_) | WordDetail(_)                           =>
+      case Words(_) | WordDetail(_)                                              =>
         AuthGuard.Public
       // Home is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in.
-      case Home                                                =>
+      case Home                                                                  =>
         AuthGuard.Public
-      case _                                                  =>
+      case _                                                                     =>
         AuthGuard.RequireAuth
     }
   }
@@ -103,6 +111,13 @@ object AppRouter {
     basePath = basePath,
   )
   private val checkInboxRoute      = Route.static(CheckInbox, root / "check-inbox", basePath)
+  private val forgotPasswordRoute  = Route.static(ForgotPassword, root / "forgot-password", basePath)
+  private val resetPasswordRoute   = Route(
+    encode = (p: ResetPassword) => p.token,
+    decode = (token: String) => ResetPassword(token),
+    pattern = root / "reset-password" / segment[String],
+    basePath = basePath,
+  )
   private val adminUserDetailRoute = Route(
     encode = (p: AdminUserDetail) => p.id,
     decode = (id: Long) => AdminUserDetail(id),
@@ -165,33 +180,37 @@ object AppRouter {
   // file calls either of them.
   private[frontend] def serialize(page: Page): String = {
     page match {
-      case SignIn              =>
+      case SignIn               =>
         "SignIn"
-      case SignUp              =>
+      case SignUp               =>
         "SignUp"
-      case Home                =>
+      case Home                 =>
         "Home"
-      case Settings            =>
+      case Settings             =>
         "Settings"
-      case VerifyEmail(token)  =>
+      case VerifyEmail(token)   =>
         s"VerifyEmail:$token"
-      case CheckInbox          =>
+      case CheckInbox           =>
         "CheckInbox"
-      case Admin(query)        =>
+      case ForgotPassword       =>
+        "ForgotPassword"
+      case ResetPassword(token) =>
+        s"ResetPassword:$token"
+      case Admin(query)         =>
         "Admin:" + UserQuery.params.createParamsString(query)
-      case AdminUserDetail(id) =>
+      case AdminUserDetail(id)  =>
         s"AdminUserDetail:$id"
-      case Words(query)        =>
+      case Words(query)         =>
         "Words:" + WordQuery.params.createParamsString(query)
-      case WordDetail(id)      =>
+      case WordDetail(id)       =>
         s"WordDetail:$id"
-      case AdminAudit(query)   =>
+      case AdminAudit(query)    =>
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
-      case AdminSystem         =>
+      case AdminSystem          =>
         "AdminSystem"
-      case Forbidden           =>
+      case Forbidden            =>
         "Forbidden"
-      case NotFound            =>
+      case NotFound             =>
         "NotFound"
     }
   }
@@ -205,6 +224,8 @@ object AppRouter {
   private[frontend] def deserialize(tag: String): Page = {
     if (tag.startsWith("VerifyEmail:")) {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
+    } else if (tag.startsWith("ResetPassword:")) {
+      ResetPassword(tag.stripPrefix("ResetPassword:"))
     } else if (tag.startsWith("WordDetail:")) {
       withId(tag, "WordDetail:")(WordDetail.apply)
     } else if (tag.startsWith("Words:")) {
@@ -222,28 +243,30 @@ object AppRouter {
       UserQuery.params.matchQueryString(tag.stripPrefix("Admin:")).map(query => Admin(query)).getOrElse(Admin())
     } else {
       tag match {
-        case "SignIn"      =>
+        case "SignIn"         =>
           SignIn
-        case "SignUp"      =>
+        case "SignUp"         =>
           SignUp
-        case "Home"        =>
+        case "Home"           =>
           Home
-        case "Settings"    =>
+        case "Settings"       =>
           Settings
-        case "CheckInbox"  =>
+        case "CheckInbox"     =>
           CheckInbox
+        case "ForgotPassword" =>
+          ForgotPassword
         // The colon-less forms are what a history entry written by an older build holds.
-        case "Admin"       =>
+        case "Admin"          =>
           Admin()
-        case "Words"       =>
+        case "Words"          =>
           Words()
-        case "AdminAudit"  =>
+        case "AdminAudit"     =>
           AdminAudit()
-        case "AdminSystem" =>
+        case "AdminSystem"    =>
           AdminSystem
-        case "Forbidden"   =>
+        case "Forbidden"      =>
           Forbidden
-        case _             =>
+        case _                =>
           NotFound
       }
     }
@@ -258,6 +281,8 @@ object AppRouter {
         settingsRoute,
         verifyEmailRoute,
         checkInboxRoute,
+        forgotPasswordRoute,
+        resetPasswordRoute,
         // Each listing's query route must precede its bare-path one; see the comment on `adminQueryRoute`.
         wordsQueryRoute,
         wordsRoute,

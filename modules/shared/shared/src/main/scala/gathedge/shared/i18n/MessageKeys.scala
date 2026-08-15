@@ -56,13 +56,15 @@ object MessageKeys {
 
   // -- Authentication --------------------------------------------------------------------------
 
-  val invalidCredentials: String       = key("auth.invalidCredentials")
-  val emailAlreadyRegistered: String   = key("auth.emailAlreadyRegistered")
-  val rateLimited: String              = key("auth.rateLimited")
-  val emailNotVerified: String         = key("auth.emailNotVerified")
-  val verificationTokenInvalid: String = key("auth.verificationTokenInvalid")
-  val verificationSendFailed: String   = key("auth.verificationSendFailed")
-  val lastCredential: String           = key("auth.lastCredential")
+  val invalidCredentials: String        = key("auth.invalidCredentials")
+  val emailAlreadyRegistered: String    = key("auth.emailAlreadyRegistered")
+  val rateLimited: String               = key("auth.rateLimited")
+  val emailNotVerified: String          = key("auth.emailNotVerified")
+  val verificationTokenInvalid: String  = key("auth.verificationTokenInvalid")
+  val verificationSendFailed: String    = key("auth.verificationSendFailed")
+  val lastCredential: String            = key("auth.lastCredential")
+  val passwordResetTokenInvalid: String = key("auth.passwordResetTokenInvalid")
+  val passwordResetSendFailed: String   = key("auth.passwordResetSendFailed")
 
   // -- Social sign-in --------------------------------------------------------------------------
   // `oauthFailed` takes the provider's reason as {0}; `oauthAccountExists` takes its display name.
@@ -117,4 +119,7 @@ object MessageKeys {
 
   val emailVerifySubject: String = key("email.verify.subject")
   val emailVerifyBody: String    = key("email.verify.body")
+
+  val emailResetSubject: String = key("email.reset.subject")
+  val emailResetBody: String    = key("email.reset.body")
 }

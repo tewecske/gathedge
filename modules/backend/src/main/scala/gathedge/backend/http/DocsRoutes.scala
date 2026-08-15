@@ -41,6 +41,8 @@ object DocsRoutes {
       AuthEndpoints.providers,
       AuthEndpoints.verifyEmail,
       AuthEndpoints.resendVerification,
+      AuthEndpoints.forgotPassword,
+      AuthEndpoints.resetPassword,
     ) ++
       // Minting a guest and redeeming a transfer code both hand out a session to somebody who has none.
       AuthEndpoints.publicGuest ++

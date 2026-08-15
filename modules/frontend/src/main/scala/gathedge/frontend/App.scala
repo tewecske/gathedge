@@ -10,8 +10,10 @@ import gathedge.frontend.pages.{
   AdminUsersPage,
   CheckInboxPage,
   ForbiddenPage,
+  ForgotPasswordPage,
   HomePage,
   NotFoundPage,
+  ResetPasswordPage,
   SettingsPage,
   SignInPage,
   SignUpPage,
@@ -229,6 +231,10 @@ object App {
         VerifyEmailPage.render(token)
       case Page.CheckInbox                          =>
         CheckInboxPage.render()
+      case Page.ForgotPassword                      =>
+        ForgotPasswordPage.render()
+      case Page.ResetPassword(token)                =>
+        ResetPasswordPage.render(token)
       // The two listings reach here only when the gate said no: a signed-in administrator gets them from the signal
       // renderers above, which is the only way they keep their state across a query change.
       case Page.Admin(_) | Page.AdminAudit(_)       =>

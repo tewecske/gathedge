@@ -41,6 +41,12 @@ final case class AppSection(
   trustedProxyHops: Int,
   loginAttemptRetentionDays: Int,
   guestRetentionDays: Int,
+  /** How long a "forgot password" link stays redeemable. Config rather than a literal — unlike
+    * `AuthService.verificationValidity` — because a password reset link is a stronger credential than a verification
+    * one (it grants a new password outright rather than merely proving an address), so a deployment may reasonably want
+    * a shorter window than the 24 hours verification links get.
+    */
+  passwordResetTokenValidityHours: Int,
 )
 
 /** `schema` is the Postgres schema this application owns, and it is one setting read by two independent things that

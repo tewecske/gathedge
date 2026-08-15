@@ -30,9 +30,16 @@ private class SignInPage {
   private val errorVar: Var[Option[String]] = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
   private val errorSignal                   = errorVar.signal
 
-  /** Seeded the same way from `?verified=1`, which is where [[VerifyEmailPage]] sends a freshly verified account. */
+  /** Seeded the same way from `?verified=1` (where [[VerifyEmailPage]] sends a freshly verified account) or `?reset=1`
+    * (where [[ResetPasswordPage]] sends one whose password just changed).
+    */
   private val noticeVar: Var[Option[String]] = {
-    Var(OAuthMessages.queryParam("verified").map(_ => I18n.t(UiKeys.signInVerified)))
+    Var(
+      OAuthMessages
+        .queryParam("verified")
+        .map(_ => I18n.t(UiKeys.signInVerified))
+        .orElse(OAuthMessages.queryParam("reset").map(_ => I18n.t(UiKeys.signInPasswordReset)))
+    )
   }
   private val noticeSignal                   = noticeVar.signal
 
@@ -58,8 +65,8 @@ private class SignInPage {
   private val submitStream = submitBus.events.filterWith(inFlightSignal.not)
 
   /** A guest reaching this page (the `RequireAnon` guard exempts it, same as [[SignUpPage]]) already has the only
-    * credential it needs — offering to claim a *different* device's transfer code here is a distraction, not a
-    * recovery path.
+    * credential it needs — offering to claim a *different* device's transfer code here is a distraction, not a recovery
+    * path.
     */
   private val isGuestSignedIn: Boolean = AppState.currentUser.exists(_.isGuest)
 
@@ -90,6 +97,10 @@ private class SignInPage {
               cls         := "input w-full",
               typ         := "password",
               controlled(value <-- passwordSignal, onInput.mapToValue --> passwordVar.writer),
+            ),
+            p(
+              cls         := "label justify-end",
+              a(cls := "link", AppRouter.router.navigateTo(Page.ForgotPassword), I18n.t(UiKeys.signInForgotPassword)),
             ),
           ),
           div(

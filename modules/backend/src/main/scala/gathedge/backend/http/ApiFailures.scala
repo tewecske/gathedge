@@ -48,6 +48,14 @@ object ApiFailures {
     )
   }
 
+  // Same shape as `verificationTokenInvalid`, for the reset-password link.
+  private val passwordResetTokenInvalid: ApiFailure.BadRequest = {
+    ApiFailure.BadRequest(
+      MessageRef(MessageKeys.passwordResetTokenInvalid),
+      "This password reset link is invalid, expired, or already used",
+    )
+  }
+
   private val rateLimited: ApiFailure.TooManyRequests = {
     ApiFailure.TooManyRequests(MessageRef(MessageKeys.rateLimited), "Too many attempts. Try again later.")
   }
@@ -97,6 +105,11 @@ object ApiFailures {
         invalidCredentials
       case AuthFailure.InvalidVerificationToken     =>
         verificationTokenInvalid
+      case AuthFailure.InvalidPasswordResetToken    =>
+        // Unreachable through this mapping, for the same reason `EmailNotVerified` is above: only
+        // `resetPassword` can raise it, and it uses `resetPassword` below instead. Mapped anyway to
+        // keep the match total.
+        passwordResetTokenInvalid
     }
   }
 
@@ -146,6 +159,36 @@ object ApiFailures {
           MessageRef(MessageKeys.verificationSendFailed),
           "Could not send a verification link",
         )
+    }
+  }
+
+  /** Asking for a password-reset link. Succeeds for an unknown address too, so the rate limiter's 429 is the only
+    * failure a caller can actually see; see [[resendVerification]], which this mirrors.
+    */
+  def forgotPassword(failure: AuthFailure): ApiFailure.BadRequest | ApiFailure.TooManyRequests = {
+    failure match {
+      case AuthFailure.RateLimited                  =>
+        rateLimited
+      case AuthFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case _                                        =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.passwordResetSendFailed),
+          "Could not send a password reset link",
+        )
+    }
+  }
+
+  /** Redeeming a password-reset link: either the token is invalid, or the new password fails validation. Mirrors
+    * [[verifyEmail]] — a catch-all mapped to the token failure keeps the match total without a status this endpoint
+    * does not describe.
+    */
+  def resetPassword(failure: AuthFailure): ApiFailure.BadRequest = {
+    failure match {
+      case AuthFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case _                                        =>
+        passwordResetTokenInvalid
     }
   }
 

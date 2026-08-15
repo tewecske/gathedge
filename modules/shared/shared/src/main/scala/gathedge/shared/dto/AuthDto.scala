@@ -32,6 +32,17 @@ final case class VerifyEmailRequest(token: String) derives JsonCodec
   */
 final case class ResendVerificationRequest(email: String) derives JsonCodec
 
+/** Asks for a password-reset link. Answers the same for an unknown address and a known one alike, per
+  * [[gathedge.shared.api.AuthEndpoints.forgotPassword]].
+  */
+final case class ForgotPasswordRequest(email: String) derives JsonCodec
+
+/** The token out of a password-reset link, plus the password it should set. Carries the token rather than reading a
+  * session, because the whole point is that the caller has no session yet — possibly no memory of the old password
+  * either.
+  */
+final case class ResetPasswordRequest(token: String, newPassword: String) derives JsonCodec
+
 /** One social account linked to the signed-in user. `email` is whatever the provider reported when the link was made,
   * shown so the user can tell two accounts at the same provider apart; it is never what a sign-in matches on.
   */

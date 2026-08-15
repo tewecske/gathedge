@@ -35,7 +35,11 @@ object AppRouterSpec extends ZIOSpecDefault {
         assertTrue(
           AppRouter.router.relativeUrlForPage(Page.AdminUserDetail(3)) == s"$prefix/admin/users/3",
           AppRouter.router.relativeUrlForPage(Page.VerifyEmail("tok")) == s"$prefix/verify-email/tok",
+          AppRouter.router.relativeUrlForPage(Page.ResetPassword("tok")) == s"$prefix/reset-password/tok",
         )
+      },
+      test("the forgot-password route builds under the language prefix too") {
+        assertTrue(AppRouter.router.relativeUrlForPage(Page.ForgotPassword) == s"$prefix/forgot-password")
       },
       // The home route is the one whose un-prefixed form is bare `/`, so it is the one where a
       // missing prefix would be least obvious.

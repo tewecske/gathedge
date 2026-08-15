@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   LoginAttemptRepository,
   MetricsRepository,
   OAuthIdentityRepository,
+  PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
   WordRepository,
@@ -39,10 +40,12 @@ import gathedge.shared.dto.{
   CreateUserRequest,
   CreateWordRequest,
   ErrorResponse,
+  ForgotPasswordRequest,
   NewTranslation,
   LoginRequest,
   Paging,
   ResendVerificationRequest,
+  ResetPasswordRequest,
   SignupRequest,
   SignupResponse,
   SystemOverview,
@@ -75,8 +78,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   private val repos = {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++
-        AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
+        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
     )
   }
 
@@ -220,6 +223,45 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.BadRequest,
             raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("verification link")),
+          )
+        },
+        // Same non-committal shape as the verification resend: a known address and an unknown one both answer an
+        // empty 204, with no session and no CSRF-exempt special casing.
+        test("asking for a password reset is an empty 204 for any address, with no session") {
+          for {
+            _        <- signUp("has-account@example.com")
+            request   = withCsrf(
+                          Request.post(
+                            "/api/auth/password/forgot",
+                            Body.fromString(ForgotPasswordRequest("has-account@example.com").toJson),
+                          )
+                        )
+            response <- runRoutes(AuthRoutes.routes, request)
+            raw      <- body(response)
+            unknown  <- runRoutes(
+                          AuthRoutes.routes,
+                          withCsrf(
+                            Request.post(
+                              "/api/auth/password/forgot",
+                              Body.fromString(ForgotPasswordRequest("nobody-here@example.com").toJson),
+                            )
+                          ),
+                        )
+          } yield assertTrue(response.status == Status.NoContent, raw.isEmpty, unknown.status == Status.NoContent)
+        },
+        test("an unknown password reset token is a 400 in the usual ErrorResponse shape") {
+          val request = withCsrf(
+            Request.post(
+              "/api/auth/password/reset",
+              Body.fromString(ResetPasswordRequest("nope", "somenewpass1").toJson),
+            )
+          )
+          for {
+            response <- runRoutes(AuthRoutes.routes, request)
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.BadRequest,
+            raw.fromJson[ErrorResponse].map(_.message).exists(_.contains("password reset link")),
           )
         },
       ),

@@ -1,15 +1,21 @@
 package gathedge.backend.service
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{EmailVerificationTokenRepository, LoginAttemptRepository, SessionRepository, UserRepository}
+import gathedge.backend.db.{
+  EmailVerificationTokenRepository,
+  LoginAttemptRepository,
+  PasswordResetTokenRepository,
+  SessionRepository,
+  UserRepository,
+}
 import zio.*
 
 import java.util.concurrent.TimeUnit
 
-/** Deletes the three kinds of row that outlive their own usefulness: sessions, which are only ever marked expired or
-  * revoked rather than removed; spent or expired email verification tokens; and sign-in attempts older than
-  * `app.login-attempt-retention-days`. Without this all three tables grow for the lifetime of the deployment. Fork as a
-  * daemon fiber once at startup, next to [[RateLimiter.runPruner]].
+/** Deletes the kinds of row that outlive their own usefulness: sessions, which are only ever marked expired or revoked
+  * rather than removed; spent or expired email verification tokens; spent or expired password-reset tokens; and sign-in
+  * attempts older than `app.login-attempt-retention-days`. Without this every one of those tables grows for the
+  * lifetime of the deployment. Fork as a daemon fiber once at startup, next to [[RateLimiter.runPruner]].
   *
   * '''`login_attempts` is the one an outsider controls.''' A row is written at every exit from `AuthService.login`,
   * including the one the rate limiter takes before a password is ever checked, so anyone who can reach the sign-in
@@ -35,10 +41,16 @@ object SessionReaper {
     */
   private val guestSweepLimit = 500
 
-  /** What one pass removed. Named rather than a bare tuple, because four `Long`s in a row is exactly the shape that
+  /** What one pass removed. Named rather than a bare tuple, because several `Long`s in a row is exactly the shape that
     * gets silently reordered.
     */
-  final case class Swept(sessions: Long, verificationTokens: Long, loginAttempts: Long, guests: Long)
+  final case class Swept(
+    sessions: Long,
+    verificationTokens: Long,
+    passwordResetTokens: Long,
+    loginAttempts: Long,
+    guests: Long,
+  )
 
   /** One pass. Returns what it removed, so both the hourly loop and the on-demand button can report it.
     *
@@ -47,25 +59,27 @@ object SessionReaper {
     * down. What this clears is the account a visitor minted and then walked away from before tagging anything.
     */
   def sweep: RIO[
-    SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & UserRepository & AppConfig,
+    SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
+      UserRepository & AppConfig,
     Swept,
   ] = {
     for {
-      config     <- ZIO.service[AppConfig]
-      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      sessions   <- SessionRepository.deleteExpired(now)
-      tokens     <- EmailVerificationTokenRepository.deleteExpired(now)
-      cutoff      = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      attempts   <- LoginAttemptRepository.deleteOlderThan(cutoff)
-      guestCutoff = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      abandoned  <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
-      guests     <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
-    } yield Swept(sessions, tokens, attempts, guests)
+      config      <- ZIO.service[AppConfig]
+      now         <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      sessions    <- SessionRepository.deleteExpired(now)
+      tokens      <- EmailVerificationTokenRepository.deleteExpired(now)
+      resetTokens <- PasswordResetTokenRepository.deleteExpired(now)
+      cutoff       = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      attempts    <- LoginAttemptRepository.deleteOlderThan(cutoff)
+      guestCutoff  = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      abandoned   <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
+      guests      <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
+    } yield Swept(sessions, tokens, resetTokens, attempts, guests)
   }
 
   def run: URIO[
-    SessionRepository & EmailVerificationTokenRepository & LoginAttemptRepository & UserRepository & AppConfig &
-      BackgroundJobs,
+    SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
+      UserRepository & AppConfig & BackgroundJobs,
     Nothing,
   ] = {
     val once = {
@@ -75,6 +89,9 @@ object SessionReaper {
         _     <- ZIO.when(swept.verificationTokens > 0)(
                    ZIO.logInfo(s"Purged ${swept.verificationTokens} expired verification token(s)")
                  )
+        _     <- ZIO.when(swept.passwordResetTokens > 0)(
+                   ZIO.logInfo(s"Purged ${swept.passwordResetTokens} expired password reset token(s)")
+                 )
         _     <- ZIO.when(swept.loginAttempts > 0)(
                    ZIO.logInfo(s"Purged ${swept.loginAttempts} expired sign-in attempt record(s)")
                  )
@@ -82,6 +99,7 @@ object SessionReaper {
         _     <- BackgroundJobs.recordSuccess(
                    jobName,
                    s"removed ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
+                     s"${swept.passwordResetTokens} password reset token(s), " +
                      s"${swept.loginAttempts} sign-in attempt record(s) and ${swept.guests} abandoned guest(s)",
                  )
       } yield ()

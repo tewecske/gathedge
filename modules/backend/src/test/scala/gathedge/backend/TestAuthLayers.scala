@@ -16,7 +16,16 @@ trait SentEmails {
 
   /** The token out of the most recent `…/verify-email/<token>` link, if there is one. */
   def lastVerificationToken: UIO[Option[String]] = {
-    all.map(_.reverseIterator.flatMap(email => SentEmails.tokenIn(email.body)).nextOption())
+    all.map(
+      _.reverseIterator.flatMap(email => SentEmails.tokenIn(email.body, SentEmails.verifyLinkPattern)).nextOption()
+    )
+  }
+
+  /** The token out of the most recent `…/reset-password/<token>` link, if there is one. */
+  def lastPasswordResetToken: UIO[Option[String]] = {
+    all.map(
+      _.reverseIterator.flatMap(email => SentEmails.tokenIn(email.body, SentEmails.resetLinkPattern)).nextOption()
+    )
   }
 }
 
@@ -27,10 +36,14 @@ object SentEmails {
   def lastVerificationToken: URIO[SentEmails, Option[String]] =
     ZIO.serviceWithZIO[SentEmails](_.lastVerificationToken)
 
-  private val linkPattern = """/verify-email/([A-Za-z0-9_-]+)""".r
+  def lastPasswordResetToken: URIO[SentEmails, Option[String]] =
+    ZIO.serviceWithZIO[SentEmails](_.lastPasswordResetToken)
 
-  private def tokenIn(body: String): Option[String] = {
-    linkPattern.findFirstMatchIn(body).flatMap(m => Option(m.group(1)))
+  private val verifyLinkPattern = """/verify-email/([A-Za-z0-9_-]+)""".r
+  private val resetLinkPattern  = """/reset-password/([A-Za-z0-9_-]+)""".r
+
+  private def tokenIn(body: String, pattern: scala.util.matching.Regex): Option[String] = {
+    pattern.findFirstMatchIn(body).flatMap(m => Option(m.group(1)))
   }
 }
 

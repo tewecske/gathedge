@@ -18,6 +18,7 @@ import gathedge.shared.dto.{
   CreateUserRequest,
   CreateWordRequest,
   DbStats,
+  ForgotPasswordRequest,
   IdentitiesResponse,
   JobStatus,
   LinkedIdentity,
@@ -30,6 +31,7 @@ import gathedge.shared.dto.{
   PruneResult,
   RateLimitEntry,
   ResendVerificationRequest,
+  ResetPasswordRequest,
   RuntimeInfo,
   SetPasswordRequest,
   SignupRequest,
@@ -80,6 +82,8 @@ object ApiSchemas {
   given Schema[SignupRequest]             = DeriveSchema.gen[SignupRequest]
   given Schema[VerifyEmailRequest]        = DeriveSchema.gen[VerifyEmailRequest]
   given Schema[ResendVerificationRequest] = DeriveSchema.gen[ResendVerificationRequest]
+  given Schema[ForgotPasswordRequest]     = DeriveSchema.gen[ForgotPasswordRequest]
+  given Schema[ResetPasswordRequest]      = DeriveSchema.gen[ResetPasswordRequest]
   given Schema[LoginRequest]              = DeriveSchema.gen[LoginRequest]
   given Schema[UpdateThemeRequest]        = DeriveSchema.gen[UpdateThemeRequest]
   given Schema[UpdateLocaleRequest]       = DeriveSchema.gen[UpdateLocaleRequest]

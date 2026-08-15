@@ -9,6 +9,8 @@ import gathedge.backend.db.{
   LoginAttemptRow,
   OAuthIdentityRepository,
   OAuthIdentityRow,
+  PasswordResetTokenRepository,
+  PasswordResetTokenRow,
   SessionRepository,
   SessionRow,
   UserRepository,
@@ -55,6 +57,11 @@ enum AuthFailure {
     * the token space cannot be probed for near-misses.
     */
   case InvalidVerificationToken
+
+  /** No such password-reset token, or one already redeemed or past its expiry — one case for all three, for the same
+    * reason as [[InvalidVerificationToken]].
+    */
+  case InvalidPasswordResetToken
 }
 
 /** The guest paths' failures, in three enums rather than one.
@@ -131,6 +138,24 @@ trait AuthService {
     * the administrator's button lie about what it did.
     */
   def issueVerificationFor(userId: Long, email: String, locale: Locale): UIO[Unit]
+
+  /** Emails a password-reset link, if `email` belongs to an account.
+    *
+    * Succeeds for an unknown address too — reporting either would turn this into an account-enumeration oracle, the
+    * same non-committal shape as [[resendVerification]]. The one failure is [[AuthFailure.RateLimited]], under its own
+    * `RateLimitKey` namespace: sharing one with signup or login would let an attacker spend somebody else's budget
+    * merely by knowing their address, which is exactly the incident `RateLimitKey.signup` exists to prevent recurring.
+    */
+  def forgotPassword(email: String, clientIp: Option[String] = None): IO[AuthFailure, Unit]
+
+  /** Redeems a password-reset link: sets `newPassword` and marks the token spent.
+    *
+    * Every session the account holds is revoked, the same rule [[setPassword]]'s callers in `AdminService` already
+    * follow when a password changes — a session obtained with the old password must not outlive the credential it was
+    * obtained with, and a "forgot password" link exists precisely because that credential may no longer be the account
+    * owner's alone.
+    */
+  def resetPassword(token: String, newPassword: String): IO[AuthFailure, Unit]
 
   /** Signs in — or registers — the person behind a verified provider identity.
     *
@@ -222,6 +247,12 @@ object AuthService {
   def issueVerificationFor(userId: Long, email: String, locale: Locale): URIO[AuthService, Unit] =
     ZIO.serviceWithZIO[AuthService](_.issueVerificationFor(userId, email, locale))
 
+  def forgotPassword(email: String, clientIp: Option[String] = None): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.forgotPassword(email, clientIp))
+
+  def resetPassword(token: String, newPassword: String): ZIO[AuthService, AuthFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.resetPassword(token, newPassword))
+
   def loginWithOAuth(
     identity: OAuthIdentity,
     locale: Locale = Locale.default,
@@ -292,8 +323,8 @@ object AuthService {
 
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      LoginAttemptRepository & GuestClaimCodeRepository & PasswordHasher & RateLimiter & EmailSender & Messages &
-      AppConfig,
+      PasswordResetTokenRepository & LoginAttemptRepository & GuestClaimCodeRepository & PasswordHasher & RateLimiter &
+      EmailSender & Messages & AppConfig,
     AuthService,
   ] = ZLayer {
     for {
@@ -301,6 +332,7 @@ object AuthService {
       sessionRepo         <- ZIO.service[SessionRepository]
       identityRepo        <- ZIO.service[OAuthIdentityRepository]
       tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
+      resetTokenRepo      <- ZIO.service[PasswordResetTokenRepository]
       attemptRepo         <- ZIO.service[LoginAttemptRepository]
       claimCodeRepo       <- ZIO.service[GuestClaimCodeRepository]
       hasher              <- ZIO.service[PasswordHasher]
@@ -314,6 +346,7 @@ object AuthService {
       sessionRepo,
       identityRepo,
       tokenRepo,
+      resetTokenRepo,
       attemptRepo,
       claimCodeRepo,
       hasher,
@@ -331,6 +364,7 @@ final case class AuthServiceLive(
   sessionRepo: SessionRepository,
   identityRepo: OAuthIdentityRepository,
   tokenRepo: EmailVerificationTokenRepository,
+  resetTokenRepo: PasswordResetTokenRepository,
   attemptRepo: LoginAttemptRepository,
   claimCodeRepo: GuestClaimCodeRepository,
   hasher: PasswordHasher,
@@ -427,6 +461,12 @@ final case class AuthServiceLive(
     */
   private def signupRateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
     RateLimitKey.signup(normalizedEmail) :: clientIp.map(RateLimitKey.signup).toList
+  }
+
+  /** [[forgotPassword]]'s own budget — see `RateLimitKey.passwordReset` for why it cannot share `email:` or `verify:`.
+    */
+  private def passwordResetRateLimitKeys(normalizedEmail: String, clientIp: Option[String]): List[String] = {
+    RateLimitKey.passwordReset(normalizedEmail) :: clientIp.map(RateLimitKey.passwordReset).toList
   }
 
   private def anyKeyBlocked(keys: List[String]): UIO[Boolean] = {
@@ -612,6 +652,74 @@ final case class AuthServiceLive(
                     // column is an `Option` only because a guest account has none.
                     issueVerification(row.id, normalizedEmail, localeOf(row))
                   }
+    } yield ()
+  }
+
+  private def issuePasswordReset(userId: Long, email: String, locale: Locale): UIO[Unit] = {
+    val catalog = messages.catalog(locale)
+    for {
+      token <- Tokens.urlSafe()
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _     <- resetTokenRepo.deleteForUser(userId).orDie
+      _     <-
+        resetTokenRepo
+          .insert(
+            PasswordResetTokenRow(
+              0L,
+              userId,
+              token,
+              now,
+              now + config.app.passwordResetTokenValidityHours.hours.toMillis,
+              None,
+            )
+          )
+          .orDie
+      // Same reasoning as `issueVerification`'s link: the locale prefix carries the language into the
+      // page the link lands on, since a full page load has no other way to learn it.
+      link   = s"${config.app.publicBaseUrl}${locale.urlPrefix}/reset-password/$token"
+      _     <- emailSender
+                 .send(
+                   email,
+                   catalog(MessageKeys.emailResetSubject),
+                   catalog(MessageKeys.emailResetBody, link, config.app.passwordResetTokenValidityHours.toString),
+                 )
+                 .catchAllCause(cause => ZIO.logErrorCause(s"Could not send password reset email to '$email'", cause))
+    } yield ()
+  }
+
+  def forgotPassword(email: String, clientIp: Option[String]): IO[AuthFailure, Unit] = {
+    val normalizedEmail = email.trim.toLowerCase
+    val keys            = passwordResetRateLimitKeys(normalizedEmail, clientIp)
+    for {
+      blocked  <- anyKeyBlocked(keys)
+      _        <- ZIO.when(blocked)(logRateLimited(normalizedEmail) *> ZIO.fail(AuthFailure.RateLimited))
+      // Every request counts, not just the ones that find an account — same reasoning as `resendVerification`.
+      _        <- recordFailure(keys)
+      maybeRow <- userRepo.findByEmail(normalizedEmail).orDie
+      // Silence for an unknown address: the caller gets the same 204 either way, so this endpoint
+      // says nothing about which addresses have accounts. `findByEmail` never returns a guest (its
+      // address is NULL), so there is nothing further to exclude here.
+      _        <- ZIO.foreachDiscard(maybeRow)(row => issuePasswordReset(row.id, normalizedEmail, localeOf(row)))
+    } yield ()
+  }
+
+  def resetPassword(token: String, newPassword: String): IO[AuthFailure, Unit] = {
+    for {
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row  <- resetTokenRepo.findByToken(token).orDie.someOrFail(AuthFailure.InvalidPasswordResetToken)
+      _    <- ZIO.when(row.consumedAt.isDefined || row.expiresAt <= now)(
+                ZIO.fail(AuthFailure.InvalidPasswordResetToken)
+              )
+      _    <- ZIO
+                .fromEither(Validation.validatePassword(newPassword))
+                .mapError(message => AuthFailure.ValidationError(Map("newPassword" -> message)))
+      hash <- hasher.hash(newPassword).orDie
+      _    <- resetTokenRepo.markConsumed(token, now).orDie
+      _    <- userRepo.updatePasswordHash(row.userId, hash).orDie
+      // A stolen or shared session must not survive the reset it was the reason for — the same rule
+      // `AdminService.updateUser` follows when an administrator changes somebody's password.
+      _    <- sessionRepo.revokeAllForUser(row.userId, now).orDie
+      _    <- SecurityLog.info(s"Password reset via emailed link for user ${row.userId}")
     } yield ()
   }
 
