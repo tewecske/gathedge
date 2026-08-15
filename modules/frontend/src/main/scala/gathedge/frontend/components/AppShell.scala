@@ -44,6 +44,13 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private val codeBus = new EventBus[Unit]()
   private val codeVar = Var(Option.empty[String])
 
+  /** Open state of the guest "sign in to a different account" confirm dialog. A plain `Var` rather than the native
+    * `<dialog>`/popover forms of a daisyUI modal — those close over imperative `showModal()`/`.close()` calls or a
+    * `popovertarget` id, neither of which fits a reactively-rendered element as well as toggling a class off a
+    * signal, and `HTMLDialogElement.showModal` is unimplemented in jsdom, which the frontend specs run under.
+    */
+  private val confirmSignInOpenVar = Var(false)
+
   private val currentUserSignal = AppState.currentUserSignal
   private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
   private val themeSignal       = AppState.themeSignal
@@ -82,6 +89,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       cls := "min-h-screen flex flex-col bg-base-200",
       renderNavbar(),
       child.maybe <-- codeVar.signal.map(_.map(renderCodePanel)),
+      renderSignInConfirmModal(),
       renderContent(),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
@@ -173,10 +181,10 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; Home is too, now,
-    * for the same reason [[navHome]] is not gated on it either — a visitor who lands on the sign-in page still needs a
-    * way back to it, even though `Home` itself is `RequireAuth` and bounces a signed-out click straight back here. The
-    * admin link is left to the signal below, which is already `false` for a visitor with no account.
+  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; Home is too, and is
+    * `Public` in [[AppRouter.Page.guardFor]] for the same reason — a visitor who lands on the sign-in page still needs
+    * a way back to it, without being bounced right back here. The admin link is left to the signal below, which is
+    * already `false` for a visitor with no account.
     */
   private def navLinks(): List[HtmlElement] = {
     List(
@@ -415,15 +423,14 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             li(
               // Not `navigateTo`: signing into a different, already-existing account abandons this guest's tagged
               // words (a sign-in swaps the session, it does not merge one account into another), so the navigation
-              // itself is gated on a confirmation rather than being unconditional like every other item here.
+              // itself is gated on a confirmation (`renderSignInConfirmModal`) rather than being unconditional like
+              // every other item here.
               button(
                 typ := "button",
                 I18n.t(UiKeys.commonSignIn),
                 onClick.mapToUnit --> Observer[Unit] { _ =>
                   Popover.hide(menuId)
-                  if (dom.window.confirm(I18n.t(UiKeys.guestSignInWarning))) {
-                    AppRouter.router.pushState(Page.SignIn)
-                  }
+                  confirmSignInOpenVar.set(true)
                 },
               )
             ),
@@ -451,6 +458,41 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
           )
       },
+    )
+  }
+
+  /** Confirms the guest "Sign in" item before it navigates away — see [[confirmSignInOpenVar]]. `Yes`/`No` reuse
+    * [[UiKeys.commonYes]]/[[UiKeys.commonNo]] rather than minting dialog-specific labels, matching the plain
+    * question-worded body text.
+    */
+  private def renderSignInConfirmModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- confirmSignInOpenVar.signal,
+      div(
+        cls := "modal-box",
+        p(I18n.t(UiKeys.guestSignInWarning)),
+        div(
+          cls := "modal-action",
+          button(
+            cls := "btn",
+            typ := "button",
+            I18n.t(UiKeys.commonNo),
+            onClick.mapToUnit --> Observer[Unit](_ => confirmSignInOpenVar.set(false)),
+          ),
+          button(
+            cls := "btn btn-primary",
+            typ := "button",
+            I18n.t(UiKeys.commonYes),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              confirmSignInOpenVar.set(false)
+              AppRouter.router.pushState(Page.SignIn)
+            },
+          ),
+        ),
+      ),
+      // Closes on an outside click, same as the daisyUI docs' `modal-backdrop` recipe.
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => confirmSignInOpenVar.set(false))),
     )
   }
 

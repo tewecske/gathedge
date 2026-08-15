@@ -67,6 +67,10 @@ object Page {
       // The whole point of the vocabulary is that it is usable before signing up for anything.
       case Words(_) | WordDetail(_)                           =>
         AuthGuard.Public
+      // Home is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
+      // sign-in.
+      case Home                                                =>
+        AuthGuard.Public
       case _                                                  =>
         AuthGuard.RequireAuth
     }
