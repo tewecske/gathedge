@@ -152,7 +152,7 @@ private class WordDetailPage(id: Long) {
               val newTag = tagsVar.now().find(_.id == tagId)
               newTag match {
                 case Some(tag) =>
-                  Some(detail.copy(tags = (detail.tags :+ tag).distinct))
+                  Some(detail.copy(tags = WordCollect.withTag(detail.tags, tag)))
                 case None      =>
                   Some(detail) // Tag not in the list yet; tagsBus will refresh it.
               }
@@ -177,7 +177,7 @@ private class WordDetailPage(id: Long) {
               Some(
                 detail.copy(
                   tags = newTag match {
-                    case Some(tag) => (detail.tags :+ tag).distinct
+                    case Some(tag) => WordCollect.withTag(detail.tags, tag)
                     case None      => detail.tags // Will be added by tagsBus.
                   },
                   pairs = (detail.pairs :+ TaggedPair(tagId, translationWordId)).distinct,

@@ -1,6 +1,6 @@
 package gathedge.frontend.components
 
-import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{TaggedPair, TranslationOption, WordSummary}
 import zio.test._
 
@@ -78,6 +78,23 @@ object WordCollectSpec extends ZIOSpecDefault {
         assertTrue(
           updated.tagIds == List(11L),
           updated.pairs == List(TaggedPair(11L, 3L)),
+        )
+      },
+      // WordDetailPage.applyChange keeps its tag list as `List[Tag]`, not `List[Long]`, because the tag bar shows a
+      // name. `Tag` carries `wordCount`, which the tag-list refresh after every chip click can change — marking a
+      // second translation as an answer for the same word genuinely adds a word to the tag. A second, third, fourth
+      // chip click for the same word and the same collect tag must still show that one tag once, not once per click.
+      test("re-marking translations under the same tag replaces the stale copy instead of piling one up per click") {
+        val tag         = Tag(10L, "saved", wordCount = 3)
+        val afterClick1 = WordCollect.withTag(Nil, tag)
+        val refreshed   = tag.copy(wordCount = 4) // the tag-list refresh that lands between two clicks
+        val afterClick2 = WordCollect.withTag(afterClick1, refreshed)
+        val afterClick3 = WordCollect.withTag(afterClick2, refreshed.copy(wordCount = 5))
+        assertTrue(
+          afterClick1 == List(tag),
+          afterClick2 == List(refreshed),
+          afterClick3.map(_.id) == List(10L),
+          afterClick3.size == 1,
         )
       },
     )

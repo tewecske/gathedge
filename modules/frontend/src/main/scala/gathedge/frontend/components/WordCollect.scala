@@ -93,6 +93,15 @@ object WordCollect {
         tagIds.nonEmpty
     }
   }
+
+  /** Folds a tag the reader just gained into a list they already had, replacing any existing entry for the same id
+    * rather than appending beside it.
+    *
+    * Not `tags :+ tag` followed by `.distinct`: [[Tag]] carries `wordCount`, which the next tag-list refresh can change,
+    * so a stale and a fresh copy of the same tag compare unequal and a plain `distinct` leaves both in — the same tag
+    * name rendered twice for every write that lands between two refreshes.
+    */
+  def withTag(tags: List[Tag], tag: Tag): List[Tag] = tags.filterNot(_.id == tag.id) :+ tag
 }
 
 /** @param onError
