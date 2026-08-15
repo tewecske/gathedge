@@ -101,6 +101,33 @@ in
       '';
     };
 
+    captcha = {
+      siteKey = mkOption {
+        type = types.str;
+        default = "";
+        example = "0x4AAAAAAARU4P2weUyGOcKw";
+        description = ''
+          Cloudflare Turnstile site key, the public half of the pair. The browser renders the
+          widget with it, so it is not a secret and may live in the Nix store. Leave empty to
+          switch captcha off everywhere (the guarded endpoints then skip verification, which is
+          how the module boots with no Turnstile account at all).
+
+          The matching secret must go in `environmentFile` as CAPTCHA_SECRET — never here. The
+          app only turns captcha on when both halves are set.
+        '';
+      };
+
+      loginThreshold = mkOption {
+        type = types.ints.unsigned;
+        default = 2;
+        description = ''
+          How many failed sign-in attempts one client address may make before the sign-in form
+          demands a captcha. Sits below the rate limiter's hard lockout, so a human gets a
+          challenge before a bot is hard-blocked.
+        '';
+      };
+    };
+
     environmentFile = mkOption {
       type = types.path;
       example = "/var/lib/secrets/gathedge.env";
@@ -108,7 +135,8 @@ in
         systemd EnvironmentFile holding the secrets, kept out of the Nix store (the store
         is world-readable). Must define DB_PASSWORD; should define BOOTSTRAP_ADMIN_EMAIL
         and BOOTSTRAP_ADMIN_PASSWORD; may define GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-        and GOOGLE_REDIRECT_URI.
+        and GOOGLE_REDIRECT_URI; may define CAPTCHA_SECRET (Cloudflare Turnstile — the
+        server-only half whose public partner is services.gathedge.captcha.siteKey).
 
         Mode 0400, owned by root. DB_PASSWORD is also read by the gathedge-db-password
         unit, which sets the Postgres role's password to match.
@@ -206,6 +234,8 @@ in
         # Without this the backend takes application.conf's default of 0 — the socket peer,
         # which behind the nginx below is always 127.0.0.1 for every client at once.
         TRUSTED_PROXY_HOPS = toString cfg.trustedProxyHops;
+        CAPTCHA_SITE_KEY = cfg.captcha.siteKey;
+        CAPTCHA_LOGIN_THRESHOLD = toString cfg.captcha.loginThreshold;
         NETTY_MAX_THREADS = "0";
         JAVA_OPTS = "-XX:MaxRAMPercentage=75";
       };
