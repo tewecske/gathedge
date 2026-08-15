@@ -167,12 +167,18 @@ trait AuthService {
   /** Mints an account with no address and no password, and a session to go with it.
     *
     * Called on a visitor's first *write*, never on a page view: a session per visit would be a row per crawler. The
-    * session lasts a year (`SessionAuth.guestSessionDuration`) because a guest has no other way back in.
+    * session lasts a year (`SessionAuth.guestSessionDuration`) because a guest has no other way back in. `theme` seeds
+    * the new row with whatever the browser already has showing, so minting a guest never overwrites a preference the
+    * visitor picked before signing in to anything.
     */
-  def createGuest(clientIp: Option[String], locale: Locale = Locale.default): IO[GuestMintFailure, (User, String)]
+  def createGuest(
+    clientIp: Option[String],
+    locale: Locale = Locale.default,
+    theme: Theme = Theme.Light,
+  ): IO[GuestMintFailure, (User, String)]
 
-  /** A fresh transfer code for a guest account, answered once and never again. Existing codes stay usable — a reader
-    * may want the same vocabulary on a phone and a laptop.
+  /** The guest account's transfer code: the same one on every call once it exists, minted on the first. Existing codes
+    * stay usable — a reader may want the same vocabulary on a phone and a laptop.
     *
     * Typed on the single case rather than on [[GuestAccountFailure]], because refusing a real account is the only way
     * this can fail and the endpoint declares exactly that one status.
@@ -256,8 +262,9 @@ object AuthService {
   def createGuest(
     clientIp: Option[String],
     locale: Locale = Locale.default,
+    theme: Theme = Theme.Light,
   ): ZIO[AuthService, GuestMintFailure, (User, String)] =
-    ZIO.serviceWithZIO[AuthService](_.createGuest(clientIp, locale))
+    ZIO.serviceWithZIO[AuthService](_.createGuest(clientIp, locale, theme))
 
   def issueClaimCode(userId: Long): ZIO[AuthService, GuestCodeFailure, String] =
     ZIO.serviceWithZIO[AuthService](_.issueClaimCode(userId))
@@ -819,7 +826,7 @@ final case class AuthServiceLive(
     userRepo.findById(userId).orDie.someOrFail(()).filterOrFail(_.isGuest)(())
   }
 
-  def createGuest(clientIp: Option[String], locale: Locale): IO[GuestMintFailure, (User, String)] = {
+  def createGuest(clientIp: Option[String], locale: Locale, theme: Theme): IO[GuestMintFailure, (User, String)] = {
     // Keyed on the address alone, because a guest has nothing else to key on — and every call counts, since a success
     // is exactly what this budget exists to cap.
     val keys = clientIp.map(RateLimitKey.guest).toList
@@ -831,7 +838,7 @@ final case class AuthServiceLive(
                    }
       _         <- recordFailure(keys)
       now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row       <- userRepo.insertGuest("light", locale.code, now).orDie
+      row       <- userRepo.insertGuest(theme.toString.toLowerCase, locale.code, now).orDie
       sessionId <- createSession(row.id, SessionAuth.guestSessionDuration)
       _         <- SecurityLog.info(s"Minted guest account ${row.id}")
     } yield (toDomain(row), sessionId)
@@ -839,12 +846,20 @@ final case class AuthServiceLive(
 
   def issueClaimCode(userId: Long): IO[GuestCodeFailure, String] = {
     for {
-      _    <- requireGuest(userId).mapError(_ => GuestCodeFailure.NotGuest)
-      code <- Tokens.claimCode()
-      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _    <- claimCodeRepo.insert(userId, code, now).orDie
-      // The code itself never appears in a log line: it is the credential, like a session id.
-      _    <- SecurityLog.info(s"Issued a transfer code for guest account $userId")
+      _        <- requireGuest(userId).mapError(_ => GuestCodeFailure.NotGuest)
+      existing <- claimCodeRepo.findActiveForUser(userId).orDie
+      code     <- existing match {
+                    case Some(row) =>
+                      ZIO.succeed(row.code)
+                    case None      =>
+                      for {
+                        code <- Tokens.claimCode()
+                        now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                        _    <- claimCodeRepo.insert(userId, code, now).orDie
+                        // The code itself never appears in a log line: it is the credential, like a session id.
+                        _    <- SecurityLog.info(s"Issued a transfer code for guest account $userId")
+                      } yield code
+                  }
     } yield code
   }
 

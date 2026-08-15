@@ -353,7 +353,7 @@
   "ui.guest.bannerHint": "Kérj átviteli kódot, hogy máshol is használhasd őket, vagy hozz létre fiókot.",
   "ui.guest.getCode": "Átviteli kód kérése",
   "ui.guest.upgrade": "Fiók létrehozása",
-  "ui.guest.codeOnce": "Írd le: csak egyszer jelenik meg.",
+  "ui.guest.codeOnce": "Őrizd meg ezt a kódot: ezzel jelentkezhetsz be a fiókodba egy másik eszközön.",
   "ui.guest.codeCopy": "Másolás",
   "ui.guest.codeCopied": "Másolva",
   "ui.guest.codeClose": "Elrejtés",

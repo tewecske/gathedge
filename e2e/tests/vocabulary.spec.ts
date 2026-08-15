@@ -41,7 +41,10 @@ test('a visitor with no account can search the dictionary', async () => {
   await expect(page.locator('tr', { hasText: 'das Haus' })).toContainText('ház');
 });
 
-test('the tag controls are absent until there is somebody to own a tag', async () => {
+test('the collect bar is there for a visitor with no account yet, but the tag filter is not', async () => {
+  // Where a tick files, and the way to make a tag: shown to everybody, so a first-time visitor can see and use it
+  // before their first tick mints an account. The tag *filter* and the guest banner still belong to an account.
+  await expect(page.locator('input[placeholder="lesson1"]')).toBeVisible();
   await expect(page.getByText('Only my words')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Your words are saved on this device' })).toHaveCount(0);
 });

@@ -92,7 +92,7 @@ private class WordDetailPage(id: Long) {
       child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.wordDetailNotFound)))),
       // Above the word for the reason it sits above the table on the listing: it says where a tick goes, and reading
       // that after clicking is reading it too late.
-      child.maybe <-- signedInSignal.map(Option.when(_)(collect.renderBar())),
+      collect.renderBar(),
       child.maybe <-- detailSignal.map(_.map(renderWord)),
       EventStream.unit().mergeWith(loadBus.events).flatMapSwitch(_ => WordApiClient.get(id)) -->
         Observer[Either[ApiError, WordDetail]] {
@@ -143,7 +143,7 @@ private class WordDetailPage(id: Long) {
 
   private def applyChange(change: WordCollect.Change): Unit = {
     change match {
-      case WordCollect.TagChange(wordId, tagId, tagged) =>
+      case WordCollect.TagChange(wordId, tagId, tagged)                     =>
         detailVar.update {
           case Some(detail) if detail.word.id == wordId =>
             if (tagged) {
@@ -153,7 +153,7 @@ private class WordDetailPage(id: Long) {
               newTag match {
                 case Some(tag) =>
                   Some(detail.copy(tags = (detail.tags :+ tag).distinct))
-                case None =>
+                case None      =>
                   Some(detail) // Tag not in the list yet; tagsBus will refresh it.
               }
             } else {
@@ -165,7 +165,7 @@ private class WordDetailPage(id: Long) {
                 )
               )
             }
-          case other =>
+          case other                                    =>
             other
         }
       case WordCollect.PairChange(wordId, tagId, translationWordId, marked) =>
@@ -191,7 +191,7 @@ private class WordDetailPage(id: Long) {
                 )
               )
             }
-          case other =>
+          case other                                    =>
             other
         }
     }

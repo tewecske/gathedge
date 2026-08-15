@@ -74,8 +74,8 @@ private class SignInPage {
       child <-- claimOpenVar.signal.map { open =>
         if (!open) {
           a(
-            cls        := "link link-hover",
-            href       := "#",
+            cls  := "link link-hover",
+            href := "#",
             I18n.t(UiKeys.guestClaimLink),
             onClick.preventDefault.mapToUnit --> Observer[Unit](_ => claimOpenVar.set(true)),
           )

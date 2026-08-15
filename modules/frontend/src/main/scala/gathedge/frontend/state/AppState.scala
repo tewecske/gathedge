@@ -27,6 +27,12 @@ object AppState {
   val themeSignal: Signal[Theme]        = themeVar.signal.distinct
   val isSignedInSignal: Signal[Boolean] = currentUserSignal.map(_.isDefined).distinct
 
+  /** The theme in force right now, read outside a subscription — for the one caller that needs it synchronously rather
+    * than reactively: minting a guest has to send this browser's current preference along with the request, before
+    * there is anywhere to `-->` a stream into.
+    */
+  def currentTheme: Theme = themeVar.now()
+
   private def themeName(theme: Theme): String = {
     theme match {
       case Theme.Light =>

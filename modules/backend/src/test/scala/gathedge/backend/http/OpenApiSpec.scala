@@ -142,7 +142,9 @@ object OpenApiSpec extends ZIOSpecDefault {
       // `AuthService` raises it for an unconfirmed address; the CSRF and `adminOnly` aspects answer 403 too but
       // describe it nowhere. 429 is only where the rate limiter is. And 500 is on nothing at all. The last three are
       // `ApiEndpoint.failure`'s rule: a status a well-behaved caller cannot provoke is not part of the contract this
-      // document states.
+      // document states. `POST /api/guest` joins `PUT /api/me/theme`/`PUT /api/me/locale` as the exceptions where 400
+      // is only reachable through `ApiEndpoint.codecError`, never the handler's own union — minting a guest cannot
+      // itself fail to decode a valid `Theme`.
       test("every operation documents exactly the statuses it can answer with") {
         assertTrue(
           statuses ==
@@ -158,10 +160,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/auth/verify")                                                -> Set(NoContent, BadRequest),
               // Answers 204 for every address, known or not, so the limiter's 429 is the only visible failure.
               ("POST", "/api/auth/verification/resend")                                   -> Set(NoContent, BadRequest, TooManyRequests),
-              // Minting a guest takes no input and is guarded by nothing, so the limiter's 429 is the only failure
-              // it can answer with. Redeeming a code adds the 400 its body can fail to decode with, and a 404 for a
-              // code that is unknown or revoked — one answer for both, so the code space cannot be probed.
-              ("POST", "/api/guest")                                                      -> Set(Created, TooManyRequests),
+              // Minting a guest takes the visitor's current theme as input, so its 400 is only the body's codec
+              // error; the limiter's 429 is its only handler-raised failure. Redeeming a code adds the same 400 and
+              // a 404 for a code that is unknown or revoked — one answer for both, so the code space cannot be probed.
+              ("POST", "/api/guest")                                                      -> Set(Created, BadRequest, TooManyRequests),
               ("POST", "/api/guest/claim")                                                -> Set(Ok, BadRequest, NotFound, TooManyRequests),
               // The two 403s outside login, and for the same reason: `AuthService` raises them for an account that is
               // not a guest, which is an answer to a well-formed request rather than an aspect's rejection.
@@ -233,7 +235,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 115 across 39 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 116 across 39 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -250,7 +252,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 115,
+          declared == 116,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own

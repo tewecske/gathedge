@@ -21,6 +21,11 @@ trait GuestClaimCodeRepository {
     */
   def findActive(code: String): Task[Option[GuestClaimCodeRow]]
 
+  /** This account's own live code, if it has minted one — what makes issuing a code idempotent: the account menu can
+    * ask for it any time and get the same answer back rather than minting a fresh one on every open.
+    */
+  def findActiveForUser(userId: Long): Task[Option[GuestClaimCodeRow]]
+
   def markUsed(id: Long, usedAt: Long): Task[Unit]
 
   /** Revokes every code an account has. Called when it stops being a guest. Returns rows affected. */
@@ -36,6 +41,9 @@ object GuestClaimCodeRepository {
 
   def findActive(code: String): RIO[GuestClaimCodeRepository, Option[GuestClaimCodeRow]] =
     ZIO.serviceWithZIO[GuestClaimCodeRepository](_.findActive(code))
+
+  def findActiveForUser(userId: Long): RIO[GuestClaimCodeRepository, Option[GuestClaimCodeRow]] =
+    ZIO.serviceWithZIO[GuestClaimCodeRepository](_.findActiveForUser(userId))
 
   def markUsed(id: Long, usedAt: Long): RIO[GuestClaimCodeRepository, Unit] =
     ZIO.serviceWithZIO[GuestClaimCodeRepository](_.markUsed(id, usedAt))
@@ -74,6 +82,13 @@ final class GuestClaimCodeRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingSt
   def findActive(code: String): Task[Option[GuestClaimCodeRow]] = {
     val q = quote(codes.filter(row => row.code == lift(code) && row.revokedAt.isEmpty))
     logged(run(ctx.run(q)).map(_.headOption))(found => s"guestClaimCodes.findActive found=${found.isDefined}")
+  }
+
+  def findActiveForUser(userId: Long): Task[Option[GuestClaimCodeRow]] = {
+    val q = quote(
+      codes.filter(row => row.userId == lift(userId) && row.revokedAt.isEmpty).sortBy(_.createdAt)(using Ord.desc)
+    )
+    logged(run(ctx.run(q)).map(_.headOption))(found => s"guestClaimCodes.findActiveForUser found=${found.isDefined}")
   }
 
   def markUsed(id: Long, usedAt: Long): Task[Unit] = {

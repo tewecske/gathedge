@@ -3,6 +3,7 @@ package gathedge.frontend.api
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.AuthEndpoints
 import gathedge.frontend.i18n.CurrentLocale
+import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
@@ -83,13 +84,16 @@ object ApiClient {
   /** Mints an account with no credentials and signs the caller in as it.
     *
     * Called on the reader's *first write*, not on load: the page has to be usable without leaving a row behind for
-    * everything that opens it. The cookie is handled by the browser, as with [[login]].
+    * everything that opens it. The cookie is handled by the browser, as with [[login]]. Sends the theme already showing
+    * in this browser, so the account the server mints starts on it rather than on a server-side default —
+    * `AppState.setUser` always trusts the server's answer, so this is what keeps a visitor's preference from being
+    * silently overwritten the moment they add their first word.
     */
   def createGuest: EventStream[Either[ApiError, AuthResponse]] = {
-    run(executor(AuthEndpoints.createGuest(()))).map(_.map(_._1))
+    run(executor(AuthEndpoints.createGuest(UpdateThemeRequest(AppState.currentTheme)))).map(_.map(_._1))
   }
 
-  /** Answers a transfer code once; it is never readable again. */
+  /** The guest account's transfer code — the same one every time once it exists. */
   def guestCode: EventStream[Either[ApiError, ClaimCodeResponse]] = {
     run(executor(AuthEndpoints.guestCode(())))
   }

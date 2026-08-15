@@ -47,6 +47,7 @@ import gathedge.shared.dto.{
   SignupResponse,
   SystemOverview,
   TaggedPair,
+  UpdateThemeRequest,
   UpdateUserRequest,
   UserPage,
   VerifyEmailRequest,
@@ -594,7 +595,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       suite("guest")(
         test("minting a guest answers 201, a session cookie, and a user with no address") {
           for {
-            response <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/guest", Body.empty)))
+            response <- runRoutes(
+                          AuthRoutes.routes,
+                          withCsrf(Request.post("/api/guest", Body.fromString(UpdateThemeRequest(Theme.Light).toJson))),
+                        )
             raw      <- body(response)
           } yield assertTrue(
             response.status == Status.Created,
@@ -603,9 +607,26 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             raw.fromJson[AuthResponse].map(_.user.isGuest) == Right(true),
           )
         },
+        test("minting a guest seeds the account with the visitor's current theme") {
+          for {
+            response <- runRoutes(
+                          AuthRoutes.routes,
+                          withCsrf(Request.post("/api/guest", Body.fromString(UpdateThemeRequest(Theme.Dark).toJson))),
+                        )
+            raw      <- body(response)
+          } yield assertTrue(raw.fromJson[AuthResponse].map(_.user.theme) == Right(Theme.Dark))
+        },
+        test("a malformed body is the described 400") {
+          for {
+            response <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/guest", Body.empty)))
+          } yield assertTrue(response.status == Status.BadRequest)
+        },
         test("a transfer code round-trips through the wire, and a wrong one is the described 404") {
           for {
-            minted  <- runRoutes(AuthRoutes.routes, withCsrf(Request.post("/api/guest", Body.empty)))
+            minted  <- runRoutes(
+                         AuthRoutes.routes,
+                         withCsrf(Request.post("/api/guest", Body.fromString(UpdateThemeRequest(Theme.Light).toJson))),
+                       )
             session  = sessionCookie(minted).map(_.content).getOrElse("")
             code    <- runRoutes(
                          AuthRoutes.routes,
@@ -629,6 +650,27 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             claimed.status == Status.Ok,
             sessionCookie(claimed).exists(_.content.nonEmpty),
             wrong.status == Status.NotFound,
+          )
+        },
+        test("asking for the transfer code again answers the same one, not a fresh one") {
+          for {
+            minted    <- runRoutes(
+                           AuthRoutes.routes,
+                           withCsrf(Request.post("/api/guest", Body.fromString(UpdateThemeRequest(Theme.Light).toJson))),
+                         )
+            session    = sessionCookie(minted).map(_.content).getOrElse("")
+            first     <- runRoutes(
+                           AuthRoutes.routes,
+                           withCsrf(withSession(Request.post("/api/guest/code", Body.empty), session)),
+                         )
+            firstRaw  <- body(first)
+            second    <- runRoutes(
+                           AuthRoutes.routes,
+                           withCsrf(withSession(Request.post("/api/guest/code", Body.empty), session)),
+                         )
+            secondRaw <- body(second)
+          } yield assertTrue(
+            firstRaw.fromJson[ClaimCodeResponse].map(_.code) == secondRaw.fromJson[ClaimCodeResponse].map(_.code)
           )
         },
         test("a registered account cannot mint a transfer code: the described 403") {

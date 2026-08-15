@@ -25,7 +25,7 @@ import gathedge.shared.i18n.UiKeys
 object WordCollect {
 
   sealed trait Change
-  final case class TagChange(wordId: Long, tagId: Long, tagged: Boolean) extends Change
+  final case class TagChange(wordId: Long, tagId: Long, tagged: Boolean)                           extends Change
   final case class PairChange(wordId: Long, tagId: Long, translationWordId: Long, marked: Boolean) extends Change
 
   /** The tag a word goes under when the reader has chosen none. Data rather than copy: it becomes a row in `tags` that
@@ -154,7 +154,10 @@ final class WordCollect(
           case Left(_)     =>
             tagsVar.set(Nil)
         },
-      newTagBus.events.map(_ => newTagVar.now().trim).filter(_.nonEmpty).flatMapSwitch(WordApiClient.createTag) -->
+      newTagBus.events
+        .map(_ => newTagVar.now().trim)
+        .filter(_.nonEmpty)
+        .flatMapSwitch(name => asReader(() => WordApiClient.createTag(name))) -->
         Observer[Either[ApiError, Tag]] {
           case Right(tag) =>
             // Straight to filing under it: creating a tag is something a reader does *in order to* use it. The listing
@@ -232,12 +235,14 @@ final class WordCollect(
   /** What both writes do when they land. A chip moves tag counts as much as a tick does — marking a translation files
     * that word under the tag too — so both refresh the page and the tag list.
     */
-  private val writeResult: Observer[Either[ApiError, WordCollect.Change]] = Observer[Either[ApiError, WordCollect.Change]] {
-    case Right(change) =>
-      onWritten.onNext(change)
-      tagsBus.emit(())
-    case Left(err)     =>
-      onError.onNext(Some(err.message))
+  private val writeResult: Observer[Either[ApiError, WordCollect.Change]] = {
+    Observer[Either[ApiError, WordCollect.Change]] {
+      case Right(change) =>
+        onWritten.onNext(change)
+        tagsBus.emit(())
+      case Left(err)     =>
+        onError.onNext(Some(err.message))
+    }
   }
 
   /** Puts the word under the collect tag, or under the reader's default one when they have not chosen. */
@@ -246,11 +251,12 @@ final class WordCollect(
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
-        val result: EventStream[Either[ApiError, Unit]] =
+        val result: EventStream[Either[ApiError, Unit]] = {
           if (tagged)
             WordApiClient.untagWord(wordId, tagId)
           else
             WordApiClient.tagWord(wordId, tagId)
+        }
         result.map(_.map(_ => WordCollect.TagChange(wordId, tagId, !tagged)))
     }
   }
@@ -267,11 +273,12 @@ final class WordCollect(
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
-        val result: EventStream[Either[ApiError, Unit]] =
+        val result: EventStream[Either[ApiError, Unit]] = {
           if (marked)
             WordApiClient.deselectPair(wordId, tagId, translationWordId)
           else
             WordApiClient.selectPair(wordId, tagId, translationWordId)
+        }
         result.map(_.map(_ => WordCollect.PairChange(wordId, tagId, translationWordId, !marked)))
     }
   }
@@ -311,8 +318,9 @@ final class WordCollect(
     })
   }
 
-  /** Where ticks are filed, and the way to make another tag. Only worth rendering with a session, since a tag belongs
-    * to an account — each page gates it on that itself.
+  /** Where ticks are filed, and the way to make another tag. Rendered for every visitor, signed in or not — a tag
+    * belongs to an account, but a reader with no account yet still has to be able to see and use the control before
+    * their first tick mints one for them, through the same `asReader` detour a tick or a chip takes.
     *
     * A card of its own, away from the filters, because it answers a different question from the tag *filter*: this one
     * says where words go, that one says which words are shown. The hint under it is what makes that readable without

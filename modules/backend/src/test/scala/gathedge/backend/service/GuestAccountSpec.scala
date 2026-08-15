@@ -14,7 +14,7 @@ import gathedge.backend.db.{
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.dto.{CreateWordRequest, Paging}
-import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, Theme, WordLanguage}
 import zio._
 import zio.test._
 
@@ -98,6 +98,19 @@ object GuestAccountSpec extends ZIOSpecDefault {
           first._2 != second._2,
           onSecond.items.map(_.word.id) == List(word),
         )
+      },
+      test("minting a guest seeds it with the visitor's current theme rather than a hardcoded default") {
+        for {
+          minted <- AuthService.createGuest(Some("10.0.0.9"), theme = Theme.Dark)
+        } yield assertTrue(minted._1.theme == Theme.Dark)
+      },
+      test("asking for the transfer code again answers the same one, not a fresh one") {
+        for {
+          minted    <- AuthService.createGuest(Some("10.0.0.10"))
+          (guest, _) = minted
+          first     <- AuthService.issueClaimCode(guest.id)
+          second    <- AuthService.issueClaimCode(guest.id)
+        } yield assertTrue(first == second)
       },
       test("an unknown, mistyped or revoked code answers the same failure") {
         for {

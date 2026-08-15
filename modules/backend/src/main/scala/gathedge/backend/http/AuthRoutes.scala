@@ -107,10 +107,10 @@ object AuthRoutes {
   private val createGuestRoute = {
     AuthEndpoints.createGuest
       .implementHandler(
-        handler { (_: Unit) =>
+        handler { (body: UpdateThemeRequest) =>
           withContext { (context: RequestContext, cfg: AppConfig) =>
             AuthService
-              .createGuest(context.clientIp, context.locale)
+              .createGuest(context.clientIp, context.locale, body.theme)
               .mapError(ApiFailures.guestMint)
               .map { case (user, sessionId) => (AuthResponse(user), guestCookie(sessionId, cfg)) }
           }

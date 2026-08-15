@@ -15,8 +15,9 @@ import org.scalajs.dom
   * That is the price of not asking anybody to register, and this is where it is paid back — a transfer code carries the
   * vocabulary to another machine, and upgrading turns the account into an ordinary one, in place.
   *
-  * '''The code is shown once.''' It is the bearer credential for the account: the server never answers it a second
-  * time, and the copy shown here disappears with the panel.
+  * The code is the bearer credential for the account, and asking for it is idempotent: the server answers the same one
+  * every time until the account is upgraded, so closing this panel does not lose it — asking again (from here or from
+  * the account menu) gets it back.
   */
 object GuestBanner {
 

@@ -353,7 +353,7 @@
   "ui.guest.bannerHint": "Take a transfer code to use them elsewhere, or create an account.",
   "ui.guest.getCode": "Get a transfer code",
   "ui.guest.upgrade": "Create an account",
-  "ui.guest.codeOnce": "Write this down: it is shown only once.",
+  "ui.guest.codeOnce": "Keep this code somewhere safe — it signs you in to this account on another device.",
   "ui.guest.codeCopy": "Copy",
   "ui.guest.codeCopied": "Copied",
   "ui.guest.codeClose": "Hide",

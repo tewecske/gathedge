@@ -188,18 +188,24 @@ object AuthEndpoints {
     * calls it lazily — on the first *write* a visitor performs, never on a page view, because a session minted per
     * visit is a row per crawler.
     *
-    * 429 is its only declared failure: it takes no input, so no codec error is reachable, and no aspect guards it.
-    * `AuthService` rate-limits it under its own key namespace, which is not tidiness but the rule the rest of the
-    * service follows — sharing a namespace with sign-in is what once let a burst of failures lock every account out.
+    * Takes the visitor's current theme as input, so the account it mints starts on the preference already showing in
+    * this browser rather than a hardcoded default — a signed-in `setUser` always trusts the server's answer, so without
+    * this the server's default would silently overwrite whatever the visitor had chosen before minting. 400 covers a
+    * body that fails to decode; 429 is `AuthService`'s own rate limiter, under its own key namespace, which is not
+    * tidiness but the rule the rest of the service follows — sharing a namespace with sign-in is what once let a burst
+    * of failures lock every account out.
     */
   val createGuest = {
     Endpoint(Method.POST / "api" / "guest")
+      .in[UpdateThemeRequest]
+      .withCodecError
       .out[AuthResponse](Status.Created)
       .outHeader(sessionCookie)
-      .outFailure(failure.tooManyRequests)
+      .outErrors(failure.badRequest, failure.tooManyRequests)
   }
 
-  /** Issues a transfer code for the guest account the caller is signed in as, and answers it **once**.
+  /** Answers the guest account's transfer code, minting one on the account's first call and the same one again on every
+    * call after — the account menu can ask for it any time without minting a fresh code each time.
     *
     * 403 is `GuestFailure.NotGuest`: a real account has an address and a password to sign in with, so it has no use for
     * a bearer code and is not allowed to mint one. It is declared for the same reason [[login]]'s 403 is — the

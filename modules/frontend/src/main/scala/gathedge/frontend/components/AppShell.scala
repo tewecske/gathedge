@@ -8,7 +8,8 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.Branding
 import gathedge.shared.domain.Theme
 import gathedge.shared.i18n.UiKeys
-import gathedge.shared.dto.AuthResponse
+import gathedge.shared.dto.{AuthResponse, ClaimCodeResponse}
+import org.scalajs.dom
 
 /** Themed shell: navbar wrapping page-specific content. Every page renders through this so the wordmark, the language
   * picker and the theme control sit in the same place whoever is looking.
@@ -35,6 +36,13 @@ object AppShell {
 private class AppShell(active: Option[Page], content: HtmlElement) {
   private val themeToggleBus = new EventBus[Unit]()
   private val logoutBus      = new EventBus[Unit]()
+
+  /** The guest's transfer code, fetched on demand from the account menu. `guestCode` is idempotent now — the same code
+    * comes back every time — so there is nothing to lose by asking for it again on every open rather than caching it
+    * here across a page load.
+    */
+  private val codeBus = new EventBus[Unit]()
+  private val codeVar = Var(Option.empty[String])
 
   private val currentUserSignal = AppState.currentUserSignal
   private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
@@ -76,6 +84,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     div(
       cls := "min-h-screen flex flex-col bg-base-200",
       renderNavbar(),
+      child.maybe <-- codeVar.signal.map(_.map(renderCodePanel)),
       renderContent(),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
@@ -100,6 +109,13 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
           // Whether or not the server acknowledged, drop the client-side session.
           AppState.clearUser()
           AppRouter.router.pushState(Page.SignIn)
+        },
+      codeBus.events.flatMapSwitch(_ => ApiClient.guestCode) -->
+        Observer[Either[ApiError, ClaimCodeResponse]] {
+          case Right(response) =>
+            codeVar.set(Some(response.code))
+          case Left(_)         =>
+            () // low-stakes: the account menu item is still there to try again
         },
     )
   }
@@ -377,34 +393,89 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       idAttr              := menuId,
       styleAttr           := s"position-anchor:$menuAnchor",
       // A guest has no address, no password and no linked providers, so the settings page has nothing to show it —
-      // what it needs instead is the way to become a real account, which lives on the vocabulary page's banner.
-      li(
-        child <-- isGuestSignal.map { isGuest =>
-          if (isGuest) {
-            a(
-              AppRouter.router.navigateTo(Page.Words()),
-              I18n.t(UiKeys.guestBannerTitle),
-              onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
-            )
-          } else {
-            a(
-              cls := (
-                if (active.contains(Page.Settings))
-                  "menu-active"
-                else
-                  ""
-              ),
-              AppRouter.router.navigateTo(Page.Settings),
-              I18n.t(UiKeys.settingsTitle),
-              // Choosing "Account settings" while already on /settings does not rebuild the shell, and a
-              // popover is never light-dismissed by a click on its own item.
-              onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
-            )
-          }
+      // what it needs instead are the two ways out of being one: the transfer code, and creating a real account. A
+      // guest never performed an explicit sign-in, so it gets neither branch's Settings link nor Logout below.
+      children <-- isGuestSignal.map { isGuest =>
+        if (isGuest) {
+          List(
+            li(
+              button(
+                typ := "button",
+                I18n.t(UiKeys.guestGetCode),
+                onClick.mapToUnit --> codeBus.writer,
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+            li(
+              a(
+                AppRouter.router.navigateTo(Page.Words()),
+                I18n.t(UiKeys.guestUpgrade),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+          )
+        } else {
+          List(
+            li(
+              a(
+                cls := (
+                  if (active.contains(Page.Settings))
+                    "menu-active"
+                  else
+                    ""
+                ),
+                AppRouter.router.navigateTo(Page.Settings),
+                I18n.t(UiKeys.settingsTitle),
+                // Choosing "Account settings" while already on /settings does not rebuild the shell, and a
+                // popover is never light-dismissed by a click on its own item.
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+            // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
+            li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
+          )
         }
-      ),
-      // No `hide` needed: logout pushes Page.SignIn, which rebuilds the shell away.
-      li(button(typ := "button", I18n.t(UiKeys.navLogOut), onClick.mapToUnit --> logoutBus.writer)),
+      },
     )
+  }
+
+  /** The guest's transfer code, fetched from the account menu. A floating alert rather than something inside the
+    * popover itself: the popover is light-dismissed on an outside click, and a code the reader wants to select and copy
+    * needs to survive that.
+    */
+  private def renderCodePanel(transferCode: String): HtmlElement = {
+    div(
+      cls  := "fixed top-16 right-4 z-50 alert alert-info flex-col items-start gap-2 w-auto max-w-sm shadow-lg",
+      role := "status",
+      p(cls := "text-sm", I18n.t(UiKeys.guestCodeOnce)),
+      div(
+        cls := "flex flex-wrap items-center gap-2",
+        code(cls := "font-mono text-lg tracking-wider", transferCode),
+        button(
+          cls    := "btn btn-xs",
+          typ    := "button",
+          I18n.t(UiKeys.guestCodeCopy),
+          onClick.mapToUnit --> Observer[Unit](_ => copyToClipboard(transferCode)),
+        ),
+        button(
+          cls    := "btn btn-xs btn-ghost",
+          typ    := "button",
+          I18n.t(UiKeys.guestCodeClose),
+          onClick.mapToUnit --> Observer[Unit](_ => codeVar.set(None)),
+        ),
+      ),
+    )
+  }
+
+  /** Feature-checked, like [[GuestBanner]]'s own copy of this: the clipboard API is absent in jsdom and on older
+    * browsers, and a copy button that throws would take the page with it. The code is on screen either way.
+    */
+  private def copyToClipboard(value: String): Unit = {
+    try {
+      val clipboard = dom.window.navigator.asInstanceOf[scala.scalajs.js.Dynamic].clipboard
+      if (!scala.scalajs.js.isUndefined(clipboard)) {
+        clipboard.writeText(value)
+      }
+    } catch { case _: Throwable => () }
   }
 }

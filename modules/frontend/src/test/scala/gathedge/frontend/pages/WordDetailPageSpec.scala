@@ -6,7 +6,8 @@ import gathedge.shared.i18n.UiKeys
 import zio.test._
 
 /** The word page under jsdom, with no backend: the fetch fails, so what is left to assert is the page's own shape — the
-  * way back to the listing, and that the collecting controls belonging to an account are absent for a visitor.
+  * way back to the listing, and that the controls belonging strictly to an account (adding a translation) are absent
+  * for a visitor, while the collect bar itself is not.
   *
   * With no catalog loaded a message resolves to its own key, so the assertions are on `UiKeys` constants.
   */
@@ -26,14 +27,15 @@ object WordDetailPageSpec extends ZIOSpecDefault {
 
   def spec = {
     suite("WordDetailPage")(
-      test("a visitor with no session gets the page and none of the tag controls") {
+      test("a visitor with no session gets the page and the collect bar, but not the add-translation form") {
         val text = withPage(12L)(_.textContent)
         assertTrue(
           text.contains(UiKeys.wordDetailBack),
-          // Where ticks are filed belongs to an account, exactly as on the listing.
+          // The collect bar is shown to every visitor, exactly as on the listing; its `<select>` still stays absent
+          // until a tag list arrives.
+          text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsCollectLabel),
-          !text.contains(UiKeys.wordsCollectHint),
-          // So does adding a translation.
+          // Adding a translation belongs to an account.
           !text.contains(UiKeys.wordDetailAddTitle),
         )
       },

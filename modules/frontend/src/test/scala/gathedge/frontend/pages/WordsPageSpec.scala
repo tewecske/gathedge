@@ -101,9 +101,10 @@ object WordsPageSpec extends ZIOSpecDefault {
           values.lift(1).contains(WordLanguage.code(WordLanguage.De)),
         )
       },
-      // The tag controls belong to an account, and this page renders for a visitor with none: `AppState` has no user
-      // under jsdom, so the tag bar and the "only my words" toggle must be absent rather than broken.
-      test("a visitor with no session gets the words and none of the tag controls") {
+      // The collect bar (where a tick files, and the way to make a tag) is shown to every visitor, session or none —
+      // the first tick mints a guest through the same detour a tag list would need a session to load. The *filter*
+      // half of the tag machinery, and "only my words", still belong to an account and stay absent.
+      test("a visitor with no session gets the words and the collect bar, but no tag filter") {
         val text = withPage(WordQuery()) { (container, _) =>
           container.textContent
         }
@@ -111,10 +112,10 @@ object WordsPageSpec extends ZIOSpecDefault {
           text.contains(UiKeys.wordsTitle),
           // Required by the licence the dictionary data is under, so it is not optional page furniture.
           text.contains(UiKeys.wordsAttribution),
-          // Both halves of the tag machinery belong to an account: where ticks are filed, and what the listing is
-          // narrowed to.
+          // The collect bar's own hint is unconditional; its `<select>` stays absent regardless of session until a
+          // tag list arrives to populate it — under jsdom, a signed-out visitor never gets one.
+          text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsCollectLabel),
-          !text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsFilterTagLabel),
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.

@@ -129,7 +129,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
       renderDirection(),
-      child.maybe <-- signedInSignal.map(Option.when(_)(collect.renderBar())),
+      collect.renderBar(),
       renderSearch(),
       // Offered only when the search found nothing: the dictionary is meant to already have the word, and a permanent
       // "add a word" form next to a hundred matches would invite duplicates of words that are already there.
@@ -196,26 +196,28 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   private def applyChange(row: WordSummary, change: WordCollect.Change): WordSummary = {
     change match {
-      case WordCollect.TagChange(wordId, tagId, tagged) if row.word.id == wordId =>
+      case WordCollect.TagChange(wordId, tagId, tagged) if row.word.id == wordId                     =>
         if (tagged)
           row.copy(tagIds = (row.tagIds :+ tagId).distinct)
-        else
+        else {
           // Untagging removes the tag id and all pairs filed under that tag.
           row.copy(
             tagIds = row.tagIds.filterNot(_ == tagId),
             pairs = row.pairs.filterNot(_.tagId == tagId),
           )
+        }
       case WordCollect.PairChange(wordId, tagId, translationWordId, marked) if row.word.id == wordId =>
-        if (marked)
+        if (marked) {
           // Marking a pair also files the word under the tag.
           row.copy(
             tagIds = (row.tagIds :+ tagId).distinct,
             pairs = (row.pairs :+ TaggedPair(tagId, translationWordId)).distinct,
           )
-        else
+        } else {
           // Unmarking removes just this one pair.
           row.copy(pairs = row.pairs.filterNot(p => p.tagId == tagId && p.translationWordId == translationWordId))
-      case _ =>
+        }
+      case _                                                                                         =>
         row
     }
   }
