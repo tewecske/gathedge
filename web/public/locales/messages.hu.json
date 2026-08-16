@@ -418,10 +418,14 @@
   "ui.admin.usage.colRoute": "Útvonal",
   "ui.admin.usage.colCount": "Kérések",
   "ui.admin.usage.routesEmpty": "Nincs kérés ebben az időablakban.",
+  "ui.admin.usage.routes.count.one": "{0} útvonal",
+  "ui.admin.usage.routes.count.other": "{0} útvonal",
   "ui.admin.usage.suspicious.card": "Gyanús tevékenység",
   "ui.admin.usage.suspicious.hint": "Azok a fiókok, amelyek szokatlanul sok kérést küldtek, vagy szokatlanul sok címről jelentkeztek be ebben az időablakban. A listázás ok az ellenőrzésre, nem ítélet.",
   "ui.admin.usage.colUser": "Fiók",
   "ui.admin.usage.colEvents": "Kérések",
   "ui.admin.usage.colIps": "Címek",
-  "ui.admin.usage.suspiciousEmpty": "Ebben az időablakban nincs jelzés."
+  "ui.admin.usage.suspiciousEmpty": "Ebben az időablakban nincs jelzés.",
+  "ui.admin.usage.suspicious.count.one": "{0} fiók jelezve",
+  "ui.admin.usage.suspicious.count.other": "{0} fiók jelezve"
 }

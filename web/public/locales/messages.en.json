@@ -418,10 +418,14 @@
   "ui.admin.usage.colRoute": "Route",
   "ui.admin.usage.colCount": "Requests",
   "ui.admin.usage.routesEmpty": "No requests in this window.",
+  "ui.admin.usage.routes.count.one": "{0} route",
+  "ui.admin.usage.routes.count.other": "{0} routes",
   "ui.admin.usage.suspicious.card": "Suspicious activity",
   "ui.admin.usage.suspicious.hint": "Accounts that made an unusual number of requests, or were seen from an unusual number of addresses, in this window. Being listed is a reason to look, not a verdict.",
   "ui.admin.usage.colUser": "Account",
   "ui.admin.usage.colEvents": "Requests",
   "ui.admin.usage.colIps": "Addresses",
-  "ui.admin.usage.suspiciousEmpty": "Nothing flagged in this window."
+  "ui.admin.usage.suspiciousEmpty": "Nothing flagged in this window.",
+  "ui.admin.usage.suspicious.count.one": "{0} account flagged",
+  "ui.admin.usage.suspicious.count.other": "{0} accounts flagged"
 }

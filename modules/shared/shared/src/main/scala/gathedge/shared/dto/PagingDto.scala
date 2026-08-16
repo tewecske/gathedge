@@ -35,7 +35,7 @@ object Paging {
   val defaultPageSize: Int = 20
 
   /** What the page-size dropdown offers. The largest is also the cap, so no caller can ask for more than the UI can. */
-  val pageSizes: List[Int] = List(20, 50, 100)
+  val pageSizes: List[Int] = List(10, 20, 50, 100)
 
   val maxPageSize: Int = pageSizes.max
 

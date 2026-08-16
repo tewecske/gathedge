@@ -447,6 +447,7 @@ object UiKeys {
   val adminUsageColRoute: String    = key("ui.admin.usage.colRoute")
   val adminUsageColCount: String    = key("ui.admin.usage.colCount")
   val adminUsageRoutesEmpty: String = key("ui.admin.usage.routesEmpty")
+  val adminUsageRoutesCount: String = pluralKey("ui.admin.usage.routes.count")
 
   val adminUsageSuspiciousCard: String  = key("ui.admin.usage.suspicious.card")
   val adminUsageSuspiciousHint: String  = key("ui.admin.usage.suspicious.hint")
@@ -454,6 +455,7 @@ object UiKeys {
   val adminUsageColEvents: String       = key("ui.admin.usage.colEvents")
   val adminUsageColIps: String          = key("ui.admin.usage.colIps")
   val adminUsageSuspiciousEmpty: String = key("ui.admin.usage.suspiciousEmpty")
+  val adminUsageSuspiciousCount: String = pluralKey("ui.admin.usage.suspicious.count")
 
   // -- Vocabulary ------------------------------------------------------------------------------
   // The browse-and-tag screen. Note what is *not* here: a German noun's article is never
