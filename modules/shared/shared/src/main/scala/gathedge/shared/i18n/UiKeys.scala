@@ -653,6 +653,18 @@ object UiKeys {
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 
+  // Share + QR code. The copy-link and share buttons act on this page's own URL
+  // (`window.location.href`); the QR code is a PNG rendered locally by the `qrcode` npm package (see
+  // `facades.QRCode`) — no network round trip, so it works for a still-signed-out player too.
+  val gameInstanceShareCopyLink: String   = key("ui.gameInstance.share.copyLink")
+  val gameInstanceShareCopied: String     = key("ui.gameInstance.share.copied")
+  val gameInstanceShareButton: String     = key("ui.gameInstance.share.button")
+  val gameInstanceShareQrGenerate: String = key("ui.gameInstance.share.qrGenerate")
+  val gameInstanceShareQrTitle: String    = key("ui.gameInstance.share.qrTitle")
+  val gameInstanceShareQrAlt: String      = key("ui.gameInstance.share.qrAlt")
+  val gameInstanceShareQrClose: String    = key("ui.gameInstance.share.qrClose")
+  val gameInstanceShareQrError: String    = key("ui.gameInstance.share.qrError")
+
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there
   // is followed by the singular, always — which is what `MessageCatalog.plural` exists to express.

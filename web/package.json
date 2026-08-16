@@ -8,6 +8,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
   "devDependencies": {
     "@scala-js/vite-plugin-scalajs": "^1.1.0",
     "@tailwindcss/vite": "^4.3.3",

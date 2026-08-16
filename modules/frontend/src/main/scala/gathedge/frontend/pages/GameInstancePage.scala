@@ -4,11 +4,18 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
+import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{AnswerOutcome, User}
 import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, PlayStarted}
 import gathedge.shared.i18n.UiKeys
+import org.scalajs.dom
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.scalajs.js
+import scala.scalajs.js.JSConverters._
+import scala.util.{Failure, Success}
 
 /** One quiz, played from its shared link (`/g/{slug}`).
   *
@@ -76,6 +83,13 @@ private class GameInstancePage(slug: String) {
   private val renameTextVar                       = Var("")
   private val renameSubmittingVar                 = Var(false)
   private val renameErrorVar: Var[Option[String]] = Var(None)
+
+  /** The QR modal — see `AppShell.confirmSignInOpenVar`'s doc comment for why a `Var[Boolean]` toggling a `modal-open`
+    * class, not `HTMLDialogElement.showModal`: that API is unimplemented in jsdom, which the frontend specs run under.
+    */
+  private val qrOpenVar                            = Var(false)
+  private val qrDataUriVar: Var[Option[String]]     = Var(None)
+  private val qrErrorVar: Var[Option[String]]       = Var(None)
 
   /** Mirrors who the reader is at the moment a request is made — same trick as `GameSetupPage.readerVar`, needed
     * because [[asReader]] reads it outside a subscription.
@@ -294,8 +308,133 @@ private class GameInstancePage(slug: String) {
           div(cls := "flex flex-wrap gap-2 mt-1", detail.tagNames.map(name => span(cls := "badge badge-ghost", name)))
         else
           emptyNode,
+        renderShareRow(),
         div(cls := "mt-4", child <-- phaseSignal.map(renderPhase)),
       ),
+    )
+  }
+
+  /** Copy-link, Web Share and QR code — all three act on this page's own URL, which is the shared link itself: nothing
+    * here needs the game's slug or id, only `dom.window.location.href`. Kept out of [[renderNameHeader]] and its rename
+    * control on purpose — sharing is not an owner-only action, unlike the pencil next to the name.
+    */
+  private def renderShareRow(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-center gap-2 mt-3",
+      button(
+        cls := "btn btn-ghost btn-xs",
+        typ := "button",
+        I18n.t(UiKeys.gameInstanceShareCopyLink),
+        onClick.mapToUnit --> Observer[Unit](_ => copyLink()),
+      ),
+      button(
+        cls := "btn btn-ghost btn-xs",
+        typ := "button",
+        I18n.t(UiKeys.gameInstanceShareButton),
+        onClick.mapToUnit --> Observer[Unit](_ => share()),
+      ),
+      button(
+        cls := "btn btn-ghost btn-xs",
+        typ := "button",
+        I18n.t(UiKeys.gameInstanceShareQrGenerate),
+        onClick.mapToUnit --> Observer[Unit](_ => openQr()),
+      ),
+      renderQrModal(),
+    )
+  }
+
+  private def pageUrl(): String = dom.window.location.href
+
+  /** Feature-checked, like `AppShell.copyToClipboard`/`GuestBanner.copyToClipboard`: the Clipboard API is absent in
+    * jsdom (which the frontend specs run under) and on older browsers, and a copy button that throws would take the
+    * page with it.
+    */
+  private def copyToClipboard(value: String): Boolean = {
+    try {
+      val clipboard = dom.window.navigator.asInstanceOf[js.Dynamic].clipboard
+      if (!js.isUndefined(clipboard)) {
+        clipboard.writeText(value)
+        true
+      } else {
+        false
+      }
+    } catch { case _: Throwable => false }
+  }
+
+  private def copyLink(): Unit = {
+    if (copyToClipboard(pageUrl())) {
+      noticeVar.set(Some(I18n.t(UiKeys.gameInstanceShareCopied)))
+    }
+  }
+
+  /** `navigator.share` first, falling back to [[copyLink]] when the API is absent — mobile browsers overwhelmingly
+    * have it, desktop ones mostly still don't. Feature-detected the same way as the clipboard call above rather than
+    * declared against a `dom` facade, since Scala.js's own DOM bindings do not have it either.
+    *
+    * The share sheet's own promise is not awaited: it rejects on a plain user cancel (`AbortError`) exactly as often as
+    * on a real failure, and there is nothing more useful to do with either outcome than nothing.
+    */
+  private def share(): Unit = {
+    val nav = dom.window.navigator.asInstanceOf[js.Dynamic]
+    if (js.typeOf(nav.share) != "undefined") {
+      try {
+        nav.share(js.Dynamic.literal(title = nameVar.now(), url = pageUrl()))
+        ()
+      } catch { case _: Throwable => copyLink() }
+    } else {
+      copyLink()
+    }
+  }
+
+  /** Opens the modal immediately and fills it in once the QR code is ready, rather than generating it up front on page
+    * load — a visitor who never asks for the code never pays for it. Generated once per page load and cached in
+    * [[qrDataUriVar]]: the URL it encodes cannot change under this page, so a second click has nothing new to render.
+    */
+  private def openQr(): Unit = {
+    Var.set(qrOpenVar -> true, qrErrorVar -> None)
+    if (qrDataUriVar.now().isEmpty) {
+      QRCode.toDataURL(pageUrl()).toFuture.onComplete {
+        case Success(uri) =>
+          qrDataUriVar.set(Some(uri))
+        case Failure(_)   =>
+          qrErrorVar.set(Some(I18n.t(UiKeys.gameInstanceShareQrError)))
+      }
+    }
+  }
+
+  /** Copied from `AppShell.renderSignInConfirmModal`'s pattern exactly: a `div.modal` with `modal-open` toggled off a
+    * `Var[Boolean]`, not `HTMLDialogElement.showModal` — that call is unimplemented in jsdom, which the frontend specs
+    * run under.
+    */
+  private def renderQrModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- qrOpenVar.signal,
+      div(
+        cls := "modal-box",
+        h3(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceShareQrTitle)),
+        div(
+          cls := "flex justify-center py-6",
+          child <-- qrDataUriVar.signal.map {
+            case Some(uri) =>
+              img(cls := "w-48 h-48", src := uri, alt := I18n.t(UiKeys.gameInstanceShareQrAlt))
+            case None      =>
+              span(cls := "loading loading-spinner")
+          },
+        ),
+        child.maybe <-- qrErrorVar.signal.map(_.map(msg => p(cls := "text-error text-sm text-center", msg))),
+        div(
+          cls := "modal-action",
+          button(
+            cls := "btn",
+            typ := "button",
+            I18n.t(UiKeys.gameInstanceShareQrClose),
+            onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false)),
+          ),
+        ),
+      ),
+      // Closes on an outside click, same as `AppShell.renderSignInConfirmModal`'s `modal-backdrop`.
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false))),
     )
   }
 
