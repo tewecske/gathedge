@@ -52,12 +52,14 @@ object AdminSystemPageSpec extends ZIOSpecDefault {
           buttons.exists(_.contains(UiKeys.adminSystemMaintenanceClear)),
         )
       },
-      test("the system page offers the three admin tabs") {
+      test("the system page offers the four admin tabs") {
         val tabs = withPage(AdminSystemPage.render()) { container =>
           container.querySelectorAll(".tab").toList.map(_.textContent)
         }
 
-        assertTrue(tabs == List(UiKeys.navAdminUsers, UiKeys.adminAuditTitle, UiKeys.navAdminSystem))
+        assertTrue(
+          tabs == List(UiKeys.navAdminUsers, UiKeys.adminAuditTitle, UiKeys.navAdminUsage, UiKeys.navAdminSystem)
+        )
       },
       test("the audit page renders its filters and its empty state with no backend") {
         val (headings, text) = withPage(auditPage()) { container =>

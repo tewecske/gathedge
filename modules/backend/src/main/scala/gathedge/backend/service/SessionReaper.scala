@@ -6,6 +6,7 @@ import gathedge.backend.db.{
   LoginAttemptRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
 }
 import zio.*
@@ -49,6 +50,7 @@ object SessionReaper {
     verificationTokens: Long,
     passwordResetTokens: Long,
     loginAttempts: Long,
+    usageEvents: Long,
     guests: Long,
   )
 
@@ -60,7 +62,7 @@ object SessionReaper {
     */
   def sweep: RIO[
     SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
-      UserRepository & AppConfig,
+      UsageEventRepository & UserRepository & AppConfig,
     Swept,
   ] = {
     for {
@@ -71,15 +73,17 @@ object SessionReaper {
       resetTokens <- PasswordResetTokenRepository.deleteExpired(now)
       cutoff       = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
       attempts    <- LoginAttemptRepository.deleteOlderThan(cutoff)
+      usageCutoff  = now - config.app.usageEventRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      usageEvents <- UsageEventRepository.deleteOlderThan(usageCutoff)
       guestCutoff  = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
       abandoned   <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
       guests      <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
-    } yield Swept(sessions, tokens, resetTokens, attempts, guests)
+    } yield Swept(sessions, tokens, resetTokens, attempts, usageEvents, guests)
   }
 
   def run: URIO[
     SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
-      UserRepository & AppConfig & BackgroundJobs,
+      UsageEventRepository & UserRepository & AppConfig & BackgroundJobs,
     Nothing,
   ] = {
     val once = {
@@ -95,12 +99,14 @@ object SessionReaper {
         _     <- ZIO.when(swept.loginAttempts > 0)(
                    ZIO.logInfo(s"Purged ${swept.loginAttempts} expired sign-in attempt record(s)")
                  )
+        _     <- ZIO.when(swept.usageEvents > 0)(ZIO.logInfo(s"Purged ${swept.usageEvents} expired usage event(s)"))
         _     <- ZIO.when(swept.guests > 0)(ZIO.logInfo(s"Purged ${swept.guests} abandoned guest account(s)"))
         _     <- BackgroundJobs.recordSuccess(
                    jobName,
                    s"removed ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
                      s"${swept.passwordResetTokens} password reset token(s), " +
-                     s"${swept.loginAttempts} sign-in attempt record(s) and ${swept.guests} abandoned guest(s)",
+                     s"${swept.loginAttempts} sign-in attempt record(s), ${swept.usageEvents} usage event(s) and " +
+                     s"${swept.guests} abandoned guest(s)",
                  )
       } yield ()
     }

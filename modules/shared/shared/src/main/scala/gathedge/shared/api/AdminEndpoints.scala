@@ -9,6 +9,8 @@ import gathedge.shared.dto.{
   LoginAttemptEntry,
   PruneResult,
   RateLimitEntry,
+  RouteUsage,
+  SuspiciousUser,
   SystemOverview,
   UpdateUserRequest,
   UserPage,
@@ -50,16 +52,19 @@ object AdminEndpoints {
     * value means "the listing's own order" rather than a malformed request — a client is free to stop sending a sort it
     * no longer offers.
     */
-  private val pageQuery     = HttpCodec.query[Int]("page").optional
-  private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional
-  private val sortQuery     = HttpCodec.query[String]("sort").optional
-  private val dirQuery      = HttpCodec.query[String]("dir").optional
-  private val searchQuery   = HttpCodec.query[String]("q").optional
-  private val limitQuery    = HttpCodec.query[Int]("limit").optional
-  private val actionQuery   = HttpCodec.query[String]("action").optional
-  private val actorQuery    = HttpCodec.query[Long]("actorId").optional
-  private val targetQuery   = HttpCodec.query[String]("targetId").optional
-  private val outcomeQuery  = HttpCodec.query[String]("outcome").optional
+  private val pageQuery            = HttpCodec.query[Int]("page").optional
+  private val pageSizeQuery        = HttpCodec.query[Int]("pageSize").optional
+  private val sortQuery            = HttpCodec.query[String]("sort").optional
+  private val dirQuery             = HttpCodec.query[String]("dir").optional
+  private val searchQuery          = HttpCodec.query[String]("q").optional
+  private val limitQuery           = HttpCodec.query[Int]("limit").optional
+  private val actionQuery          = HttpCodec.query[String]("action").optional
+  private val actorQuery           = HttpCodec.query[Long]("actorId").optional
+  private val targetQuery          = HttpCodec.query[String]("targetId").optional
+  private val outcomeQuery         = HttpCodec.query[String]("outcome").optional
+  private val windowQuery          = HttpCodec.query[Int]("windowHours").optional
+  private val actionThresholdQuery = HttpCodec.query[Int]("actionThreshold").optional
+  private val ipThresholdQuery     = HttpCodec.query[Int]("ipThreshold").optional
 
   /** One page of accounts, narrowed by `q` — a case-insensitive substring of the address.
     *
@@ -226,6 +231,30 @@ object AdminEndpoints {
     Endpoint(Method.POST / "api" / "admin" / "system" / "prune").out[PruneResult].outFailure(failure.unauthorized)
   }
 
+  /** Every (method, route) pair `usage_events` holds a row for, most-used first is the caller's job — the same list
+    * sorted the other way is the least-used report, so there is only one endpoint for both.
+    */
+  val usageRoutes = {
+    Endpoint(Method.GET / "api" / "admin" / "usage" / "routes")
+      .query(windowQuery)
+      .withCodecError
+      .out[List[RouteUsage]]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
+  /** Accounts that crossed either threshold in the window — too many requests, or too many distinct origins. See
+    * `gathedge.backend.service.UsageStatsService` for what "crossed" means.
+    */
+  val usageSuspicious = {
+    Endpoint(Method.GET / "api" / "admin" / "usage" / "suspicious")
+      .query(windowQuery)
+      .query(actionThresholdQuery)
+      .query(ipThresholdQuery)
+      .withCodecError
+      .out[List[SuspiciousUser]]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
     List(
       listUsers,
@@ -245,6 +274,8 @@ object AdminEndpoints {
       clearRateLimits,
       systemOverview,
       systemPrune,
+      usageRoutes,
+      usageSuspicious,
     )
   }
 }

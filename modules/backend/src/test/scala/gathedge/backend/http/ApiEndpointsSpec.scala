@@ -11,6 +11,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
   WordRepository,
 }
@@ -25,6 +26,7 @@ import gathedge.backend.service.{
   OAuthClients,
   RateLimiter,
   SystemService,
+  UsageStatsService,
   WordService,
 }
 import gathedge.shared.api.ApiFailure
@@ -82,7 +84,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test ++ WordRepository.test
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
+        MetricsRepository.test ++ WordRepository.test
     )
   }
 
@@ -93,7 +96,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
           TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
-          (AdminService.live ++ SystemService.live ++ WordService.live)
+          (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
       )
   }
 

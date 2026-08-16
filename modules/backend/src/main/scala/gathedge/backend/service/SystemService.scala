@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   MigrationRow,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
 }
 import gathedge.backend.security.SessionAuth
@@ -72,8 +73,8 @@ object SystemService {
   /** Captures the process start instant as the layer is built, which for this layer is startup. */
   val live: URLayer[
     AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository &
-      PasswordResetTokenRepository & LoginAttemptRepository & UserRepository & AuditLogRepository & AuditTrail &
-      RateLimiter & BackgroundJobs,
+      PasswordResetTokenRepository & LoginAttemptRepository & UsageEventRepository & UserRepository &
+      AuditLogRepository & AuditTrail & RateLimiter & BackgroundJobs,
     SystemService,
   ] = ZLayer {
     for {
@@ -83,6 +84,7 @@ object SystemService {
       tokenRepo      <- ZIO.service[EmailVerificationTokenRepository]
       resetTokenRepo <- ZIO.service[PasswordResetTokenRepository]
       attemptRepo    <- ZIO.service[LoginAttemptRepository]
+      usageRepo      <- ZIO.service[UsageEventRepository]
       userRepo       <- ZIO.service[UserRepository]
       auditRepo      <- ZIO.service[AuditLogRepository]
       auditTrail     <- ZIO.service[AuditTrail]
@@ -97,6 +99,7 @@ object SystemService {
       tokenRepo,
       resetTokenRepo,
       attemptRepo,
+      usageRepo,
       userRepo,
       auditRepo,
       auditTrail,
@@ -124,6 +127,7 @@ final case class SystemServiceLive(
   tokenRepo: EmailVerificationTokenRepository,
   resetTokenRepo: PasswordResetTokenRepository,
   attemptRepo: LoginAttemptRepository,
+  usageRepo: UsageEventRepository,
   userRepo: UserRepository,
   auditRepo: AuditLogRepository,
   auditTrail: AuditTrail,
@@ -286,7 +290,9 @@ final case class SystemServiceLive(
       // The reaper's own body, not a copy of it, so the button and the hourly loop cannot remove different things.
       swept <- SessionReaper.sweep
                  .provideEnvironment(
-                   ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config).add(resetTokenRepo)
+                   ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config)
+                     .add(resetTokenRepo)
+                     .add(usageRepo)
                  )
                  .orDie
       // Stale keys only: this is housekeeping, and it must not quietly unblock an account that is being brute-forced
@@ -310,8 +316,8 @@ final case class SystemServiceLive(
                  AuditAction.systemPrune,
                  s"pruned ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
                    s"${swept.passwordResetTokens} password reset token(s), " +
-                   s"${swept.loginAttempts} sign-in attempt record(s), ${swept.guests} abandoned guest(s) and " +
-                   s"$keys rate-limit key(s)",
+                   s"${swept.loginAttempts} sign-in attempt record(s), ${swept.usageEvents} usage event(s), " +
+                   s"${swept.guests} abandoned guest(s) and $keys rate-limit key(s)",
                )
     } yield result
   }

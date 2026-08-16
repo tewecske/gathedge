@@ -107,6 +107,7 @@ object UiKeys {
   val navThemeLight: String  = key("ui.nav.themeLight")
   val navAdminUsers: String  = key("ui.nav.adminUsers")
   val navAdminSystem: String = key("ui.nav.adminSystem")
+  val navAdminUsage: String  = key("ui.nav.adminUsage")
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
@@ -434,6 +435,25 @@ object UiKeys {
   val adminSystemMaintenancePrune: String        = key("ui.admin.system.maintenance.prune")
   val adminSystemMaintenanceClear: String        = key("ui.admin.system.maintenance.clear")
   val adminSystemMaintenanceClearConfirm: String = key("ui.admin.system.maintenance.clearConfirm")
+
+  // -- Administration: usage statistics ----------------------------------------------------------
+
+  val adminUsageTitle: String       = key("ui.admin.usage.title")
+  val adminUsageWindowLabel: String = key("ui.admin.usage.windowLabel")
+
+  val adminUsageMostCard: String    = key("ui.admin.usage.most.card")
+  val adminUsageLeastCard: String   = key("ui.admin.usage.least.card")
+  val adminUsageColMethod: String   = key("ui.admin.usage.colMethod")
+  val adminUsageColRoute: String    = key("ui.admin.usage.colRoute")
+  val adminUsageColCount: String    = key("ui.admin.usage.colCount")
+  val adminUsageRoutesEmpty: String = key("ui.admin.usage.routesEmpty")
+
+  val adminUsageSuspiciousCard: String  = key("ui.admin.usage.suspicious.card")
+  val adminUsageSuspiciousHint: String  = key("ui.admin.usage.suspicious.hint")
+  val adminUsageColUser: String         = key("ui.admin.usage.colUser")
+  val adminUsageColEvents: String       = key("ui.admin.usage.colEvents")
+  val adminUsageColIps: String          = key("ui.admin.usage.colIps")
+  val adminUsageSuspiciousEmpty: String = key("ui.admin.usage.suspiciousEmpty")
 
   // -- Vocabulary ------------------------------------------------------------------------------
   // The browse-and-tag screen. Note what is *not* here: a German noun's article is never

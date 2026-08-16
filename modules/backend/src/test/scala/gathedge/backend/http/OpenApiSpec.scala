@@ -109,6 +109,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/rate-limits/clear",
               "/api/admin/system",
               "/api/admin/system/prune",
+              "/api/admin/usage/routes",
+              "/api/admin/usage/suspicious",
             )
         )
       },
@@ -254,6 +256,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/admin/rate-limits/clear")                                    -> Set(NoContent, BadRequest, Unauthorized),
               ("GET", "/api/admin/system")                                                -> Set(Ok, Unauthorized),
               ("POST", "/api/admin/system/prune")                                         -> Set(Ok, Unauthorized),
+              ("GET", "/api/admin/usage/routes")                                          -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/admin/usage/suspicious")                                      -> Set(Ok, BadRequest, Unauthorized),
             )
         )
       },
@@ -276,7 +280,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 124,
+          declared == 128,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own

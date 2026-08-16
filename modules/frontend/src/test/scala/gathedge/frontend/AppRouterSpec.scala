@@ -29,6 +29,7 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.router.relativeUrlForPage(Page.CheckInbox) == s"$prefix/check-inbox",
           AppRouter.router.relativeUrlForPage(Page.Settings) == s"$prefix/settings",
           AppRouter.router.relativeUrlForPage(Page.AdminSystem) == s"$prefix/admin/system",
+          AppRouter.router.relativeUrlForPage(Page.AdminUsage) == s"$prefix/admin/usage",
         )
       },
       test("so does a route with path parameters") {

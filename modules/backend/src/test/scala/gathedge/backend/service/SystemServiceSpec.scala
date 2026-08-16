@@ -12,6 +12,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
 }
 import gathedge.backend.security.PasswordHasher
@@ -29,7 +30,8 @@ object SystemServiceSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ MetricsRepository.test
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
+        MetricsRepository.test
     )
   }
 

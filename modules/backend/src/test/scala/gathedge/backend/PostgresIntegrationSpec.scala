@@ -16,6 +16,8 @@ import gathedge.backend.db.{
   OAuthIdentityRow,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
+  UsageEventRow,
   UserRepository,
   WordRepository,
   WordRow,
@@ -84,7 +86,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     containerDataSource >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
-        AuditLogRepository.live ++ GuestClaimCodeRepository.live ++ WordRepository.live
+        AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++ WordRepository.live
     )
   }
 
@@ -191,32 +193,43 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           links.forall(_._1.createdBy.isEmpty),
         )
       },
-      // `login_attempts` and `audit_log` are the two user references declared ON DELETE SET NULL rather than CASCADE,
-      // and the same blind spot applies: SQLite enforces neither, so the whole SQLite suite passes whichever. Getting it
-      // wrong in either direction is a real bug — CASCADE would erase the record of what was done to an account the
-      // moment it is deleted, and NO ACTION would make `deleteUser` answer 500 for every account that has ever
-      // signed in.
-      test("deleting a user keeps its audit entries and sign-in history, with the references nulled out") {
+      // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather
+      // than CASCADE, and the same blind spot applies: SQLite enforces neither, so the whole SQLite suite passes
+      // whichever. Getting it wrong in either direction is a real bug — CASCADE would erase the record of what was
+      // done to (or by) an account the moment it is deleted, and NO ACTION would make `deleteUser` answer 500 for
+      // every account that has ever signed in or made a request.
+      test(
+        "deleting a user keeps its audit entries, sign-in history and usage events, with the references nulled out"
+      ) {
         for {
-          admin          <- AdminService.createUser(AdminActor.system, "pgaudit@example.com", "password123", isAdmin = true)
-          target         <-
+          admin           <- AdminService.createUser(AdminActor.system, "pgaudit@example.com", "password123", isAdmin = true)
+          target          <-
             AdminService.createUser(AdminActor(admin.id), "pgaudited@example.com", "password123", isAdmin = false)
           // Both directions of the reference: the target has attempts and is the subject of an audit entry, and it
           // is also the *actor* on one of its own (it clears its own lockout), so deleting it exercises
           // `audit_log.actor_user_id` as well as `login_attempts.user_id`.
-          _              <- AuthService.login("pgaudited@example.com", "password123")
-          _              <- AuthService.login("pgaudited@example.com", "wrong").either
-          _              <- AdminService.clearLockout(AdminActor(target.id), target.id)
-          attemptsBefore <- AdminService.loginAttempts(50, None).map(_.count(_.userId.contains(target.id)))
-          auditBefore    <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
-          _              <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          gone           <- AdminService.getUser(target.id).either
-          attemptsAfter  <- AdminService.loginAttempts(50, None).map(_.filter(_.email == "pgaudited@example.com"))
-          auditAfter     <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
+          _               <- AuthService.login("pgaudited@example.com", "password123")
+          _               <- AuthService.login("pgaudited@example.com", "wrong").either
+          _               <- AdminService.clearLockout(AdminActor(target.id), target.id)
+          _               <-
+            UsageEventRepository.insert(
+              UsageEventRow(0L, 0L, "GET", "/api/pg-test", 200, Some(target.id), Some("10.0.0.9"))
+            )
+          attemptsBefore  <- AdminService.loginAttempts(50, None).map(_.count(_.userId.contains(target.id)))
+          auditBefore     <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
+          usageBefore     <- UsageEventRepository.countsByUser(0L).map(_.toMap.getOrElse(target.id, 0L))
+          usageTotal      <- UsageEventRepository.countAll
+          _               <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          gone            <- AdminService.getUser(target.id).either
+          attemptsAfter   <- AdminService.loginAttempts(50, None).map(_.filter(_.email == "pgaudited@example.com"))
+          auditAfter      <- AdminService.auditLog(Paging.firstPage, 50, None, false, None, None, Some(target.id.toString))
+          usageAfter      <- UsageEventRepository.countsByUser(0L).map(_.toMap.getOrElse(target.id, 0L))
+          usageTotalAfter <- UsageEventRepository.countAll
         } yield assertTrue(
           gone == Left(gathedge.backend.service.AdminFailure.NotFound),
           attemptsBefore == 2,
           auditBefore.items.nonEmpty,
+          usageBefore == 1L,
           // The rows survive; only the foreign keys are cleared.
           attemptsAfter.size == 2,
           attemptsAfter.forall(_.userId.isEmpty),
@@ -226,6 +239,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           auditAfter.items.exists(entry =>
             entry.actorEmail.contains("pgaudited@example.com") && entry.actorUserId.isEmpty
           ),
+          // The usage event row survives (the total count is unchanged) but no longer counts against the deleted
+          // account, because its `user_id` was nulled rather than the row being cascaded away.
+          usageTotalAfter == usageTotal,
+          usageAfter == 0L,
         )
       },
       // Both of these are queries the SQLite suite runs happily and Postgres refuses, because Quill names the SQL

@@ -11,6 +11,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
   WordRepository,
 }
@@ -24,6 +25,7 @@ import gathedge.backend.service.{
   OAuthClients,
   RateLimiter,
   SystemService,
+  UsageStatsService,
   WordService,
 }
 import zio.*
@@ -48,7 +50,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++
         OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
         LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
-        MetricsRepository.test ++ WordRepository.test
+        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test
     )
   }
 
@@ -61,7 +63,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
         TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live) >+> (AdminService.live ++ SystemService.live ++ WordService.live)
+    base >+> (AuthService.live ++ AuditTrail.live) >+>
+      (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
   }
 
   /** The one mutating body the CSRF cases are driven with. Its content is beside the point — what matters is that the

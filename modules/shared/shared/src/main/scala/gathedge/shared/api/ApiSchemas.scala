@@ -34,10 +34,12 @@ import gathedge.shared.dto.{
   RateLimitEntry,
   ResendVerificationRequest,
   ResetPasswordRequest,
+  RouteUsage,
   RuntimeInfo,
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  SuspiciousUser,
   SystemOverview,
   TagResponse,
   TaggedPair,
@@ -127,6 +129,8 @@ object ApiSchemas {
   given Schema[AdminUserDetail]            = DeriveSchema.gen[AdminUserDetail]
   given Schema[AuditEntry]                 = DeriveSchema.gen[AuditEntry]
   given Schema[RateLimitEntry]             = DeriveSchema.gen[RateLimitEntry]
+  given Schema[RouteUsage]                 = DeriveSchema.gen[RouteUsage]
+  given Schema[SuspiciousUser]             = DeriveSchema.gen[SuspiciousUser]
 
   // The two paged listings. Concrete rather than one generic `Page[A]`, which would need a `given [A: Schema]` and buys
   // a shared field name in exchange for a derivation that only ever has two instantiations.

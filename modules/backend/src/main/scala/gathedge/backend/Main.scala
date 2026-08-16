@@ -13,6 +13,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  UsageEventRepository,
   UserRepository,
   WordRepository,
 }
@@ -31,6 +32,8 @@ import gathedge.backend.service.{
   RateLimiter,
   SessionReaper,
   SystemService,
+  UsageStatsService,
+  UsageTracker,
   WordService,
 }
 import gathedge.shared.Branding
@@ -51,7 +54,7 @@ object Main extends ZIOAppDefault {
     val combined = AuthRoutes.routes ++ WordRoutes.routes ++ AdminRoutes.routes ++ DocsRoutes.routes
     // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and one of this API's URLs carries a
     // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
-    RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging
+    RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging @@ RouteSupport.usageTracking
   }
 
   private val program = {
@@ -86,6 +89,7 @@ object Main extends ZIOAppDefault {
     PasswordResetTokenRepository.live,
     LoginAttemptRepository.live,
     AuditLogRepository.live,
+    UsageEventRepository.live,
     MetricsRepository.live,
     GuestClaimCodeRepository.live,
     WordRepository.live,
@@ -104,6 +108,8 @@ object Main extends ZIOAppDefault {
     WordService.live,
     AdminService.live,
     SystemService.live,
+    UsageTracker.live,
+    UsageStatsService.live,
     Server.customized,
     ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.binding(cfg.app.serverHost, cfg.app.serverPort))),
     ZLayer(ZIO.serviceWith[AppConfig](cfg => NettyConfig.default.maxThreads(cfg.netty.maxThreads))),

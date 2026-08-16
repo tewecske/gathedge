@@ -6,6 +6,7 @@ import gathedge.frontend.api.ApiClient
 import gathedge.frontend.pages.{
   AdminAuditPage,
   AdminSystemPage,
+  AdminUsagePage,
   AdminUserDetailPage,
   AdminUsersPage,
   CheckInboxPage,
@@ -251,6 +252,10 @@ object App {
       case Page.AdminSystem if gate.isAdmin         =>
         AdminSystemPage.render()
       case Page.AdminSystem                         =>
+        ForbiddenPage.render()
+      case Page.AdminUsage if gate.isAdmin          =>
+        AdminUsagePage.render()
+      case Page.AdminUsage                          =>
         ForbiddenPage.render()
       case Page.Forbidden                           =>
         ForbiddenPage.render()

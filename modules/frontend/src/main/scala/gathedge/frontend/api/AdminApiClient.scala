@@ -11,6 +11,8 @@ import gathedge.shared.dto.{
   LoginAttemptEntry,
   PruneResult,
   RateLimitEntry,
+  RouteUsage,
+  SuspiciousUser,
   SystemOverview,
   UpdateUserRequest,
   UserPage,
@@ -112,5 +114,17 @@ object AdminApiClient {
 
   def systemPrune: EventStream[Either[ApiError, PruneResult]] = {
     run(executor(AdminEndpoints.systemPrune(())))
+  }
+
+  def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {
+    run(executor(AdminEndpoints.usageRoutes(windowHours)))
+  }
+
+  def usageSuspicious(
+    windowHours: Option[Int] = None,
+    actionThreshold: Option[Int] = None,
+    ipThreshold: Option[Int] = None,
+  ): EventStream[Either[ApiError, List[SuspiciousUser]]] = {
+    run(executor(AdminEndpoints.usageSuspicious(windowHours, actionThreshold, ipThreshold)))
   }
 }

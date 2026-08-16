@@ -51,8 +51,14 @@ object Page {
   final case class AdminAudit(query: AuditQuery = AuditQuery.default) extends Page
 
   case object AdminSystem extends Page
-  case object Forbidden   extends Page
-  case object NotFound    extends Page
+
+  /** What routes get used, and which accounts look unusual — see `gathedge.backend.service.UsageStatsService`. No
+    * listing state of its own, like [[AdminSystem]]: the window is a control on the page rather than something worth
+    * bookmarking a particular value of.
+    */
+  case object AdminUsage extends Page
+  case object Forbidden  extends Page
+  case object NotFound   extends Page
 
   enum AuthGuard {
 
@@ -125,6 +131,7 @@ object AppRouter {
     basePath = basePath,
   )
   private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
+  private val adminUsageRoute      = Route.static(AdminUsage, root / "admin" / "usage", basePath)
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
@@ -208,6 +215,8 @@ object AppRouter {
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
       case AdminSystem          =>
         "AdminSystem"
+      case AdminUsage           =>
+        "AdminUsage"
       case Forbidden            =>
         "Forbidden"
       case NotFound             =>
@@ -264,6 +273,8 @@ object AppRouter {
           AdminAudit()
         case "AdminSystem"    =>
           AdminSystem
+        case "AdminUsage"     =>
+          AdminUsage
         case "Forbidden"      =>
           Forbidden
         case _                =>
@@ -293,6 +304,7 @@ object AppRouter {
         adminAuditQueryRoute,
         adminAuditRoute,
         adminSystemRoute,
+        adminUsageRoute,
         forbiddenRoute,
       ),
       serializePage = serialize,

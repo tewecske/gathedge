@@ -40,6 +40,10 @@ final case class AppSection(
   requireEmailVerification: Boolean,
   trustedProxyHops: Int,
   loginAttemptRetentionDays: Int,
+  /** How long a row in `usage_events` is kept. Every API request writes one, session or none, so like
+    * `loginAttemptRetentionDays` this is a table an unauthenticated caller can grow at will.
+    */
+  usageEventRetentionDays: Int,
   guestRetentionDays: Int,
   /** How long a "forgot password" link stays redeemable. Config rather than a literal — unlike
     * `AuthService.verificationValidity` — because a password reset link is a stronger credential than a verification

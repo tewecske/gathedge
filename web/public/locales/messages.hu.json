@@ -408,5 +408,20 @@
   "words.pairQuotaExceeded": "Elérted a fiókonkénti gyakorlópár-korlátot: legfeljebb {0}",
   "guest.codeInvalid": "Ez az átviteli kód érvénytelen",
   "guest.notGuest": "Ez a fiók már regisztrálva van",
-  "ui.pos.otherKind": "egyéb"
+  "ui.pos.otherKind": "egyéb",
+  "ui.nav.adminUsage": "Használat",
+  "ui.admin.usage.title": "Használati statisztika",
+  "ui.admin.usage.windowLabel": "Időablak",
+  "ui.admin.usage.most.card": "Leggyakrabban használt funkciók",
+  "ui.admin.usage.least.card": "Legritkábban használt funkciók",
+  "ui.admin.usage.colMethod": "Metódus",
+  "ui.admin.usage.colRoute": "Útvonal",
+  "ui.admin.usage.colCount": "Kérések",
+  "ui.admin.usage.routesEmpty": "Nincs kérés ebben az időablakban.",
+  "ui.admin.usage.suspicious.card": "Gyanús tevékenység",
+  "ui.admin.usage.suspicious.hint": "Azok a fiókok, amelyek szokatlanul sok kérést küldtek, vagy szokatlanul sok címről jelentkeztek be ebben az időablakban. A listázás ok az ellenőrzésre, nem ítélet.",
+  "ui.admin.usage.colUser": "Fiók",
+  "ui.admin.usage.colEvents": "Kérések",
+  "ui.admin.usage.colIps": "Címek",
+  "ui.admin.usage.suspiciousEmpty": "Ebben az időablakban nincs jelzés."
 }

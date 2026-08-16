@@ -1,7 +1,7 @@
 package gathedge.backend.http
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService}
+import gathedge.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService, UsageStatsService}
 import gathedge.shared.api.AdminEndpoints
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{ClearRateLimitRequest, CreateUserRequest, Paging, SortDirection, UpdateUserRequest}
@@ -214,9 +214,31 @@ object AdminRoutes {
       .implementHandler(handler((_: Unit) => actor.flatMap(acting => SystemService.prune(acting))))
   }
 
+  private val usageRoutesRoute = {
+    AdminEndpoints.usageRoutes
+      .implementHandler(
+        handler((windowHours: Option[Int]) =>
+          UsageStatsService.topRoutes(windowHours.getOrElse(UsageStatsService.defaultWindowHours))
+        )
+      )
+  }
+
+  private val usageSuspiciousRoute = {
+    AdminEndpoints.usageSuspicious
+      .implementHandler(
+        handler { (windowHours: Option[Int], actionThreshold: Option[Int], ipThreshold: Option[Int]) =>
+          UsageStatsService.suspiciousUsers(
+            windowHours.getOrElse(UsageStatsService.defaultWindowHours),
+            actionThreshold.getOrElse(UsageStatsService.defaultActionThreshold),
+            ipThreshold.getOrElse(UsageStatsService.defaultIpThreshold),
+          )
+        }
+      )
+  }
+
   // `AppConfig` is here for `requestContext`, which needs the trusted-proxy hop count to decide what the client's
   // address is — the value that lands on every `audit_log` row this file writes.
-  val routes: Routes[AuthService & AdminService & SystemService & AppConfig, Response] = {
+  val routes: Routes[AuthService & AdminService & SystemService & UsageStatsService & AppConfig, Response] = {
     Routes(
       listUsersRoute,
       getUserRoute,
@@ -235,6 +257,8 @@ object AdminRoutes {
       clearRateLimitsRoute,
       systemOverviewRoute,
       systemPruneRoute,
+      usageRoutesRoute,
+      usageSuspiciousRoute,
     ) @@ RouteSupport.adminOnly @@ RouteSupport.requestContext @@ RouteSupport.csrf
   }
 }

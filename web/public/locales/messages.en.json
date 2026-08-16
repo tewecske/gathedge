@@ -408,5 +408,20 @@
   "words.pairQuotaExceeded": "You've reached the account limit of {0} practice pairs",
   "guest.codeInvalid": "That transfer code is not valid",
   "guest.notGuest": "This account is already registered",
-  "ui.pos.otherKind": "other"
+  "ui.pos.otherKind": "other",
+  "ui.nav.adminUsage": "Usage",
+  "ui.admin.usage.title": "Usage",
+  "ui.admin.usage.windowLabel": "Window",
+  "ui.admin.usage.most.card": "Most used features",
+  "ui.admin.usage.least.card": "Least used features",
+  "ui.admin.usage.colMethod": "Method",
+  "ui.admin.usage.colRoute": "Route",
+  "ui.admin.usage.colCount": "Requests",
+  "ui.admin.usage.routesEmpty": "No requests in this window.",
+  "ui.admin.usage.suspicious.card": "Suspicious activity",
+  "ui.admin.usage.suspicious.hint": "Accounts that made an unusual number of requests, or were seen from an unusual number of addresses, in this window. Being listed is a reason to look, not a verdict.",
+  "ui.admin.usage.colUser": "Account",
+  "ui.admin.usage.colEvents": "Requests",
+  "ui.admin.usage.colIps": "Addresses",
+  "ui.admin.usage.suspiciousEmpty": "Nothing flagged in this window."
 }

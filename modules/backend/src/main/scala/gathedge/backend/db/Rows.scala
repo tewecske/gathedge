@@ -76,6 +76,21 @@ final case class LoginAttemptRow(
   createdAt: Long,
 )
 
+/** One API request, written by `RouteSupport.usageTracking` on every call, session or none. `route` is normalized
+  * rather than the raw path — see the note on the migration that creates this table — so aggregation groups requests by
+  * endpoint shape instead of by exact URL. `userId` is `None` for an anonymous or invalid-session caller, and becomes
+  * `None` again if the account is later deleted, like [[LoginAttemptRow.userId]].
+  */
+final case class UsageEventRow(
+  id: Long,
+  createdAt: Long,
+  method: String,
+  route: String,
+  status: Int,
+  userId: Option[Long],
+  ip: Option[String],
+)
+
 /** The queryable half of the `security` logger: one row per administrator action, written by the same
   * `AdminService.audit` call that emits the log line.
   *

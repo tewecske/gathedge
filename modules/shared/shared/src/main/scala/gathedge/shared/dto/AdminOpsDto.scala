@@ -310,3 +310,19 @@ final case class PruneResult(
   guests: Long,
   rateLimitKeys: Long,
 ) derives JsonCodec
+
+/** How many requests one route (method plus normalized path) received in the reported window. The most- and least-used
+  * lists shown on the usage screen are the same rows, sorted the two opposite ways — there is no second query for
+  * "least used".
+  */
+final case class RouteUsage(method: String, route: String, count: Long) derives JsonCodec
+
+/** One account [[UsageStatsService]] flagged as unusual in the reported window, by exceeding either threshold on its
+  * own — the two are independent signals, not a combined score. `email` is `None` for a guest.
+  */
+final case class SuspiciousUser(
+  userId: Long,
+  email: Option[String],
+  eventCount: Long,
+  distinctIpCount: Int,
+) derives JsonCodec

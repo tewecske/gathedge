@@ -28,7 +28,7 @@ object RouteSupportSpec extends ZIOSpecDefault {
     forwardedFor.fold(base)(value => base.addHeader("X-Forwarded-For", value))
   }
 
-  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, localeSuite)
+  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, normalizeSuite, localeSuite)
 
   /** The request log used to write the whole URL, query string included, and the OAuth callback carries an
     * authorization code in one. That code reached `logs/backend.log` and `docker logs` on every callback.
@@ -48,6 +48,31 @@ object RouteSupportSpec extends ZIOSpecDefault {
           RouteSupport.loggableUrl(Request.get("/api/me")) == "/api/me",
           RouteSupport.loggableUrl(Request.get("/api/admin/users/42")) == "/api/admin/users/42",
         )
+      },
+    )
+  }
+
+  /** The stored form of a request's path, for `usage_events.route`. A future path segment carrying a secret needs more
+    * than an all-digits check — see the warning on [[RouteSupport.normalizeRoute]] — and a case demonstrating that
+    * belongs in this suite, next to `loggableUrl`'s own.
+    */
+  private val normalizeSuite = {
+    suite("normalizeRoute")(
+      test("a numeric path segment becomes a placeholder") {
+        assertTrue(
+          RouteSupport.normalizeRoute(Request.get("/api/admin/users/42")) == "/api/admin/users/{id}",
+          RouteSupport.normalizeRoute(Request.get("/api/words/7/detail")) == "/api/words/{id}/detail",
+        )
+      },
+      test("a non-numeric segment is left as it is") {
+        assertTrue(
+          RouteSupport.normalizeRoute(Request.get("/api/admin/users")) == "/api/admin/users",
+          RouteSupport.normalizeRoute(Request.get("/api/auth/google/start")) == "/api/auth/google/start",
+        )
+      },
+      test("the query string plays no part, same as loggableUrl") {
+        val request = getWithQuery("/api/admin/users/42?q=someone")
+        assertTrue(RouteSupport.normalizeRoute(request) == "/api/admin/users/{id}")
       },
     )
   }

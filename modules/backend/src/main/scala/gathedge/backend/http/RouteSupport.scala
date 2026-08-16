@@ -2,7 +2,7 @@ package gathedge.backend.http
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.security.{SecurityLog, SessionAuth}
-import gathedge.backend.service.AuthService
+import gathedge.backend.service.{AuthService, UsageTracker}
 import gathedge.shared.domain.{Locale, User}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import zio.*
@@ -141,6 +141,22 @@ object RouteSupport {
     request.path.segments.mkString("/", "/", "")
   }
 
+  /** The stored, aggregable form of a request's path, for `usage_events.route`: every segment made only of digits
+    * becomes `{id}`, so `/api/words/42` and `/api/words/43` count as the same route instead of two among ten thousand.
+    *
+    * '''A future path segment carrying a secret needs more than this''', the same warning [[loggableUrl]] carries for
+    * the query string — today nothing puts one in a path (the OAuth code is a query parameter, every token travels in a
+    * request body), so an all-digits check is the only rule this needs. An endpoint that changes that must extend the
+    * scrub here too, and pin it in `RouteSupportSpec`.
+    */
+  private val numericSegment = "^[0-9]+$".r
+
+  private[backend] def normalizeRoute(request: Request): String = {
+    request.path.segments
+      .map(segment => if (numericSegment.matches(segment)) "{id}" else segment)
+      .mkString("/", "/", "")
+  }
+
   /** One log line per request, replacing `Middleware.requestLogging()`.
     *
     * It exists only because that middleware offers no hook to rewrite the URL — its one relevant parameter maps a
@@ -169,6 +185,25 @@ object RouteSupport {
             LogAnnotation("duration_ms", java.time.Duration.between(start, end).toMillis.toString),
           )(ZIO.logInfo("Http request served").as(response))
         }
+      }
+    )
+  }
+
+  /** Records one `usage_events` row per request — every API call, not just administrator actions — so an admin screen
+    * can answer "which features get used" and "does an account look abnormal" with no per-feature instrumentation.
+    * Built the same before/after shape as [[requestLogging]], because the status this records is the one the handler
+    * actually answered with, and attached the same way: globally, once, in `Main`, needing no per-route wiring.
+    *
+    * The caller and the client address are resolved inside [[UsageTracker.record]] rather than here, so this aspect
+    * needs nothing in its environment beyond the tracker itself — `AuthService` and `AppConfig` are the tracker's own
+    * dependencies, not this aspect's.
+    */
+  val usageTracking: HandlerAspect[UsageTracker, Unit] = {
+    HandlerAspect.interceptHandlerStateful(
+      Handler.fromFunctionZIO[Request] { (request: Request) => ZIO.succeed((request, (request, ()))) }
+    )(
+      Handler.fromFunctionZIO[(Request, Response)] { case (request, response) =>
+        UsageTracker.record(request, response.status).as(response)
       }
     )
   }
