@@ -155,11 +155,24 @@ final case class SystemServiceLive(
       mailStartTls = config.mail.smtp.startTls,
       databaseUrl = SystemService.redactUrl(config.db.url),
       databaseUser = config.db.user,
+      databaseSchema = config.db.schema,
       sessionValidityHours = SessionAuth.sessionDuration.toHours,
       verificationValidityHours = AuthService.verificationValidity.toHours,
+      resetTokenValidityHours = config.app.passwordResetTokenValidityHours.toLong,
       rateLimitMaxAttempts = RateLimiter.maxAttempts,
       rateLimitWindowMinutes = RateLimiter.window.toMinutes,
       nettyMaxThreads = config.netty.maxThreads,
+      trustedProxyHops = config.app.trustedProxyHops,
+      loginAttemptRetentionDays = config.app.loginAttemptRetentionDays,
+      guestRetentionDays = config.app.guestRetentionDays,
+      // Only whether Turnstile is switched on and the threshold that triggers it — the site key and secret never
+      // leave the server, same as every other credential on this page.
+      captchaConfigured = config.isCaptchaConfigured,
+      captchaLoginThreshold = config.captcha.loginThreshold,
+      quotaTagsSoft = config.quotas.tagsPerUserSoft,
+      quotaTagsHard = config.quotas.tagsPerUserHard,
+      quotaWordPairsSoft = config.quotas.wordPairsPerUserSoft,
+      quotaWordPairsHard = config.quotas.wordPairsPerUserHard,
       // Empty outside production, and the reason the process refused to start if it is not.
       productionIssues = config.productionIssues,
     )

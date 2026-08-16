@@ -183,8 +183,10 @@ private class AdminSystemPage {
       row(I18n.t(UiKeys.adminSystemConfigStartTls), yesNo(config.mailStartTls)),
       row(I18n.t(UiKeys.adminSystemConfigDatabase), config.databaseUrl),
       row(I18n.t(UiKeys.adminSystemConfigDatabaseUser), config.databaseUser),
+      row(I18n.t(UiKeys.adminSystemConfigDatabaseSchema), config.databaseSchema),
       row(I18n.t(UiKeys.adminSystemConfigSessionLife), hours(config.sessionValidityHours)),
       row(I18n.t(UiKeys.adminSystemConfigVerifyLife), hours(config.verificationValidityHours)),
+      row(I18n.t(UiKeys.adminSystemConfigResetLife), hours(config.resetTokenValidityHours)),
       row(
         I18n.t(UiKeys.adminSystemConfigRateLimit),
         I18n.t(UiKeys.adminSystemConfigRateLimitValue, config.rateLimitMaxAttempts, config.rateLimitWindowMinutes),
@@ -196,10 +198,31 @@ private class AdminSystemPage {
         else
           config.nettyMaxThreads.toString,
       ),
+      row(I18n.t(UiKeys.adminSystemConfigProxyHops), config.trustedProxyHops.toString),
+      row(I18n.t(UiKeys.adminSystemConfigAttemptRetention), days(config.loginAttemptRetentionDays.toLong)),
+      row(I18n.t(UiKeys.adminSystemConfigGuestRetention), days(config.guestRetentionDays.toLong)),
+      row(
+        I18n.t(UiKeys.adminSystemConfigCaptcha),
+        if (config.captchaConfigured)
+          yesNo(config.captchaConfigured)
+        else
+          I18n.t(UiKeys.adminSystemConfigCaptchaOff),
+      ),
+      row(I18n.t(UiKeys.adminSystemConfigCaptchaThreshold), config.captchaLoginThreshold.toString),
+      row(
+        I18n.t(UiKeys.adminSystemConfigQuotaTags),
+        I18n.t(UiKeys.adminSystemConfigQuotaValue, config.quotaTagsSoft, config.quotaTagsHard),
+      ),
+      row(
+        I18n.t(UiKeys.adminSystemConfigQuotaWordPairs),
+        I18n.t(UiKeys.adminSystemConfigQuotaValue, config.quotaWordPairsSoft, config.quotaWordPairsHard),
+      ),
     )
   }
 
   private def hours(value: Long): String = I18n.plural(UiKeys.adminSystemConfigHours, value)
+
+  private def days(value: Long): String = I18n.plural(UiKeys.durationDays, value)
 
   private def renderRuntime(runtime: RuntimeInfo, jobs: List[JobStatus]): HtmlElement = {
     card(
