@@ -50,7 +50,8 @@ object OpenApiSpec extends ZIOSpecDefault {
   private val statuses: Map[(String, String), Set[Status]] = {
     openApi.paths.toList.flatMap { entry =>
       val (path, item) = entry
-      val byMethod     = List("GET" -> item.get, "PUT" -> item.put, "POST" -> item.post, "DELETE" -> item.delete)
+      val byMethod     =
+        List("GET" -> item.get, "PUT" -> item.put, "POST" -> item.post, "DELETE" -> item.delete, "PATCH" -> item.patch)
       byMethod.collect { case (method, Some(operation)) =>
         val declared = operation.responses.keySet
           .collect { case OpenAPI.StatusOrDefault.StatusValue(status) =>
@@ -89,6 +90,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/copy",
+              "/api/games",
+              "/api/games/setup",
+              "/api/games/{slug}",
               "/api/me",
               "/api/me/theme",
               "/api/me/locale",
@@ -218,6 +222,19 @@ object OpenApiSpec extends ZIOSpecDefault {
               // is written, so a blocked copy leaves nothing behind.
               ("POST", "/api/tags/{tagId}/copy")                                          ->
                 Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              // Setup takes no input the codec can fail to decode (both query parameters are read leniently, the
+              // same as the vocabulary listing's `lang`/`target`), so its only failure is the aspect's 401.
+              ("GET", "/api/games/setup")                                                 -> Set(Ok, Unauthorized),
+              // createGame's own failures are all BadRequest (no tags selected, a tag ineligible for the language
+              // pair, or a validation error) — it never raises NotFound/NotOwner.
+              ("POST", "/api/games")                                                      -> Set(Created, BadRequest, Unauthorized),
+              // Guarded by `optionalUser`, the same reasoning as the vocabulary reads: a shared game link must be
+              // viewable before any guest is minted, so this declares no 401.
+              ("GET", "/api/games/{slug}")                                                -> Set(Ok, NotFound),
+              // The only endpoint whose 403 is a business rule outside login/guest: `GameService.rename` raises
+              // `NotOwner` for anyone but the game's owner.
+              ("PATCH", "/api/games/{slug}")                                              ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/me")                                                          -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
@@ -280,13 +297,18 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 128,
+          declared == 136,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
-          // on login is the only one in the skeleton. A feature whose service raises a permission failure of its own
-          // adds its paths here.
+          // on login, and `GameService.rename`'s not-owner refusal, are the ones in the skeleton. A feature whose
+          // service raises a permission failure of its own adds its paths here.
           describes(Forbidden) ==
-            Set(("POST", "/api/auth/login"), ("POST", "/api/guest/code"), ("POST", "/api/auth/upgrade")),
+            Set(
+              ("POST", "/api/auth/login"),
+              ("POST", "/api/guest/code"),
+              ("POST", "/api/auth/upgrade"),
+              ("PATCH", "/api/games/{slug}"),
+            ),
           // The rate limiter wraps signup, login, the verification resend and the password-reset request, and
           // nothing else.
           describes(TooManyRequests) ==
@@ -341,6 +363,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The vocabulary reads, which are the whole reason the feature needs no sign-up.
               ("GET", "/api/words"),
               ("GET", "/api/words/{id}"),
+              // A shared game link, the same reasoning as the vocabulary reads.
+              ("GET", "/api/games/{slug}"),
             )
         )
       },
@@ -349,7 +373,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 13,
+          guarded.size == operations.size - 14,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

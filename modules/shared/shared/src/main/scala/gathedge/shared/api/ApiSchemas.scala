@@ -15,11 +15,14 @@ import gathedge.shared.dto.{
   ClaimRequest,
   ClearRateLimitRequest,
   ConfigSummary,
+  CreateGameRequest,
   CreateTagRequest,
   CreateUserRequest,
   CreateWordRequest,
   DbStats,
   ForgotPasswordRequest,
+  GameCreated,
+  GameDetail,
   IdentitiesResponse,
   JobStatus,
   LinkedIdentity,
@@ -32,6 +35,7 @@ import gathedge.shared.dto.{
   ProvidersResponse,
   PruneResult,
   RateLimitEntry,
+  RenameGameRequest,
   ResendVerificationRequest,
   ResetPasswordRequest,
   RouteUsage,
@@ -147,4 +151,9 @@ object ApiSchemas {
   given Schema[DbStats]        = DeriveSchema.gen[DbStats]
   given Schema[SystemOverview] = DeriveSchema.gen[SystemOverview]
   given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
+
+  given Schema[GameDetail]        = DeriveSchema.gen[GameDetail]
+  given Schema[GameCreated]       = DeriveSchema.gen[GameCreated]
+  given Schema[CreateGameRequest] = DeriveSchema.gen[CreateGameRequest]
+  given Schema[RenameGameRequest] = DeriveSchema.gen[RenameGameRequest]
 }

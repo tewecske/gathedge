@@ -2,6 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.db.{GameRepository, GameRow, TagRow}
 import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.shared.dto.GameDetail
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -19,15 +20,6 @@ enum GameFailure {
   case NoTagsSelected
   case ValidationError(fieldErrors: Map[String, MessageRef])
 }
-
-/** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. */
-final case class GameDetail(
-  slug: String,
-  name: String,
-  sourceLanguage: WordLanguage,
-  targetLanguage: WordLanguage,
-  tagNames: List[String],
-)
 
 /** Creating and reading a vocabulary quiz. Playing one is [[gathedge.backend.service.GameService]]'s later extension
   * (once `startPlay`/`nextPrompt`/`submitAnswer`/`getResults` exist) — this covers only a game's own identity: which

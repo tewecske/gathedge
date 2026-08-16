@@ -3,6 +3,7 @@ package gathedge.backend.http
 import gathedge.backend.service.{
   AdminFailure,
   AuthFailure,
+  GameFailure,
   GuestAccountFailure,
   GuestClaimFailure,
   GuestCodeFailure,
@@ -252,6 +253,54 @@ object ApiFailures {
           MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
           s"You've reached the maximum of $limit practice pairs for your account",
         )
+    }
+  }
+
+  // GameFailure gets three mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
+  // ValidationError (all BadRequest), get only ever raises NotFound, and rename can raise NotFound/NotOwner/
+  // ValidationError. A single wide mapping would force create/get to describe statuses they cannot produce — the same
+  // reason the guest mappings below are four functions instead of one.
+
+  def game(failure: GameFailure): ApiFailure.NotFound = {
+    failure match {
+      case GameFailure.NotFound =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case _                    =>
+        // Unreachable through this mapping: getBySlug only ever raises NotFound. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+    }
+  }
+
+  def gameCreate(failure: GameFailure): ApiFailure.BadRequest = {
+    failure match {
+      case GameFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case GameFailure.NoTagsSelected                =>
+        ApiFailure.BadRequest(MessageRef(MessageKeys.gameNoTagsSelected), "Select at least one tag")
+      case GameFailure.TagNotEligible                =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.gameTagNotEligible),
+          "One of the selected tags has no eligible pairs for this language pair",
+        )
+      case _                                          =>
+        // Unreachable through this mapping: createGame never raises NotFound/NotOwner. Mapped anyway to keep the
+        // match total.
+        ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
+    }
+  }
+
+  def gameRename(failure: GameFailure): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound = {
+    failure match {
+      case GameFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case GameFailure.NotOwner                      =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
+      case GameFailure.NotFound                      =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case _                                          =>
+        // Unreachable through this mapping: rename never raises NoTagsSelected/TagNotEligible. Mapped anyway to
+        // keep the match total.
+        ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
     }
   }
 

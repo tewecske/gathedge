@@ -107,6 +107,13 @@ object MessageKeys {
   val wordPairQuotaWarning: String  = key("words.pairQuotaWarning")
   val wordPairQuotaExceeded: String = key("words.pairQuotaExceeded")
 
+  // -- Games -------------------------------------------------------------------------------------
+
+  val gameNotFound: String       = key("games.notFound")
+  val gameNotOwner: String       = key("games.notOwner")
+  val gameTagNotEligible: String = key("games.tagNotEligible")
+  val gameNoTagsSelected: String = key("games.noTagsSelected")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.
