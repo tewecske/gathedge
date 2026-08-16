@@ -22,6 +22,14 @@ object GameSetupPage {
   def render(): HtmlElement = {
     AppShell.render(Page.GameSetup, new GameSetupPage().render())
   }
+
+  /** Case-insensitive substring match on tag name — the narrowing the filter box applies to an already-fetched tag
+    * list. Purely client-side: `tagsVar` is populated once per language-pair change, and this never re-asks the server.
+    */
+  def matchingTags(tags: List[Tag], filter: String): List[Tag] = {
+    val needle = filter.trim.toLowerCase
+    if (needle.isEmpty) tags else tags.filter(_.name.toLowerCase.contains(needle))
+  }
 }
 
 private class GameSetupPage {
@@ -36,6 +44,13 @@ private class GameSetupPage {
 
   private val tagsVar    = Var(List.empty[Tag])
   private val tagsSignal = tagsVar.signal
+
+  private val tagFilterVar                          = Var("")
+  private val filteredTagsSignal: Signal[List[Tag]] = {
+    tagsSignal.combineWith(tagFilterVar.signal).map { case (tags, filter) =>
+      GameSetupPage.matchingTags(tags, filter)
+    }
+  }
 
   private val selectedTagIdsVar = Var(Set.empty[Long])
 
@@ -104,17 +119,37 @@ private class GameSetupPage {
       div(
         cls  := "mb-4",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupTagsLabel)),
-        div(cls  := "flex flex-col gap-3 mt-1", children <-- tagsSignal.map(tagCheckboxGroups)),
+        label(
+          cls    := "flex flex-col gap-1 mt-1 max-w-xs",
+          span(cls      := "label-text text-xs", I18n.t(UiKeys.gameSetupTagFilterLabel)),
+          input(
+            cls         := "input input-sm",
+            typ         := "search",
+            placeholder := I18n.t(UiKeys.gameSetupTagFilterPlaceholder),
+            controlled(value <-- tagFilterVar.signal, onInput.mapToValue --> tagFilterVar.writer),
+          ),
+        ),
+        div(cls  := "flex flex-col gap-3 mt-2", children <-- filteredTagsSignal.map(tagCheckboxGroups)),
         child.maybe <-- tagsSignal.combineWith(loadingSignal).map { case (tags, loading) =>
           Option.when(tags.isEmpty && !loading)(
             p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoEligibleTags))
           )
         },
+        // Distinct from the message above: tags exist for this language pair, the filter just matched none of them.
+        child.maybe <-- tagsSignal.combineWith(filteredTagsSignal, loadingSignal).map {
+          case (tags, filtered, loading) =>
+            Option.when(tags.nonEmpty && filtered.isEmpty && !loading)(
+              p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoMatchingTags))
+            )
+        },
       ),
       renderPlayButton(),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
-      formRequests --> Observer[(WordLanguage, WordLanguage)](_ => Var.set(loadingVar -> true, errorVar -> None)),
+      // A language-pair change fetches a different tag list, so a filter typed against the old one is cleared with
+      // it — the same reasoning that already drops now-ineligible selections below.
+      formRequests -->
+        Observer[(WordLanguage, WordLanguage)](_ => Var.set(loadingVar -> true, errorVar -> None, tagFilterVar -> "")),
       formRequests.flatMapSwitch { case (source, target) => asReader(() => GameApiClient.setup(source, target)) } -->
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>

@@ -634,13 +634,16 @@ object UiKeys {
 
   // -- Game setup ----------------------------------------------------------------------------------
 
-  val gameSetupTitle: String          = key("ui.gameSetup.title")
-  val gameSetupSourceLabel: String    = key("ui.gameSetup.sourceLabel")
-  val gameSetupTargetLabel: String    = key("ui.gameSetup.targetLabel")
-  val gameSetupTagsLabel: String      = key("ui.gameSetup.tagsLabel")
-  val gameSetupNoEligibleTags: String = key("ui.gameSetup.noEligibleTags")
-  val gameSetupPlay: String           = key("ui.gameSetup.play")
-  val gameSetupCreated: String        = key("ui.gameSetup.created")
+  val gameSetupTitle: String                = key("ui.gameSetup.title")
+  val gameSetupSourceLabel: String          = key("ui.gameSetup.sourceLabel")
+  val gameSetupTargetLabel: String          = key("ui.gameSetup.targetLabel")
+  val gameSetupTagsLabel: String            = key("ui.gameSetup.tagsLabel")
+  val gameSetupTagFilterLabel: String       = key("ui.gameSetup.tagFilterLabel")
+  val gameSetupTagFilterPlaceholder: String = key("ui.gameSetup.tagFilterPlaceholder")
+  val gameSetupNoEligibleTags: String       = key("ui.gameSetup.noEligibleTags")
+  val gameSetupNoMatchingTags: String       = key("ui.gameSetup.noMatchingTags")
+  val gameSetupPlay: String                 = key("ui.gameSetup.play")
+  val gameSetupCreated: String              = key("ui.gameSetup.created")
 
   // -- Game instance -----------------------------------------------------------------------------
 
