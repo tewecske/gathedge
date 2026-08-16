@@ -100,6 +100,7 @@ object UiKeys {
   val navLanguage: String = key("ui.nav.language")
 
   val navWords: String       = key("ui.nav.words")
+  val navGames: String       = key("ui.nav.games")
   val navAdmin: String       = key("ui.nav.admin")
   val navAccountMenu: String = key("ui.nav.accountMenu")
   val navLogOut: String      = key("ui.nav.logOut")
@@ -606,6 +607,13 @@ object UiKeys {
     * different, already-existing account abandons this guest's words rather than merging them.
     */
   val guestSignInWarning: String = key("ui.guest.signInWarning")
+
+  // -- Games -------------------------------------------------------------------------------------
+
+  val gamesTitle: String          = key("ui.games.title")
+  val gamesVocabQuizTitle: String = key("ui.games.vocabQuiz.title")
+  val gamesVocabQuizBody: String  = key("ui.games.vocabQuiz.body")
+  val gamesVocabQuizPlay: String  = key("ui.games.vocabQuiz.play")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

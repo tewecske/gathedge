@@ -12,6 +12,7 @@ import gathedge.frontend.pages.{
   CheckInboxPage,
   ForbiddenPage,
   ForgotPasswordPage,
+  GamesPage,
   HomePage,
   NotFoundPage,
   ResetPasswordPage,
@@ -228,6 +229,8 @@ object App {
         HomePage.render()
       case Page.Settings                            =>
         SettingsPage.render()
+      case Page.Games                               =>
+        GamesPage.render()
       case Page.VerifyEmail(token)                  =>
         VerifyEmailPage.render(token)
       case Page.CheckInbox                          =>

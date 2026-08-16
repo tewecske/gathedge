@@ -189,6 +189,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private def navLinks(): List[HtmlElement] = {
     List(
       navLink(Page.Words(), I18n.t(UiKeys.navWords)),
+      navLink(Page.Games, I18n.t(UiKeys.navGames)),
       navLink(Page.Home, I18n.t(UiKeys.navHome)),
     )
   }
@@ -200,6 +201,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private def navMenuItems(): List[HtmlElement] = {
     List(
       navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
+      navMenuItem(Page.Games, I18n.t(UiKeys.navGames)),
       navMenuItem(Page.Home, I18n.t(UiKeys.navHome)),
     )
   }

@@ -21,6 +21,11 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
+  /** The catalog of game types. Public, like [[Home]] and [[Words]]: a shared game link should show the catalog without
+    * bouncing a signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
+    */
+  case object Games extends Page
+
   /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
   case object ForgotPassword extends Page
 
@@ -82,8 +87,8 @@ object Page {
       case Words(_) | WordDetail(_)                                              =>
         AuthGuard.Public
       // Home is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
-      // sign-in.
-      case Home                                                                  =>
+      // sign-in. Games is the same: a shared link has to show the catalog, not sign-in.
+      case Home | Games                                                          =>
         AuthGuard.Public
       case _                                                                     =>
         AuthGuard.RequireAuth
@@ -110,6 +115,7 @@ object AppRouter {
   private val signUpRoute          = Route.static(SignUp, root / "sign-up", basePath)
   private val homeRoute            = Route.static(Home, root, basePath)
   private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
+  private val gamesRoute           = Route.static(Games, root / "games", basePath)
   private val verifyEmailRoute     = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
@@ -195,6 +201,8 @@ object AppRouter {
         "Home"
       case Settings             =>
         "Settings"
+      case Games                =>
+        "Games"
       case VerifyEmail(token)   =>
         s"VerifyEmail:$token"
       case CheckInbox           =>
@@ -260,6 +268,8 @@ object AppRouter {
           Home
         case "Settings"       =>
           Settings
+        case "Games"          =>
+          Games
         case "CheckInbox"     =>
           CheckInbox
         case "ForgotPassword" =>
@@ -290,6 +300,7 @@ object AppRouter {
         signUpRoute,
         homeRoute,
         settingsRoute,
+        gamesRoute,
         verifyEmailRoute,
         checkInboxRoute,
         forgotPasswordRoute,
