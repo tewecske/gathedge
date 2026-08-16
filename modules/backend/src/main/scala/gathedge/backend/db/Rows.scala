@@ -176,3 +176,67 @@ final case class GuestClaimCodeRow(
   lastUsedAt: Option[Long],
   revokedAt: Option[Long],
 )
+
+/** One quiz, scoped to a language pair and built from the tags in [[GameTagRow]].
+  *
+  * `slug` is generated once at creation and never changes — the permanent key a share link is built from, sized and
+  * typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]: an app-generated random identifier that
+  * must never collide. `name` is the opposite: cosmetic, free to edit at will, which is why the two are separate
+  * columns rather than one renameable field.
+  */
+final case class GameRow(
+  id: Long,
+  ownerUserId: Long,
+  slug: String,
+  name: String,
+  sourceLanguage: String,
+  targetLanguage: String,
+  createdAt: Long,
+  updatedAt: Long,
+)
+
+/** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like
+  * [[WordTagRow]], not a single column on [[GameRow]].
+  */
+final case class GameTagRow(id: Long, gameId: Long, tagId: Long)
+
+/** One attempt at a game, by one account.
+  *
+  * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on every
+  * read — a play is read far more often than written to, and all three are cheap to maintain incrementally as answers
+  * come in. `wordCount` and `maxScore` are fixed at the moment the play starts; `score` is the one column that changes
+  * as it progresses. `finishedAt` is `None` for a play still in progress and set once, when it completes — there is no
+  * separate "abandoned" state.
+  */
+final case class GamePlayRow(
+  id: Long,
+  gameId: Long,
+  playerUserId: Long,
+  score: Int,
+  maxScore: Int,
+  wordCount: Int,
+  startedAt: Long,
+  finishedAt: Option[Long],
+)
+
+/** One word pair asked and answered inside one play — the per-word-pair progression record the whole feature is built
+  * on. There is no separate stats table: a play's own score fields are the per-play summary, and a later feature
+  * aggregates this row across plays for anything more.
+  *
+  * Both `wordId` and `translationWordId` are stored, for the same reason [[WordTagPairRow]] stores both: a word usually
+  * has several translations, and this row has to say which specific sense was tested, not merely which word was on
+  * screen. Unlike [[WordTagPairRow]], these two columns deliberately do NOT cascade from `words` — see the migration's
+  * comment: this table is a permanent scored history record, and a play's score must never silently change because a
+  * dictionary row was later removed.
+  */
+final case class GamePlayAnswerRow(
+  id: Long,
+  playId: Long,
+  wordId: Long,
+  translationWordId: Long,
+  position: Int,
+  userAnswer: String,
+  outcome: String,
+  points: Int,
+  answeredAt: Long,
+)

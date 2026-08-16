@@ -396,6 +396,7 @@
   "ui.guest.signInWarning": "Ha másik fiókkal jelentkezel be, az ezen az eszközön gyűjtött szavak itt maradnak. Kérj előbb átviteli kódot, ha meg szeretnéd tartani őket! Folytatod a bejelentkezést?",
   "field.word": "Szó",
   "field.tag": "Címke",
+  "field.gameName": "Játék neve",
   "words.notFound": "Nincs ilyen szó",
   "words.tagNotFound": "Nincs ilyen címke",
   "words.tagExists": "Már van ilyen nevű címkéd",

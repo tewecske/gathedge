@@ -10,6 +10,7 @@ import gathedge.backend.db.{
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
+  GameRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
@@ -86,7 +87,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     containerDataSource >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
-        AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++ WordRepository.live
+        AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
+        WordRepository.live ++ GameRepository.live
     )
   }
 
@@ -147,7 +149,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // reference declared without an ON DELETE action instead raises
       // "update or delete on table \"users\" violates foreign key constraint", which `deleteById`'s `.orDie` turns
       // into a bare 500. Any new table that references `users` belongs in this test.
-      test("deleting a user cascades to its sessions, identities, tokens, tags, practice pairs and transfer codes") {
+      test(
+        "deleting a user cascades to its sessions, identities, tokens, tags, practice pairs, transfer codes and games"
+      ) {
         for {
           admin      <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
           signup     <- AuthService.signup("pgdeltarget@example.com", "password123")
@@ -168,6 +172,12 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // ON DELETE action, the cascade *into* `tags` would raise a violation and `deleteUser` would answer 500.
           _          <- WordRepository.pairTranslation(word.id, tag.id, spoon.id, 0L)
           _          <- GuestClaimCodeRepository.insert(target.id, "PGDE-LETE-CODE-0001", 0L)
+          // `games.owner_user_id` cascades directly; `game_tags.tag_id` reaches `users` only through `tags`, the
+          // same indirect path `word_tag_pairs` exercises above.
+          game       <- GameRepository.insertGame(
+                          gathedge.backend.db.GameRow(0L, target.id, "pg-delete-slug", "PG Delete", "de", "hu", 0L, 0L),
+                          List(tag.id),
+                        )
           _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone       <- AdminService.getUser(target.id).either
           sessions   <- SessionRepository.listForUser(target.id)
@@ -176,6 +186,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           tags       <- WordRepository.listTags(target.id)
           pairs      <- WordRepository.pairsFor(target.id, List(word.id, spoon.id))
           codes      <- GuestClaimCodeRepository.countFor(target.id)
+          gameGone   <- GameRepository.findBySlug(game.slug)
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
           stillThere <- WordRepository.findWordById(word.id)
           links      <- WordRepository.allTranslationsOf(word.id)
@@ -187,6 +198,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           tags.isEmpty,
           pairs.isEmpty,
           codes == 0L,
+          gameGone.isEmpty,
           stillThere.isDefined,
           stillThere.flatMap(_.createdBy).isEmpty,
           links.map(_._2.text) == List("kanál"),

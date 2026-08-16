@@ -396,6 +396,7 @@
   "ui.guest.signInWarning": "Signing in to a different account leaves this device's words behind. Get a transfer code first if you want to keep them! Continue anyway?",
   "field.word": "Word",
   "field.tag": "Tag",
+  "field.gameName": "Game name",
   "words.notFound": "No such word",
   "words.tagNotFound": "No such tag",
   "words.tagExists": "You already have a tag with that name",

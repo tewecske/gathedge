@@ -1,0 +1,194 @@
+First game feature: vocabulary translation quiz
+=================================================
+
+Background (paste this once for context, or skip if the assistant already has it):
+The game quizzes a player on translation pairs the Vocabulary feature already tracks in
+word_tag_pairs (not raw word_translations) — only tags with at least one marked pair in the chosen
+source/target language direction are selectable for a game. A shared game link is playable without
+signing in: a guest account is minted on first write via the existing POST /api/guest flow, never
+on page view. "One typo" = Levenshtein edit distance of 1 from the expected answer, after trim +
+case-fold. Full design lives in the plan this task list was generated from (games / game_tags /
+game_plays / game_play_answers tables; GameEndpoints/GameRoutes/GameService following the
+WordEndpoints/WordRoutes/WordService conventions; three new frontend pages: Games catalog, game
+setup, game instance/play/results).
+
+Paste tasks below one at a time, in order — each builds on the previous one's schema/service/API.
+
+------------------------------------------------------------
+TASK 1 — Schema
+------------------------------------------------------------
+Add Flyway migration V6 (both modules/backend/src/main/resources/db/migration/postgresql/ and
+.../sqlite/, schema-identical per the project's dual-dialect convention) creating four tables:
+
+- games: id, slug (unique, generated once, never changes), name (renameable), owner_user_id
+  references users ON DELETE CASCADE, source_language, target_language, created_at, updated_at.
+- game_tags: id, game_id references games ON DELETE CASCADE, tag_id references tags ON DELETE
+  CASCADE, UNIQUE(game_id, tag_id). A game can span several tags.
+- game_plays: id, game_id references games ON DELETE CASCADE, player_user_id references users ON
+  DELETE CASCADE, started_at, finished_at (nullable, set when the play completes), score,
+  max_score, word_count.
+- game_play_answers: id, play_id references game_plays ON DELETE CASCADE, word_id references
+  words, translation_word_id references words, position, user_answer, outcome
+  ('correct'|'typo'|'wrong'), points, answered_at, UNIQUE(play_id, position). This table is the
+  per-word-pair progression record — no separate stats table, a later feature aggregates this one.
+
+Follow existing migration conventions: epoch-millis BIGINT/INTEGER timestamps, comments explaining
+non-obvious choices (see V2__words.sql / V3__word_tag_pairs.sql for the style). Add the matching
+Quill Row case classes (GameRow, GameTagRow, GamePlayRow, GamePlayAnswerRow) to
+modules/backend/src/main/scala/gathedge/backend/db/Rows.scala, following the existing row shapes
+(e.g. WordTagPairRow). No repository, service, or API in this task — schema and rows only. Confirm
+sbt compile and existing tests still pass.
+
+------------------------------------------------------------
+TASK 2 — Game + tag service layer
+------------------------------------------------------------
+Add GameRepository (modules/backend/.../db/GameRepository.scala) and GameService
+(modules/backend/.../service/GameService.scala), mirroring WordRepository/WordService's structure
+(trait + *RepositoryLive[Dialect, Naming] + live/test ZLayers, one INFO log line per repository
+method via QuillRepository.logged, Dynamic Queries throughout).
+
+Implement:
+- Eligible-tags-for-language-pair query: tags with at least one word_tag_pairs row where the
+  source word's language = sourceLanguage and the marked translation word's language =
+  targetLanguage. Sort the caller's own tags first (same "own tags first" idea as elsewhere in the
+  app). Reuse the join shape WordRepository.translationsOf already uses, just scoped to tag
+  membership via game_tags/word_tag_pairs instead of word_translations.
+- Name/slug generation: a small bundled wordlist resource of neutral real English words (not drawn
+  from the imported dictionary). slug = two words joined with a hyphen (e.g. "brave-otter"), retried
+  on a UNIQUE collision, falling back to a numeric suffix after a few attempts. name starts as the
+  Title Case of the same words; renaming later only touches name, never slug.
+- createGame(userId, sourceLanguage, targetLanguage, tagIds): validates every tagId is eligible for
+  the language pair, generates slug+name, inserts games + game_tags in one transaction.
+- getBySlug(slug): game detail (name, languages, tag names) with no owner-only data.
+- rename(slug, newName, requesterUserId): only the owner may rename; anyone else gets a
+  "not owner" failure, unknown slug gets "not found".
+
+Add a GameFailure enum for these operations (NotFound, TagNotEligible, NotOwner, etc.), following
+WordFailure's shape. Write backend tests against SQLite (TestDataSource.sqlite), following
+WordServiceSpec/WordRepositorySpec's structure. No HTTP endpoints in this task yet.
+
+------------------------------------------------------------
+TASK 3 — Setup/detail endpoints
+------------------------------------------------------------
+Add GameEndpoints (modules/shared/.../api/GameEndpoints.scala), following WordEndpoints'
+conventions exactly (PathCodec values up top, .withCodecError on every endpoint with input,
+.outErrors/.outFailure using the shared `failure` object, an `all` and `public` list at the
+bottom):
+
+- GET /api/games/setup?sourceLanguage=&targetLanguage= -> eligible tags list. authenticated.
+- POST /api/games -> create (sourceLanguage, targetLanguage, tagIds) -> {slug, name} (201).
+  authenticated.
+- GET /api/games/{slug} -> game detail. optionalUser (must be viewable before any guest is minted,
+  same reasoning as GET /api/words).
+- PATCH /api/games/{slug} -> rename ({name}) -> updated detail. authenticated; not-owner declared
+  as Forbidden (a business-rule 403, not the aspect's blanket one — see WordEndpoints/ApiFailures
+  for the pattern of declaring a specific 403 case).
+
+Add GameRoutes (modules/backend/.../http/GameRoutes.scala) implementing these via
+implementHandler, grouping into Routes(...) buckets by aspect combo (optionalUser vs authenticated)
+exactly like WordRoutes does — never attach an aspect to an individual handler with path params.
+Add ApiFailures.game mapping GameFailure -> ApiFailure. Register GameRoutes.routes in Main.scala's
+`++` chain and GameEndpoints.all (plus .public) in DocsRoutes.scala. No play endpoints in this task.
+
+------------------------------------------------------------
+TASK 4 — Play session backend
+------------------------------------------------------------
+Add scoring logic to modules/shared (cross JVM/JS, so it's unit-testable independent of the
+backend): a Levenshtein edit-distance function and a pure scoring function (normalize both sides
+via trim + case-fold; exact match after normalization = 2 points; edit distance exactly 1 = 1
+point; otherwise 0 points). Add sharedJVM tests covering exact match, one-letter typo (insertion,
+deletion, substitution), unrelated word, case differences, and surrounding whitespace.
+
+Extend GameService with:
+- startPlay(slug, playerUserId): computes the eligible word pool (word_tag_pairs rows for the
+  game's tags filtered by source/target language, deduped to one row per source word_id — pick the
+  lowest translation_word_id on a tie), inserts a game_plays row with word_count set, fails with a
+  declared "no eligible words" failure if the pool is empty.
+- nextPrompt(playId, requesterUserId): ownership-checks the play belongs to requesterUserId, then
+  picks a random eligible word not yet present in game_play_answers for this play_id; returns
+  {finished: true} once none remain.
+- submitAnswer(playId, wordId, answerText, requesterUserId): looks up the expected translation text
+  itself (never trusts a client-supplied translation id), scores it with the shared scoring
+  function, inserts the game_play_answers row, sets game_plays.finished_at + aggregates score once
+  every eligible word has been answered. Returns only an acknowledgement — no score or correctness
+  in the response, so the player isn't shown points mid-game.
+- getResults(playId, requesterUserId): ownership-checked; returns score, max_score, word_count, and
+  the full list of answers (word text, expected text, given text, outcome) for the mistakes table.
+
+Add the corresponding GameEndpoints/GameRoutes entries (POST /api/games/{slug}/plays, GET
+/api/games/plays/{playId}/prompt, POST /api/games/plays/{playId}/answers, GET
+/api/games/plays/{playId}/results), all authenticated with an ownership check on playId. Backend
+tests: full playthrough against SQLite (start -> answer every prompt -> results match expected
+score), plus an ownership-violation test (another user's playId is rejected).
+
+------------------------------------------------------------
+TASK 5 — Frontend routing + Games catalog page
+------------------------------------------------------------
+Add Page.Games to modules/frontend/.../AppRouter.scala (static route /games, default RequireAuth
+guard is fine unless you want it public — decide based on whether signed-out visitors should see
+the catalog). Add a nav link in AppShell's navLinks()/navMenuItems(). Add a new GamesPage.scala
+under modules/frontend/.../pages/ rendering one daisyUI card per game type — for now exactly one
+card: "Vocabulary Quiz" with a short description, linking to the setup page from task 6. Add the
+needed UiKeys entries (new "// -- Games --" section) and matching messages.en.json/messages.hu.json
+keys. Confirm npm --prefix web run typecheck and sbt frontend/test pass.
+
+------------------------------------------------------------
+TASK 6 — Frontend game setup page
+------------------------------------------------------------
+Add Page.GameSetup (static route /games/vocabulary-quiz) and a GameSetupPage.scala. Source/target
+language selects (reuse WordsPage.languageSelect's pattern). A tag multi-select scoped to the
+chosen languages, calling GET /api/games/setup?sourceLanguage=&targetLanguage=, own tags shown
+first (reuse WordCollect's tag-picker machinery where it fits, or build a simpler multi-select if
+that component doesn't fit a multi-select shape). A "Play" button that calls POST /api/games, then
+navigates to Page.GameInstance(slug) (added in the next task). Add a GameApiClient.scala under
+modules/frontend/.../api/ mirroring WordApiClient's shape for the setup/create calls. UiKeys +
+message entries for this page's copy and validation states (e.g. no eligible tags for the chosen
+languages).
+
+------------------------------------------------------------
+TASK 7 — Frontend game instance/play page
+------------------------------------------------------------
+Add Page.GameInstance(slug: String) (path param route /g/{slug}, following the wordDetailRoute
+path-param pattern in AppRouter) and a GameInstancePage.scala. On load: GET /api/games/{slug} for
+the game detail (optionalUser — works for a signed-out visitor opening a shared link). If no
+session exists yet, the first play-starting action should call the existing guest-mint endpoint
+(the same one AppState/ApiClient already uses for the guest-vocabulary flow) before calling POST
+/api/games/{slug}/plays, so a guest is minted on first write, not on page view. Render one prompt
+at a time: word text in the source language, a text input, a submit action that calls POST
+/api/games/plays/{playId}/answers and then GET .../prompt for the next word (or finished). No score
+or correctness shown during play — only a progress indicator (e.g. "3 of 12"). UiKeys + message
+entries for this page.
+
+------------------------------------------------------------
+TASK 8 — Frontend results + rename
+------------------------------------------------------------
+When nextPrompt reports finished, call GET /api/games/plays/{playId}/results and render the
+results screen: total score / max score, and a table of every answer (source word, expected
+translation, what the player typed, outcome) with mistakes (typo/wrong) visually marked. Add a
+"Play again" button that calls POST /api/games/{slug}/plays again (a fresh game_plays row against
+the same game) and restarts the prompt loop. Add inline name editing on the instance page, visible
+only when the current user is the game's owner, calling PATCH /api/games/{slug}. UiKeys + message
+entries for this screen.
+
+------------------------------------------------------------
+TASK 9 — Share + QR code
+------------------------------------------------------------
+On the game instance page, add: a copy-link button (copies the page's own URL), a Web Share API
+button that falls back to the copy-link behavior when navigator.share is unavailable, and a
+"Generate QR code" button that opens a modal (copy AppShell's inline modal pattern — div with a
+modal-open class toggled by a Var[Boolean], since HTMLDialogElement.showModal isn't usable under
+the frontend test environment) showing a QR code of the page's URL. This needs a new dependency —
+nothing in the repo generates QR codes today. Add a small client-side QR library (e.g. "qrcode" on
+npm — generates an SVG or data-URI locally, no network call) to web/package.json and a thin
+Scala.js facade to call it. Flag the new dependency to the user before adding it. UiKeys + message
+entries for the share/QR controls.
+
+------------------------------------------------------------
+TASK 10 — i18n completion + end-to-end test
+------------------------------------------------------------
+Run the backend test suite and confirm MessagesSpec passes (every UiKeys/MessageKeys constant
+present in both messages.en.json and messages.hu.json, matching placeholders). Fill any gaps left
+by earlier tasks. Add a Playwright e2e spec (e2e/tests/) covering the full flow: sign in, create a
+game from tags with marked pairs, open the generated link in a fresh (signed-out) browser context,
+play through as a guest, and see the results screen with the expected score. Run npm --prefix e2e
+test and confirm it passes alongside the existing suite.

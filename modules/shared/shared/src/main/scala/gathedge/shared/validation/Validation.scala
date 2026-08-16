@@ -119,6 +119,11 @@ object Validation {
     *   the *catalog key* of the field's label (e.g. `MessageKeys.fieldEmail`), not the label itself. It is passed as a
     *   `MessageRef.keyArg` so the label is translated before being spliced into the sentence around it.
     */
+  /** A game's display name. Bounded by `games.name VARCHAR(255)`, the same ceiling as [[maxNameLength]]. */
+  def validateGameName(name: String): Either[MessageRef, String] = {
+    validateNonBlank(name, MessageKeys.fieldGameName, maxNameLength)
+  }
+
   def validateNonBlank(value: String, fieldKey: String, maxLength: Int = maxTextLength): Either[MessageRef, String] = {
     val trimmed = value.trim
     if (trimmed.isEmpty)

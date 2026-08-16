@@ -53,6 +53,7 @@ object MessageKeys {
   val fieldPassword: String = key("field.password")
   val fieldWord: String     = key("field.word")
   val fieldTag: String      = key("field.tag")
+  val fieldGameName: String = key("field.gameName")
 
   // -- Authentication --------------------------------------------------------------------------
 
