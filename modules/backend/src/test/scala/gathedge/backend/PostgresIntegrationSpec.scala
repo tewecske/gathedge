@@ -10,7 +10,9 @@ import gathedge.backend.db.{
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
+  GamePlayRow,
   GameRepository,
+  GameRow,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
@@ -203,6 +205,46 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           stillThere.flatMap(_.createdBy).isEmpty,
           links.map(_._2.text) == List("kanál"),
           links.forall(_._1.createdBy.isEmpty),
+        )
+      },
+      // `game_play_words.play_id` is the one FK this new table declares (`word_id`/`translation_word_id`
+      // deliberately are not, per the migration's comment, mirroring `game_play_answers`): deleting the account
+      // cascades users -> games -> game_plays -> game_play_words, all the way down, and this is the one dialect
+      // that actually enforces every link in that chain.
+      test("a play's sampled word set cascades away with the play it belongs to") {
+        for {
+          admin      <- AdminService.createUser(AdminActor.system, "pgwladmin@example.com", "password123", isAdmin = true)
+          signup     <- AuthService.signup("pgwltarget@example.com", "password123")
+          (target, _) = signup
+          tag        <- WordRepository.insertTag(target.id, "pgwordlimit", "pgwordlimit", 0L)
+          source     <- WordRepository.ensureWord(
+                          WordRow(0L, "de", "Pgword", "pgword", "noun", "", 1, "user", Some(target.id), 0L)
+                        )
+          dest       <- WordRepository.ensureWord(WordRow(0L, "hu", "Pgszo", "pgszo", "noun", "", 1, "user", None, 0L))
+          _          <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
+          game       <- GameRepository.insertGame(
+                          GameRow(0L, target.id, "pg-wordlimit-slug", "PG Word Limit", "de", "hu", 0L, 0L, Some(1)),
+                          List(tag.id),
+                        )
+          play       <- GameRepository.insertPlay(
+                          GamePlayRow(
+                            id = 0L,
+                            gameId = game.id,
+                            playerUserId = target.id,
+                            score = 0,
+                            maxScore = 2,
+                            wordCount = 1,
+                            startedAt = 0L,
+                            finishedAt = None,
+                          ),
+                          List((source.id, dest.id)),
+                        )
+          before     <- GameRepository.wordPairsOf(play.id)
+          _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          after      <- GameRepository.wordPairsOf(play.id)
+        } yield assertTrue(
+          before == List((source.id, dest.id)),
+          after.isEmpty,
         )
       },
       // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather

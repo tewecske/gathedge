@@ -54,7 +54,28 @@ private class GameSetupPage {
 
   private val selectedTagIdsVar = Var(Set.empty[Long])
 
-  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal)
+  /** Mutually exclusive with [[wordCountVar]] — see [[renderWordLimitControls]]. Defaults to `true`: "use every
+    * eligible word" is today's only behaviour, and stays the default once a count becomes an option.
+    */
+  private val selectAllVar = Var(true)
+
+  /** The number input's raw text, kept as a `String` (not `Int`) so a blank or partially-typed value never fails to
+    * render — [[wordLimitSignal]] is what turns this into the `Option[Int]` the request actually needs.
+    */
+  private val wordCountVar = Var("")
+
+  /** `None` for "select all" or an unusable count (blank, zero, not a number) — the same "guard by falling back to
+    * select-all" [[GameApiClient.create]]'s doc comment allows for. `Some(n)` only once the reader has both unchecked
+    * "select all" and typed a positive number.
+    */
+  private val wordLimitSignal: Signal[Option[Int]] = {
+    selectAllVar.signal.combineWith(wordCountVar.signal).map {
+      case (true, _)     => None
+      case (false, text) => text.trim.toIntOption.filter(_ > 0)
+    }
+  }
+
+  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal, wordLimitSignal)
 
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
@@ -143,6 +164,7 @@ private class GameSetupPage {
             )
         },
       ),
+      renderWordLimitControls(),
       renderPlayButton(),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
@@ -165,8 +187,8 @@ private class GameSetupPage {
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
-      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch { case (source, target, tagIds) =>
-        asReader(() => GameApiClient.create(source, target, tagIds.toList))
+      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch { case (source, target, tagIds, wordLimit) =>
+        asReader(() => GameApiClient.create(source, target, tagIds.toList, wordLimit))
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -240,6 +262,48 @@ private class GameSetupPage {
         ),
       ),
       span(cls := "label-text text-sm", s"${tag.name} (${tag.wordCount})"),
+    )
+  }
+
+  /** The "select all" checkbox and the exact-count number input, mutually exclusive: checking the box clears the number
+    * and switches to select-all; typing a number unchecks the box. Checking the box back on is the only way back to
+    * select-all once a count has been typed — clearing the number input by hand leaves "count mode" active with no
+    * usable count, which [[wordLimitSignal]] already treats as select-all until a positive number is typed.
+    */
+  private def renderWordLimitControls(): HtmlElement = {
+    div(
+      cls := "mb-4 flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordLimitLabel)),
+      label(
+        cls    := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ    := "checkbox",
+          cls    := "checkbox checkbox-sm",
+          controlled(
+            checked <-- selectAllVar.signal,
+            onClick.mapToChecked --> Observer[Boolean] { on =>
+              if (on) Var.set(selectAllVar -> true, wordCountVar -> "") else selectAllVar.set(false)
+            },
+          ),
+        ),
+        span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupWordLimitSelectAll)),
+      ),
+      label(
+        cls    := "flex items-center gap-2",
+        span(cls  := "label-text text-sm", I18n.t(UiKeys.gameSetupWordLimitCount)),
+        input(
+          typ     := "number",
+          minAttr := "1",
+          cls     := "input input-sm w-24",
+          disabled <-- selectAllVar.signal,
+          controlled(
+            value <-- wordCountVar.signal,
+            onInput.mapToValue --> Observer[String] { text =>
+              Var.set(wordCountVar -> text, selectAllVar -> false)
+            },
+          ),
+        ),
+      ),
     )
   }
 

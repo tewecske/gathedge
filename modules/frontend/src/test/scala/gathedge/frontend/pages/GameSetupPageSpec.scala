@@ -33,6 +33,20 @@ object GameSetupPageSpec extends ZIOSpecDefault {
     container.querySelector("input[type=search]").asInstanceOf[dom.html.Input]
   }
 
+  private def wordCountBox(container: dom.Element): dom.html.Input = {
+    container.querySelector("input[type=number]").asInstanceOf[dom.html.Input]
+  }
+
+  /** `AppShell`'s own theme-toggle switch is also a bare `input[type=checkbox]`, and renders before this page's
+    * content, so a page-wide `querySelector` would find that one instead. Scoped from `wordCountBox`'s own
+    * `renderWordLimitControls` wrapper (`label > input[type=number]`, two levels up to the section `div`) finds the
+    * "select all" checkbox unambiguously, the same way it is the only checkbox in that section either way.
+    */
+  private def selectAllBox(container: dom.Element): dom.html.Input = {
+    val section = wordCountBox(container).parentElement.parentElement
+    section.querySelector("input[type=checkbox]").asInstanceOf[dom.html.Input]
+  }
+
   private val mine   = Tag(1L, "Animals", wordCount = 3, ownedByMe = true)
   private val theirs = Tag(2L, "animation", wordCount = 5, ownedByMe = false)
   private val other  = Tag(3L, "Colours", wordCount = 2, ownedByMe = false)
@@ -85,6 +99,40 @@ object GameSetupPageSpec extends ZIOSpecDefault {
           !text.contains(UiKeys.gameSetupNoEligibleTags),
           !text.contains(UiKeys.gameSetupNoMatchingTags),
         )
+      },
+      // The word-limit controls: "select all" starts checked (today's only behaviour, kept as the default) and the
+      // count input starts disabled, since checking a fixed count while "select all" is on would be contradictory.
+      test("select all starts checked, and the count input starts disabled") {
+        val (checked, disabled) = withPage { container =>
+          (selectAllBox(container).checked, wordCountBox(container).disabled)
+        }
+        assertTrue(checked, disabled)
+      },
+      // Mutual exclusivity, one direction: typing a count unchecks "select all" and enables further typing.
+      test("typing a word count unchecks select all") {
+        val (value, checked) = withPage { container =>
+          val count = wordCountBox(container)
+          count.disabled = false // jsdom still fires `input` on a disabled field; this mirrors what a real click does
+          count.value = "20"
+          count.dispatchEvent(new dom.Event("input"))
+          (wordCountBox(container).value, selectAllBox(container).checked)
+        }
+        assertTrue(value == "20", !checked)
+      },
+      // Mutual exclusivity, the other direction: checking "select all" back on clears whatever count was typed and
+      // disables the input again. `.click()` (not a bare dispatched event) is what gives jsdom's own checkbox-toggle
+      // default action, the same activation behaviour a real click has — a plain input value stays intact through the
+      // count field's earlier `dispatchEvent`, but a checkbox's `checked` needs that native toggle to flip.
+      test("checking select all back on clears a previously typed count") {
+        val (value, disabled) = withPage { container =>
+          val count = wordCountBox(container)
+          count.disabled = false
+          count.value = "20"
+          count.dispatchEvent(new dom.Event("input"))
+          selectAllBox(container).click()
+          (wordCountBox(container).value, wordCountBox(container).disabled)
+        }
+        assertTrue(value.isEmpty, disabled)
       },
     )
   }

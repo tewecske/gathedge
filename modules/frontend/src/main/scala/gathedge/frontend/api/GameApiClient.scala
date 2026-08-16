@@ -41,8 +41,9 @@ object GameApiClient {
     source: WordLanguage,
     target: WordLanguage,
     tagIds: List[Long],
+    wordLimit: Option[Int] = None,
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds))))
+    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, wordLimit))))
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */

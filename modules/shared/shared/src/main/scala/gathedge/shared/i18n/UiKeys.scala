@@ -645,6 +645,12 @@ object UiKeys {
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
 
+  // How many words a play draws from the eligible pool: "select all" (the default, and today's only behaviour) or an
+  // exact count, mutually exclusive — see `GameSetupPage`'s checkbox/number-input pair.
+  val gameSetupWordLimitLabel: String     = key("ui.gameSetup.wordLimitLabel")
+  val gameSetupWordLimitSelectAll: String = key("ui.gameSetup.wordLimitSelectAll")
+  val gameSetupWordLimitCount: String     = key("ui.gameSetup.wordLimitCount")
+
   // -- Game instance -----------------------------------------------------------------------------
 
   val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")

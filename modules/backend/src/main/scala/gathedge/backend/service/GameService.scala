@@ -38,11 +38,15 @@ trait GameService {
   /** `userId`'s own games, most recently created first, with their tag names and how many times each was played. */
   def myGames(userId: Long): UIO[List[MyGameSummary]]
 
+  /** `wordLimit`: `None` for "use every eligible word" (the default, and the only behaviour before this parameter
+    * existed), `Some(n)` for "sample exactly n of them at play time", validated by [[Validation.validateWordLimit]].
+    */
   def createGame(
     userId: Long,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
+    wordLimit: Option[Int] = None,
   ): IO[GameFailure, GameDetail]
 
   def getBySlug(slug: String): IO[GameFailure, GameDetail]
@@ -89,8 +93,9 @@ object GameService {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
+    wordLimit: Option[Int] = None,
   ): ZIO[GameService, GameFailure, GameDetail] =
-    ZIO.serviceWithZIO[GameService](_.createGame(userId, sourceLanguage, targetLanguage, tagIds))
+    ZIO.serviceWithZIO[GameService](_.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit))
 
   def getBySlug(slug: String): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.getBySlug(slug))
@@ -197,6 +202,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
+    wordLimit: Option[Int],
     now: Long,
     attempt: Int,
     lastPair: Option[(String, String)],
@@ -214,6 +220,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
           targetLanguage = WordLanguage.code(targetLanguage),
           createdAt = now,
           updatedAt = now,
+          wordLimit = wordLimit,
         )
         repo.insertGame(row, tagIds).catchAll { error =>
           // A concurrent caller may have taken this exact slug between the attempt and here; the unique
@@ -221,7 +228,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
           // race tolerance WordRepository.ensureWord applies to a word's natural key.
           repo.findBySlug(slug).orDie.flatMap {
             case Some(_) =>
-              insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt + 1, Some(pair))
+              insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, now, attempt + 1, Some(pair))
             case None    =>
               ZIO.die(error)
           }
@@ -235,16 +242,21 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
+    wordLimit: Option[Int] = None,
   ): IO[GameFailure, GameDetail] = {
     for {
       _          <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
       eligible   <- repo.eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)).orDie
       eligibleIds = eligible.map(_._1.id).toSet
       _          <- ZIO.unless(tagIds.forall(eligibleIds.contains))(ZIO.fail(GameFailure.TagNotEligible))
+      validLimit <- ZIO
+                      .foreach(wordLimit)(limit => ZIO.fromEither(Validation.validateWordLimit(limit)))
+                      .mapError(error => GameFailure.ValidationError(Map("wordLimit" -> error)))
       now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row        <- insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt = 0, lastPair = None)
+      row        <-
+        insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, validLimit, now, attempt = 0, lastPair = None)
       tags       <- repo.tagsOf(row.id).orDie
-    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted)
+    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted, row.wordLimit)
   }
 
   private def detailOf(row: GameRow): UIO[GameDetail] = {
@@ -255,6 +267,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
         WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
         tags.map(_.name).sorted,
+        row.wordLimit,
       )
     }
   }
@@ -300,15 +313,17 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield play
   }
 
-  /** A play's `game_id` always names a real game — `games` cascades onto `game_plays`, so a missing row here is a
-    * defect, not a caller error, the same reasoning `insertWithRetry` dies rather than fails on an exhausted slug.
+  /** `pool` itself when `limit` is absent or no smaller than the pool — today's only behaviour, and what a
+    * `wordLimit = None` game always gets. Otherwise a random `limit`-sized subset, shuffled once here and handed
+    * straight to `insertPlay` to persist: this is the one and only time a play's word set is decided, per this file's
+    * doc comment on why `nextPrompt`/`submitAnswer`/`getResults` must never re-derive it.
     */
-  private def requireGame(gameId: Long): UIO[GameRow] = {
-    repo.findGame(gameId).orDie.flatMap {
-      case Some(game) =>
-        ZIO.succeed(game)
-      case None       =>
-        ZIO.die(new IllegalStateException(s"game $gameId missing for an existing play"))
+  private def sampleWordPool(pool: List[(Long, Long)], limit: Option[Int]): UIO[List[(Long, Long)]] = {
+    limit match {
+      case Some(n) if n < pool.size =>
+        Random.shuffle(pool).map(_.take(n))
+      case _                        =>
+        ZIO.succeed(pool)
     }
   }
 
@@ -317,8 +332,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       game     <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
       pool     <- eligibleWordPool(game)
       _        <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+      sampled  <- sampleWordPool(pool, game.wordLimit)
       now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      wordCount = pool.size
+      wordCount = sampled.size
       maxScore  = wordCount * GameScoring.maxPointsPerWord
       row      <- repo
                     .insertPlay(
@@ -331,7 +347,8 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                         wordCount = wordCount,
                         startedAt = now,
                         finishedAt = None,
-                      )
+                      ),
+                      sampled,
                     )
                     .orDie
     } yield PlayStarted(row.id, wordCount, maxScore)
@@ -340,8 +357,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
     for {
       play       <- requireOwnedPlay(playId, requesterUserId)
-      game       <- requireGame(play.gameId)
-      pool       <- eligibleWordPool(game)
+      pool       <- repo.wordPairsOf(playId).orDie
       answered   <- repo.answersOf(playId).orDie
       answeredIds = answered.map(_.wordId).toSet
       remaining   = pool.filterNot(pair => answeredIds.contains(pair._1))
@@ -367,8 +383,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit] = {
     for {
       play          <- requireOwnedPlay(playId, requesterUserId)
-      game          <- requireGame(play.gameId)
-      pool          <- eligibleWordPool(game)
+      pool          <- repo.wordPairsOf(playId).orDie
       translationId <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
       expectedWords <- repo.wordsByIds(List(translationId)).orDie
       expectedText   = expectedWords.headOption.map(row => Word.displayText(row.text, row.gender)).getOrElse("")

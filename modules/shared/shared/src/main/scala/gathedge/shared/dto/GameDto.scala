@@ -3,11 +3,17 @@ package gathedge.shared.dto
 import gathedge.shared.domain.{AnswerOutcome, WordLanguage}
 import zio.json.*
 
-/** What `POST /api/games` needs: the language pair to draw words from, and which of the caller's eligible tags to build
-  * the game out of.
+/** What `POST /api/games` needs: the language pair to draw words from, which of the caller's eligible tags to build the
+  * game out of, and how many words a play should draw from the resulting eligible pool. `wordLimit = None` means "use
+  * every eligible word" — the setup screen's "select all" checkbox, and the only behaviour before this field existed;
+  * `Some(n)` means "sample exactly n of them, once, when a play starts" — see `GameService.startPlay`.
   */
-final case class CreateGameRequest(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, tagIds: List[Long])
-    derives JsonCodec
+final case class CreateGameRequest(
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+  tagIds: List[Long],
+  wordLimit: Option[Int] = None,
+) derives JsonCodec
 
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name — the caller already knows
   * everything else it just sent. The full [[GameDetail]] is a separate `GET`.
@@ -16,13 +22,17 @@ final case class GameCreated(slug: String, name: String) derives JsonCodec
 
 final case class RenameGameRequest(name: String) derives JsonCodec
 
-/** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. */
+/** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. `wordLimit`
+  * mirrors [[CreateGameRequest.wordLimit]] — `None` for "every eligible word", `Some(n)` for a fixed sample size —
+  * cheap to carry here so a game's own page or listing can show "20 words" instead of staying silent about the setting.
+  */
 final case class GameDetail(
   slug: String,
   name: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   tagNames: List[String],
+  wordLimit: Option[Int] = None,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s answer: enough for the play loop to start — the id every later play call addresses,

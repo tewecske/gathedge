@@ -115,6 +115,11 @@ object MessageKeys {
   val gameNoTagsSelected: String  = key("games.noTagsSelected")
   val gameNoEligibleWords: String = key("games.noEligibleWords")
 
+  /** Takes [[gathedge.shared.validation.Validation.maxWordLimit]] as `{0}` — one message covers both a non-positive
+    * count and one over the ceiling, since "enter a number between 1 and {0}" already reads correctly for either.
+    */
+  val gameWordLimitInvalid: String = key("games.wordLimitInvalid")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.

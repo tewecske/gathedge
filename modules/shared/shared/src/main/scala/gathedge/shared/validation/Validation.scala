@@ -124,6 +124,20 @@ object Validation {
     validateNonBlank(name, MessageKeys.fieldGameName, maxNameLength)
   }
 
+  /** How many words a play may draw from its eligible pool, when the creator asks for a fixed count rather than "select
+    * all" — see `games.word_limit`. No column or quota naturally bounds this the way a `VARCHAR` width bounds
+    * [[maxNameLength]], so [[maxWordLimit]] is a plain literal, picked generous enough for any real quiz while keeping
+    * play-start sampling and per-prompt random selection cheap.
+    */
+  val maxWordLimit = 500
+
+  def validateWordLimit(limit: Int): Either[MessageRef, Int] = {
+    if (limit < 1 || limit > maxWordLimit)
+      Left(MessageRef(MessageKeys.gameWordLimitInvalid, List(maxWordLimit.toString)))
+    else
+      Right(limit)
+  }
+
   def validateNonBlank(value: String, fieldKey: String, maxLength: Int = maxTextLength): Either[MessageRef, String] = {
     val trimmed = value.trim
     if (trimmed.isEmpty)

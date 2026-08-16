@@ -160,6 +160,22 @@ object GameServiceSpec extends ZIOSpecDefault {
           result <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, Nil).either
         } yield assertTrue(result == Left(GameFailure.NoTagsSelected))
       },
+      test("creating a game with a non-positive or too-large word limit fails validation") {
+        for {
+          owner    <- newUser()
+          tagId    <- eligibleTag(owner, "lesson1", WordLanguage.De, WordLanguage.Hu)
+          zero     <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(0)).either
+          negative <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(-1)).either
+          tooHigh  <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(501)).either
+        } yield assertTrue(
+          zero.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
+          negative.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
+          tooHigh.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
+        )
+      },
       test("once every adjective-noun combination is taken, a new game still gets a slug, with a numeric suffix") {
         for {
           owner <- newUser()
@@ -249,6 +265,39 @@ object GameServiceSpec extends ZIOSpecDefault {
           results.answers.size == 3,
           results.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct, AnswerOutcome.Typo, AnswerOutcome.Wrong),
         )
+      },
+      test("a word limit fixes the play's word count below the eligible pool, and the pool alone is unaffected") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "limited", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(2))
+          started <- GameService.startPlay(created.slug, owner)
+        } yield assertTrue(created.wordLimit.contains(2), started.wordCount == 2, started.maxScore == 4)
+      },
+      test("a limited play's word set is fixed at start and stays consistent across the whole playthrough") {
+        for {
+          owner     <- newUser()
+          tagId     <- eligibleTagWithPairs(owner, "sampled", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(2))
+          started   <- GameService.startPlay(created.slug, owner)
+          scenarios <- playThrough(started.playId, "sampled", owner)
+          results   <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          scenarios.size == 2,
+          results.wordCount == 2,
+          results.answers.size == 2,
+          // Two distinct words answered — the sample never repeats a word or drifts mid-play.
+          results.answers.map(_.wordText).distinct.size == 2,
+        )
+      },
+      test("a game with no word limit still uses every eligible word, exactly as before this setting existed") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "unlimited", WordLanguage.De, WordLanguage.Hu, count = 4)
+          created <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = None)
+          started <- GameService.startPlay(created.slug, owner)
+        } yield assertTrue(created.wordLimit.isEmpty, started.wordCount == 4, started.maxScore == 8)
       },
       test("starting a play when the game's tags currently carry nothing eligible fails") {
         for {
