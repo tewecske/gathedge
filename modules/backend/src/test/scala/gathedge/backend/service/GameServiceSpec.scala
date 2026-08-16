@@ -25,14 +25,19 @@ object GameServiceSpec extends ZIOSpecDefault {
 
   private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L).map(_.id)
 
-  private def dictionaryWord(language: WordLanguage, text: String, rank: Int = 1): WordRow = {
+  private def dictionaryWord(
+    language: WordLanguage,
+    text: String,
+    rank: Int = 1,
+    gender: Option[Gender] = None,
+  ): WordRow = {
     WordRow(
       id = 0L,
       language = WordLanguage.code(language),
       text = text,
       textNorm = text.toLowerCase,
       partOfSpeech = PartOfSpeech.code(PartOfSpeech.Noun),
-      gender = Gender.toColumn(None),
+      gender = Gender.toColumn(gender),
       frequencyRank = rank,
       source = WordService.dictionarySource,
       createdBy = None,
@@ -271,6 +276,54 @@ object GameServiceSpec extends ZIOSpecDefault {
           promptResult == Left(GameFailure.NotOwner),
           submitResult == Left(GameFailure.NotOwner),
           resultsResult == Left(GameFailure.NotOwner),
+        )
+      },
+      test("a gendered source word's prompt and results carry its article, an ungendered one is unaffected") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "genderedSource", "genderedSource", 0L)
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Der)))
+          target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          started <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+          _       <- GameService.submitAnswer(started.playId, prompt.wordId.get, "asztal", owner)
+          results <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          // The prompt is the gendered German source word: it shows its article.
+          prompt.wordText.contains("der Tisch"),
+          results.answers.head.wordText == "der Tisch",
+          // The expected answer is the ungendered Hungarian target: it is unaffected.
+          results.answers.head.expectedText == "asztal",
+          results.answers.head.outcome == AnswerOutcome.Correct,
+        )
+      },
+      test("a gendered expected answer requires its article to score as correct") {
+        for {
+          owner       <- newUser()
+          tag         <- WordRepository.insertTag(owner, "genderedTarget", "genderedTarget", 0L)
+          source      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
+          target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Der)))
+          _           <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          // Hungarian -> German: the *expected* answer is now the gendered German word.
+          created     <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          started     <- GameService.startPlay(created.slug, owner)
+          prompt      <- GameService.nextPrompt(started.playId, owner)
+          _           <- GameService.submitAnswer(started.playId, prompt.wordId.get, "Tisch", owner)
+          bareResults <- GameService.getResults(started.playId, owner)
+          restarted   <- GameService.startPlay(created.slug, owner)
+          prompt2     <- GameService.nextPrompt(restarted.playId, owner)
+          _           <- GameService.submitAnswer(restarted.playId, prompt2.wordId.get, "der Tisch", owner)
+          fullResults <- GameService.getResults(restarted.playId, owner)
+        } yield assertTrue(
+          // The ungendered Hungarian source word is unaffected.
+          prompt.wordText.contains("asztal"),
+          // Typing the noun without its article is nowhere near a one-letter typo of "der Tisch", so it scores wrong.
+          bareResults.answers.head.outcome == AnswerOutcome.Wrong,
+          bareResults.answers.head.expectedText == "der Tisch",
+          // Typing the noun with its correct article scores correct.
+          fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
     ).provide(layer)

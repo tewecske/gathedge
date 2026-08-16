@@ -163,14 +163,17 @@ final case class Word(
 
 object Word {
 
+  /** How a word is written on screen: a German noun with its article, anything else as it stands. Takes the raw text
+    * and the raw `gender` column value directly, for callers holding a DB row (e.g. `WordRow`) rather than a full
+    * [[Word]] — the game feature is the first of these, needing no other field to show or score a word.
+    */
+  def displayText(text: String, genderColumn: String): String = {
+    Gender.fromColumn(genderColumn).map(gender => Gender.article(gender) + " " + text).getOrElse(text)
+  }
+
   /** How a word is written on screen: a German noun with its article, anything else as it stands. */
   def display(word: Word): String = {
-    word.gender match {
-      case Some(gender) =>
-        Gender.article(gender) + " " + word.text
-      case None         =>
-        word.text
-    }
+    displayText(word.text, Gender.toColumn(word.gender))
   }
 
   extension (word: Word) {

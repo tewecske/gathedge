@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, MyGameSummary, PlayStarted}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
@@ -353,7 +353,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                           index      <- Random.nextIntBounded(choices.size)
                           (wordId, _) = choices(index)
                           wordRows   <- repo.wordsByIds(List(wordId)).orDie
-                          wordText    = wordRows.headOption.map(_.text).getOrElse("")
+                          wordText    = wordRows.headOption.map(row => Word.displayText(row.text, row.gender)).getOrElse("")
                         } yield GamePrompt(
                           finished = false,
                           wordId = Some(wordId),
@@ -371,7 +371,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       pool          <- eligibleWordPool(game)
       translationId <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
       expectedWords <- repo.wordsByIds(List(translationId)).orDie
-      expectedText   = expectedWords.headOption.map(_.text).getOrElse("")
+      expectedText   = expectedWords.headOption.map(row => Word.displayText(row.text, row.gender)).getOrElse("")
       scored         = GameScoring.score(expectedText, answerText)
       now           <- Clock.currentTime(TimeUnit.MILLISECONDS)
       answeredSoFar <- repo.answersOf(playId).orDie
@@ -399,7 +399,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       answers <- repo.answersOf(playId).orDie
       wordIds  = answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct
       words   <- repo.wordsByIds(wordIds).orDie
-      textOf   = words.map(w => w.id -> w.text).toMap
+      textOf   = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
       results  = answers.map { a =>
                    GameAnswerResult(
                      wordText = textOf.getOrElse(a.wordId, ""),
