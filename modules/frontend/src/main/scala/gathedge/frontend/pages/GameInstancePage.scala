@@ -546,6 +546,9 @@ private class GameInstancePage(slug: String) {
             cls         := "input input-sm w-full",
             placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
             controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
+            // `renderPrompt` is freshly mounted for every new `GamePrompt` (see `phaseSignal`'s `.distinct`), so
+            // focusing on mount both auto-focuses on first load and re-focuses on every new word.
+            onMountFocus,
           ),
         ),
         button(
