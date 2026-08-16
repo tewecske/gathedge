@@ -37,7 +37,7 @@ object GamesPage {
         h2(cls := "card-title", title),
         p(body),
         div(
-          cls := "card-actions justify-end",
+          cls  := "card-actions justify-end",
           a(cls := "btn btn-primary", AppRouter.router.navigateTo(target), I18n.t(UiKeys.gamesVocabQuizPlay)),
         ),
       ),

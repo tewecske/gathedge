@@ -5,7 +5,7 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.state.AppState
+import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
 import gathedge.shared.dto.GameCreated
 import gathedge.shared.i18n.UiKeys
@@ -57,8 +57,8 @@ private class GameSetupPage {
 
   private val userSignal = AppState.currentUserSignal
 
-  /** Mirrors who the reader is at the moment a request is made — signals cannot be read outside a subscription, and
-    * the guest detour needs `.now()`. Same trick as `WordCollect.readerVar`.
+  /** Mirrors who the reader is at the moment a request is made — signals cannot be read outside a subscription, and the
+    * guest detour needs `.now()`. Same trick as `WordCollect.readerVar`.
     */
   private val readerVar = Var(Option.empty[User])
 
@@ -93,16 +93,18 @@ private class GameSetupPage {
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.gameSetupTitle)),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
-      child.maybe <-- createdVar.signal.map(_.map(created => Alert.success(I18n.t(UiKeys.gameSetupCreated, created.name)))),
+      child.maybe <-- createdVar.signal.map(
+        _.map(created => Alert.success(I18n.t(UiKeys.gameSetupCreated, created.name)))
+      ),
       div(
-        cls := "flex flex-wrap items-end gap-3 mb-4",
+        cls  := "flex flex-wrap items-end gap-3 mb-4",
         languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
         languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
       ),
       div(
-        cls := "mb-4",
+        cls  := "mb-4",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupTagsLabel)),
-        div(cls := "flex flex-col gap-3 mt-1", children <-- tagsSignal.map(tagCheckboxGroups)),
+        div(cls  := "flex flex-col gap-3 mt-1", children <-- tagsSignal.map(tagCheckboxGroups)),
         child.maybe <-- tagsSignal.combineWith(loadingSignal).map { case (tags, loading) =>
           Option.when(tags.isEmpty && !loading)(
             p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoEligibleTags))
@@ -117,7 +119,7 @@ private class GameSetupPage {
       formRequests.flatMapSwitch { case (source, target) => asReader(() => GameApiClient.setup(source, target)) } -->
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>
-            val sorted = Tag.sorted(tags)
+            val sorted           = Tag.sorted(tags)
             Var.set(
               tagsVar           -> sorted,
               loadingVar        -> false,
@@ -135,8 +137,11 @@ private class GameSetupPage {
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
             Var.set(creatingVar -> false, createdVar -> Some(created))
+            // This browser is the one that created it, so it is offered the rename control — see `GameOwnership`'s
+            // doc comment on why the game's own detail response cannot carry that flag itself.
+            GameOwnership.markOwned(created.slug)
             AppRouter.router.pushState(Page.GameInstance(created.slug))
-          case Left(err)       =>
+          case Left(err)      =>
             Var.set(creatingVar -> false, errorVar -> Some(err.message))
         },
     )
@@ -186,8 +191,8 @@ private class GameSetupPage {
     label(
       cls := "label gap-2 justify-start cursor-pointer",
       input(
-        typ := "checkbox",
-        cls := "checkbox checkbox-sm",
+        typ    := "checkbox",
+        cls    := "checkbox checkbox-sm",
         controlled(
           checked <-- selectedTagIdsVar.signal.map(_.contains(tag.id)),
           onClick.mapToChecked --> Observer[Boolean] { on =>
@@ -201,8 +206,8 @@ private class GameSetupPage {
 
   private def renderPlayButton(): HtmlElement = {
     button(
-      typ      := "button",
-      cls      := "btn btn-primary",
+      typ := "button",
+      cls := "btn btn-primary",
       disabled <-- selectedTagIdsVar.signal.combineWith(creatingSignal).map { case (ids, busy) =>
         ids.isEmpty || busy
       },

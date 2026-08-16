@@ -59,6 +59,7 @@ object UiKeys {
   val commonAdd: String           = key("ui.common.add")
   val commonCreate: String        = key("ui.common.create")
   val commonSave: String          = key("ui.common.save")
+  val commonCancel: String        = key("ui.common.cancel")
   val commonRemove: String        = key("ui.common.remove")
   val commonApply: String         = key("ui.common.apply")
   val commonAdministrator: String = key("ui.common.administrator")
@@ -627,15 +628,30 @@ object UiKeys {
 
   // -- Game instance -----------------------------------------------------------------------------
 
-  val gameInstanceNotFound: String           = key("ui.gameInstance.notFound")
-  val gameInstanceStart: String              = key("ui.gameInstance.start")
-  val gameInstanceProgress: String           = key("ui.gameInstance.progress")
-  val gameInstanceAnswerLabel: String        = key("ui.gameInstance.answerLabel")
-  val gameInstanceAnswerPlaceholder: String  = key("ui.gameInstance.answerPlaceholder")
-  val gameInstanceSubmit: String             = key("ui.gameInstance.submit")
-  val gameInstanceFinishedTitle: String      = key("ui.gameInstance.finishedTitle")
-  val gameInstanceFinishedBody: String       = key("ui.gameInstance.finishedBody")
-  val gameInstanceBackToGames: String        = key("ui.gameInstance.backToGames")
+  val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")
+  val gameInstanceStart: String             = key("ui.gameInstance.start")
+  val gameInstanceProgress: String          = key("ui.gameInstance.progress")
+  val gameInstanceAnswerLabel: String       = key("ui.gameInstance.answerLabel")
+  val gameInstanceAnswerPlaceholder: String = key("ui.gameInstance.answerPlaceholder")
+  val gameInstanceSubmit: String            = key("ui.gameInstance.submit")
+  val gameInstanceFinishedTitle: String     = key("ui.gameInstance.finishedTitle")
+  val gameInstanceBackToGames: String       = key("ui.gameInstance.backToGames")
+
+  // The results screen: score, and the full per-word answer table.
+  val gameInstanceScore: String              = key("ui.gameInstance.score")
+  val gameInstanceResultsWordCol: String     = key("ui.gameInstance.results.wordCol")
+  val gameInstanceResultsExpectedCol: String = key("ui.gameInstance.results.expectedCol")
+  val gameInstanceResultsAnswerCol: String   = key("ui.gameInstance.results.answerCol")
+  val gameInstanceResultsOutcomeCol: String  = key("ui.gameInstance.results.outcomeCol")
+  val gameInstanceOutcomeCorrect: String     = key("ui.gameInstance.outcome.correct")
+  val gameInstanceOutcomeTypo: String        = key("ui.gameInstance.outcome.typo")
+  val gameInstanceOutcomeWrong: String       = key("ui.gameInstance.outcome.wrong")
+  val gameInstancePlayAgain: String          = key("ui.gameInstance.playAgain")
+
+  // Inline rename, offered only to a browser that created this game — see `GameOwnership`'s doc comment on why
+  // there is no server-asserted "you own this" flag to key it off instead.
+  val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
+  val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

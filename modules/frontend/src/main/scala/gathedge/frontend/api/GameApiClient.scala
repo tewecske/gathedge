@@ -3,7 +3,16 @@ package gathedge.frontend.api
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{Tag, WordLanguage}
-import gathedge.shared.dto.{CreateGameRequest, GameCreated, GameDetail, GamePrompt, PlayStarted, SubmitAnswerRequest}
+import gathedge.shared.dto.{
+  CreateGameRequest,
+  GameCreated,
+  GameDetail,
+  GamePrompt,
+  GameResults,
+  PlayStarted,
+  RenameGameRequest,
+  SubmitAnswerRequest,
+}
 
 import EndpointClient.{executor, run}
 
@@ -35,6 +44,14 @@ object GameApiClient {
     run(executor(GameEndpoints.get(slug)))
   }
 
+  /** Owner-only — see `GameEndpoints.rename`'s doc comment. `GameInstancePage` only offers the control behind
+    * `GameOwnership.isOwned`, but the 403 this can still answer (a different account, or a stale local hint) is what
+    * actually enforces it.
+    */
+  def rename(slug: String, name: String): EventStream[Either[ApiError, GameDetail]] = {
+    run(executor(GameEndpoints.rename(slug, RenameGameRequest(name))))
+  }
+
   def startPlay(slug: String): EventStream[Either[ApiError, PlayStarted]] = {
     run(executor(GameEndpoints.startPlay(slug)))
   }
@@ -45,5 +62,10 @@ object GameApiClient {
 
   def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, Unit]] = {
     run(executor(GameEndpoints.submitAnswer(playId, SubmitAnswerRequest(wordId, answerText))))
+  }
+
+  /** The finished play's score and full answer history, for the results screen. */
+  def getResults(playId: Long): EventStream[Either[ApiError, GameResults]] = {
+    run(executor(GameEndpoints.results(playId)))
   }
 }

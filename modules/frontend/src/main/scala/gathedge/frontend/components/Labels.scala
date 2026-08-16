@@ -1,7 +1,7 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, PartOfSpeech, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -58,6 +58,20 @@ object Labels {
     */
   def translationOrigin(origin: String): String = {
     translatedOr(UiKeys.originPrefix + origin, origin)
+  }
+
+  /** How one answer on a game results screen turned out. Matched exhaustively rather than by suffix, like [[language]]
+    * — `AnswerOutcome` is a fixed shared enum, not a stored code a newer build might widen.
+    */
+  def gameOutcome(outcome: AnswerOutcome): String = {
+    outcome match {
+      case AnswerOutcome.Correct =>
+        I18n.t(UiKeys.gameInstanceOutcomeCorrect)
+      case AnswerOutcome.Typo    =>
+        I18n.t(UiKeys.gameInstanceOutcomeTypo)
+      case AnswerOutcome.Wrong   =>
+        I18n.t(UiKeys.gameInstanceOutcomeWrong)
+    }
   }
 
   private def translatedOr(key: String, fallback: String): String = {
