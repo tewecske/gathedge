@@ -65,8 +65,9 @@ trait GameService {
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt]
 
   /** Scores `answerText` against `wordId`'s expected translation — looked up server-side, never trusting a
-    * client-supplied translation id — and records it. Answers with acknowledgement only: never the score or whether it
-    * was correct, so a player is never shown correctness mid-game.
+    * client-supplied translation id — and records it. When `wordId` has more than one marked translation in the game's
+    * tags, `answerText` is scored against each and the best-scoring one wins. Answers with acknowledgement only: never
+    * the score or whether it was correct, so a player is never shown correctness mid-game.
     */
   def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit]
 
@@ -380,31 +381,49 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield prompt
   }
 
+  /** `wordId`'s translation ids eligible under `game`'s tags — every marked pair, not just the one the prompt was drawn
+    * against — so [[submitAnswer]] can credit any of a word's accepted translations, not only the one `wordPairsOf`
+    * happened to fix for this play.
+    */
+  private def candidateTranslationIds(game: GameRow, wordId: Long, fallback: Long): UIO[List[Long]] = {
+    repo
+      .eligibleWordPairs(game.id, game.sourceLanguage, game.targetLanguage)
+      .orDie
+      .map(pairs => (fallback :: pairs.collect { case (w, t) if w == wordId => t }).distinct)
+  }
+
   def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit] = {
     for {
-      play          <- requireOwnedPlay(playId, requesterUserId)
-      pool          <- repo.wordPairsOf(playId).orDie
-      translationId <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
-      expectedWords <- repo.wordsByIds(List(translationId)).orDie
-      expectedText   = expectedWords.headOption.map(row => Word.displayText(row.text, row.gender)).getOrElse("")
-      scored         = GameScoring.score(expectedText, answerText)
-      now           <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      answeredSoFar <- repo.answersOf(playId).orDie
-      position       = answeredSoFar.size + 1
-      newScore       = answeredSoFar.map(_.points).sum + scored.points
-      finishedAt     = Option.when(position == play.wordCount)(now)
-      answer         = GamePlayAnswerRow(
-                         id = 0L,
-                         playId = playId,
-                         wordId = wordId,
-                         translationWordId = translationId,
-                         position = position,
-                         userAnswer = answerText,
-                         outcome = AnswerOutcome.code(scored.outcome),
-                         points = scored.points,
-                         answeredAt = now,
-                       )
-      _             <- repo.recordAnswer(answer, newScore, finishedAt).orDie
+      play            <- requireOwnedPlay(playId, requesterUserId)
+      pool            <- repo.wordPairsOf(playId).orDie
+      translationId   <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
+      game            <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
+      candidateIds    <- candidateTranslationIds(game, wordId, translationId)
+      candidateWords  <- repo.wordsByIds(candidateIds).orDie
+      textById         = candidateWords.map(row => row.id -> Word.displayText(row.text, row.gender)).toMap
+      scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> GameScoring.score(text, answerText)))
+      (bestId, scored) = {
+        scoredById
+          .maxByOption(_._2.points)
+          .getOrElse(translationId -> GameScoring.score(textById.getOrElse(translationId, ""), answerText))
+      }
+      now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      answeredSoFar   <- repo.answersOf(playId).orDie
+      position         = answeredSoFar.size + 1
+      newScore         = answeredSoFar.map(_.points).sum + scored.points
+      finishedAt       = Option.when(position == play.wordCount)(now)
+      answer           = GamePlayAnswerRow(
+                           id = 0L,
+                           playId = playId,
+                           wordId = wordId,
+                           translationWordId = bestId,
+                           position = position,
+                           userAnswer = answerText,
+                           outcome = AnswerOutcome.code(scored.outcome),
+                           points = scored.points,
+                           answeredAt = now,
+                         )
+      _               <- repo.recordAnswer(answer, newScore, finishedAt).orDie
     } yield ()
   }
 

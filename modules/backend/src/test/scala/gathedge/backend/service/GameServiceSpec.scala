@@ -348,6 +348,32 @@ object GameServiceSpec extends ZIOSpecDefault {
           results.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
+      test("a word with more than one marked translation accepts any of them") {
+        for {
+          owner    <- newUser()
+          tag      <- WordRepository.insertTag(owner, "multi", "multi", 0L)
+          source   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "multi-source"))
+          target1  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "multi-target-1"))
+          target2  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "multi-target-2"))
+          _        <- WordRepository.pairTranslation(source.id, tag.id, target1.id, 0L)
+          _        <- WordRepository.pairTranslation(source.id, tag.id, target2.id, 0L)
+          created  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          started  <- GameService.startPlay(created.slug, owner)
+          prompt   <- GameService.nextPrompt(started.playId, owner)
+          _        <- GameService.submitAnswer(started.playId, prompt.wordId.get, "multi-target-2", owner)
+          results  <- GameService.getResults(started.playId, owner)
+          restart  <- GameService.startPlay(created.slug, owner)
+          prompt2  <- GameService.nextPrompt(restart.playId, owner)
+          _        <- GameService.submitAnswer(restart.playId, prompt2.wordId.get, "multi-target-1", owner)
+          results2 <- GameService.getResults(restart.playId, owner)
+        } yield assertTrue(
+          // Whichever of the two marked translations is typed, it scores correct and the results show that one.
+          results.answers.head.outcome == AnswerOutcome.Correct,
+          results.answers.head.expectedText == "multi-target-2",
+          results2.answers.head.outcome == AnswerOutcome.Correct,
+          results2.answers.head.expectedText == "multi-target-1",
+        )
+      },
       test("a gendered expected answer requires its article to score as correct") {
         for {
           owner       <- newUser()
