@@ -27,7 +27,7 @@ buildNpmPackage {
   sourceRoot = "${src.name}/web";
 
   # nix run nixpkgs#prefetch-npm-deps -- web/package-lock.json
-  npmDepsHash = "sha256-ptqaEDr/NWhj6igul/iE0mGfFneCNacjpYXsZvcOIcY=";
+  npmDepsHash = "sha256-0ufJZ9juYasTjQ/aJwE8Srydb62yhItFK08N1zZXAlM=";
 
   nativeBuildInputs = [ fakeSbt ];
 
