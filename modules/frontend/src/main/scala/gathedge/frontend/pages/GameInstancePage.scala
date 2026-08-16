@@ -1,0 +1,257 @@
+package gathedge.frontend.pages
+
+import com.raquo.laminar.api.L._
+import gathedge.frontend.{AppRouter, Page}
+import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
+import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
+import gathedge.frontend.i18n.I18n
+import gathedge.frontend.state.AppState
+import gathedge.shared.domain.User
+import gathedge.shared.dto.{GameDetail, GamePrompt, PlayStarted}
+import gathedge.shared.i18n.UiKeys
+
+/** One quiz, played from its shared link (`/g/{slug}`).
+  *
+  * The initial `GET /api/games/{slug}` mints nobody — see `Page.GameInstance`'s doc comment — a visitor can read the
+  * quiz's name and tags with no session at all. Starting a play is the first write the page makes, so it is where the
+  * guest detour sits ([[asReader]], copied in spirit from `GameSetupPage`'s), and it sits there once: every later call
+  * in the loop (`nextPrompt`, `submitAnswer`) runs against the session `startPlay` already established.
+  *
+  * One prompt is shown at a time, with a "3 of 12" progress line and nothing else about how the game is going —
+  * `GameEndpoints.submitAnswer`'s doc comment is why: a player is never shown correctness mid-game, and that includes
+  * the running score.
+  */
+object GameInstancePage {
+
+  def render(slug: String): HtmlElement = {
+    AppShell.render(Page.GameInstance(slug), new GameInstancePage(slug).render())
+  }
+}
+
+private class GameInstancePage(slug: String) {
+
+  private sealed trait Phase
+
+  private object Phase {
+    case object NotStarted extends Phase
+    case object Loading    extends Phase
+
+    final case class Playing(prompt: GamePrompt, wordCount: Int) extends Phase
+
+    case object Finished extends Phase
+  }
+
+  private val gameVar    = Var(Option.empty[GameDetail])
+  private val missingVar = Var(false)
+
+  private val errorVar: Var[Option[String]] = Var(None)
+  private val noticeVar: Var[Option[String]] = Var(None)
+
+  private val playIdVar    = Var(Option.empty[Long])
+  private val wordCountVar = Var(0)
+
+  private val promptVar   = Var(Option.empty[GamePrompt])
+  private val finishedVar = Var(false)
+
+  private val answerTextVar = Var("")
+
+  private val startingVar    = Var(false)
+  private val submittingVar  = Var(false)
+
+  /** Mirrors who the reader is at the moment a request is made — same trick as `GameSetupPage.readerVar`, needed
+    * because [[asReader]] reads it outside a subscription.
+    */
+  private val readerVar = Var(Option.empty[User])
+
+  private val loadBus   = new EventBus[Unit]()
+  private val startBus  = new EventBus[Unit]()
+  private val nextBus   = new EventBus[Unit]()
+  private val submitBus = new EventBus[Unit]()
+
+  private val phaseSignal: Signal[Phase] = {
+    playIdVar.signal
+      .combineWith(finishedVar.signal, promptVar.signal, wordCountVar.signal)
+      .map {
+        case (None, _, _, _)              =>
+          Phase.NotStarted
+        case (Some(_), true, _, _)        =>
+          Phase.Finished
+        case (Some(_), false, Some(p), n) =>
+          Phase.Playing(p, n)
+        case (Some(_), false, None, _)    =>
+          Phase.Loading
+      }
+      .distinct
+  }
+
+  /** A per-account write, with the guest detour in front of it — copied from `GameSetupPage.asReader`. With no session
+    * `startPlay` cannot succeed, so a guest is minted first and the call retried against the session that creates.
+    * Signed in, the mint is skipped entirely.
+    */
+  private def asReader[A](write: () => EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
+    readerVar.now() match {
+      case Some(_) =>
+        write()
+      case None    =>
+        ApiClient.createGuest.flatMapSwitch {
+          case Right(response) =>
+            AppState.setUser(response.user)
+            noticeVar.set(Some(I18n.t(UiKeys.guestBannerHint)))
+            write()
+          case Left(err)       =>
+            EventStream.fromValue(Left(err))
+        }
+    }
+  }
+
+  def render(): HtmlElement = {
+    div(
+      cls := "max-w-xl mx-auto",
+      Alert.maybeError(errorVar.signal),
+      Alert.maybeInfo(noticeVar.signal),
+      child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.gameInstanceNotFound)))),
+      child.maybe <-- gameVar.signal.map(_.map(renderGame)),
+      child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
+      onMountCallback(_ => loadBus.emit(())),
+      AppState.currentUserSignal --> readerVar.writer,
+      loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
+        Observer[Either[ApiError, GameDetail]] {
+          case Right(detail) =>
+            Var.set(gameVar -> Some(detail), missingVar -> false, errorVar -> None)
+          case Left(err)     =>
+            // A quiz that is not there is a different thing from a request that failed, and reads differently.
+            if (err.status == 404)
+              Var.set(missingVar -> true, errorVar -> None)
+            else
+              errorVar.set(Some(err.message))
+        },
+      startBus.events --> Observer[Unit](_ => Var.set(startingVar -> true, errorVar -> None)),
+      startBus.events.flatMapSwitch(_ => asReader(() => GameApiClient.startPlay(slug))) -->
+        Observer[Either[ApiError, PlayStarted]] {
+          case Right(started) =>
+            Var.set(
+              playIdVar    -> Some(started.playId),
+              wordCountVar -> started.wordCount,
+              startingVar  -> false,
+            )
+            nextBus.emit(())
+          case Left(err)       =>
+            Var.set(startingVar -> false, errorVar -> Some(err.message))
+        },
+      nextPromptStream --> Observer[Either[ApiError, GamePrompt]] {
+        case Right(prompt) =>
+          if (prompt.finished)
+            Var.set(finishedVar -> true, promptVar -> None)
+          else
+            Var.set(promptVar -> Some(prompt), answerTextVar -> "", submittingVar -> false)
+        case Left(err)     =>
+          Var.set(submittingVar -> false, errorVar -> Some(err.message))
+      },
+      submitStream --> Observer[Either[ApiError, Unit]] {
+        case Right(_)  =>
+          nextBus.emit(())
+        case Left(err) =>
+          Var.set(submittingVar -> false, errorVar -> Some(err.message))
+      },
+    )
+  }
+
+  private def nextPromptStream: EventStream[Either[ApiError, GamePrompt]] = {
+    nextBus.events
+      .map(_ => playIdVar.now())
+      .collect { case Some(playId) => playId }
+      .flatMapSwitch(playId => GameApiClient.nextPrompt(playId))
+  }
+
+  private def submitStream: EventStream[Either[ApiError, Unit]] = {
+    submitBus.events
+      .filterWith(submittingVar.signal.not)
+      .map(_ => (playIdVar.now(), promptVar.now().flatMap(_.wordId), answerTextVar.now().trim))
+      .collect { case (Some(playId), Some(wordId), text) if text.nonEmpty => (playId, wordId, text) }
+      .flatMapSwitch { case (playId, wordId, text) =>
+        submittingVar.set(true)
+        GameApiClient.submitAnswer(playId, wordId, text)
+      }
+  }
+
+  private def renderGame(detail: GameDetail): HtmlElement = {
+    div(
+      cls := "card bg-base-100 shadow mt-4",
+      div(
+        cls := "card-body",
+        h1(cls := "card-title text-2xl", detail.name),
+        p(
+          cls := "text-sm opacity-70",
+          s"${Labels.language(detail.sourceLanguage)} → ${Labels.language(detail.targetLanguage)}",
+        ),
+        if (detail.tagNames.nonEmpty)
+          div(cls := "flex flex-wrap gap-2 mt-1", detail.tagNames.map(name => span(cls := "badge badge-ghost", name)))
+        else
+          emptyNode,
+        div(cls := "mt-4", child <-- phaseSignal.map(renderPhase)),
+      ),
+    )
+  }
+
+  private def renderPhase(phase: Phase): HtmlElement = {
+    phase match {
+      case Phase.NotStarted          =>
+        renderStart()
+      case Phase.Loading             =>
+        span(cls := "loading loading-spinner")
+      case Phase.Playing(prompt, wc) =>
+        renderPrompt(prompt, wc)
+      case Phase.Finished            =>
+        renderFinished()
+    }
+  }
+
+  private def renderStart(): HtmlElement = {
+    button(
+      cls      := "btn btn-primary",
+      typ      := "button",
+      disabled <-- startingVar.signal,
+      I18n.t(UiKeys.gameInstanceStart),
+      onClick.mapToUnit --> startBus.writer,
+    )
+  }
+
+  private def renderPrompt(prompt: GamePrompt, wordCount: Int): HtmlElement = {
+    div(
+      p(
+        cls := "text-sm opacity-70",
+        I18n.t(UiKeys.gameInstanceProgress, prompt.position.getOrElse(0), wordCount),
+      ),
+      h2(cls := "text-xl font-semibold my-2", prompt.wordText.getOrElse("")),
+      form(
+        cls        := "flex flex-wrap items-end gap-2",
+        noValidate := true,
+        onSubmit.preventDefault.mapToUnit --> submitBus.writer,
+        label(
+          cls := "form-control grow",
+          span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
+          input(
+            cls         := "input input-sm w-full",
+            placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
+            controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
+          ),
+        ),
+        button(
+          cls      := "btn btn-sm btn-primary",
+          typ      := "submit",
+          disabled <-- submittingVar.signal,
+          I18n.t(UiKeys.gameInstanceSubmit),
+        ),
+      ),
+    )
+  }
+
+  private def renderFinished(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      p(cls := "font-semibold", I18n.t(UiKeys.gameInstanceFinishedTitle)),
+      p(cls := "text-sm opacity-70", I18n.t(UiKeys.gameInstanceFinishedBody)),
+      a(cls := "link link-hover text-sm", AppRouter.router.navigateTo(Page.Games), I18n.t(UiKeys.gameInstanceBackToGames)),
+    )
+  }
+}

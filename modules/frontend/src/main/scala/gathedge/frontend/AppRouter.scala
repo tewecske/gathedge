@@ -32,6 +32,13 @@ object Page {
     */
   case object GameSetup extends Page
 
+  /** One quiz, playable from its shared link: `/g/{slug}`. Public for the same reason [[GameSetup]] is public and
+    * [[WordDetail]] is — a shared link has to render for a signed-out visitor — but nothing here mints a guest on
+    * arrival, unlike `GameSetup`: reading the game's name and tags is not a write. It is starting a play, the first
+    * action the page offers, that goes through the guest detour, in `GameInstancePage`.
+    */
+  final case class GameInstance(slug: String) extends Page
+
   /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
   case object ForgotPassword extends Page
 
@@ -94,7 +101,7 @@ object Page {
         AuthGuard.Public
       // Home is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in. Games is the same: a shared link has to show the catalog, not sign-in.
-      case Home | Games | GameSetup                                              =>
+      case Home | Games | GameSetup | GameInstance(_)                            =>
         AuthGuard.Public
       case _                                                                     =>
         AuthGuard.RequireAuth
@@ -123,6 +130,12 @@ object AppRouter {
   private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
   private val gamesRoute           = Route.static(Games, root / "games", basePath)
   private val gameSetupRoute       = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
+  private val gameInstanceRoute    = Route(
+    encode = (p: GameInstance) => p.slug,
+    decode = (slug: String) => GameInstance(slug),
+    pattern = root / "g" / segment[String],
+    basePath = basePath,
+  )
   private val verifyEmailRoute     = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
@@ -212,6 +225,8 @@ object AppRouter {
         "Games"
       case GameSetup            =>
         "GameSetup"
+      case GameInstance(slug)   =>
+        s"GameInstance:$slug"
       case VerifyEmail(token)   =>
         s"VerifyEmail:$token"
       case CheckInbox           =>
@@ -250,6 +265,8 @@ object AppRouter {
   private[frontend] def deserialize(tag: String): Page = {
     if (tag.startsWith("VerifyEmail:")) {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
+    } else if (tag.startsWith("GameInstance:")) {
+      GameInstance(tag.stripPrefix("GameInstance:"))
     } else if (tag.startsWith("ResetPassword:")) {
       ResetPassword(tag.stripPrefix("ResetPassword:"))
     } else if (tag.startsWith("WordDetail:")) {
@@ -313,6 +330,7 @@ object AppRouter {
         settingsRoute,
         gamesRoute,
         gameSetupRoute,
+        gameInstanceRoute,
         verifyEmailRoute,
         checkInboxRoute,
         forgotPasswordRoute,

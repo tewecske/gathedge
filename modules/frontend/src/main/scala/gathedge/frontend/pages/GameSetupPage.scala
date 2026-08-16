@@ -1,7 +1,7 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import gathedge.frontend.Page
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
@@ -135,7 +135,7 @@ private class GameSetupPage {
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
             Var.set(creatingVar -> false, createdVar -> Some(created))
-          // TODO(task 7): AppRouter.router.pushState(Page.GameInstance(created.slug)) once that page exists.
+            AppRouter.router.pushState(Page.GameInstance(created.slug))
           case Left(err)       =>
             Var.set(creatingVar -> false, errorVar -> Some(err.message))
         },
