@@ -180,6 +180,30 @@ object GameServiceSpec extends ZIOSpecDefault {
           found   <- GameService.getBySlug(created.slug)
         } yield assertTrue(found == created)
       },
+      test("myGames answers only the caller's own games, with tag names and play counts") {
+        for {
+          owner      <- newUser()
+          other      <- newUser()
+          ownTagId   <- eligibleTagWithPairs(owner, "mine", WordLanguage.De, WordLanguage.Hu, count = 1)
+          otherTagId <- eligibleTagWithPairs(other, "notMine", WordLanguage.De, WordLanguage.Hu, count = 1)
+          ownGame    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(ownTagId))
+          _          <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
+          unplayed   <- GameService.myGames(owner)
+          firstPlay  <- GameService.startPlay(ownGame.slug, owner)
+          _          <- playThrough(firstPlay.playId, "mine", owner)
+          secondPlay <- GameService.startPlay(ownGame.slug, owner)
+          _          <- playThrough(secondPlay.playId, "mine", owner)
+          played     <- GameService.myGames(owner)
+        } yield assertTrue(
+          // Only the caller's own game comes back — the other account's game (and its tag) is invisible here.
+          unplayed.map(_.slug) == List(ownGame.slug),
+          unplayed.head.tagNames == List("mine"),
+          unplayed.head.sourceLanguage == WordLanguage.De,
+          unplayed.head.targetLanguage == WordLanguage.Hu,
+          unplayed.head.playCount == 0L,
+          played.head.playCount == 2L,
+        )
+      },
       test("only the owner may rename a game") {
         for {
           owner   <- newUser()

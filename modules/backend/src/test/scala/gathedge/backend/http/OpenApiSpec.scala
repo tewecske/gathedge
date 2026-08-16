@@ -92,6 +92,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/copy",
               "/api/games",
               "/api/games/setup",
+              "/api/games/mine",
               "/api/games/{slug}",
               "/api/games/{slug}/plays",
               "/api/games/plays/{playId}/prompt",
@@ -229,6 +230,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Setup takes no input the codec can fail to decode (both query parameters are read leniently, the
               // same as the vocabulary listing's `lang`/`target`), so its only failure is the aspect's 401.
               ("GET", "/api/games/setup")                                                 -> Set(Ok, Unauthorized),
+              // Same shape as setup: no input the codec can fail to decode, so its only failure is the aspect's 401.
+              ("GET", "/api/games/mine")                                                  -> Set(Ok, Unauthorized),
               // createGame's own failures are all BadRequest (no tags selected, a tag ineligible for the language
               // pair, or a validation error) — it never raises NotFound/NotOwner.
               ("POST", "/api/games")                                                      -> Set(Created, BadRequest, Unauthorized),
@@ -313,7 +316,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 151,
+          declared == 152,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, and on the three play-id operations), are

@@ -616,6 +616,22 @@ object UiKeys {
   val gamesVocabQuizBody: String  = key("ui.games.vocabQuiz.body")
   val gamesVocabQuizPlay: String  = key("ui.games.vocabQuiz.play")
 
+  /** The "my games" card on the catalog page — a link to [[myGamesTitle]]'s table, shown only when signed in. */
+  val gamesMyGamesTitle: String = key("ui.games.myGames.title")
+  val gamesMyGamesBody: String  = key("ui.games.myGames.body")
+  val gamesMyGamesOpen: String  = key("ui.games.myGames.open")
+
+  // -- My games --------------------------------------------------------------------------------
+
+  /** The signed-in owner's own games: name, tags, language pair, and how many times each was played. */
+  val myGamesTitle: String     = key("ui.myGames.title")
+  val myGamesEmpty: String     = key("ui.myGames.empty")
+  val myGamesNameCol: String   = key("ui.myGames.nameCol")
+  val myGamesTagsCol: String   = key("ui.myGames.tagsCol")
+  val myGamesSourceCol: String = key("ui.myGames.sourceCol")
+  val myGamesTargetCol: String = key("ui.myGames.targetCol")
+  val myGamesPlaysCol: String  = key("ui.myGames.playsCol")
+
   // -- Game setup ----------------------------------------------------------------------------------
 
   val gameSetupTitle: String          = key("ui.gameSetup.title")

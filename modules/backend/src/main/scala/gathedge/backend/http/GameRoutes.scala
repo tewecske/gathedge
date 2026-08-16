@@ -39,6 +39,10 @@ object GameRoutes {
     )
   }
 
+  private val mineRoute = {
+    GameEndpoints.mine.implementHandler(handler((_: Unit) => userId.flatMap(GameService.myGames)))
+  }
+
   private val createRoute = {
     GameEndpoints.create.implementHandler(
       handler { (body: CreateGameRequest) =>
@@ -103,8 +107,16 @@ object GameRoutes {
   private val publicRoutes = Routes(getRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
-    Routes(setupRoute, createRoute, renameRoute, startPlayRoute, nextPromptRoute, submitAnswerRoute, resultsRoute)
-      @@ RouteSupport.authenticated
+    Routes(
+      setupRoute,
+      mineRoute,
+      createRoute,
+      renameRoute,
+      startPlayRoute,
+      nextPromptRoute,
+      submitAnswerRoute,
+      resultsRoute,
+    ) @@ RouteSupport.authenticated
   }
 
   val routes: Routes[AuthService & GameService, Response] = {

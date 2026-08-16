@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, WordLanguage}
-import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, PlayStarted}
+import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, MyGameSummary, PlayStarted}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -34,6 +34,9 @@ trait GameService {
 
   /** Tags with a marked pair in the `sourceLanguage` -> `targetLanguage` direction, own tags first. */
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]]
+
+  /** `userId`'s own games, most recently created first, with their tag names and how many times each was played. */
+  def myGames(userId: Long): UIO[List[MyGameSummary]]
 
   def createGame(
     userId: Long,
@@ -77,6 +80,9 @@ object GameService {
     viewerId: Long,
   ): URIO[GameService, List[Tag]] =
     ZIO.serviceWithZIO[GameService](_.eligibleTags(sourceLanguage, targetLanguage, viewerId))
+
+  def myGames(userId: Long): URIO[GameService, List[MyGameSummary]] =
+    ZIO.serviceWithZIO[GameService](_.myGames(userId))
 
   def createGame(
     userId: Long,
@@ -141,6 +147,26 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         val byTag = rows.groupBy(_._1).view.mapValues(_.map(_._2).distinct.size.toLong).toMap
         Tag.sorted(byTag.map { case (row, wordCount) => toTag(row, wordCount, viewerId) }.toList)
       }
+  }
+
+  def myGames(userId: Long): UIO[List[MyGameSummary]] = {
+    for {
+      rows       <- repo.gamesByOwner(userId).orDie
+      tagsByGame <- ZIO
+                      .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tags.map(_.name).sorted))
+                      .map(_.toMap)
+      counts     <- repo.playCounts(rows.map(_.id)).orDie
+    } yield rows.map { row =>
+      MyGameSummary(
+        slug = row.slug,
+        name = row.name,
+        sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
+        targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
+        tagNames = tagsByGame.getOrElse(row.id, Nil),
+        playCount = counts.getOrElse(row.id, 0L),
+        createdAt = row.createdAt,
+      )
+    }
   }
 
   private def capitalize(word: String): String = {

@@ -16,6 +16,7 @@ import gathedge.frontend.pages.{
   GameSetupPage,
   GamesPage,
   HomePage,
+  MyGamesPage,
   NotFoundPage,
   ResetPasswordPage,
   SettingsPage,
@@ -257,6 +258,8 @@ object App {
         GamesPage.render()
       case Page.GameSetup                           =>
         GameSetupPage.render()
+      case Page.MyGames                             =>
+        MyGamesPage.render()
       case Page.GameInstance(slug)                  =>
         GameInstancePage.render(slug)
       case Page.VerifyEmail(token)                  =>

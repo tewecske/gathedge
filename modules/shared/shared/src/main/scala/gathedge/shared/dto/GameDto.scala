@@ -54,3 +54,16 @@ final case class GameAnswerResult(
 /** `GET /api/games/plays/{playId}/results`'s answer: the finished play's score and its full answer history. */
 final case class GameResults(score: Int, maxScore: Int, wordCount: Int, answers: List[GameAnswerResult])
     derives JsonCodec
+
+/** One row of `GET /api/games/mine` — the caller's own games, most recently created first. `playCount` is `0` for a
+  * game nobody has played yet, never absent.
+  */
+final case class MyGameSummary(
+  slug: String,
+  name: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+  tagNames: List[String],
+  playCount: Long,
+  createdAt: Long,
+) derives JsonCodec

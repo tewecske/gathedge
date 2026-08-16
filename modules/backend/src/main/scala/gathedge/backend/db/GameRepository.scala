@@ -39,6 +39,15 @@ trait GameRepository {
   /** Rows affected — `0` means `id` does not exist. Ownership is the service's job: this only writes. */
   def rename(id: Long, name: String, updatedAt: Long): Task[Long]
 
+  /** Every game `ownerUserId` created, most recent first — the "my games" listing's source rows. */
+  def gamesByOwner(ownerUserId: Long): Task[List[GameRow]]
+
+  /** How many `game_plays` rows exist for each of `gameIds`, as one grouped query rather than one per game. A game with
+    * zero plays is simply absent from the map — the caller's job to default it to `0`, the same split
+    * [[eligibleTags]]'s doc comment draws for dedup.
+    */
+  def playCounts(gameIds: List[Long]): Task[Map[Long, Long]]
+
   def findPlay(id: Long): Task[Option[GamePlayRow]]
 
   /** Raw `(word_id, translation_word_id)` pairs for `gameId`'s tags, scoped to `sourceLanguage` -> `targetLanguage` —
@@ -80,6 +89,12 @@ object GameRepository {
 
   def rename(id: Long, name: String, updatedAt: Long): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt))
+
+  def gamesByOwner(ownerUserId: Long): RIO[GameRepository, List[GameRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.gamesByOwner(ownerUserId))
+
+  def playCounts(gameIds: List[Long]): RIO[GameRepository, Map[Long, Long]] =
+    ZIO.serviceWithZIO[GameRepository](_.playCounts(gameIds))
 
   def findPlay(id: Long): RIO[GameRepository, Option[GamePlayRow]] =
     ZIO.serviceWithZIO[GameRepository](_.findPlay(id))
@@ -189,6 +204,27 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       games.filter(_.id == lift(id)).update(_.name -> lift(name), _.updatedAt -> lift(updatedAt))
     }
     logged(run(ctx.run(q)))(rows => s"games.rename id=$id rows=$rows")
+  }
+
+  def gamesByOwner(ownerUserId: Long): Task[List[GameRow]] = {
+    val q = quote {
+      games.filter(_.ownerUserId == lift(ownerUserId)).sortBy(_.createdAt)(using Ord.desc)
+    }
+    logged(run(ctx.run(q)))(rows => s"games.gamesByOwner owner=$ownerUserId rows=${rows.size}")
+  }
+
+  def playCounts(gameIds: List[Long]): Task[Map[Long, Long]] = {
+    if (gameIds.isEmpty)
+      ZIO.succeed(Map.empty)
+    else {
+      val q = quote {
+        gamePlays
+          .filter(play => liftQuery(gameIds).contains(play.gameId))
+          .groupBy(play => play.gameId)
+          .map { case (gameId, plays) => (gameId, plays.size) }
+      }
+      logged(run(ctx.run(q)).map(_.toMap))(counts => s"games.playCounts games=${gameIds.size} rows=${counts.size}")
+    }
   }
 
   def findPlay(id: Long): Task[Option[GamePlayRow]] = {

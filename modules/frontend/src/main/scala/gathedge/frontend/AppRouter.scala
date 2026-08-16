@@ -32,6 +32,12 @@ object Page {
     */
   case object GameSetup extends Page
 
+  /** The signed-in owner's own games: name, tags, language pair, and how many times each was played. Unlike
+    * [[Games]]/[[GameSetup]]/[[GameInstance]], there is no shared link to keep public — it is a personal listing, so it
+    * requires auth like the rest of the account-scoped pages.
+    */
+  case object MyGames extends Page
+
   /** One quiz, playable from its shared link: `/g/{slug}`. Public for the same reason [[GameSetup]] is public and
     * [[WordDetail]] is — a shared link has to render for a signed-out visitor — but nothing here mints a guest on
     * arrival, unlike `GameSetup`: reading the game's name and tags is not a write. It is starting a play, the first
@@ -130,6 +136,7 @@ object AppRouter {
   private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
   private val gamesRoute           = Route.static(Games, root / "games", basePath)
   private val gameSetupRoute       = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
+  private val myGamesRoute         = Route.static(MyGames, root / "games" / "mine", basePath)
   private val gameInstanceRoute    = Route(
     encode = (p: GameInstance) => p.slug,
     decode = (slug: String) => GameInstance(slug),
@@ -225,6 +232,8 @@ object AppRouter {
         "Games"
       case GameSetup            =>
         "GameSetup"
+      case MyGames              =>
+        "MyGames"
       case GameInstance(slug)   =>
         s"GameInstance:$slug"
       case VerifyEmail(token)   =>
@@ -298,6 +307,8 @@ object AppRouter {
           Games
         case "GameSetup"      =>
           GameSetup
+        case "MyGames"        =>
+          MyGames
         case "CheckInbox"     =>
           CheckInbox
         case "ForgotPassword" =>
@@ -330,6 +341,7 @@ object AppRouter {
         settingsRoute,
         gamesRoute,
         gameSetupRoute,
+        myGamesRoute,
         gameInstanceRoute,
         verifyEmailRoute,
         checkInboxRoute,

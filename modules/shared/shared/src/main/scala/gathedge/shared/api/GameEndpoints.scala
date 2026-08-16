@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   GameDetail,
   GamePrompt,
   GameResults,
+  MyGameSummary,
   PlayStarted,
   RenameGameRequest,
   SubmitAnswerRequest,
@@ -33,6 +34,15 @@ object GameEndpoints {
       .query(sourceLanguageQuery)
       .query(targetLanguageQuery)
       .out[List[Tag]]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** The caller's own games, most recently created first — see `GameService.myGames`. Takes no input, so its only
+    * failure is the aspect's 401, the same shape as [[setup]].
+    */
+  val mine = {
+    Endpoint(Method.GET / "api" / "games" / "mine")
+      .out[List[MyGameSummary]]
       .outFailure(failure.unauthorized)
   }
 
@@ -96,7 +106,7 @@ object GameEndpoints {
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] =
-    List(setup, create, get, rename, startPlay, nextPrompt, submitAnswer, results)
+    List(setup, mine, create, get, rename, startPlay, nextPrompt, submitAnswer, results)
 
   /** Just [[get]] — a shared game link must be viewable before any guest is minted, the same reasoning
     * [[WordEndpoints.public]] applies to the dictionary reads.

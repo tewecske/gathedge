@@ -44,6 +44,7 @@ import gathedge.shared.dto.{
   LoginAttemptEntry,
   LoginRequest,
   MigrationInfo,
+  MyGameSummary,
   NewTranslation,
   PairSelectionResponse,
   PlayStarted,
@@ -178,4 +179,5 @@ object ApiSchemas {
   given Schema[SubmitAnswerRequest] = DeriveSchema.gen[SubmitAnswerRequest]
   given Schema[GameAnswerResult]    = DeriveSchema.gen[GameAnswerResult]
   given Schema[GameResults]         = DeriveSchema.gen[GameResults]
+  given Schema[MyGameSummary]       = DeriveSchema.gen[MyGameSummary]
 }

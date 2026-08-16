@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   GameDetail,
   GamePrompt,
   GameResults,
+  MyGameSummary,
   PlayStarted,
   RenameGameRequest,
   SubmitAnswerRequest,
@@ -29,6 +30,11 @@ object GameApiClient {
   /** The tags eligible for a quiz between `source` and `target`, own tags first — see `Tag.sorted`. */
   def setup(source: WordLanguage, target: WordLanguage): EventStream[Either[ApiError, List[Tag]]] = {
     run(executor(GameEndpoints.setup(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)))))
+  }
+
+  /** The signed-in caller's own games, for the "my games" table. */
+  def myGames(): EventStream[Either[ApiError, List[MyGameSummary]]] = {
+    run(executor(GameEndpoints.mine(())))
   }
 
   def create(
