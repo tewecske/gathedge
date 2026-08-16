@@ -615,6 +615,16 @@ object UiKeys {
   val gamesVocabQuizBody: String  = key("ui.games.vocabQuiz.body")
   val gamesVocabQuizPlay: String  = key("ui.games.vocabQuiz.play")
 
+  // -- Game setup ----------------------------------------------------------------------------------
+
+  val gameSetupTitle: String          = key("ui.gameSetup.title")
+  val gameSetupSourceLabel: String    = key("ui.gameSetup.sourceLabel")
+  val gameSetupTargetLabel: String    = key("ui.gameSetup.targetLabel")
+  val gameSetupTagsLabel: String      = key("ui.gameSetup.tagsLabel")
+  val gameSetupNoEligibleTags: String = key("ui.gameSetup.noEligibleTags")
+  val gameSetupPlay: String           = key("ui.gameSetup.play")
+  val gameSetupCreated: String        = key("ui.gameSetup.created")
+
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there
   // is followed by the singular, always — which is what `MessageCatalog.plural` exists to express.

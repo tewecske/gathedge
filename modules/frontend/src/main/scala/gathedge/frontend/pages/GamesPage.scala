@@ -1,7 +1,7 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import gathedge.frontend.Page
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.components.AppShell
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.UiKeys
@@ -22,13 +22,14 @@ object GamesPage {
           gameCard(
             title = I18n.t(UiKeys.gamesVocabQuizTitle),
             body = I18n.t(UiKeys.gamesVocabQuizBody),
+            target = Page.GameSetup,
           ),
         ),
       ),
     )
   }
 
-  private def gameCard(title: String, body: String): HtmlElement = {
+  private def gameCard(title: String, body: String, target: Page): HtmlElement = {
     div(
       cls := "card bg-base-100 shadow-xl",
       div(
@@ -36,9 +37,8 @@ object GamesPage {
         h2(cls := "card-title", title),
         p(body),
         div(
-          cls  := "card-actions justify-end",
-          // TODO: link to the setup page (Page.VocabQuizSetup or similar) once a later task adds it.
-          button(cls := "btn btn-primary btn-disabled", I18n.t(UiKeys.gamesVocabQuizPlay)),
+          cls := "card-actions justify-end",
+          a(cls := "btn btn-primary", AppRouter.router.navigateTo(target), I18n.t(UiKeys.gamesVocabQuizPlay)),
         ),
       ),
     )
