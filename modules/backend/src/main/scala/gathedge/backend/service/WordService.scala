@@ -489,13 +489,22 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection) ext
       targets <- ZIO.foreach(request.translations)(translation => {
                    linkOrExisting(row, translation, userId).map { case (target, _) => target }
                  })
+      // Tag membership is never quota-gated — only the marks below are — so this always goes through, even when the
+      // pair quota below refuses every mark.
       _       <- ZIO.foreachDiscard(request.tagIds)(tagId => tagWord(row.id, tagId, userId))
       // A translation somebody bothered to type is the answer they want to be asked for, so it is marked as one
       // straight away — the same state clicking its chip on the listing produces. `tagWord` above has already checked
-      // each tag belongs to the caller.
-      _       <- ZIO.foreachDiscard(request.tagIds)(tagId => {
-                   ZIO.foreachDiscard(targets)(target => pairInTag(row.id, tagId, target.id))
+      // each tag belongs to the caller. A combination already marked (possible when a translation already existed) is
+      // idempotent and never charged, mirroring `selectPair`. The quota is checked once for the whole batch, before
+      // any mark is written, so a request that would cross the *hard* threshold leaves no pairs behind at all.
+      pending <- ZIO.filter(request.tagIds.flatMap(tagId => targets.map(target => (tagId, target))))({
+                   case (tagId, target) => pairAlreadyMarked(userId, row.id, tagId, target.id).map(marked => !marked)
                  })
+      _       <- ZIO.when(pending.nonEmpty)(
+                   // `pairTranslation` writes one row per direction, so each genuinely new mark adds two.
+                   repo.countPairsOwnedBy(userId).orDie.flatMap(pairQuota(_, pending.size.toLong * 2L)).unit
+                 )
+      _       <- ZIO.foreachDiscard(pending) { case (tagId, target) => pairInTag(row.id, tagId, target.id) }
       detail  <- detailOf(row, Some(userId))
     } yield detail
   }

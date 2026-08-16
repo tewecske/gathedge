@@ -619,6 +619,94 @@ object WordServiceSpec extends ZIOSpecDefault {
           tagsAfter == 1L,
         )
       }.provide(layerWithQuotas(tagsSoft = 1, tagsHard = 1, pairsSoft = 100, pairsHard = 100)),
+      test(
+        "creating a word with tagIds: a request whose tags × translations would cross the pair quota's hard limit " +
+          "fails entirely, tags still attach, and no pairs are written"
+      ) {
+        for {
+          tag1       <- createTag("t1", 1L)
+          tag2       <- createTag("t2", 1L)
+          blocked    <- WordService
+                          .create(
+                            CreateWordRequest(
+                              WordLanguage.De,
+                              "Haus",
+                              PartOfSpeech.Noun,
+                              Some(Gender.Das),
+                              List(
+                                NewTranslation(WordLanguage.Hu, "otthon", None, None),
+                                NewTranslation(WordLanguage.Hu, "lakás", None, None),
+                              ),
+                              List(tag1.id, tag2.id),
+                            ),
+                            userId = 1L,
+                          )
+                          .either
+          pairsAfter <- WordRepository.countPairsOwnedBy(1L)
+          page       <- list(search = Some("haus"), reader = Some(1L))
+          tagged      = page.items.head.tagIds
+        } yield assertTrue(
+          // Two tags × two translations is four new marks, eight rows — past a hard limit of six.
+          blocked == Left(WordFailure.PairQuotaExceeded(6)),
+          // The quota is checked before any mark is written, so none of the eight landed.
+          pairsAfter == 0L,
+          // Tag membership is never quota-gated: both tags are still attached even though marking was refused.
+          tagged.toSet == Set(tag1.id, tag2.id),
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1000, tagsHard = 1000, pairsSoft = 1000, pairsHard = 6)),
+      test("creating a word with tagIds: crossing only the pair quota's soft threshold still succeeds, marks written") {
+        for {
+          tag        <- createTag("t1", 1L)
+          detail     <- WordService.create(
+                          CreateWordRequest(
+                            WordLanguage.De,
+                            "Haus",
+                            PartOfSpeech.Noun,
+                            Some(Gender.Das),
+                            List(NewTranslation(WordLanguage.Hu, "otthon", None, None)),
+                            List(tag.id),
+                          ),
+                          userId = 1L,
+                        )
+          pairsAfter <- WordRepository.countPairsOwnedBy(1L)
+        } yield assertTrue(
+          detail.translations.exists(_.word.text == "otthon"),
+          // One tag × one translation is one new mark, two rows — at the soft threshold, still allowed through.
+          pairsAfter == 2L,
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1000, tagsHard = 1000, pairsSoft = 2, pairsHard = 100)),
+      test(
+        "creating a word with tagIds: a combination already marked is not charged again against the pair quota"
+      ) {
+        for {
+          _      <- seed
+          tag1   <- createTag("t1", 1L)
+          tag2   <- createTag("t2", 1L)
+          page   <- list(search = Some("haus"), reader = Some(1L))
+          word    = page.items.head.word
+          haz     = page.items.head.translations.head.wordId
+          // "ház" is already marked under tag1 before the create call below — that combination must cost nothing again.
+          _      <- WordService.selectPair(word.id, tag1.id, haz, 1L)
+          before <- WordRepository.countPairsOwnedBy(1L)
+          _      <- WordService.create(
+                      CreateWordRequest(
+                        WordLanguage.De,
+                        "Haus",
+                        PartOfSpeech.Noun,
+                        Some(Gender.Das),
+                        List(NewTranslation(WordLanguage.Hu, "ház", None, None)),
+                        List(tag1.id, tag2.id),
+                      ),
+                      userId = 1L,
+                    )
+          after  <- WordRepository.countPairsOwnedBy(1L)
+        } yield assertTrue(
+          before == 2L,
+          // Only tag2 × "ház" is new: two more rows, not four — a hard limit of 4 would refuse the double-charged
+          // total (6) but allows the correctly-deduplicated one.
+          after == 4L,
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1000, tagsHard = 1000, pairsSoft = 1000, pairsHard = 4)),
     )
   }
 
