@@ -120,6 +120,11 @@ object MessageKeys {
     */
   val gameWordLimitInvalid: String = key("games.wordLimitInvalid")
 
+  /** `GameFailure.NotFixedPool` — reshuffle on a game that draws a fresh sample every play already, or has no word
+    * limit at all.
+    */
+  val gameNotFixedPool: String = key("games.notFixedPool")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.

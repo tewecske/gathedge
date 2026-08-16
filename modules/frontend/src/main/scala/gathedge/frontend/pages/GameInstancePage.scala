@@ -106,6 +106,12 @@ private class GameInstancePage(slug: String) {
   private val renameCancelBus = new EventBus[Unit]()
   private val renameSaveBus   = new EventBus[Unit]()
 
+  /** Owner-only, shown only for a `randomizeEachPlay = false` game — see `GameService.reshuffle`'s doc comment. No
+    * separate "editing" state the way rename has: one click, one request, nothing to confirm first.
+    */
+  private val reshufflingVar = Var(false)
+  private val reshuffleBus   = new EventBus[Unit]()
+
   private val phaseSignal: Signal[Phase] = {
     playIdVar.signal
       .combineWith(finishedVar.signal, promptVar.signal, wordCountVar.signal)
@@ -244,6 +250,18 @@ private class GameInstancePage(slug: String) {
             )
           }
       },
+      reshuffleStream --> Observer[Either[ApiError, Unit]] {
+        case Right(_)  =>
+          Var.set(reshufflingVar -> false, noticeVar -> Some(I18n.t(UiKeys.gameInstanceReshuffled)))
+        case Left(err) =>
+          if (err.status == 403) {
+            // Same reasoning as the rename 403 above: a stale local hint, or the same account signed in elsewhere.
+            GameOwnership.forget(slug)
+            Var.set(isOwnerVar -> false, reshufflingVar -> false, errorVar -> Some(err.message))
+          } else {
+            Var.set(reshufflingVar -> false, errorVar -> Some(err.message))
+          }
+      },
       // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
       // stream this triggers (`loadBus`, above) has to already have a subscriber when this fires, or the mount's own
       // reload is emitted to nobody and silently lost, leaving the quiz stuck loading forever.
@@ -284,6 +302,15 @@ private class GameInstancePage(slug: String) {
       .flatMapSwitch { text =>
         renameSubmittingVar.set(true)
         GameApiClient.rename(slug, text)
+      }
+  }
+
+  private def reshuffleStream: EventStream[Either[ApiError, Unit]] = {
+    reshuffleBus.events
+      .filterWith(reshufflingVar.signal.not)
+      .flatMapSwitch { _ =>
+        reshufflingVar.set(true)
+        GameApiClient.reshuffle(slug)
       }
   }
 
@@ -464,6 +491,20 @@ private class GameInstancePage(slug: String) {
             title := I18n.t(UiKeys.gameInstanceRenameEdit),
             "✎",
             onClick.mapToUnit --> renameEditBus.writer,
+          )
+        )
+      },
+      // Only for a fixed-pool game — see `reshufflingVar`'s doc comment. `gameVar` is read reactively rather than
+      // `.now()`'d: a rename response also carries `randomizeEachPlay`, so this stays correct even though that field
+      // itself never actually changes from a rename.
+      child.maybe <-- isOwnerVar.signal.combineWith(gameVar.signal).map { case (owner, game) =>
+        Option.when(owner && game.exists(!_.randomizeEachPlay))(
+          button(
+            cls := "btn btn-ghost btn-xs",
+            typ := "button",
+            disabled <-- reshufflingVar.signal,
+            I18n.t(UiKeys.gameInstanceReshuffle),
+            onClick.mapToUnit --> reshuffleBus.writer,
           )
         )
       },

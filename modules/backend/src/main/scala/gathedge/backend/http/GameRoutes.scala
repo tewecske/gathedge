@@ -31,10 +31,25 @@ object GameRoutes {
     requested.flatMap(WordLanguage.fromString).getOrElse(WordLanguage.En)
   }
 
+  /** `"1,2,3"` -> `[1, 2, 3]`, silently dropping anything that fails to parse — the setup screen never sends a
+    * malformed id, and a stray one here is not worth a 400 over, the same leniency [[languageOf]] applies.
+    */
+  private def tagIdsOf(requested: Option[String]): List[Long] = {
+    requested.toList.flatMap(_.split(",").toList).map(_.trim).flatMap(_.toLongOption)
+  }
+
   private val setupRoute = {
     GameEndpoints.setup.implementHandler(
       handler { (source: Option[String], target: Option[String]) =>
         userId.flatMap(id => GameService.eligibleTags(languageOf(source), languageOf(target), id))
+      }
+    )
+  }
+
+  private val setupWordsRoute = {
+    GameEndpoints.setupWords.implementHandler(
+      handler { (source: Option[String], target: Option[String], tagIds: Option[String]) =>
+        userId.flatMap(_ => GameService.eligibleWords(languageOf(source), languageOf(target), tagIdsOf(tagIds)))
       }
     )
   }
@@ -48,7 +63,14 @@ object GameRoutes {
       handler { (body: CreateGameRequest) =>
         userId.flatMap(id => {
           GameService
-            .createGame(id, body.sourceLanguage, body.targetLanguage, body.tagIds)
+            .createGame(
+              id,
+              body.sourceLanguage,
+              body.targetLanguage,
+              body.tagIds,
+              body.wordLimit,
+              body.randomizeEachPlay,
+            )
             .map(detail => GameCreated(detail.slug, detail.name))
             .mapError(ApiFailures.gameCreate)
         })
@@ -66,6 +88,14 @@ object GameRoutes {
     GameEndpoints.rename.implementHandler(
       handler { (slug: String, body: RenameGameRequest) =>
         userId.flatMap(id => GameService.rename(slug, body.name, id).mapError(ApiFailures.gameRename))
+      }
+    )
+  }
+
+  private val reshuffleRoute = {
+    GameEndpoints.reshuffle.implementHandler(
+      handler { (slug: String) =>
+        userId.flatMap(id => GameService.reshuffle(slug, id).mapError(ApiFailures.gameReshuffle))
       }
     )
   }
@@ -109,9 +139,11 @@ object GameRoutes {
   private val sessionRoutes = {
     Routes(
       setupRoute,
+      setupWordsRoute,
       mineRoute,
       createRoute,
       renameRoute,
+      reshuffleRoute,
       startPlayRoute,
       nextPromptRoute,
       submitAnswerRoute,

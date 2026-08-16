@@ -2,7 +2,15 @@ package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage}
-import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, MyGameSummary, PlayStarted}
+import gathedge.shared.dto.{
+  GameAnswerResult,
+  GameDetail,
+  GamePrompt,
+  GameResults,
+  GameSetupWord,
+  MyGameSummary,
+  PlayStarted,
+}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -24,6 +32,12 @@ enum GameFailure {
     * and starting a play.
     */
   case NoEligibleWords
+
+  /** [[GameService.reshuffle]] on a game that has nothing fixed to reshuffle: either it draws a fresh sample every play
+    * already (`randomizeEachPlay = true`), or it has no word limit at all (uses every eligible word, so there is no
+    * subset to redraw).
+    */
+  case NotFixedPool
   case ValidationError(fieldErrors: Map[String, MessageRef])
 }
 
@@ -39,7 +53,10 @@ trait GameService {
   def myGames(userId: Long): UIO[List[MyGameSummary]]
 
   /** `wordLimit`: `None` for "use every eligible word" (the default, and the only behaviour before this parameter
-    * existed), `Some(n)` for "sample exactly n of them at play time", validated by [[Validation.validateWordLimit]].
+    * existed), `Some(n)` for "sample exactly n of them", validated by [[Validation.validateWordLimit]].
+    * `randomizeEachPlay`: `true` (the default, and the only behaviour before this parameter existed) draws a fresh
+    * sample every play; `false` draws it once, now, and stores it as the game's fixed pool. Forced to `true` when
+    * `wordLimit` is `None`, regardless of what is passed — a fixed sample of "everything" is meaningless.
     */
   def createGame(
     userId: Long,
@@ -47,12 +64,30 @@ trait GameService {
     targetLanguage: WordLanguage,
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
+    randomizeEachPlay: Boolean = true,
   ): IO[GameFailure, GameDetail]
+
+  /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from — deduped to one
+    * row per source word, same as [[startPlay]]'s own pool. What the setup screen's word list previews before the game
+    * exists.
+    */
+  def eligibleWords(
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    tagIds: List[Long],
+  ): UIO[List[GameSetupWord]]
 
   def getBySlug(slug: String): IO[GameFailure, GameDetail]
 
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
+
+  /** Redraws a `randomizeEachPlay = false` game's fixed word pool from its current eligible pool. Owner-only
+    * ([[GameFailure.NotOwner]] otherwise); fails [[GameFailure.NotFixedPool]] if the game draws a fresh sample every
+    * play already, or has no word limit at all. Takes effect for every play started after this call; a play already in
+    * progress keeps the pool it was started with.
+    */
+  def reshuffle(slug: String, requesterUserId: Long): IO[GameFailure, Unit]
 
   /** Starts a fresh attempt at `slug`. Fails [[GameFailure.NoEligibleWords]] if the game's tags carry no eligible pair
     * right now.
@@ -95,14 +130,28 @@ object GameService {
     targetLanguage: WordLanguage,
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
-  ): ZIO[GameService, GameFailure, GameDetail] =
-    ZIO.serviceWithZIO[GameService](_.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit))
+    randomizeEachPlay: Boolean = true,
+  ): ZIO[GameService, GameFailure, GameDetail] = {
+    ZIO.serviceWithZIO[GameService](
+      _.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, randomizeEachPlay)
+    )
+  }
+
+  def eligibleWords(
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    tagIds: List[Long],
+  ): URIO[GameService, List[GameSetupWord]] =
+    ZIO.serviceWithZIO[GameService](_.eligibleWords(sourceLanguage, targetLanguage, tagIds))
 
   def getBySlug(slug: String): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.getBySlug(slug))
 
   def rename(slug: String, newName: String, requesterUserId: Long): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.rename(slug, newName, requesterUserId))
+
+  def reshuffle(slug: String, requesterUserId: Long): ZIO[GameService, GameFailure, Unit] =
+    ZIO.serviceWithZIO[GameService](_.reshuffle(slug, requesterUserId))
 
   def startPlay(slug: String, playerUserId: Long): ZIO[GameService, GameFailure, PlayStarted] =
     ZIO.serviceWithZIO[GameService](_.startPlay(slug, playerUserId))
@@ -204,6 +253,8 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     targetLanguage: WordLanguage,
     tagIds: List[Long],
     wordLimit: Option[Int],
+    randomizeEachPlay: Boolean,
+    wordPool: List[(Long, Long)],
     now: Long,
     attempt: Int,
     lastPair: Option[(String, String)],
@@ -222,14 +273,26 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
           createdAt = now,
           updatedAt = now,
           wordLimit = wordLimit,
+          randomizeEachPlay = randomizeEachPlay,
         )
-        repo.insertGame(row, tagIds).catchAll { error =>
+        repo.insertGame(row, tagIds, wordPool).catchAll { error =>
           // A concurrent caller may have taken this exact slug between the attempt and here; the unique
           // index is what decides, and the loser simply tries again with a fresh candidate — the same
           // race tolerance WordRepository.ensureWord applies to a word's natural key.
           repo.findBySlug(slug).orDie.flatMap {
             case Some(_) =>
-              insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, now, attempt + 1, Some(pair))
+              insertWithRetry(
+                userId,
+                sourceLanguage,
+                targetLanguage,
+                tagIds,
+                wordLimit,
+                randomizeEachPlay,
+                wordPool,
+                now,
+                attempt + 1,
+                Some(pair),
+              )
             case None    =>
               ZIO.die(error)
           }
@@ -244,20 +307,67 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     targetLanguage: WordLanguage,
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
+    randomizeEachPlay: Boolean = true,
   ): IO[GameFailure, GameDetail] = {
     for {
-      _          <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
-      eligible   <- repo.eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)).orDie
-      eligibleIds = eligible.map(_._1.id).toSet
-      _          <- ZIO.unless(tagIds.forall(eligibleIds.contains))(ZIO.fail(GameFailure.TagNotEligible))
-      validLimit <- ZIO
-                      .foreach(wordLimit)(limit => ZIO.fromEither(Validation.validateWordLimit(limit)))
-                      .mapError(error => GameFailure.ValidationError(Map("wordLimit" -> error)))
-      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row        <-
-        insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, validLimit, now, attempt = 0, lastPair = None)
-      tags       <- repo.tagsOf(row.id).orDie
-    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted, row.wordLimit)
+      _              <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
+      eligible       <- repo.eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)).orDie
+      eligibleIds     = eligible.map(_._1.id).toSet
+      _              <- ZIO.unless(tagIds.forall(eligibleIds.contains))(ZIO.fail(GameFailure.TagNotEligible))
+      validLimit     <- ZIO
+                          .foreach(wordLimit)(limit => ZIO.fromEither(Validation.validateWordLimit(limit)))
+                          .mapError(error => GameFailure.ValidationError(Map("wordLimit" -> error)))
+      // A fixed sample of "everything" is meaningless, so a missing limit always wins over whatever the caller asked
+      // for here — the same normalization the setup page's own disabled control enforces client-side.
+      normalizedFixed = validLimit.isDefined && !randomizeEachPlay
+      wordPool       <- if (normalizedFixed) {
+                          eligibleWordPoolForTags(
+                            tagIds,
+                            WordLanguage.code(sourceLanguage),
+                            WordLanguage.code(targetLanguage),
+                          )
+                            .flatMap(pool => sampleWordPool(pool, validLimit))
+                        } else {
+                          ZIO.succeed(Nil)
+                        }
+      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      row            <- insertWithRetry(
+                          userId,
+                          sourceLanguage,
+                          targetLanguage,
+                          tagIds,
+                          validLimit,
+                          !normalizedFixed,
+                          wordPool,
+                          now,
+                          attempt = 0,
+                          lastPair = None,
+                        )
+      tags           <- repo.tagsOf(row.id).orDie
+    } yield GameDetail(
+      row.slug,
+      row.name,
+      sourceLanguage,
+      targetLanguage,
+      tags.map(_.name).sorted,
+      row.wordLimit,
+      row.randomizeEachPlay,
+    )
+  }
+
+  /** The setup screen's preview of the pool a game built from `tagIds` would draw from — same dedup rule as
+    * [[eligibleWordPool]], through [[GameRepository.eligibleWordPairsForTags]] instead of a game's own `game_tags`,
+    * since no game exists yet.
+    */
+  def eligibleWords(
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    tagIds: List[Long],
+  ): UIO[List[GameSetupWord]] = {
+    for {
+      pool  <- eligibleWordPoolForTags(tagIds, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+      words <- repo.wordsByIds(pool.map(_._1)).orDie
+    } yield words.map(w => GameSetupWord(w.id, Word.displayText(w.text, w.gender))).sortBy(_.text)
   }
 
   private def detailOf(row: GameRow): UIO[GameDetail] = {
@@ -269,6 +379,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
         tags.map(_.name).sorted,
         row.wordLimit,
+        row.randomizeEachPlay,
       )
     }
   }
@@ -293,15 +404,40 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield detail
   }
 
-  /** `(word_id, translation_word_id)` pairs eligible for `game`, deduped to one row per source word — the lowest
-    * translation id on a tie, per [[GameRepository.eligibleWordPairs]]'s doc comment on why dedup is a business rule
-    * and not the query's job.
+  def reshuffle(slug: String, requesterUserId: Long): IO[GameFailure, Unit] = {
+    for {
+      game    <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      _       <- ZIO.unless(game.ownerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+      _       <- ZIO.when(game.randomizeEachPlay || game.wordLimit.isEmpty)(ZIO.fail(GameFailure.NotFixedPool))
+      pool    <- eligibleWordPool(game)
+      sampled <- sampleWordPool(pool, game.wordLimit)
+      _       <- repo.replaceGameWordPool(game.id, sampled).orDie
+    } yield ()
+  }
+
+  /** Dedupes raw `(word_id, translation_word_id)` pairs to one row per source word — the lowest translation id on a tie
+    * — per [[GameRepository.eligibleWordPairs]]'s doc comment on why dedup is a business rule and not the query's job.
+    * Shared by [[eligibleWordPool]] (a game's own tags) and [[eligibleWordPoolForTags]] (an explicit tag list).
     */
+  private def dedupeToOnePerWord(pairs: List[(Long, Long)]): List[(Long, Long)] = {
+    pairs.groupBy(_._1).view.mapValues(_.map(_._2).min).toList
+  }
+
+  /** `(word_id, translation_word_id)` pairs eligible for `game`, deduped to one row per source word. */
   private def eligibleWordPool(game: GameRow): UIO[List[(Long, Long)]] = {
-    repo
-      .eligibleWordPairs(game.id, game.sourceLanguage, game.targetLanguage)
-      .orDie
-      .map(_.groupBy(_._1).view.mapValues(_.map(_._2).min).toList)
+    repo.eligibleWordPairs(game.id, game.sourceLanguage, game.targetLanguage).orDie.map(dedupeToOnePerWord)
+  }
+
+  /** Same as [[eligibleWordPool]], through an explicit tag id list instead of a game's `game_tags` — what the setup
+    * screen's word-list preview and a `randomizeEachPlay = false` game's fixed-pool sampling both call through, since
+    * neither has a `game_tags` row set to read from yet.
+    */
+  private def eligibleWordPoolForTags(
+    tagIds: List[Long],
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): UIO[List[(Long, Long)]] = {
+    repo.eligibleWordPairsForTags(tagIds, sourceLanguage, targetLanguage).orDie.map(dedupeToOnePerWord)
   }
 
   /** Loads `playId` and checks it belongs to `requesterUserId` — the ownership check every play-id endpoint needs,
@@ -331,9 +467,18 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def startPlay(slug: String, playerUserId: Long): IO[GameFailure, PlayStarted] = {
     for {
       game     <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      pool     <- eligibleWordPool(game)
-      _        <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
-      sampled  <- sampleWordPool(pool, game.wordLimit)
+      sampled  <- if (game.randomizeEachPlay) {
+                    for {
+                      pool <- eligibleWordPool(game)
+                      _    <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+                      s    <- sampleWordPool(pool, game.wordLimit)
+                    } yield s
+                  } else {
+                    for {
+                      pool <- repo.wordPoolOf(game.id).orDie
+                      _    <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+                    } yield pool
+                  }
       now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
       wordCount = sampled.size
       maxScore  = wordCount * GameScoring.maxPointsPerWord

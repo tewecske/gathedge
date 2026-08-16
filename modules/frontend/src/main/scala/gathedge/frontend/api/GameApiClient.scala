@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   GameDetail,
   GamePrompt,
   GameResults,
+  GameSetupWord,
   MyGameSummary,
   PlayStarted,
   RenameGameRequest,
@@ -32,6 +33,19 @@ object GameApiClient {
     run(executor(GameEndpoints.setup(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)))))
   }
 
+  /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from — see
+    * `GameService.eligibleWords`. `tagIds` is joined as a comma-separated query string, since this codebase has no
+    * list-typed query codec — see `GameEndpoints.tagIdsQuery`'s doc comment.
+    */
+  def setupWords(
+    source: WordLanguage,
+    target: WordLanguage,
+    tagIds: Set[Long],
+  ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
+    val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
+    run(executor(GameEndpoints.setupWords(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)), joined)))
+  }
+
   /** The signed-in caller's own games, for the "my games" table. */
   def myGames(): EventStream[Either[ApiError, List[MyGameSummary]]] = {
     run(executor(GameEndpoints.mine(())))
@@ -42,8 +56,9 @@ object GameApiClient {
     target: WordLanguage,
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
+    randomizeEachPlay: Boolean = true,
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, wordLimit))))
+    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay))))
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */
@@ -57,6 +72,13 @@ object GameApiClient {
     */
   def rename(slug: String, name: String): EventStream[Either[ApiError, GameDetail]] = {
     run(executor(GameEndpoints.rename(slug, RenameGameRequest(name))))
+  }
+
+  /** Owner-only — see `GameEndpoints.reshuffle`'s doc comment. `GameInstancePage` only offers the control for a
+    * `randomizeEachPlay = false` game the reader is shown as owning, the same gating [[rename]] applies.
+    */
+  def reshuffle(slug: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GameEndpoints.reshuffle(slug)))
   }
 
   def startPlay(slug: String): EventStream[Either[ApiError, PlayStarted]] = {

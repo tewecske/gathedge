@@ -7,7 +7,7 @@ import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
-import gathedge.shared.dto.GameCreated
+import gathedge.shared.dto.{GameCreated, GameSetupWord}
 import gathedge.shared.i18n.UiKeys
 
 /** Choosing a language pair and tags, and turning them into a fresh quiz.
@@ -75,7 +75,23 @@ private class GameSetupPage {
     }
   }
 
-  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal, wordLimitSignal)
+  /** Whether a play draws a fresh sample every time (the default) or draws it once, here, and fixes it — see
+    * `GameRow.randomizeEachPlay`. Meaningless while [[selectAllVar]] is true, the same as [[wordCountVar]]; the setup
+    * form still sends whatever this holds, but `GameService.createGame` normalizes it back to `true` server-side too.
+    */
+  private val randomizeEachPlayVar = Var(true)
+
+  private val formAndTagsSignal =
+    formSignal.combineWith(selectedTagIdsVar.signal, wordLimitSignal, randomizeEachPlayVar.signal)
+
+  /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
+    * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
+    * trivially empty, the same shortcut the backend itself takes.
+    */
+  private val wordsQuerySignal = formSignal.combineWith(selectedTagIdsVar.signal).distinct
+
+  private val wordsVar        = Var(List.empty[GameSetupWord])
+  private val wordsLoadingVar = Var(false)
 
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
@@ -125,7 +141,7 @@ private class GameSetupPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4 max-w-2xl",
+      cls := "p-4 max-w-4xl",
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.gameSetupTitle)),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
@@ -138,33 +154,10 @@ private class GameSetupPage {
         languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
       ),
       div(
-        cls  := "mb-4",
-        span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupTagsLabel)),
-        label(
-          cls    := "flex flex-col gap-1 mt-1 max-w-xs",
-          span(cls      := "label-text text-xs", I18n.t(UiKeys.gameSetupTagFilterLabel)),
-          input(
-            cls         := "input input-sm",
-            typ         := "search",
-            placeholder := I18n.t(UiKeys.gameSetupTagFilterPlaceholder),
-            controlled(value <-- tagFilterVar.signal, onInput.mapToValue --> tagFilterVar.writer),
-          ),
-        ),
-        div(cls  := "flex flex-col gap-3 mt-2", children <-- filteredTagsSignal.map(tagCheckboxGroups)),
-        child.maybe <-- tagsSignal.combineWith(loadingSignal).map { case (tags, loading) =>
-          Option.when(tags.isEmpty && !loading)(
-            p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoEligibleTags))
-          )
-        },
-        // Distinct from the message above: tags exist for this language pair, the filter just matched none of them.
-        child.maybe <-- tagsSignal.combineWith(filteredTagsSignal, loadingSignal).map {
-          case (tags, filtered, loading) =>
-            Option.when(tags.nonEmpty && filtered.isEmpty && !loading)(
-              p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoMatchingTags))
-            )
-        },
+        cls  := "flex flex-col md:flex-row gap-6",
+        renderTagsColumn(),
+        renderWordsColumn(),
       ),
-      renderWordLimitControls(),
       renderPlayButton(),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
@@ -186,9 +179,23 @@ private class GameSetupPage {
           case Left(err)   =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
+      wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ => wordsLoadingVar.set(true)),
+      wordsQuerySignal.updates.flatMapSwitch { case (source, target, tagIds) =>
+        if (tagIds.isEmpty)
+          EventStream.fromValue(Right(Nil))
+        else
+          asReader(() => GameApiClient.setupWords(source, target, tagIds))
+      } -->
+        Observer[Either[ApiError, List[GameSetupWord]]] {
+          case Right(words) =>
+            Var.set(wordsVar -> words, wordsLoadingVar -> false)
+          case Left(err)    =>
+            Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
+        },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
-      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch { case (source, target, tagIds, wordLimit) =>
-        asReader(() => GameApiClient.create(source, target, tagIds.toList, wordLimit))
+      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
+        case (source, target, tagIds, wordLimit, randomizeEachPlay) =>
+          asReader(() => GameApiClient.create(source, target, tagIds.toList, wordLimit, randomizeEachPlay))
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -205,6 +212,47 @@ private class GameSetupPage {
       // own reload is emitted to nobody and silently lost, leaving the tag list empty until something else (a
       // language change) asks again.
       onMountCallback(_ => reloadBus.emit(())),
+    )
+  }
+
+  private def renderTagsColumn(): HtmlElement = {
+    div(
+      cls := "flex-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupTagsLabel)),
+      label(
+        cls    := "flex flex-col gap-1 mt-1 max-w-xs",
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.gameSetupTagFilterLabel)),
+        input(
+          cls         := "input input-sm",
+          typ         := "search",
+          placeholder := I18n.t(UiKeys.gameSetupTagFilterPlaceholder),
+          controlled(value <-- tagFilterVar.signal, onInput.mapToValue --> tagFilterVar.writer),
+        ),
+      ),
+      div(cls  := "flex flex-col gap-3 mt-2", children <-- filteredTagsSignal.map(tagCheckboxGroups)),
+      child.maybe <-- tagsSignal.combineWith(loadingSignal).map { case (tags, loading) =>
+        Option.when(tags.isEmpty && !loading)(
+          p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoEligibleTags))
+        )
+      },
+      // Distinct from the message above: tags exist for this language pair, the filter just matched none of them.
+      child.maybe <-- tagsSignal.combineWith(filteredTagsSignal, loadingSignal).map { case (tags, filtered, loading) =>
+        Option.when(tags.nonEmpty && filtered.isEmpty && !loading)(
+          p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.gameSetupNoMatchingTags))
+        )
+      },
+    )
+  }
+
+  /** The word-limit controls sit at the top, above the word list they narrow — a reader picks a count and watches the
+    * list underneath explain what it means, rather than the two living in unrelated corners of the form.
+    */
+  private def renderWordsColumn(): HtmlElement = {
+    div(
+      cls := "flex-1",
+      renderWordLimitControls(),
+      renderRandomizeControls(),
+      renderWordsList(),
     )
   }
 
@@ -304,6 +352,69 @@ private class GameSetupPage {
           ),
         ),
       ),
+    )
+  }
+
+  /** Two radio options, disabled while [[selectAllVar]] is true — there is nothing to fix when a play always uses every
+    * eligible word. `name := "randomize"` ties the pair together as one control the browser enforces mutual exclusion
+    * on, the same way native radio buttons always have.
+    */
+  private def renderRandomizeControls(): HtmlElement = {
+    val disabledSignal = selectAllVar.signal
+    div(
+      cls := "mb-4 flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupRandomizeLabel)),
+      label(
+        cls    := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ      := "radio",
+          cls      := "radio radio-sm",
+          nameAttr := "randomize",
+          disabled <-- disabledSignal,
+          controlled(
+            checked <-- randomizeEachPlayVar.signal,
+            onClick.mapToChecked --> Observer[Boolean](on => if (on) randomizeEachPlayVar.set(true)),
+          ),
+        ),
+        span(cls   := "label-text text-sm", I18n.t(UiKeys.gameSetupRandomizeAlways)),
+      ),
+      label(
+        cls    := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ      := "radio",
+          cls      := "radio radio-sm",
+          nameAttr := "randomize",
+          disabled <-- disabledSignal,
+          controlled(
+            checked <-- randomizeEachPlayVar.signal.map(!_),
+            onClick.mapToChecked --> Observer[Boolean](on => if (on) randomizeEachPlayVar.set(false)),
+          ),
+        ),
+        span(cls   := "label-text text-sm", I18n.t(UiKeys.gameSetupRandomizeFixed)),
+      ),
+    )
+  }
+
+  /** The eligible pool the current tag selection would draw from — see `GameApiClient.setupWords`. A plain scrollable
+    * list rather than anything fancier: its only job is to let the word-limit count above make sense.
+    */
+  private def renderWordsList(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordsHeading)),
+      span(
+        cls    := "label-text text-sm opacity-70",
+        child.text <-- wordsVar.signal.map(words => I18n.plural(UiKeys.gameSetupWordsCount, words.size.toLong)),
+      ),
+      div(
+        cls    := "flex flex-col gap-1 mt-1 max-h-96 overflow-y-auto border border-base-300 rounded p-2",
+        children <-- wordsVar.signal.map(_.map(word => div(cls := "text-sm", word.text))),
+      ),
+      child.maybe <-- wordsVar.signal.combineWith(wordsLoadingVar.signal).map { case (words, loading) =>
+        Option.when(words.isEmpty && !loading)(
+          p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameSetupWordsEmpty))
+        )
+      },
     )
   }
 

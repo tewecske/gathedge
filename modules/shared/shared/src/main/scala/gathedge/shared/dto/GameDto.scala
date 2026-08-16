@@ -6,13 +6,17 @@ import zio.json.*
 /** What `POST /api/games` needs: the language pair to draw words from, which of the caller's eligible tags to build the
   * game out of, and how many words a play should draw from the resulting eligible pool. `wordLimit = None` means "use
   * every eligible word" — the setup screen's "select all" checkbox, and the only behaviour before this field existed;
-  * `Some(n)` means "sample exactly n of them, once, when a play starts" — see `GameService.startPlay`.
+  * `Some(n)` means "sample exactly n of them" — see `GameService.startPlay`. `randomizeEachPlay` decides *when* that
+  * sample is drawn: `true` (the default, and the only behaviour before this field existed) draws it fresh every time
+  * this quiz is played; `false` draws it once, here, and every later playthrough reuses that same fixed set until the
+  * owner reshuffles it. Meaningless (and ignored server-side) when `wordLimit` is `None`.
   */
 final case class CreateGameRequest(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   tagIds: List[Long],
   wordLimit: Option[Int] = None,
+  randomizeEachPlay: Boolean = true,
 ) derives JsonCodec
 
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name — the caller already knows
@@ -22,9 +26,18 @@ final case class GameCreated(slug: String, name: String) derives JsonCodec
 
 final case class RenameGameRequest(name: String) derives JsonCodec
 
+/** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
+  * the requested tags and language pair would draw from — `text` already carries a gendered source word's article, the
+  * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row
+  * per source word, the same rule `GameService.eligibleWordPool` applies once a game actually exists.
+  */
+final case class GameSetupWord(wordId: Long, text: String) derives JsonCodec
+
 /** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. `wordLimit`
   * mirrors [[CreateGameRequest.wordLimit]] — `None` for "every eligible word", `Some(n)` for a fixed sample size —
   * cheap to carry here so a game's own page or listing can show "20 words" instead of staying silent about the setting.
+  * `randomizeEachPlay` mirrors [[CreateGameRequest.randomizeEachPlay]] — the instance page uses it to decide whether to
+  * offer the owner a reshuffle control.
   */
 final case class GameDetail(
   slug: String,
@@ -33,6 +46,7 @@ final case class GameDetail(
   targetLanguage: WordLanguage,
   tagNames: List[String],
   wordLimit: Option[Int] = None,
+  randomizeEachPlay: Boolean = true,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s answer: enough for the play loop to start — the id every later play call addresses,

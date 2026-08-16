@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   GameDetail,
   GamePrompt,
   GameResults,
+  GameSetupWord,
   MyGameSummary,
   PlayStarted,
   RenameGameRequest,
@@ -27,6 +28,12 @@ object GameEndpoints {
   private val sourceLanguageQuery = HttpCodec.query[String]("sourceLanguage").optional
   private val targetLanguageQuery = HttpCodec.query[String]("targetLanguage").optional
 
+  /** Comma-joined tag ids (`"1,2,3"`) rather than a repeated `?tagIds=1&tagIds=2` param — this codebase has no
+    * precedent for a list-typed query codec (see `WordEndpoints.list`'s tuple-of-scalars workaround for the same gap),
+    * so the route handler parses this by hand, the same spirit as that workaround.
+    */
+  private val tagIdsQuery = HttpCodec.query[String]("tagIds").optional
+
   private val noContent = HttpCodec.status(Status.NoContent)
 
   val setup = {
@@ -34,6 +41,20 @@ object GameEndpoints {
       .query(sourceLanguageQuery)
       .query(targetLanguageQuery)
       .out[List[Tag]]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from, before
+    * any game exists — see `GameService.eligibleWords`. Session-only like [[setup]], for the same reason; an empty or
+    * missing `tagIds` simply answers an empty list rather than a 400, since the setup form's own "no tags picked yet"
+    * state is not an error.
+    */
+  val setupWords = {
+    Endpoint(Method.GET / "api" / "games" / "setup" / "words")
+      .query(sourceLanguageQuery)
+      .query(targetLanguageQuery)
+      .query(tagIdsQuery)
+      .out[List[GameSetupWord]]
       .outFailure(failure.unauthorized)
   }
 
@@ -66,6 +87,15 @@ object GameEndpoints {
       .withCodecError
       .out[GameDetail]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+  }
+
+  /** Owner-only: redraws a `randomizeEachPlay = false` game's fixed word pool. `conflict` covers a game with nothing
+    * fixed to reshuffle (`randomizeEachPlay = true`, or no word limit) — see `GameService.reshuffle`.
+    */
+  val reshuffle = {
+    Endpoint(Method.POST / "api" / "games" / gameSlug / "reshuffle")
+      .outCodec(noContent)
+      .outErrors(failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Starts a fresh attempt at `slug`. `NoTagsSelected`/`TagNotEligible`/`ValidationError` are unreachable here — they
@@ -106,7 +136,7 @@ object GameEndpoints {
   }
 
   val all: List[Endpoint[?, ?, ?, ?, ?]] =
-    List(setup, mine, create, get, rename, startPlay, nextPrompt, submitAnswer, results)
+    List(setup, setupWords, mine, create, get, rename, reshuffle, startPlay, nextPrompt, submitAnswer, results)
 
   /** Just [[get]] — a shared game link must be viewable before any guest is minted, the same reasoning
     * [[WordEndpoints.public]] applies to the dictionary reads.

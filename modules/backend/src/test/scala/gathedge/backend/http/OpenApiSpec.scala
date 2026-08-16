@@ -92,8 +92,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/copy",
               "/api/games",
               "/api/games/setup",
+              "/api/games/setup/words",
               "/api/games/mine",
               "/api/games/{slug}",
+              "/api/games/{slug}/reshuffle",
               "/api/games/{slug}/plays",
               "/api/games/plays/{playId}/prompt",
               "/api/games/plays/{playId}/answers",
@@ -230,6 +232,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Setup takes no input the codec can fail to decode (both query parameters are read leniently, the
               // same as the vocabulary listing's `lang`/`target`), so its only failure is the aspect's 401.
               ("GET", "/api/games/setup")                                                 -> Set(Ok, Unauthorized),
+              // The setup screen's word-list preview. A missing/empty tagIds simply answers an empty list, not a
+              // 400, so its only failure is the aspect's 401, the same shape as setup.
+              ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
               // Same shape as setup: no input the codec can fail to decode, so its only failure is the aspect's 401.
               ("GET", "/api/games/mine")                                                  -> Set(Ok, Unauthorized),
               // createGame's own failures are all BadRequest (no tags selected, a tag ineligible for the language
@@ -242,6 +247,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `NotOwner` for anyone but the game's owner.
               ("PATCH", "/api/games/{slug}")                                              ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+              // Owner-only, the same shape as rename: NotFound for an unknown slug, Forbidden for one that
+              // belongs to somebody else, Conflict for a game with nothing fixed to reshuffle.
+              ("POST", "/api/games/{slug}/reshuffle")                                     ->
+                Set(NoContent, Unauthorized, Forbidden, NotFound, Conflict),
               // startPlay's own failures are NotFound (unknown slug) and BadRequest (the pool came back empty);
               // it never raises NotOwner, so no Forbidden.
               ("POST", "/api/games/{slug}/plays")                                         ->
@@ -316,18 +325,19 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 152,
+          declared == 157,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
-          // on login, and `GameService`'s not-owner refusal (on rename, and on the three play-id operations), are
-          // the ones in the skeleton. A feature whose service raises a permission failure of its own adds its paths
-          // here.
+          // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, and the three play-id operations),
+          // are the ones in the skeleton. A feature whose service raises a permission failure of its own adds its
+          // paths here.
           describes(Forbidden) ==
             Set(
               ("POST", "/api/auth/login"),
               ("POST", "/api/guest/code"),
               ("POST", "/api/auth/upgrade"),
               ("PATCH", "/api/games/{slug}"),
+              ("POST", "/api/games/{slug}/reshuffle"),
               ("GET", "/api/games/plays/{playId}/prompt"),
               ("POST", "/api/games/plays/{playId}/answers"),
               ("GET", "/api/games/plays/{playId}/results"),

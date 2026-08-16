@@ -29,10 +29,12 @@ trait GameRepository {
     */
   def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[(TagRow, Long)]]
 
-  /** Inserts `row` and one `game_tags` row per id in `tagIds`, as one unit of work: a game with only some of its tags
-    * recorded is not a game anybody asked to create.
+  /** Inserts `row`, one `game_tags` row per id in `tagIds`, and (for a `randomizeEachPlay = false` game) one
+    * `game_word_pool` row per pair in `wordPool`, as one unit of work — the same "row + linked rows" shape
+    * [[insertPlay]] models for `game_play_words`: a game whose row landed but whose tags or fixed pool didn't is not a
+    * state anything downstream can make sense of. `wordPool` is empty for a `randomizeEachPlay = true` game.
     */
-  def insertGame(row: GameRow, tagIds: List[Long]): Task[GameRow]
+  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): Task[GameRow]
 
   def tagsOf(gameId: Long): Task[List[TagRow]]
 
@@ -57,6 +59,16 @@ trait GameRepository {
     */
   def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]]
 
+  /** The same join shape as [[eligibleWordPairs]], through an explicit tag id list instead of `game_tags` — what the
+    * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all, and what
+    * `GameService` also uses to sample a `randomizeEachPlay = false` game's fixed pool, via its own tags.
+    */
+  def eligibleWordPairsForTags(
+    tagIds: List[Long],
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[List[(Long, Long)]]
+
   /** Inserts `row` and one `game_play_words` row per pair in `wordPairs`, as one unit of work — the same "row + linked
     * rows" shape [[insertGame]] models for `game_tags`: a play whose `game_plays` row landed but whose word set didn't
     * is not a state anything downstream (`nextPrompt`, `submitAnswer`, `getResults`) can make sense of.
@@ -69,6 +81,18 @@ trait GameRepository {
     * random prompt order from this.
     */
   def wordPairsOf(playId: Long): Task[List[(Long, Long)]]
+
+  /** `gameId`'s fixed word pool, for a `randomizeEachPlay = false` game — written once by [[insertGame]] (or replaced
+    * by [[replaceGameWordPool]]) rather than sampled fresh by every play. Empty for a `randomizeEachPlay = true` game,
+    * which keeps no rows here at all. Order is not meaningful, the same as [[wordPairsOf]].
+    */
+  def wordPoolOf(gameId: Long): Task[List[(Long, Long)]]
+
+  /** Replaces `gameId`'s whole fixed word pool with `pairs`, in one transaction — the reshuffle action's only write.
+    * Deleting first and inserting fresh, rather than diffing, matches how small this table is expected to stay (one
+    * game's `wordLimit`, at most) and keeps the same "delete then insert" shape simple.
+    */
+  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): Task[Unit]
 
   /** Every answer recorded for `playId` so far, in the order they were answered. */
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]]
@@ -92,8 +116,8 @@ object GameRepository {
   def eligibleTags(sourceLanguage: String, targetLanguage: String): RIO[GameRepository, List[(TagRow, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleTags(sourceLanguage, targetLanguage))
 
-  def insertGame(row: GameRow, tagIds: List[Long]): RIO[GameRepository, GameRow] =
-    ZIO.serviceWithZIO[GameRepository](_.insertGame(row, tagIds))
+  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): RIO[GameRepository, GameRow] =
+    ZIO.serviceWithZIO[GameRepository](_.insertGame(row, tagIds, wordPool))
 
   def tagsOf(gameId: Long): RIO[GameRepository, List[TagRow]] =
     ZIO.serviceWithZIO[GameRepository](_.tagsOf(gameId))
@@ -117,11 +141,24 @@ object GameRepository {
   ): RIO[GameRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleWordPairs(gameId, sourceLanguage, targetLanguage))
 
+  def eligibleWordPairsForTags(
+    tagIds: List[Long],
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): RIO[GameRepository, List[(Long, Long)]] =
+    ZIO.serviceWithZIO[GameRepository](_.eligibleWordPairsForTags(tagIds, sourceLanguage, targetLanguage))
+
   def insertPlay(row: GamePlayRow, wordPairs: List[(Long, Long)]): RIO[GameRepository, GamePlayRow] =
     ZIO.serviceWithZIO[GameRepository](_.insertPlay(row, wordPairs))
 
   def wordPairsOf(playId: Long): RIO[GameRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.wordPairsOf(playId))
+
+  def wordPoolOf(gameId: Long): RIO[GameRepository, List[(Long, Long)]] =
+    ZIO.serviceWithZIO[GameRepository](_.wordPoolOf(gameId))
+
+  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): RIO[GameRepository, Unit] =
+    ZIO.serviceWithZIO[GameRepository](_.replaceGameWordPool(gameId, pairs))
 
   def answersOf(playId: Long): RIO[GameRepository, List[GamePlayAnswerRow]] =
     ZIO.serviceWithZIO[GameRepository](_.answersOf(playId))
@@ -161,6 +198,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def gamePlays       = quote(querySchema[GamePlayRow]("game_plays"))
   private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
   private inline def gamePlayWords   = quote(querySchema[GamePlayWordRow]("game_play_words"))
+  private inline def gameWordPool    = quote(querySchema[GameWordPoolRow]("game_word_pool"))
 
   def findBySlug(slug: String): Task[Option[GameRow]] = {
     logged(run(ctx.run(quote(games.filter(_.slug == lift(slug))))).map(_.headOption)) { found =>
@@ -188,7 +226,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def insertGame(row: GameRow, tagIds: List[Long]): Task[GameRow] = {
+  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): Task[GameRow] = {
     val inserted = transaction(
       for {
         id <- ctx.run(quote(games.insertValue(lift(row)).returningGenerated(_.id)))
@@ -198,10 +236,24 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                   liftQuery(links).foreach(row => gameTags.insert(_.gameId -> row.gameId, _.tagId -> row.tagId))
                 })
               }
+        _  <- ZIO.unless(wordPool.isEmpty) {
+                val links = wordPool.map { case (wordId, translationWordId) =>
+                  GameWordPoolRow(0L, id, wordId, translationWordId)
+                }
+                ctx.run(quote {
+                  liftQuery(links).foreach(row => {
+                    gameWordPool.insert(
+                      _.gameId            -> row.gameId,
+                      _.wordId            -> row.wordId,
+                      _.translationWordId -> row.translationWordId,
+                    )
+                 })
+                })
+              }
       } yield id
     )
     logged(inserted.map(id => row.copy(id = id))) { game =>
-      s"games.insert id=${game.id} owner=${row.ownerUserId} tags=${tagIds.size}"
+      s"games.insert id=${game.id} owner=${row.ownerUserId} tags=${tagIds.size} pool=${wordPool.size}"
     }
   }
 
@@ -262,6 +314,27 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
+  def eligibleWordPairsForTags(
+    tagIds: List[Long],
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[List[(Long, Long)]] = {
+    if (tagIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        for {
+          pair   <- wordTagPairs.filter(p => liftQuery(tagIds).contains(p.tagId))
+          source <- words.join(w => w.id == pair.wordId && w.language == lift(sourceLanguage))
+          target <- words.join(w => w.id == pair.translationWordId && w.language == lift(targetLanguage))
+        } yield (pair.wordId, pair.translationWordId)
+      }
+      logged(run(ctx.run(q))) { rows =>
+        s"games.eligibleWordPairsForTags tags=${tagIds.size} source=$sourceLanguage target=$targetLanguage rows=${rows.size}"
+      }
+    }
+  }
+
   def insertPlay(row: GamePlayRow, wordPairs: List[(Long, Long)]): Task[GamePlayRow] = {
     val inserted = transaction(
       for {
@@ -277,7 +350,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                       _.wordId            -> row.wordId,
                       _.translationWordId -> row.translationWordId,
                     )
-                 })
+                  })
                 })
               }
       } yield id
@@ -292,6 +365,36 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       gamePlayWords.filter(_.playId == lift(playId)).map(row => (row.wordId, row.translationWordId))
     }
     logged(run(ctx.run(q)))(rows => s"games.wordPairsOf play=$playId rows=${rows.size}")
+  }
+
+  def wordPoolOf(gameId: Long): Task[List[(Long, Long)]] = {
+    val q = quote {
+      gameWordPool.filter(_.gameId == lift(gameId)).map(row => (row.wordId, row.translationWordId))
+    }
+    logged(run(ctx.run(q)))(rows => s"games.wordPoolOf game=$gameId rows=${rows.size}")
+  }
+
+  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): Task[Unit] = {
+    val effect = transaction(
+      for {
+        _ <- ctx.run(quote(gameWordPool.filter(_.gameId == lift(gameId)).delete))
+        _ <- ZIO.unless(pairs.isEmpty) {
+               val links = pairs.map { case (wordId, translationWordId) =>
+                 GameWordPoolRow(0L, gameId, wordId, translationWordId)
+               }
+               ctx.run(quote {
+                 liftQuery(links).foreach(row => {
+                   gameWordPool.insert(
+                     _.gameId            -> row.gameId,
+                     _.wordId            -> row.wordId,
+                     _.translationWordId -> row.translationWordId,
+                   )
+                 })
+               })
+             }
+      } yield ()
+    )
+    logged(effect) { _ => s"games.replaceGameWordPool game=$gameId rows=${pairs.size}" }
   }
 
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]] = {

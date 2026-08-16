@@ -651,6 +651,18 @@ object UiKeys {
   val gameSetupWordLimitSelectAll: String = key("ui.gameSetup.wordLimitSelectAll")
   val gameSetupWordLimitCount: String     = key("ui.gameSetup.wordLimitCount")
 
+  // The right-hand word list: exactly the eligible pool the selected tags/languages would draw from — see
+  // `GameService.eligibleWords`. Disabled while "select all" is picked, since there is nothing to fix.
+  val gameSetupWordsHeading: String = key("ui.gameSetup.words.heading")
+  val gameSetupWordsCount: String   = pluralKey("ui.gameSetup.words.count")
+  val gameSetupWordsEmpty: String   = key("ui.gameSetup.words.empty")
+
+  // Whether a play's word sample is drawn fresh every time (today's only behaviour before this choice existed) or
+  // drawn once and fixed — see `GameRow.randomizeEachPlay`.
+  val gameSetupRandomizeLabel: String  = key("ui.gameSetup.randomize.label")
+  val gameSetupRandomizeAlways: String = key("ui.gameSetup.randomize.always")
+  val gameSetupRandomizeFixed: String  = key("ui.gameSetup.randomize.fixed")
+
   // -- Game instance -----------------------------------------------------------------------------
 
   val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")
@@ -677,6 +689,11 @@ object UiKeys {
   // there is no server-asserted "you own this" flag to key it off instead.
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
+
+  // Owner-only, shown only for a `randomizeEachPlay = false` game — see `GameService.reshuffle`. No confirmation
+  // dialog, the same as rename.
+  val gameInstanceReshuffle: String  = key("ui.gameInstance.reshuffle")
+  val gameInstanceReshuffled: String = key("ui.gameInstance.reshuffled")
 
   // Share + QR code. The copy-link and share buttons act on this page's own URL
   // (`window.location.href`); the QR code is a PNG rendered locally by the `qrcode` npm package (see

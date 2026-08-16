@@ -186,6 +186,10 @@ final case class GuestClaimCodeRow(
   *
   * `wordLimit` is `None` for "use every eligible word" (the only behaviour before this field existed) or `Some(n)` for
   * "sample exactly n of them at play time" — see [[GamePlayWordRow]] for where that sample actually gets stored.
+  *
+  * `randomizeEachPlay` is `true` for "draw a fresh sample every play" (the only behaviour before this field existed,
+  * and what a `wordLimit = None` game always keeps — a fixed sample of "everything" is meaningless) or `false` for
+  * "draw the sample once and reuse it" — see [[GameWordPoolRow]] for where that fixed sample gets stored.
   */
 final case class GameRow(
   id: Long,
@@ -197,6 +201,7 @@ final case class GameRow(
   createdAt: Long,
   updatedAt: Long,
   wordLimit: Option[Int] = None,
+  randomizeEachPlay: Boolean = true,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like
@@ -254,3 +259,10 @@ final case class GamePlayAnswerRow(
   * the migration's comment: a play's word set is fixed history, not current dictionary state.
   */
 final case class GamePlayWordRow(id: Long, playId: Long, wordId: Long, translationWordId: Long)
+
+/** A game's own fixed word draw, for a `randomizeEachPlay = false` game — written once at `createGame` (when the
+  * creator picked "randomize now") and replaced wholesale by [[GameRepository.replaceGameWordPool]] on a reshuffle.
+  * Every play of such a game reads this same set via [[GameRepository.wordPoolOf]], instead of each play drawing its
+  * own sample the way [[GamePlayWordRow]] does for a `randomizeEachPlay = true` game.
+  */
+final case class GameWordPoolRow(id: Long, gameId: Long, wordId: Long, translationWordId: Long)

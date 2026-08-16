@@ -299,6 +299,97 @@ object GameServiceSpec extends ZIOSpecDefault {
           started <- GameService.startPlay(created.slug, owner)
         } yield assertTrue(created.wordLimit.isEmpty, started.wordCount == 4, started.maxScore == 8)
       },
+      test("a fixed word pool is drawn once at creation and every playthrough reuses the same words") {
+        for {
+          owner     <- newUser()
+          tagId     <- eligibleTagWithPairs(owner, "fixed", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created   <- GameService.createGame(
+                         owner,
+                         WordLanguage.De,
+                         WordLanguage.Hu,
+                         List(tagId),
+                         wordLimit = Some(2),
+                         randomizeEachPlay = false,
+                       )
+          first     <- GameService.startPlay(created.slug, owner)
+          firstIds  <- playThrough(first.playId, "fixed", owner) *>
+                         GameService.getResults(first.playId, owner).map(_.answers.map(_.wordText).toSet)
+          second    <- GameService.startPlay(created.slug, owner)
+          secondIds <- playThrough(second.playId, "fixed", owner) *>
+                         GameService.getResults(second.playId, owner).map(_.answers.map(_.wordText).toSet)
+        } yield assertTrue(
+          created.randomizeEachPlay == false,
+          first.wordCount == 2,
+          second.wordCount == 2,
+          firstIds == secondIds,
+        )
+      },
+      test("randomizeEachPlay is forced true when no word limit is set, even if fixed is requested") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "everything", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(
+                       owner,
+                       WordLanguage.De,
+                       WordLanguage.Hu,
+                       List(tagId),
+                       wordLimit = None,
+                       randomizeEachPlay = false,
+                     )
+        } yield assertTrue(created.randomizeEachPlay == true)
+      },
+      test("reshuffle is refused to anyone but the game's owner") {
+        for {
+          owner   <- newUser()
+          other   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "reshuffleGuard", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created <- GameService.createGame(
+                       owner,
+                       WordLanguage.De,
+                       WordLanguage.Hu,
+                       List(tagId),
+                       wordLimit = Some(2),
+                       randomizeEachPlay = false,
+                     )
+          result  <- GameService.reshuffle(created.slug, other).either
+        } yield assertTrue(result == Left(GameFailure.NotOwner))
+      },
+      test("reshuffle is refused on a game with nothing fixed to reshuffle") {
+        for {
+          owner       <- newUser()
+          tagId       <- eligibleTagWithPairs(owner, "notFixed", WordLanguage.De, WordLanguage.Hu, count = 5)
+          alwaysFresh <- GameService.createGame(
+                           owner,
+                           WordLanguage.De,
+                           WordLanguage.Hu,
+                           List(tagId),
+                           wordLimit = Some(2),
+                           randomizeEachPlay = true,
+                         )
+          everything  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = None)
+          resultFresh <- GameService.reshuffle(alwaysFresh.slug, owner).either
+          resultAll   <- GameService.reshuffle(everything.slug, owner).either
+        } yield assertTrue(
+          resultFresh == Left(GameFailure.NotFixedPool),
+          resultAll == Left(GameFailure.NotFixedPool),
+        )
+      },
+      test("a successful reshuffle redraws the fixed pool from the current eligible words") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "reshuffled", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created <- GameService.createGame(
+                       owner,
+                       WordLanguage.De,
+                       WordLanguage.Hu,
+                       List(tagId),
+                       wordLimit = Some(2),
+                       randomizeEachPlay = false,
+                     )
+          _       <- GameService.reshuffle(created.slug, owner)
+          started <- GameService.startPlay(created.slug, owner)
+        } yield assertTrue(started.wordCount == 2, started.maxScore == 4)
+      },
       test("starting a play when the game's tags currently carry nothing eligible fails") {
         for {
           owner   <- newUser()
