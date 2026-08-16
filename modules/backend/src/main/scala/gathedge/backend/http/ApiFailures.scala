@@ -256,10 +256,12 @@ object ApiFailures {
     }
   }
 
-  // GameFailure gets three mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
-  // ValidationError (all BadRequest), get only ever raises NotFound, and rename can raise NotFound/NotOwner/
-  // ValidationError. A single wide mapping would force create/get to describe statuses they cannot produce — the same
-  // reason the guest mappings below are four functions instead of one.
+  // GameFailure gets five mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
+  // ValidationError (all BadRequest), get only ever raises NotFound, rename can raise NotFound/NotOwner/
+  // ValidationError, startPlay can raise NotFound/NoEligibleWords, and the three play-id endpoints (nextPrompt/
+  // submitAnswer/getResults) can raise NotFound/NotOwner. A single wide mapping would force every one of them to
+  // describe statuses they cannot produce — the same reason the guest mappings below are four functions instead of
+  // one.
 
   def game(failure: GameFailure): ApiFailure.NotFound = {
     failure match {
@@ -275,14 +277,14 @@ object ApiFailures {
     failure match {
       case GameFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
-      case GameFailure.NoTagsSelected                =>
+      case GameFailure.NoTagsSelected               =>
         ApiFailure.BadRequest(MessageRef(MessageKeys.gameNoTagsSelected), "Select at least one tag")
-      case GameFailure.TagNotEligible                =>
+      case GameFailure.TagNotEligible               =>
         ApiFailure.BadRequest(
           MessageRef(MessageKeys.gameTagNotEligible),
           "One of the selected tags has no eligible pairs for this language pair",
         )
-      case _                                          =>
+      case _                                        =>
         // Unreachable through this mapping: createGame never raises NotFound/NotOwner. Mapped anyway to keep the
         // match total.
         ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
@@ -293,14 +295,44 @@ object ApiFailures {
     failure match {
       case GameFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
-      case GameFailure.NotOwner                      =>
+      case GameFailure.NotOwner                     =>
         ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
-      case GameFailure.NotFound                      =>
+      case GameFailure.NotFound                     =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
-      case _                                          =>
+      case _                                        =>
         // Unreachable through this mapping: rename never raises NoTagsSelected/TagNotEligible. Mapped anyway to
         // keep the match total.
         ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
+    }
+  }
+
+  /** Starting a play: either the slug is unknown, or the game's tags currently carry nothing eligible to play. */
+  def gameStartPlay(failure: GameFailure): ApiFailure.BadRequest | ApiFailure.NotFound = {
+    failure match {
+      case GameFailure.NotFound        =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case GameFailure.NoEligibleWords =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.gameNoEligibleWords),
+          "This game has no eligible words to play right now",
+        )
+      case _                           =>
+        // Unreachable through this mapping: startPlay never raises NoTagsSelected/TagNotEligible/ValidationError/
+        // NotOwner. Mapped anyway to keep the match total.
+        ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
+    }
+  }
+
+  /** `nextPrompt`/`submitAnswer`/`getResults`: an unknown `playId`, or one that belongs to somebody else. */
+  def gamePlay(failure: GameFailure): ApiFailure.Forbidden | ApiFailure.NotFound = {
+    failure match {
+      case GameFailure.NotOwner =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
+      case GameFailure.NotFound =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case _                    =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
     }
   }
 

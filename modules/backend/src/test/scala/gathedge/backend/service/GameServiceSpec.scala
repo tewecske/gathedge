@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.db.{GameRepository, UserRepository, WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage}
 import zio._
 import zio.test._
 
@@ -55,6 +55,59 @@ object GameServiceSpec extends ZIOSpecDefault {
       target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target"))
       _      <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
     } yield tag.id
+  }
+
+  /** A tag owned by `ownerId` carrying `count` marked pairs, named `$name-source-$i` -> `$name-target-$i` for `i` in
+    * `0 until count` — enough eligible words for a real play-through, with the index recoverable from the prompt text
+    * alone so a test can decide what to answer without a second lookup.
+    */
+  private def eligibleTagWithPairs(
+    ownerId: Long,
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    count: Int,
+  ): RIO[WordRepository, Long] = {
+    for {
+      tag <- WordRepository.insertTag(ownerId, name, name, 0L)
+      _   <- ZIO.foreachDiscard(0 until count) { i =>
+               for {
+                 source <- WordRepository.ensureWord(dictionaryWord(sourceLanguage, s"$name-source-$i"))
+                 target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target-$i"))
+                 _      <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+               } yield ()
+             }
+    } yield tag.id
+  }
+
+  /** Plays `playId` to completion, answering each prompt per the scenario its index (the trailing digit of its source
+    * text, per [[eligibleTagWithPairs]]) selects: index 0 answers exactly, index 1 with a one-letter typo, index 2 (and
+    * any beyond) wrong. Returns the scenario picked for each prompt answered, in the order they came back — the random
+    * order [[GameService.nextPrompt]] itself picks, not the tag's insertion order.
+    */
+  private def playThrough(
+    playId: Long,
+    tagName: String,
+    userId: Long,
+    acc: List[Int] = Nil,
+  ): ZIO[GameService, GameFailure, List[Int]] = {
+    GameService.nextPrompt(playId, userId).flatMap { prompt =>
+      if (prompt.finished)
+        ZIO.succeed(acc)
+      else {
+        val wordText = prompt.wordText.get
+        val index    = wordText.stripPrefix(s"$tagName-source-").toInt
+        val expected = s"$tagName-target-$index"
+        val scenario = index % 3
+        val answer   = scenario match {
+          case 0 => expected
+          case 1 => expected + "x"
+          case _ => "totally-unrelated"
+        }
+        GameService.submitAnswer(playId, prompt.wordId.get, answer, userId) *>
+          playThrough(playId, tagName, userId, acc :+ scenario)
+      }
+    }
   }
 
   def spec = {
@@ -148,6 +201,53 @@ object GameServiceSpec extends ZIOSpecDefault {
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           result  <- GameService.rename(created.slug, "   ", owner).either
         } yield assertTrue(result.left.exists(_.isInstanceOf[GameFailure.ValidationError]))
+      },
+      test("a full playthrough scores exact, typo and wrong answers, and results match what was submitted") {
+        for {
+          owner     <- newUser()
+          tagId     <- eligibleTagWithPairs(owner, "playthrough", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started   <- GameService.startPlay(created.slug, owner)
+          scenarios <- playThrough(started.playId, "playthrough", owner)
+          results   <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          started.wordCount == 3,
+          started.maxScore == 6,
+          scenarios.sorted == List(0, 1, 2), // one of each scenario, order decided by nextPrompt's own randomness
+          results.wordCount == 3,
+          results.maxScore == 6,
+          results.score == 3,                // one exact match (2) + one typo (1) + one wrong (0)
+          results.answers.size == 3,
+          results.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct, AnswerOutcome.Typo, AnswerOutcome.Wrong),
+        )
+      },
+      test("starting a play when the game's tags currently carry nothing eligible fails") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "emptied", "emptied", 0L)
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "emptied-source"))
+          target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "emptied-target"))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          _       <- WordRepository.unpairTranslation(source.id, tag.id, target.id)
+          result  <- GameService.startPlay(created.slug, owner).either
+        } yield assertTrue(result == Left(GameFailure.NoEligibleWords))
+      },
+      test("a play belongs to the player who started it — another user is refused at every step") {
+        for {
+          owner         <- newUser()
+          other         <- newUser()
+          tagId         <- eligibleTagWithPairs(owner, "guarded", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created       <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started       <- GameService.startPlay(created.slug, owner)
+          promptResult  <- GameService.nextPrompt(started.playId, other).either
+          submitResult  <- GameService.submitAnswer(started.playId, 0L, "anything", other).either
+          resultsResult <- GameService.getResults(started.playId, other).either
+        } yield assertTrue(
+          promptResult == Left(GameFailure.NotOwner),
+          submitResult == Left(GameFailure.NotOwner),
+          resultsResult == Left(GameFailure.NotOwner),
+        )
       },
     ).provide(layer)
   }

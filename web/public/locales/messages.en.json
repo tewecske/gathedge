@@ -411,6 +411,7 @@
   "games.notOwner": "You do not own this game",
   "games.tagNotEligible": "One of the selected tags has no eligible pairs for this language pair",
   "games.noTagsSelected": "Select at least one tag",
+  "games.noEligibleWords": "This game has no eligible words to play right now",
   "guest.codeInvalid": "That transfer code is not valid",
   "guest.notGuest": "This account is already registered",
   "ui.pos.otherKind": "other",

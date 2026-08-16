@@ -93,6 +93,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games",
               "/api/games/setup",
               "/api/games/{slug}",
+              "/api/games/{slug}/plays",
+              "/api/games/plays/{playId}/prompt",
+              "/api/games/plays/{playId}/answers",
+              "/api/games/plays/{playId}/results",
               "/api/me",
               "/api/me/theme",
               "/api/me/locale",
@@ -235,6 +239,18 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `NotOwner` for anyone but the game's owner.
               ("PATCH", "/api/games/{slug}")                                              ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+              // startPlay's own failures are NotFound (unknown slug) and BadRequest (the pool came back empty);
+              // it never raises NotOwner, so no Forbidden.
+              ("POST", "/api/games/{slug}/plays")                                         ->
+                Set(Created, BadRequest, Unauthorized, NotFound),
+              // The three play-id operations share one shape: NotFound for an unknown playId, Forbidden for one
+              // that belongs to somebody else.
+              ("GET", "/api/games/plays/{playId}/prompt")                                 ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+              ("POST", "/api/games/plays/{playId}/answers")                               ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
+              ("GET", "/api/games/plays/{playId}/results")                                ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/me")                                                          -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
@@ -297,17 +313,21 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 136,
+          declared == 151,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
-          // on login, and `GameService.rename`'s not-owner refusal, are the ones in the skeleton. A feature whose
-          // service raises a permission failure of its own adds its paths here.
+          // on login, and `GameService`'s not-owner refusal (on rename, and on the three play-id operations), are
+          // the ones in the skeleton. A feature whose service raises a permission failure of its own adds its paths
+          // here.
           describes(Forbidden) ==
             Set(
               ("POST", "/api/auth/login"),
               ("POST", "/api/guest/code"),
               ("POST", "/api/auth/upgrade"),
               ("PATCH", "/api/games/{slug}"),
+              ("GET", "/api/games/plays/{playId}/prompt"),
+              ("POST", "/api/games/plays/{playId}/answers"),
+              ("GET", "/api/games/plays/{playId}/results"),
             ),
           // The rate limiter wraps signup, login, the verification resend and the password-reset request, and
           // nothing else.

@@ -7,16 +7,18 @@ import zio.*
 
 import javax.sql.DataSource
 
-/** `games` and `game_tags` — creating a game and reading it back. `game_plays`/`game_play_answers` get no methods here
-  * yet; nothing writes to them until the play-session feature does.
+/** `games`/`game_tags` — creating a game and reading it back — and `game_plays`/`game_play_answers` — one attempt at a
+  * game and its per-word answer history.
   *
-  * '''Nothing here logs a game's name or slug.''' A slug is a public identifier, not a credential, but a game's name is
-  * free text somebody typed — the same rule [[QuillRepository.logged]] states for a tag name applies here: log ids and
-  * counts.
+  * '''Nothing here logs a game's name or slug, or a submitted answer's text.''' A slug is a public identifier, not a
+  * credential, but a game's name and a player's typed answer are both free text somebody typed — the same rule
+  * [[QuillRepository.logged]] states for a tag name applies here: log ids and counts.
   */
 trait GameRepository {
 
   def findBySlug(slug: String): Task[Option[GameRow]]
+
+  def findGame(id: Long): Task[Option[GameRow]]
 
   /** Tags carrying at least one `word_tag_pairs` row whose source word is `sourceLanguage` and whose marked translation
     * word is `targetLanguage` — the set a game may be built from. Distinct on tag id; which order they come back in is
@@ -33,12 +35,36 @@ trait GameRepository {
 
   /** Rows affected — `0` means `id` does not exist. Ownership is the service's job: this only writes. */
   def rename(id: Long, name: String, updatedAt: Long): Task[Long]
+
+  def findPlay(id: Long): Task[Option[GamePlayRow]]
+
+  /** Raw `(word_id, translation_word_id)` pairs for `gameId`'s tags, scoped to `sourceLanguage` -> `targetLanguage` —
+    * the same join shape as [[eligibleTags]], through `game_tags` instead of a bare tag id list. Not deduped: a word
+    * can sit under more than one of the game's tags. Deduping to one row per source word (lowest translation id on a
+    * tie) is a business rule, not a projection, so it is the service's job.
+    */
+  def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]]
+
+  def insertPlay(row: GamePlayRow): Task[GamePlayRow]
+
+  /** Every answer recorded for `playId` so far, in the order they were answered. */
+  def answersOf(playId: Long): Task[List[GamePlayAnswerRow]]
+
+  /** Inserts `answer` and updates `game_plays.score` (and `finished_at`, when given) in one transaction — a play whose
+    * answer landed but whose running score did not update is not a state either side of this should ever observe.
+    */
+  def recordAnswer(answer: GamePlayAnswerRow, newScore: Int, finishedAt: Option[Long]): Task[Unit]
+
+  def wordsByIds(ids: List[Long]): Task[List[WordRow]]
 }
 
 object GameRepository {
 
   def findBySlug(slug: String): RIO[GameRepository, Option[GameRow]] =
     ZIO.serviceWithZIO[GameRepository](_.findBySlug(slug))
+
+  def findGame(id: Long): RIO[GameRepository, Option[GameRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.findGame(id))
 
   def eligibleTags(sourceLanguage: String, targetLanguage: String): RIO[GameRepository, List[TagRow]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleTags(sourceLanguage, targetLanguage))
@@ -51,6 +77,32 @@ object GameRepository {
 
   def rename(id: Long, name: String, updatedAt: Long): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt))
+
+  def findPlay(id: Long): RIO[GameRepository, Option[GamePlayRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.findPlay(id))
+
+  def eligibleWordPairs(
+    gameId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): RIO[GameRepository, List[(Long, Long)]] =
+    ZIO.serviceWithZIO[GameRepository](_.eligibleWordPairs(gameId, sourceLanguage, targetLanguage))
+
+  def insertPlay(row: GamePlayRow): RIO[GameRepository, GamePlayRow] =
+    ZIO.serviceWithZIO[GameRepository](_.insertPlay(row))
+
+  def answersOf(playId: Long): RIO[GameRepository, List[GamePlayAnswerRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.answersOf(playId))
+
+  def recordAnswer(
+    answer: GamePlayAnswerRow,
+    newScore: Int,
+    finishedAt: Option[Long],
+  ): RIO[GameRepository, Unit] =
+    ZIO.serviceWithZIO[GameRepository](_.recordAnswer(answer, newScore, finishedAt))
+
+  def wordsByIds(ids: List[Long]): RIO[GameRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.wordsByIds(ids))
 
   val live: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new GameRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GameRepository
@@ -69,15 +121,23 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     with GameRepository {
   import ctx._
 
-  private inline def games        = quote(querySchema[GameRow]("games"))
-  private inline def gameTags     = quote(querySchema[GameTagRow]("game_tags"))
-  private inline def words        = quote(querySchema[WordRow]("words"))
-  private inline def tags         = quote(querySchema[TagRow]("tags"))
-  private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
+  private inline def games           = quote(querySchema[GameRow]("games"))
+  private inline def gameTags        = quote(querySchema[GameTagRow]("game_tags"))
+  private inline def words           = quote(querySchema[WordRow]("words"))
+  private inline def tags            = quote(querySchema[TagRow]("tags"))
+  private inline def wordTagPairs    = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
+  private inline def gamePlays       = quote(querySchema[GamePlayRow]("game_plays"))
+  private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
 
   def findBySlug(slug: String): Task[Option[GameRow]] = {
     logged(run(ctx.run(quote(games.filter(_.slug == lift(slug))))).map(_.headOption)) { found =>
       s"games.findBySlug found=${found.isDefined}"
+    }
+  }
+
+  def findGame(id: Long): Task[Option[GameRow]] = {
+    logged(run(ctx.run(quote(games.filter(_.id == lift(id))))).map(_.headOption)) { found =>
+      s"games.findGame found=${found.isDefined}"
     }
   }
 
@@ -126,5 +186,70 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       games.filter(_.id == lift(id)).update(_.name -> lift(name), _.updatedAt -> lift(updatedAt))
     }
     logged(run(ctx.run(q)))(rows => s"games.rename id=$id rows=$rows")
+  }
+
+  def findPlay(id: Long): Task[Option[GamePlayRow]] = {
+    logged(run(ctx.run(quote(gamePlays.filter(_.id == lift(id))))).map(_.headOption)) { found =>
+      s"games.findPlay found=${found.isDefined}"
+    }
+  }
+
+  def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]] = {
+    val q = quote {
+      for {
+        link   <- gameTags.filter(_.gameId == lift(gameId))
+        pair   <- wordTagPairs.join(p => p.tagId == link.tagId)
+        source <- words.join(w => w.id == pair.wordId && w.language == lift(sourceLanguage))
+        target <- words.join(w => w.id == pair.translationWordId && w.language == lift(targetLanguage))
+      } yield (pair.wordId, pair.translationWordId)
+    }
+    logged(run(ctx.run(q))) { rows =>
+      s"games.eligibleWordPairs game=$gameId source=$sourceLanguage target=$targetLanguage rows=${rows.size}"
+    }
+  }
+
+  def insertPlay(row: GamePlayRow): Task[GamePlayRow] = {
+    val inserted = run(ctx.run(quote(gamePlays.insertValue(lift(row)).returningGenerated(_.id))))
+    logged(inserted.map(id => row.copy(id = id))) { play =>
+      s"games.insertPlay id=${play.id} game=${play.gameId} player=${play.playerUserId} words=${play.wordCount}"
+    }
+  }
+
+  def answersOf(playId: Long): Task[List[GamePlayAnswerRow]] = {
+    val q = quote {
+      gamePlayAnswers.filter(_.playId == lift(playId)).sortBy(_.position)
+    }
+    logged(run(ctx.run(q)))(rows => s"games.answersOf play=$playId rows=${rows.size}")
+  }
+
+  def recordAnswer(answer: GamePlayAnswerRow, newScore: Int, finishedAt: Option[Long]): Task[Unit] = {
+    val effect = transaction(
+      for {
+        _ <- ctx.run(quote(gamePlayAnswers.insertValue(lift(answer)).returningGenerated(_.id)))
+        _ <- finishedAt match {
+               case Some(_) =>
+                 ctx.run(
+                   quote(
+                     gamePlays
+                       .filter(_.id == lift(answer.playId))
+                       .update(_.score -> lift(newScore), _.finishedAt -> lift(finishedAt))
+                   )
+                 )
+               case None    =>
+                 ctx.run(quote(gamePlays.filter(_.id == lift(answer.playId)).update(_.score -> lift(newScore))))
+             }
+      } yield ()
+    )
+    logged(effect) { _ =>
+      s"games.recordAnswer play=${answer.playId} position=${answer.position} outcome=${answer.outcome} " +
+        s"finished=${finishedAt.isDefined}"
+    }
+  }
+
+  def wordsByIds(ids: List[Long]): Task[List[WordRow]] = {
+    val q = quote {
+      words.filter(w => liftQuery(ids).contains(w.id))
+    }
+    logged(run(ctx.run(q)))(rows => s"games.wordsByIds requested=${ids.size} rows=${rows.size}")
   }
 }

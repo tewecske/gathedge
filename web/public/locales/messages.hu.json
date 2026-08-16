@@ -411,6 +411,7 @@
   "games.notOwner": "Ez a játék nem a tiéd",
   "games.tagNotEligible": "Az egyik kiválasztott címkéhez nincs megjelölt pár ehhez a nyelvpárhoz",
   "games.noTagsSelected": "Válassz ki legalább egy címkét",
+  "games.noEligibleWords": "Ehhez a játékhoz jelenleg nincs kiválasztható szó",
   "guest.codeInvalid": "Ez az átviteli kód érvénytelen",
   "guest.notGuest": "Ez a fiók már regisztrálva van",
   "ui.pos.otherKind": "egyéb",

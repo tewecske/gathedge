@@ -1,8 +1,8 @@
 package gathedge.backend.service
 
-import gathedge.backend.db.{GameRepository, GameRow, TagRow}
-import gathedge.shared.domain.{Tag, WordLanguage}
-import gathedge.shared.dto.GameDetail
+import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, WordRow}
+import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, WordLanguage}
+import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, PlayStarted}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -18,12 +18,17 @@ enum GameFailure {
 
   /** A game needs at least one tag to draw words from. */
   case NoTagsSelected
+
+  /** `startPlay`'s pool of eligible words came back empty — normally impossible right after `createGame`, since that
+    * already validates every tag id is eligible, but reachable if a tag's pairs were removed between creating the game
+    * and starting a play.
+    */
+  case NoEligibleWords
   case ValidationError(fieldErrors: Map[String, MessageRef])
 }
 
-/** Creating and reading a vocabulary quiz. Playing one is [[gathedge.backend.service.GameService]]'s later extension
-  * (once `startPlay`/`nextPrompt`/`submitAnswer`/`getResults` exist) — this covers only a game's own identity: which
-  * tags it may be built from, minting its `slug`/`name`, and renaming it.
+/** Creating, reading and renaming a vocabulary quiz — which tags it may be built from, minting its `slug`/`name` — plus
+  * playing one: `startPlay`/`nextPrompt`/`submitAnswer`/`getResults`.
   */
 trait GameService {
 
@@ -41,6 +46,27 @@ trait GameService {
 
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
+
+  /** Starts a fresh attempt at `slug`. Fails [[GameFailure.NoEligibleWords]] if the game's tags carry no eligible pair
+    * right now.
+    */
+  def startPlay(slug: String, playerUserId: Long): IO[GameFailure, PlayStarted]
+
+  /** The next unanswered word in `playId`, or `{finished: true}` once every eligible word has been answered.
+    * [[GameFailure.NotOwner]] if `playId` does not belong to `requesterUserId`.
+    */
+  def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt]
+
+  /** Scores `answerText` against `wordId`'s expected translation — looked up server-side, never trusting a
+    * client-supplied translation id — and records it. Answers with acknowledgement only: never the score or whether it
+    * was correct, so a player is never shown correctness mid-game.
+    */
+  def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit]
+
+  /** `playId`'s score and full answer history, for the results screen. [[GameFailure.NotOwner]] if it does not belong
+    * to `requesterUserId`.
+    */
+  def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults]
 }
 
 object GameService {
@@ -65,6 +91,23 @@ object GameService {
 
   def rename(slug: String, newName: String, requesterUserId: Long): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.rename(slug, newName, requesterUserId))
+
+  def startPlay(slug: String, playerUserId: Long): ZIO[GameService, GameFailure, PlayStarted] =
+    ZIO.serviceWithZIO[GameService](_.startPlay(slug, playerUserId))
+
+  def nextPrompt(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GamePrompt] =
+    ZIO.serviceWithZIO[GameService](_.nextPrompt(playId, requesterUserId))
+
+  def submitAnswer(
+    playId: Long,
+    wordId: Long,
+    answerText: String,
+    requesterUserId: Long,
+  ): ZIO[GameService, GameFailure, Unit] =
+    ZIO.serviceWithZIO[GameService](_.submitAnswer(playId, wordId, answerText, requesterUserId))
+
+  def getResults(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GameResults] =
+    ZIO.serviceWithZIO[GameService](_.getResults(playId, requesterUserId))
 
   val live: URLayer[GameRepository & GameWordList, GameService] = {
     ZLayer.fromFunction((repo: GameRepository, words: GameWordList) => GameServiceLive(repo, words))
@@ -200,5 +243,137 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       _      <- repo.rename(row.id, valid, now).orDie
       detail <- detailOf(row.copy(name = valid))
     } yield detail
+  }
+
+  /** `(word_id, translation_word_id)` pairs eligible for `game`, deduped to one row per source word — the lowest
+    * translation id on a tie, per [[GameRepository.eligibleWordPairs]]'s doc comment on why dedup is a business rule
+    * and not the query's job.
+    */
+  private def eligibleWordPool(game: GameRow): UIO[List[(Long, Long)]] = {
+    repo
+      .eligibleWordPairs(game.id, game.sourceLanguage, game.targetLanguage)
+      .orDie
+      .map(_.groupBy(_._1).view.mapValues(_.map(_._2).min).toList)
+  }
+
+  /** Loads `playId` and checks it belongs to `requesterUserId` — the ownership check every play-id endpoint needs,
+    * mirroring [[rename]]'s check for a game's slug.
+    */
+  private def requireOwnedPlay(playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayRow] = {
+    for {
+      play <- repo.findPlay(playId).orDie.someOrFail(GameFailure.NotFound)
+      _    <- ZIO.unless(play.playerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+    } yield play
+  }
+
+  /** A play's `game_id` always names a real game — `games` cascades onto `game_plays`, so a missing row here is a
+    * defect, not a caller error, the same reasoning `insertWithRetry` dies rather than fails on an exhausted slug.
+    */
+  private def requireGame(gameId: Long): UIO[GameRow] = {
+    repo.findGame(gameId).orDie.flatMap {
+      case Some(game) =>
+        ZIO.succeed(game)
+      case None       =>
+        ZIO.die(new IllegalStateException(s"game $gameId missing for an existing play"))
+    }
+  }
+
+  def startPlay(slug: String, playerUserId: Long): IO[GameFailure, PlayStarted] = {
+    for {
+      game     <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      pool     <- eligibleWordPool(game)
+      _        <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      wordCount = pool.size
+      maxScore  = wordCount * GameScoring.maxPointsPerWord
+      row      <- repo
+                    .insertPlay(
+                      GamePlayRow(
+                        id = 0L,
+                        gameId = game.id,
+                        playerUserId = playerUserId,
+                        score = 0,
+                        maxScore = maxScore,
+                        wordCount = wordCount,
+                        startedAt = now,
+                        finishedAt = None,
+                      )
+                    )
+                    .orDie
+    } yield PlayStarted(row.id, wordCount, maxScore)
+  }
+
+  def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
+    for {
+      play       <- requireOwnedPlay(playId, requesterUserId)
+      game       <- requireGame(play.gameId)
+      pool       <- eligibleWordPool(game)
+      answered   <- repo.answersOf(playId).orDie
+      answeredIds = answered.map(_.wordId).toSet
+      remaining   = pool.filterNot(pair => answeredIds.contains(pair._1))
+      prompt     <- remaining match {
+                      case Nil     =>
+                        ZIO.succeed(GamePrompt(finished = true))
+                      case choices =>
+                        for {
+                          index      <- Random.nextIntBounded(choices.size)
+                          (wordId, _) = choices(index)
+                          wordRows   <- repo.wordsByIds(List(wordId)).orDie
+                          wordText    = wordRows.headOption.map(_.text).getOrElse("")
+                        } yield GamePrompt(
+                          finished = false,
+                          wordId = Some(wordId),
+                          wordText = Some(wordText),
+                          position = Some(answeredIds.size + 1),
+                        )
+                    }
+    } yield prompt
+  }
+
+  def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit] = {
+    for {
+      play          <- requireOwnedPlay(playId, requesterUserId)
+      game          <- requireGame(play.gameId)
+      pool          <- eligibleWordPool(game)
+      translationId <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
+      expectedWords <- repo.wordsByIds(List(translationId)).orDie
+      expectedText   = expectedWords.headOption.map(_.text).getOrElse("")
+      scored         = GameScoring.score(expectedText, answerText)
+      now           <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      answeredSoFar <- repo.answersOf(playId).orDie
+      position       = answeredSoFar.size + 1
+      newScore       = answeredSoFar.map(_.points).sum + scored.points
+      finishedAt     = Option.when(position == play.wordCount)(now)
+      answer         = GamePlayAnswerRow(
+                         id = 0L,
+                         playId = playId,
+                         wordId = wordId,
+                         translationWordId = translationId,
+                         position = position,
+                         userAnswer = answerText,
+                         outcome = AnswerOutcome.code(scored.outcome),
+                         points = scored.points,
+                         answeredAt = now,
+                       )
+      _             <- repo.recordAnswer(answer, newScore, finishedAt).orDie
+    } yield ()
+  }
+
+  def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults] = {
+    for {
+      play    <- requireOwnedPlay(playId, requesterUserId)
+      answers <- repo.answersOf(playId).orDie
+      wordIds  = answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct
+      words   <- repo.wordsByIds(wordIds).orDie
+      textOf   = words.map(w => w.id -> w.text).toMap
+      results  = answers.map { a =>
+                   GameAnswerResult(
+                     wordText = textOf.getOrElse(a.wordId, ""),
+                     expectedText = textOf.getOrElse(a.translationWordId, ""),
+                     givenText = a.userAnswer,
+                     outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
+                   )
+                 }
+    } yield GameResults(play.score, play.maxScore, play.wordCount, results)
   }
 }

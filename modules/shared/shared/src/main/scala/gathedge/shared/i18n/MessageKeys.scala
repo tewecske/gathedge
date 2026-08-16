@@ -109,10 +109,11 @@ object MessageKeys {
 
   // -- Games -------------------------------------------------------------------------------------
 
-  val gameNotFound: String       = key("games.notFound")
-  val gameNotOwner: String       = key("games.notOwner")
-  val gameTagNotEligible: String = key("games.tagNotEligible")
-  val gameNoTagsSelected: String = key("games.noTagsSelected")
+  val gameNotFound: String        = key("games.notFound")
+  val gameNotOwner: String        = key("games.notOwner")
+  val gameTagNotEligible: String  = key("games.tagNotEligible")
+  val gameNoTagsSelected: String  = key("games.noTagsSelected")
+  val gameNoEligibleWords: String = key("games.noEligibleWords")
 
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space

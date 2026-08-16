@@ -1,6 +1,17 @@
 package gathedge.shared.api
 
-import gathedge.shared.domain.{Gender, Locale, OAuthProvider, PartOfSpeech, Tag, Theme, User, Word, WordLanguage}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  Gender,
+  Locale,
+  OAuthProvider,
+  PartOfSpeech,
+  Tag,
+  Theme,
+  User,
+  Word,
+  WordLanguage,
+}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   AdminIdentityInfo,
@@ -21,8 +32,11 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   DbStats,
   ForgotPasswordRequest,
+  GameAnswerResult,
   GameCreated,
   GameDetail,
+  GamePrompt,
+  GameResults,
   IdentitiesResponse,
   JobStatus,
   LinkedIdentity,
@@ -32,6 +46,7 @@ import gathedge.shared.dto.{
   MigrationInfo,
   NewTranslation,
   PairSelectionResponse,
+  PlayStarted,
   ProvidersResponse,
   PruneResult,
   RateLimitEntry,
@@ -43,6 +58,7 @@ import gathedge.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  SubmitAnswerRequest,
   SuspiciousUser,
   SystemOverview,
   TagResponse,
@@ -85,6 +101,7 @@ object ApiSchemas {
   given Schema[WordLanguage]  = DeriveSchema.gen[WordLanguage]
   given Schema[PartOfSpeech]  = DeriveSchema.gen[PartOfSpeech]
   given Schema[Gender]        = DeriveSchema.gen[Gender]
+  given Schema[AnswerOutcome] = DeriveSchema.gen[AnswerOutcome]
 
   given Schema[User] = DeriveSchema.gen[User]
   given Schema[Word] = DeriveSchema.gen[Word]
@@ -152,8 +169,13 @@ object ApiSchemas {
   given Schema[SystemOverview] = DeriveSchema.gen[SystemOverview]
   given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
 
-  given Schema[GameDetail]        = DeriveSchema.gen[GameDetail]
-  given Schema[GameCreated]       = DeriveSchema.gen[GameCreated]
-  given Schema[CreateGameRequest] = DeriveSchema.gen[CreateGameRequest]
-  given Schema[RenameGameRequest] = DeriveSchema.gen[RenameGameRequest]
+  given Schema[GameDetail]          = DeriveSchema.gen[GameDetail]
+  given Schema[GameCreated]         = DeriveSchema.gen[GameCreated]
+  given Schema[CreateGameRequest]   = DeriveSchema.gen[CreateGameRequest]
+  given Schema[RenameGameRequest]   = DeriveSchema.gen[RenameGameRequest]
+  given Schema[PlayStarted]         = DeriveSchema.gen[PlayStarted]
+  given Schema[GamePrompt]          = DeriveSchema.gen[GamePrompt]
+  given Schema[SubmitAnswerRequest] = DeriveSchema.gen[SubmitAnswerRequest]
+  given Schema[GameAnswerResult]    = DeriveSchema.gen[GameAnswerResult]
+  given Schema[GameResults]         = DeriveSchema.gen[GameResults]
 }
