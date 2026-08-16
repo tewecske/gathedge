@@ -87,9 +87,9 @@ private class GameInstancePage(slug: String) {
   /** The QR modal — see `AppShell.confirmSignInOpenVar`'s doc comment for why a `Var[Boolean]` toggling a `modal-open`
     * class, not `HTMLDialogElement.showModal`: that API is unimplemented in jsdom, which the frontend specs run under.
     */
-  private val qrOpenVar                            = Var(false)
-  private val qrDataUriVar: Var[Option[String]]     = Var(None)
-  private val qrErrorVar: Var[Option[String]]       = Var(None)
+  private val qrOpenVar                         = Var(false)
+  private val qrDataUriVar: Var[Option[String]] = Var(None)
+  private val qrErrorVar: Var[Option[String]]   = Var(None)
 
   /** Mirrors who the reader is at the moment a request is made — same trick as `GameSetupPage.readerVar`, needed
     * because [[asReader]] reads it outside a subscription.
@@ -155,7 +155,6 @@ private class GameInstancePage(slug: String) {
         .distinct
         .map(loaded => Option.when(loaded)(renderGameCard())),
       child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
-      onMountCallback(_ => loadBus.emit(())),
       AppState.currentUserSignal --> readerVar.writer,
       loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
         Observer[Either[ApiError, GameDetail]] {
@@ -245,6 +244,10 @@ private class GameInstancePage(slug: String) {
             )
           }
       },
+      // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
+      // stream this triggers (`loadBus`, above) has to already have a subscriber when this fires, or the mount's own
+      // reload is emitted to nobody and silently lost, leaving the quiz stuck loading forever.
+      onMountCallback(_ => loadBus.emit(())),
     )
   }
 
@@ -367,8 +370,8 @@ private class GameInstancePage(slug: String) {
     }
   }
 
-  /** `navigator.share` first, falling back to [[copyLink]] when the API is absent — mobile browsers overwhelmingly
-    * have it, desktop ones mostly still don't. Feature-detected the same way as the clipboard call above rather than
+  /** `navigator.share` first, falling back to [[copyLink]] when the API is absent — mobile browsers overwhelmingly have
+    * it, desktop ones mostly still don't. Feature-detected the same way as the clipboard call above rather than
     * declared against a `dom` facade, since Scala.js's own DOM bindings do not have it either.
     *
     * The share sheet's own promise is not awaited: it rejects on a plain user cancel (`AbortError`) exactly as often as
@@ -411,10 +414,10 @@ private class GameInstancePage(slug: String) {
       cls := "modal",
       cls("modal-open") <-- qrOpenVar.signal,
       div(
-        cls := "modal-box",
+        cls   := "modal-box",
         h3(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceShareQrTitle)),
         div(
-          cls := "flex justify-center py-6",
+          cls  := "flex justify-center py-6",
           child <-- qrDataUriVar.signal.map {
             case Some(uri) =>
               img(cls := "w-48 h-48", src := uri, alt := I18n.t(UiKeys.gameInstanceShareQrAlt))
@@ -424,7 +427,7 @@ private class GameInstancePage(slug: String) {
         ),
         child.maybe <-- qrErrorVar.signal.map(_.map(msg => p(cls := "text-error text-sm text-center", msg))),
         div(
-          cls := "modal-action",
+          cls  := "modal-action",
           button(
             cls := "btn",
             typ := "button",

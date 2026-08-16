@@ -40,6 +40,11 @@ object App {
 
   private val sessionLoadedVar: Var[Boolean] = Var(false)
 
+  /** A hand-off slot, not state: written and read back within the same synchronous call in [[renderers]]'s
+    * `GameInstance` renderer — see its comment for why. Nothing else may read or write this.
+    */
+  private var latestGameSlug: String = ""
+
   /** The *only* user-derived facts that change which page element is built. Deliberately not the whole `User`: a theme
     * toggle (or any other profile write) must not tear down and rebuild the mounted page, discarding its `Var`s,
     * in-flight requests and half-typed form input. Everything else user-dependent is read reactively by
@@ -109,6 +114,23 @@ object App {
       // and drawing them for an instant and then taking them away would be worse than a spinner.
       .collectSignalPF[WordQuery] { case (gate, page: Page.Words) if gate.loaded => page.query }(query =>
         WordsPage.render(query, onWordQuery)
+      )
+      // Both game pages mint a guest account on their first write (GameSetupPage.asReader/GameInstancePage.asReader) —
+      // the same reasoning `WordsPage` above is pulled out for. `AppState.setUser` on that mint flips `Gate.signedIn`
+      // and `Gate.isGuest`, and a catch-all `collectStaticPF` rebuilds its element on *any* `Gate` change: the create
+      // (or startPlay) request that guest mint was made for is still in flight when that happens, and the fresh element
+      // it lands on has forgotten it was ever sent — the setup screen's chosen tags, or the just-started play's id, gone
+      // with the element that requested them. A signal renderer is what keeps the same element (and its in-flight
+      // request) alive across that one Gate change. The slug is read once — `GameInstance` reaching this renderer
+      // again with a *different* slug (only possible via a hand-edited URL; nothing in the UI links one game instance
+      // straight to another) would keep showing the first game rather than resetting, which a plain page reload avoids.
+      .collectSignalPF[Unit] { case (gate, Page.GameSetup) if gate.loaded => () }(_ => GameSetupPage.render())
+      // `GameInstancePage.render` needs the slug itself (not a signal of it) to build its element, and `Signal#now`
+      // is not public outside Airstream. The partial function below is plain code, not just a pattern match, so it can
+      // stash the slug as a side effect the moment it is extracted — which is always strictly before the `render` call
+      // that follows below reads it back, since `CollectPageSignalRenderer` evaluates the two in that order.
+      .collectSignalPF[Unit] { case (gate, page: Page.GameInstance) if gate.loaded => latestGameSlug = page.slug }(_ =>
+        GameInstancePage.render(latestGameSlug)
       )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }

@@ -30,10 +30,13 @@ test.afterAll(async () => {
   await page.close();
 });
 
-test('unauthenticated visitor is redirected to sign-in', async () => {
+test('an unauthenticated visitor lands on the public home page', async () => {
   // Deliberately bare: this is the one place the boot script's prefix redirect is exercised.
+  // Home is public on purpose — see HomePage's doc comment: it's the navbar's own link, always shown, so a
+  // signed-out click on it must not bounce back to sign-in.
   await page.goto('/');
-  await expect(page).toHaveURL(/\/en\/sign-in$/);
+  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
 });
 
 test('sign up creates an account and lands on the home page', async () => {

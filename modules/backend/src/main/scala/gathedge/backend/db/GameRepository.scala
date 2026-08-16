@@ -21,10 +21,13 @@ trait GameRepository {
   def findGame(id: Long): Task[Option[GameRow]]
 
   /** Tags carrying at least one `word_tag_pairs` row whose source word is `sourceLanguage` and whose marked translation
-    * word is `targetLanguage` — the set a game may be built from. Distinct on tag id; which order they come back in is
-    * the caller's job, not this query's.
+    * word is `targetLanguage` — the set a game may be built from, paired with which source word makes each row
+    * eligible. Not deduped to one row per tag: a tag with three eligible words comes back as three rows sharing that
+    * tag, and turning that into a per-tag word count (or a bare tag id set) is the caller's job — the same split
+    * [[eligibleWordPairs]]'s doc comment draws for per-word dedup. Which order tags come back in is the caller's job
+    * too.
     */
-  def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[TagRow]]
+  def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[(TagRow, Long)]]
 
   /** Inserts `row` and one `game_tags` row per id in `tagIds`, as one unit of work: a game with only some of its tags
     * recorded is not a game anybody asked to create.
@@ -66,7 +69,7 @@ object GameRepository {
   def findGame(id: Long): RIO[GameRepository, Option[GameRow]] =
     ZIO.serviceWithZIO[GameRepository](_.findGame(id))
 
-  def eligibleTags(sourceLanguage: String, targetLanguage: String): RIO[GameRepository, List[TagRow]] =
+  def eligibleTags(sourceLanguage: String, targetLanguage: String): RIO[GameRepository, List[(TagRow, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleTags(sourceLanguage, targetLanguage))
 
   def insertGame(row: GameRow, tagIds: List[Long]): RIO[GameRepository, GameRow] =
@@ -141,14 +144,14 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[TagRow]] = {
+  def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[(TagRow, Long)]] = {
     val q = quote {
       (for {
         pair   <- wordTagPairs
         source <- words.join(w => w.id == pair.wordId && w.language == lift(sourceLanguage))
         target <- words.join(w => w.id == pair.translationWordId && w.language == lift(targetLanguage))
         tag    <- tags.join(t => t.id == pair.tagId)
-      } yield tag).distinct
+      } yield (tag, pair.wordId)).distinct
     }
     logged(run(ctx.run(q))) { rows =>
       s"games.eligibleTags source=$sourceLanguage target=$targetLanguage rows=${rows.size}"

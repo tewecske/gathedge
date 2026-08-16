@@ -126,13 +126,21 @@ object GameService {
 
 final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) extends GameService {
 
-  private def toTag(row: TagRow, viewerId: Long): Tag = Tag(row.id, row.name, wordCount = 0L, row.userId == viewerId)
+  private def toTag(row: TagRow, wordCount: Long, viewerId: Long): Tag = {
+    Tag(row.id, row.name, wordCount, row.userId == viewerId)
+  }
 
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]] = {
     repo
       .eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
       .orDie
-      .map(rows => Tag.sorted(rows.map(toTag(_, viewerId))))
+      .map { rows =>
+        // One row per (tag, eligible source word) — see the repo method's doc comment on why dedup is left to the
+        // caller. Counting distinct word ids per tag is what turns that into "how many words this tag would draw
+        // prompts from", the number the setup screen's checkbox shows next to each tag's name.
+        val byTag = rows.groupBy(_._1).view.mapValues(_.map(_._2).distinct.size.toLong).toMap
+        Tag.sorted(byTag.map { case (row, wordCount) => toTag(row, wordCount, viewerId) }.toList)
+      }
   }
 
   private def capitalize(word: String): String = {
@@ -205,7 +213,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     for {
       _          <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
       eligible   <- repo.eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)).orDie
-      eligibleIds = eligible.map(_.id).toSet
+      eligibleIds = eligible.map(_._1.id).toSet
       _          <- ZIO.unless(tagIds.forall(eligibleIds.contains))(ZIO.fail(GameFailure.TagNotEligible))
       now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row        <- insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt = 0, lastPair = None)

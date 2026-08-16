@@ -91,10 +91,21 @@ test('a transfer code is shown once and carries the vocabulary to another browse
 test('upgrading keeps every word, and the account can sign in afterwards', async () => {
   const email = `e2e-guest-${unique}@example.com`;
 
-  await page.getByRole('button', { name: 'Create an account' }).click();
+  // GuestBanner's upgrade control is a real `<a href>` (it navigates to Page.SignUp), so its accessible role is
+  // "link" even though it is styled as a button.
+  await page.getByRole('link', { name: 'Create an account' }).click();
+  await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
-  await page.getByRole('button', { name: 'Create account' }).click();
+  // The submit button reads "Sign up" even here — only the heading and hint change for a guest upgrade
+  // (SignUpPage.isGuestSignedIn); the action itself is still phrased the same as a plain signup.
+  await page.getByRole('button', { name: 'Sign up' }).click();
+
+  // An upgraded guest is signed in and no longer a guest, so `RequireAnon` fires the same redirect signing up or
+  // signing in does — off the sign-up page, to Home (App.redirectTarget; SignUpPage's own doc comment on why it does
+  // not navigate itself). Waiting for that page to land, rather than clicking straight through, is what keeps the
+  // clicks below off the moment the shell is still being torn down and rebuilt underneath them.
+  await expect(page).toHaveURL(/\/en\/$/);
 
   // The banner belongs to guests, so it goes as soon as the account is a real one.
   await expect(page.getByRole('heading', { name: 'Your words are saved on this device' })).toHaveCount(0);

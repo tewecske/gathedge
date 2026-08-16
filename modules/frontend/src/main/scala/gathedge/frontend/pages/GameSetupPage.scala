@@ -113,7 +113,6 @@ private class GameSetupPage {
       ),
       renderPlayButton(),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
-      onMountCallback(_ => reloadBus.emit(())),
       AppState.currentUserSignal --> readerVar.writer,
       formRequests --> Observer[(WordLanguage, WordLanguage)](_ => Var.set(loadingVar -> true, errorVar -> None)),
       formRequests.flatMapSwitch { case (source, target) => asReader(() => GameApiClient.setup(source, target)) } -->
@@ -144,6 +143,11 @@ private class GameSetupPage {
           case Left(err)      =>
             Var.set(creatingVar -> false, errorVar -> Some(err.message))
         },
+      // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
+      // stream this triggers (`formRequests`, above) has to already have a subscriber when this fires, or the mount's
+      // own reload is emitted to nobody and silently lost, leaving the tag list empty until something else (a
+      // language change) asks again.
+      onMountCallback(_ => reloadBus.emit(())),
     )
   }
 
