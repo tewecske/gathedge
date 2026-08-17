@@ -2,10 +2,10 @@ package gathedge.frontend
 
 import gathedge.frontend.components.SortHeader
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
 import gathedge.shared.domain.Locale.urlPrefix
 import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
-import gathedge.shared.dto.{Paging, UserSort, WordSort}
+import gathedge.shared.dto.{GamePlaySort, Paging, UserSort, WordSort}
 import zio.test._
 
 /** That every route carries the language prefix.
@@ -148,12 +148,42 @@ object AppRouterSpec extends ZIOSpecDefault {
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the
       // query would answer the back button with the filter silently gone.
       test("the history tag carries the listing state too") {
-        val page  = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
-        val words = Page.Words(WordQuery(search = "haus", target = WordLanguage.En, tagId = Some(9L)))
+        val page    = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
+        val words   = Page.Words(WordQuery(search = "haus", target = WordLanguage.En, tagId = Some(9L)))
+        val results = Page.GameResults(
+          "brave-otter",
+          GamePlayQuery(page = 2, sort = SortHeader.Sort.descending(GamePlaySort.score), search = "alice"),
+        )
 
         assertTrue(
           AppRouter.deserialize(AppRouter.serialize(page)) == page,
           AppRouter.deserialize(AppRouter.serialize(words)) == words,
+          AppRouter.deserialize(AppRouter.serialize(results)) == results,
+        )
+      },
+      // Unlike the other listings, this one needs a path segment (the game's slug) *and* a query — see
+      // `AppRouter.gameResultsRoute`'s doc comment on why it uses `Route.withQuery` instead of the "two routes, query
+      // first" trick the others use.
+      test("a game's results listing carries both its slug and its query through the URL") {
+        val filtered = Page.GameResults(
+          "brave-otter",
+          GamePlayQuery(page = 2, sort = SortHeader.Sort.descending(GamePlaySort.score), search = "alice"),
+        )
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          url.startsWith(s"$prefix/games/brave-otter/results?"),
+          url.contains("page=2"),
+          url.contains(s"sort=${GamePlaySort.score}"),
+          url.contains("dir=desc"),
+          url.contains("q=alice"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          // The unfiltered listing still round-trips, even though `Route.withQuery` has no bare-path fallback to
+          // prefer instead — see the route's doc comment for why the resulting `?`-suffixed URL is an accepted
+          // tradeoff on this owner-only diagnostic page.
+          AppRouter.router
+            .pageForRelativeUrl(AppRouter.router.relativeUrlForPage(Page.GameResults("brave-otter")))
+            .contains(Page.GameResults("brave-otter")),
         )
       },
     )

@@ -2,7 +2,7 @@ package gathedge.frontend
 
 import com.raquo.waypoint._
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
 import gathedge.shared.Branding
 
 sealed trait Page
@@ -44,6 +44,14 @@ object Page {
     * action the page offers, that goes through the guest detour, in `GameInstancePage`.
     */
   final case class GameInstance(slug: String) extends Page
+
+  /** A tracked game's owner-facing results listing: who played `slug` and how they scored. Owner-only (the default
+    * `AuthGuard.RequireAuth` covers it — see `guardFor`), unlike [[GameInstance]]: a shared link must stay public, but
+    * a game's play history is not something a shared link should leak. It carries its whole listing state, the same
+    * reason [[Admin]]/[[AdminAudit]]/[[Words]] do — see [[gathedge.frontend.listing.GamePlayQuery]] and the route
+    * below.
+    */
+  final case class GameResults(slug: String, query: GamePlayQuery = GamePlayQuery.default) extends Page
 
   /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
   case object ForgotPassword extends Page
@@ -130,17 +138,31 @@ object AppRouter {
     */
   private val basePath = CurrentLocale.prefix
 
-  private val signInRoute          = Route.static(SignIn, root / "sign-in", basePath)
-  private val signUpRoute          = Route.static(SignUp, root / "sign-up", basePath)
-  private val homeRoute            = Route.static(Home, root, basePath)
-  private val settingsRoute        = Route.static(Settings, root / "settings", basePath)
-  private val gamesRoute           = Route.static(Games, root / "games", basePath)
-  private val gameSetupRoute       = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
-  private val myGamesRoute         = Route.static(MyGames, root / "games" / "mine", basePath)
-  private val gameInstanceRoute    = Route(
+  private val signInRoute       = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute       = Route.static(SignUp, root / "sign-up", basePath)
+  private val homeRoute         = Route.static(Home, root, basePath)
+  private val settingsRoute     = Route.static(Settings, root / "settings", basePath)
+  private val gamesRoute        = Route.static(Games, root / "games", basePath)
+  private val gameSetupRoute    = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
+  private val myGamesRoute      = Route.static(MyGames, root / "games" / "mine", basePath)
+  private val gameInstanceRoute = Route(
     encode = (p: GameInstance) => p.slug,
     decode = (slug: String) => GameInstance(slug),
     pattern = root / "g" / segment[String],
+    basePath = basePath,
+  )
+
+  /** Unlike the other listings, this one needs a path segment *and* a query — `Route.onlyQueryPF`'s "two routes, query
+    * first" trick (see `adminQueryRoute`'s doc comment) only works for a fully static path, so this uses `withQuery`
+    * instead, the general path-plus-query combinator. One consequence: the unfiltered URL may carry a trailing `?` (the
+    * same cosmetic wart `adminQueryRoute`'s comment warns about for `onlyQuery`) since there is no bare-path fallback
+    * route to prefer instead — acceptable here, since this is an owner-only diagnostic page, not one meant to be
+    * hand-typed or shared.
+    */
+  private val gameResultsRoute     = Route.withQuery[GameResults, String, GamePlayQuery](
+    encode = (p: GameResults) => PatternArgs(p.slug, p.query),
+    decode = (args: PatternArgs[String, GamePlayQuery]) => GameResults(args.path, args.params),
+    pattern = (root / "games" / segment[String] / "results") ? GamePlayQuery.params,
     basePath = basePath,
   )
   private val verifyEmailRoute     = Route(
@@ -220,47 +242,49 @@ object AppRouter {
   // file calls either of them.
   private[frontend] def serialize(page: Page): String = {
     page match {
-      case SignIn               =>
+      case SignIn                   =>
         "SignIn"
-      case SignUp               =>
+      case SignUp                   =>
         "SignUp"
-      case Home                 =>
+      case Home                     =>
         "Home"
-      case Settings             =>
+      case Settings                 =>
         "Settings"
-      case Games                =>
+      case Games                    =>
         "Games"
-      case GameSetup            =>
+      case GameSetup                =>
         "GameSetup"
-      case MyGames              =>
+      case MyGames                  =>
         "MyGames"
-      case GameInstance(slug)   =>
+      case GameInstance(slug)       =>
         s"GameInstance:$slug"
-      case VerifyEmail(token)   =>
+      case GameResults(slug, query) =>
+        s"GameResults:$slug:" + GamePlayQuery.params.createParamsString(query)
+      case VerifyEmail(token)       =>
         s"VerifyEmail:$token"
-      case CheckInbox           =>
+      case CheckInbox               =>
         "CheckInbox"
-      case ForgotPassword       =>
+      case ForgotPassword           =>
         "ForgotPassword"
-      case ResetPassword(token) =>
+      case ResetPassword(token)     =>
         s"ResetPassword:$token"
-      case Admin(query)         =>
+      case Admin(query)             =>
         "Admin:" + UserQuery.params.createParamsString(query)
-      case AdminUserDetail(id)  =>
+      case AdminUserDetail(id)      =>
         s"AdminUserDetail:$id"
-      case Words(query)         =>
+      case Words(query)             =>
         "Words:" + WordQuery.params.createParamsString(query)
-      case WordDetail(id)       =>
+      case WordDetail(id)           =>
         s"WordDetail:$id"
-      case AdminAudit(query)    =>
+      case AdminAudit(query)        =>
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
-      case AdminSystem          =>
+      case AdminSystem              =>
         "AdminSystem"
-      case AdminUsage           =>
+      case AdminUsage               =>
         "AdminUsage"
-      case Forbidden            =>
+      case Forbidden                =>
         "Forbidden"
-      case NotFound             =>
+      case NotFound                 =>
         "NotFound"
     }
   }
@@ -276,6 +300,20 @@ object AppRouter {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
     } else if (tag.startsWith("GameInstance:")) {
       GameInstance(tag.stripPrefix("GameInstance:"))
+    } else if (tag.startsWith("GameResults:")) {
+      // A tag we cannot read is a history entry from an older build; the game's own page is still the right
+      // fallback, the same reasoning `AdminAudit`'s fallback below applies to its own listing.
+      val rest = tag.stripPrefix("GameResults:")
+      val sep  = rest.indexOf(':')
+      if (sep < 0) {
+        GameResults(rest)
+      } else {
+        val slug = rest.substring(0, sep)
+        GamePlayQuery.params
+          .matchQueryString(rest.substring(sep + 1))
+          .map(query => GameResults(slug, query))
+          .getOrElse(GameResults(slug))
+      }
     } else if (tag.startsWith("ResetPassword:")) {
       ResetPassword(tag.stripPrefix("ResetPassword:"))
     } else if (tag.startsWith("WordDetail:")) {
@@ -343,6 +381,7 @@ object AppRouter {
         gameSetupRoute,
         myGamesRoute,
         gameInstanceRoute,
+        gameResultsRoute,
         verifyEmailRoute,
         checkInboxRoute,
         forgotPasswordRoute,

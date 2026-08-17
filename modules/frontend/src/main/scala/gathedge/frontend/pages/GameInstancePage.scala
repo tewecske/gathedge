@@ -508,6 +508,18 @@ private class GameInstancePage(slug: String) {
           )
         )
       },
+      // Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
+      // comment. Links to the results listing rather than opening it here, the same split `MyGamesPage`/`GameInstance`
+      // already draw between "this game" and "a listing about it".
+      child.maybe <-- isOwnerVar.signal.combineWith(gameVar.signal).map { case (owner, game) =>
+        Option.when(owner && game.exists(_.trackResults))(
+          a(
+            cls := "btn btn-ghost btn-xs",
+            AppRouter.router.navigateTo(Page.GameResults(slug)),
+            I18n.t(UiKeys.gameInstanceViewResults),
+          )
+        )
+      },
     )
   }
 

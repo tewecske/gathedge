@@ -663,6 +663,11 @@ object UiKeys {
   val gameSetupRandomizeAlways: String = key("ui.gameSetup.randomize.always")
   val gameSetupRandomizeFixed: String  = key("ui.gameSetup.randomize.fixed")
 
+  // Whether the owner can later see who played and how they scored — see `GameRow.trackResults`. Off by default,
+  // like every prior addition to this screen.
+  val gameSetupTrackResultsLabel: String = key("ui.gameSetup.trackResults.label")
+  val gameSetupTrackResultsHint: String  = key("ui.gameSetup.trackResults.hint")
+
   // -- Game instance -----------------------------------------------------------------------------
 
   val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")
@@ -706,6 +711,32 @@ object UiKeys {
   val gameInstanceShareQrAlt: String      = key("ui.gameInstance.share.qrAlt")
   val gameInstanceShareQrClose: String    = key("ui.gameInstance.share.qrClose")
   val gameInstanceShareQrError: String    = key("ui.gameInstance.share.qrError")
+
+  // Owner-only, shown only when `GameDetail.trackResults` is true — links to the results listing below.
+  val gameInstanceViewResults: String = key("ui.gameInstance.viewResults")
+
+  // -- Game results ------------------------------------------------------------------------------
+  // The owner-facing "who played my game" listing (`GET /api/games/{slug}/plays`) and its per-player detail modal.
+
+  val gameResultsTitle: String             = key("ui.gameResults.title")
+  val gameResultsFilterLabel: String       = key("ui.gameResults.filterLabel")
+  val gameResultsFilterPlaceholder: String = key("ui.gameResults.filterPlaceholder")
+  val gameResultsEmpty: String             = key("ui.gameResults.empty")
+  val gameResultsCount: String             = pluralKey("ui.gameResults.count")
+  val gameResultsPlayerCol: String         = key("ui.gameResults.playerCol")
+  val gameResultsScoreCol: String          = key("ui.gameResults.scoreCol")
+  val gameResultsWordCountCol: String      = key("ui.gameResults.wordCountCol")
+  val gameResultsStartedCol: String        = key("ui.gameResults.startedCol")
+  val gameResultsViewButton: String        = key("ui.gameResults.viewButton")
+  val gameResultsGuestBadge: String        = key("ui.gameResults.guestBadge")
+  val gameResultsNotTracked: String        = key("ui.gameResults.notTracked")
+
+  // The result modal: prev/next step through the currently loaded page only — see `GameResultsPage`'s doc comment.
+  val gameResultsModalTitle: String   = key("ui.gameResults.modal.title")
+  val gameResultsModalClose: String   = key("ui.gameResults.modal.close")
+  val gameResultsModalPrev: String    = key("ui.gameResults.modal.prev")
+  val gameResultsModalNext: String    = key("ui.gameResults.modal.next")
+  val gameResultsModalLoading: String = key("ui.gameResults.modal.loading")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

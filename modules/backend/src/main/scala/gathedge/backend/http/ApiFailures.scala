@@ -256,11 +256,12 @@ object ApiFailures {
     }
   }
 
-  // GameFailure gets six mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
+  // GameFailure gets seven mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
   // ValidationError (all BadRequest), get only ever raises NotFound, rename can raise NotFound/NotOwner/
   // ValidationError, startPlay can raise NotFound/NoEligibleWords, reshuffle can raise NotFound/NotOwner/
-  // NotFixedPool, and the three play-id endpoints (nextPrompt/submitAnswer/getResults) can raise NotFound/NotOwner.
-  // A single wide mapping would force every one of them to describe statuses they cannot produce — the same reason
+  // NotFixedPool, the three play-id endpoints (nextPrompt/submitAnswer/getResults) can raise NotFound/NotOwner, and
+  // the owner-facing results listing/detail (listPlays/getPlayDetail) can raise NotFound/NotOwner/NotTracked. A
+  // single wide mapping would force every one of them to describe statuses they cannot produce — the same reason
   // the guest mappings below are four functions instead of one.
 
   def game(failure: GameFailure): ApiFailure.NotFound = {
@@ -351,6 +352,23 @@ object ApiFailures {
       case GameFailure.NotFound =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
       case _                    =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+    }
+  }
+
+  /** `listPlays`/`getPlayDetail`: an unknown slug (or, for detail, a `playId` that does not belong to it), one that
+    * belongs to somebody else, or a game that never turned on `trackResults`.
+    */
+  def gameResults(failure: GameFailure): ApiFailure.Conflict | ApiFailure.Forbidden | ApiFailure.NotFound = {
+    failure match {
+      case GameFailure.NotOwner   =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
+      case GameFailure.NotFound   =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case GameFailure.NotTracked =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.gameNotTracked), "This game does not track results")
+      case _                      =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
     }

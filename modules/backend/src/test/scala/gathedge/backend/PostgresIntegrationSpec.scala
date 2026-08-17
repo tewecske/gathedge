@@ -247,6 +247,61 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           after.isEmpty,
         )
       },
+      // `GameRepository.matchingPlays`'s player filter is a correlated subquery against `users` — the first query in
+      // this repository to reach that table at all, and the reserved-word lambda-naming rule (`row`, never `user`)
+      // only bites on this dialect. Real Postgres is the only place `listPlaysPage`/`countPlaysMatching`/
+      // `findPlayInGame`/`usersByIds` actually run as SQL rather than just compiling.
+      test(
+        "a tracked game's owner-facing plays listing filters by player and scopes a play to its own game, for real"
+      ) {
+        for {
+          owner         <- AuthService.signup("pgowner@example.com", "password123").map(_._1)
+          alice         <- AuthService.signup("pgalice@example.com", "password123").map(_._1)
+          bob           <- AuthService.signup("pgbob@example.com", "password123").map(_._1)
+          tag           <- WordRepository.insertTag(owner.id, "pgtracked", "pgtracked", 0L)
+          source        <- WordRepository.ensureWord(
+                             WordRow(0L, "de", "Pgtrack", "pgtrack", "noun", "", 1, "user", Some(owner.id), 0L)
+                           )
+          dest          <- WordRepository.ensureWord(WordRow(0L, "hu", "Pgnyom", "pgnyom", "noun", "", 1, "user", None, 0L))
+          _             <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
+          gameA         <- GameRepository.insertGame(
+                             GameRow(0L, owner.id, "pg-tracked-a", "PG Tracked A", "de", "hu", 0L, 0L, trackResults = true),
+                             List(tag.id),
+                           )
+          gameB         <- GameRepository.insertGame(
+                             GameRow(0L, owner.id, "pg-tracked-b", "PG Tracked B", "de", "hu", 0L, 0L, trackResults = true),
+                             List(tag.id),
+                           )
+          playAlice     <- GameRepository.insertPlay(
+                             GamePlayRow(0L, gameA.id, alice.id, 2, 2, 1, 0L, Some(1L)),
+                             List((source.id, dest.id)),
+                           )
+          playBob       <- GameRepository.insertPlay(
+                             GamePlayRow(0L, gameA.id, bob.id, 0, 2, 1, 0L, Some(1L)),
+                             List((source.id, dest.id)),
+                           )
+          playOtherGame <- GameRepository.insertPlay(
+                             GamePlayRow(0L, gameB.id, alice.id, 2, 2, 1, 0L, Some(1L)),
+                             List((source.id, dest.id)),
+                           )
+          all           <- GameRepository.listPlaysPage(gameA.id, 0, 20, None, None, false)
+          total         <- GameRepository.countPlaysMatching(gameA.id, None)
+          filtered      <- GameRepository.listPlaysPage(gameA.id, 0, 20, Some("alice"), None, false)
+          ownPlay       <- GameRepository.findPlayInGame(gameA.id, playAlice.id)
+          crossGame     <- GameRepository.findPlayInGame(gameB.id, playAlice.id)
+          crossGame2    <- GameRepository.findPlayInGame(gameA.id, playOtherGame.id)
+          players       <- GameRepository.usersByIds(List(alice.id, bob.id)).map(_.map(u => u.id -> u.email).toMap)
+        } yield assertTrue(
+          all.map(_.id).toSet == Set(playAlice.id, playBob.id),
+          total == 2L,
+          filtered.map(_.id) == List(playAlice.id),
+          ownPlay.contains(playAlice.copy(id = playAlice.id)),
+          crossGame.isEmpty,
+          crossGame2.isEmpty,
+          players.get(alice.id).flatten.contains("pgalice@example.com"),
+          players.get(bob.id).flatten.contains("pgbob@example.com"),
+        )
+      },
       // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather
       // than CASCADE, and the same blind spot applies: SQLite enforces neither, so the whole SQLite suite passes
       // whichever. Getting it wrong in either direction is a real bug — CASCADE would erase the record of what was

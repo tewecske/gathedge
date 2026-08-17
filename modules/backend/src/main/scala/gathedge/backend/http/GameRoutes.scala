@@ -3,7 +3,14 @@ package gathedge.backend.http
 import gathedge.backend.service.{AuthService, GameService}
 import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{User, WordLanguage}
-import gathedge.shared.dto.{CreateGameRequest, GameCreated, RenameGameRequest, SubmitAnswerRequest}
+import gathedge.shared.dto.{
+  CreateGameRequest,
+  GameCreated,
+  Paging,
+  RenameGameRequest,
+  SortDirection,
+  SubmitAnswerRequest,
+}
 import zio.*
 import zio.http.*
 
@@ -38,6 +45,13 @@ object GameRoutes {
     requested.toList.flatMap(_.split(",").toList).map(_.trim).flatMap(_.toLongOption)
   }
 
+  /** An empty `q=` is the filter box after being cleared, which is not a filter — same rule `AdminRoutes.searchTerm`
+    * follows.
+    */
+  private def searchTerm(requested: Option[String]): Option[String] = {
+    requested.map(_.trim).filter(_.nonEmpty)
+  }
+
   private val setupRoute = {
     GameEndpoints.setup.implementHandler(
       handler { (source: Option[String], target: Option[String]) =>
@@ -70,6 +84,7 @@ object GameRoutes {
               body.tagIds,
               body.wordLimit,
               body.randomizeEachPlay,
+              body.trackResults,
             )
             .map(detail => GameCreated(detail.slug, detail.name))
             .mapError(ApiFailures.gameCreate)
@@ -134,6 +149,42 @@ object GameRoutes {
     )
   }
 
+  private val listPlaysRoute = {
+    GameEndpoints.listPlays.implementHandler(
+      handler {
+        (
+          slug: String,
+          page: Option[Int],
+          pageSize: Option[Int],
+          sort: Option[String],
+          dir: Option[String],
+          q: Option[String],
+        ) =>
+          userId.flatMap(id => {
+            GameService
+              .listPlays(
+                slug,
+                id,
+                Paging.boundedPage(page),
+                Paging.boundedPageSize(pageSize),
+                searchTerm(q),
+                sort,
+                SortDirection.isDescending(dir),
+              )
+              .mapError(ApiFailures.gameResults)
+          })
+      }
+    )
+  }
+
+  private val playDetailRoute = {
+    GameEndpoints.playDetail.implementHandler(
+      handler { (slug: String, playId: Long) =>
+        userId.flatMap(id => GameService.getPlayDetail(slug, playId, id).mapError(ApiFailures.gameResults))
+      }
+    )
+  }
+
   private val publicRoutes = Routes(getRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
@@ -148,6 +199,8 @@ object GameRoutes {
       nextPromptRoute,
       submitAnswerRoute,
       resultsRoute,
+      listPlaysRoute,
+      playDetailRoute,
     ) @@ RouteSupport.authenticated
   }
 

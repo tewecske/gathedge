@@ -97,6 +97,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games/{slug}",
               "/api/games/{slug}/reshuffle",
               "/api/games/{slug}/plays",
+              "/api/games/{slug}/plays/{playId}",
               "/api/games/plays/{playId}/prompt",
               "/api/games/plays/{playId}/answers",
               "/api/games/plays/{playId}/results",
@@ -263,6 +264,13 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/games/plays/{playId}/results")                                ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+              // Owner-only, and only for a `trackResults = true` game: NotFound for an unknown slug (or, for the
+              // detail operation, a playId that does not belong to it), Forbidden for a game that belongs to somebody
+              // else, Conflict for a game that never turned tracking on.
+              ("GET", "/api/games/{slug}/plays")                                          ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("GET", "/api/games/{slug}/plays/{playId}")                                 ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("GET", "/api/me")                                                          -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
@@ -325,12 +333,12 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 157,
+          declared == 167,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
-          // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, and the three play-id operations),
-          // are the ones in the skeleton. A feature whose service raises a permission failure of its own adds its
-          // paths here.
+          // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and
+          // the owner-facing results listing/detail), are the ones in the skeleton. A feature whose service raises a
+          // permission failure of its own adds its paths here.
           describes(Forbidden) ==
             Set(
               ("POST", "/api/auth/login"),
@@ -341,6 +349,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/plays/{playId}/prompt"),
               ("POST", "/api/games/plays/{playId}/answers"),
               ("GET", "/api/games/plays/{playId}/results"),
+              ("GET", "/api/games/{slug}/plays"),
+              ("GET", "/api/games/{slug}/plays/{playId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend and the password-reset request, and
           // nothing else.

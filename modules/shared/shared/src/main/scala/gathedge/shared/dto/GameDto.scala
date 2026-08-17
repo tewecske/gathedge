@@ -17,6 +17,7 @@ final case class CreateGameRequest(
   tagIds: List[Long],
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
+  trackResults: Boolean = false,
 ) derives JsonCodec
 
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name — the caller already knows
@@ -47,6 +48,7 @@ final case class GameDetail(
   tagNames: List[String],
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
+  trackResults: Boolean = false,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s answer: enough for the play loop to start — the id every later play call addresses,
@@ -91,3 +93,51 @@ final case class MyGameSummary(
   playCount: Long,
   createdAt: Long,
 ) derives JsonCodec
+
+/** One row of `GET /api/games/{slug}/plays` — a tracked game's owner-facing listing. `playerEmail` is `None` for a
+  * guest who never gave one; `playerIsGuest` lets the table badge that instead of showing a blank cell.
+  */
+final case class GamePlaySummary(
+  playId: Long,
+  playerEmail: Option[String],
+  playerIsGuest: Boolean,
+  score: Int,
+  maxScore: Int,
+  wordCount: Int,
+  startedAt: Long,
+  finishedAt: Option[Long],
+) derives JsonCodec
+
+/** One page of a tracked game's plays. `total` counts what matches the player filter, the same rule [[UserPage]]
+  * follows.
+  */
+final case class GamePlayPage(items: List[GamePlaySummary], total: Long) derives JsonCodec
+
+/** `GET /api/games/{slug}/plays/{playId}`'s answer: one player's full attempt, for the owner-facing result modal.
+  * Distinct from [[GameResults]], the player-facing equivalent, only by carrying the player's identity — a table row
+  * needs to say *whose* result this is.
+  */
+final case class GamePlayDetail(
+  playId: Long,
+  playerEmail: Option[String],
+  playerIsGuest: Boolean,
+  score: Int,
+  maxScore: Int,
+  wordCount: Int,
+  startedAt: Long,
+  finishedAt: Option[Long],
+  answers: List[GameAnswerResult],
+) derives JsonCodec
+
+/** The columns `GET /api/games/{slug}/plays` will order by. Player is absent: filtering by it is a substring match on
+  * `users.email`, but ordering by it would need a join this listing deliberately avoids (see `GameRepository`'s
+  * `matchingPlays` doc comment) — the same split the admin user list's sign-in badge draws between "shown/filterable"
+  * and "orderable".
+  */
+object GamePlaySort {
+  val score: String     = "score"
+  val wordCount: String = "wordCount"
+  val startedAt: String = "startedAt"
+
+  val all: List[String] = List(score, wordCount, startedAt)
+}

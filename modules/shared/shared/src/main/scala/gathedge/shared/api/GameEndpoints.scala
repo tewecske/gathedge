@@ -5,6 +5,8 @@ import gathedge.shared.dto.{
   CreateGameRequest,
   GameCreated,
   GameDetail,
+  GamePlayDetail,
+  GamePlayPage,
   GamePrompt,
   GameResults,
   GameSetupWord,
@@ -33,6 +35,16 @@ object GameEndpoints {
     * so the route handler parses this by hand, the same spirit as that workaround.
     */
   private val tagIdsQuery = HttpCodec.query[String]("tagIds").optional
+
+  /** The owner-facing plays listing's paging/sort/filter params — same shape as `AdminEndpoints`'s own, not shared
+    * across files since neither hoists them today. `sort` names a column out of `dto.GamePlaySort`; `q` is a
+    * case-insensitive substring of the player's address.
+    */
+  private val pageQuery     = HttpCodec.query[Int]("page").optional
+  private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional
+  private val sortQuery     = HttpCodec.query[String]("sort").optional
+  private val dirQuery      = HttpCodec.query[String]("dir").optional
+  private val searchQuery   = HttpCodec.query[String]("q").optional
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
@@ -135,8 +147,45 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
-  val all: List[Endpoint[?, ?, ?, ?, ?]] =
-    List(setup, setupWords, mine, create, get, rename, reshuffle, startPlay, nextPrompt, submitAnswer, results)
+  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays, most recent first unless `sort`
+    * says otherwise — see `GameService.listPlays`. `conflict` covers a game that does not track results.
+    */
+  val listPlays = {
+    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays")
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .query(searchQuery)
+      .withCodecError
+      .out[GamePlayPage]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+  }
+
+  /** Owner-only equivalent of [[results]]: one play's full answer history, addressed by game and play together so an
+    * owner can never be handed a play id that belongs to somebody else's game. See `GameService.getPlayDetail`.
+    */
+  val playDetail = {
+    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / playId).withCodecError
+      .out[GamePlayDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+  }
+
+  val all: List[Endpoint[?, ?, ?, ?, ?]] = List(
+    setup,
+    setupWords,
+    mine,
+    create,
+    get,
+    rename,
+    reshuffle,
+    startPlay,
+    nextPrompt,
+    submitAnswer,
+    results,
+    listPlays,
+    playDetail,
+  )
 
   /** Just [[get]] — a shared game link must be viewable before any guest is minted, the same reasoning
     * [[WordEndpoints.public]] applies to the dictionary reads.

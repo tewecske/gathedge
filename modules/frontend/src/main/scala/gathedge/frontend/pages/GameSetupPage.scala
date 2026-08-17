@@ -81,8 +81,20 @@ private class GameSetupPage {
     */
   private val randomizeEachPlayVar = Var(true)
 
-  private val formAndTagsSignal =
-    formSignal.combineWith(selectedTagIdsVar.signal, wordLimitSignal, randomizeEachPlayVar.signal)
+  /** Whether the owner will later be able to see who played and how they scored — see `GameRow.trackResults`. Off by
+    * default, like every prior addition to this screen; independent of the word-limit/randomize pair above, so it is
+    * not part of their mutual-exclusion wiring.
+    */
+  private val trackResultsVar = Var(false)
+
+  private val formAndTagsSignal = {
+    formSignal.combineWith(
+      selectedTagIdsVar.signal,
+      wordLimitSignal,
+      randomizeEachPlayVar.signal,
+      trackResultsVar.signal,
+    )
+  }
 
   /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
     * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
@@ -194,8 +206,10 @@ private class GameSetupPage {
         },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
       playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
-        case (source, target, tagIds, wordLimit, randomizeEachPlay) =>
-          asReader(() => GameApiClient.create(source, target, tagIds.toList, wordLimit, randomizeEachPlay))
+        case (source, target, tagIds, wordLimit, randomizeEachPlay, trackResults) =>
+          asReader(() =>
+            GameApiClient.create(source, target, tagIds.toList, wordLimit, randomizeEachPlay, trackResults)
+          )
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -252,6 +266,7 @@ private class GameSetupPage {
       cls := "flex-1",
       renderWordLimitControls(),
       renderRandomizeControls(),
+      renderTrackResultsControl(),
       renderWordsList(),
     )
   }
@@ -391,6 +406,25 @@ private class GameSetupPage {
           ),
         ),
         span(cls   := "label-text text-sm", I18n.t(UiKeys.gameSetupRandomizeFixed)),
+      ),
+    )
+  }
+
+  /** A single checkbox, independent of the word-limit/randomize controls above — see [[trackResultsVar]]. */
+  private def renderTrackResultsControl(): HtmlElement = {
+    div(
+      cls := "mb-4",
+      label(
+        cls := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ := "checkbox",
+          cls := "checkbox checkbox-sm",
+          controlled(checked <-- trackResultsVar.signal, onClick.mapToChecked --> trackResultsVar.writer),
+        ),
+        div(
+          span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupTrackResultsLabel)),
+          p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
+        ),
       ),
     )
   }

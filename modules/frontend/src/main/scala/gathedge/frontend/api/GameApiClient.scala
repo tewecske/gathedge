@@ -7,6 +7,8 @@ import gathedge.shared.dto.{
   CreateGameRequest,
   GameCreated,
   GameDetail,
+  GamePlayDetail,
+  GamePlayPage,
   GamePrompt,
   GameResults,
   GameSetupWord,
@@ -57,8 +59,15 @@ object GameApiClient {
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
+    trackResults: Boolean = false,
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay))))
+    run(
+      executor(
+        GameEndpoints.create(
+          CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay, trackResults)
+        )
+      )
+    )
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */
@@ -96,5 +105,24 @@ object GameApiClient {
   /** The finished play's score and full answer history, for the results screen. */
   def getResults(playId: Long): EventStream[Either[ApiError, GameResults]] = {
     run(executor(GameEndpoints.results(playId)))
+  }
+
+  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays. Every paging parameter is
+    * optional, the same shape [[AdminApiClient.listUsers]] follows.
+    */
+  def listPlays(
+    slug: String,
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+    search: Option[String] = None,
+  ): EventStream[Either[ApiError, GamePlayPage]] = {
+    run(executor(GameEndpoints.listPlays(slug, page, pageSize, sort, dir, search)))
+  }
+
+  /** Owner-only equivalent of [[getResults]]: one play's full answer history, for the result modal. */
+  def getPlayDetail(slug: String, playId: Long): EventStream[Either[ApiError, GamePlayDetail]] = {
+    run(executor(GameEndpoints.playDetail(slug, playId)))
   }
 }

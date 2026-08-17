@@ -190,6 +190,10 @@ final case class GuestClaimCodeRow(
   * `randomizeEachPlay` is `true` for "draw a fresh sample every play" (the only behaviour before this field existed,
   * and what a `wordLimit = None` game always keeps — a fixed sample of "everything" is meaningless) or `false` for
   * "draw the sample once and reuse it" — see [[GameWordPoolRow]] for where that fixed sample gets stored.
+  *
+  * `trackResults` gates only whether the owner-facing play listing/detail is reachable (`GameService.listPlays`/
+  * `getPlayDetail`) — `false` (the default) is the only behaviour before this field existed. [[GamePlayRow]] and
+  * [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this flag.
   */
 final case class GameRow(
   id: Long,
@@ -202,6 +206,7 @@ final case class GameRow(
   updatedAt: Long,
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
+  trackResults: Boolean = false,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like

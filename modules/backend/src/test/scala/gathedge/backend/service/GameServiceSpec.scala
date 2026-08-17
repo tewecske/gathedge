@@ -492,6 +492,79 @@ object GameServiceSpec extends ZIOSpecDefault {
           fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
+      test("createGame's trackResults defaults to false and round-trips when set") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTag(owner, "trackDefault", WordLanguage.De, WordLanguage.Hu)
+          default <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          tracked <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+        } yield assertTrue(!default.trackResults, tracked.trackResults)
+      },
+      test("listPlays/getPlayDetail are refused for a game that never turned on trackResults") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "untracked", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner)
+          _       <- playThrough(started.playId, "untracked", owner)
+          listed  <- GameService.listPlays(created.slug, owner, 1, 20, None, None, false).either
+          detail  <- GameService.getPlayDetail(created.slug, started.playId, owner).either
+        } yield assertTrue(listed == Left(GameFailure.NotTracked), detail == Left(GameFailure.NotTracked))
+      },
+      test("listPlays/getPlayDetail are refused to anyone but the game's owner") {
+        for {
+          owner   <- newUser()
+          other   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "trackedGuard", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+          started <- GameService.startPlay(created.slug, owner)
+          _       <- playThrough(started.playId, "trackedGuard", owner)
+          listed  <- GameService.listPlays(created.slug, other, 1, 20, None, None, false).either
+          detail  <- GameService.getPlayDetail(created.slug, started.playId, other).either
+        } yield assertTrue(listed == Left(GameFailure.NotOwner), detail == Left(GameFailure.NotOwner))
+      },
+      test(
+        "listPlays returns every play with player identity, paged, filtered and counted, and getPlayDetail " +
+          "answers one play's full history"
+      ) {
+        for {
+          owner    <- newUser()
+          tagId    <- eligibleTagWithPairs(owner, "listed", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created  <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+          alice    <- UserRepository.insert("alice@example.com", Some("hash"), false, "light", "en", 0L, None).map(_.id)
+          guest    <- newUser()
+          playA    <- GameService.startPlay(created.slug, alice)
+          _        <- playThrough(playA.playId, "listed", alice)
+          playG    <- GameService.startPlay(created.slug, guest)
+          _        <- playThrough(playG.playId, "listed", guest)
+          all      <- GameService.listPlays(created.slug, owner, 1, 20, None, None, false)
+          filtered <- GameService.listPlays(created.slug, owner, 1, 20, Some("alice"), None, false)
+          detail   <- GameService.getPlayDetail(created.slug, playA.playId, owner)
+        } yield assertTrue(
+          all.total == 2L,
+          all.items.map(_.playId).toSet == Set(playA.playId, playG.playId),
+          all.items.find(_.playId == playA.playId).exists(_.playerEmail.contains("alice@example.com")),
+          all.items.find(_.playId == playG.playId).exists(_.playerIsGuest),
+          filtered.total == 1L,
+          filtered.items.map(_.playId) == List(playA.playId),
+          detail.playerEmail.contains("alice@example.com"),
+          detail.answers.size == 1,
+        )
+      },
+      test("getPlayDetail refuses a playId that belongs to a different game") {
+        for {
+          owner  <- newUser()
+          tagId  <- eligibleTagWithPairs(owner, "crossGame", WordLanguage.De, WordLanguage.Hu, count = 1)
+          gameA  <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+          gameB  <-
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+          playA  <- GameService.startPlay(gameA.slug, owner)
+          result <- GameService.getPlayDetail(gameB.slug, playA.playId, owner).either
+        } yield assertTrue(result == Left(GameFailure.NotFound))
+      },
     ).provide(layer)
   }
 }

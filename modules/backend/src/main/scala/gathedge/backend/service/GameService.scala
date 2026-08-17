@@ -1,14 +1,18 @@
 package gathedge.backend.service
 
-import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, WordRow}
+import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   GameAnswerResult,
   GameDetail,
+  GamePlayDetail,
+  GamePlayPage,
+  GamePlaySummary,
   GamePrompt,
   GameResults,
   GameSetupWord,
   MyGameSummary,
+  Paging,
   PlayStarted,
 }
 import gathedge.shared.i18n.MessageRef
@@ -38,6 +42,11 @@ enum GameFailure {
     * subset to redraw).
     */
   case NotFixedPool
+
+  /** [[GameService.listPlays]]/[[GameService.getPlayDetail]] on a game whose owner never turned on `trackResults` — the
+    * play history is recorded regardless, this only refuses to show it.
+    */
+  case NotTracked
   case ValidationError(fieldErrors: Map[String, MessageRef])
 }
 
@@ -57,6 +66,9 @@ trait GameService {
     * `randomizeEachPlay`: `true` (the default, and the only behaviour before this parameter existed) draws a fresh
     * sample every play; `false` draws it once, now, and stores it as the game's fixed pool. Forced to `true` when
     * `wordLimit` is `None`, regardless of what is passed — a fixed sample of "everything" is meaningless.
+    * `trackResults`: `false` (the default, and the only behaviour before this parameter existed) means
+    * [[listPlays]]/[[getPlayDetail]] answer [[GameFailure.NotTracked]] for this game; `true` opts into the owner-facing
+    * results listing. Set once, here — there is no route to change it after creation.
     */
   def createGame(
     userId: Long,
@@ -65,6 +77,7 @@ trait GameService {
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
+    trackResults: Boolean = false,
   ): IO[GameFailure, GameDetail]
 
   /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from — deduped to one
@@ -110,6 +123,24 @@ trait GameService {
     * to `requesterUserId`.
     */
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults]
+
+  /** One page of `slug`'s plays, for its owner. [[GameFailure.NotOwner]] for anyone else; [[GameFailure.NotTracked]] if
+    * the game never turned on `trackResults`. `playerContains` narrows to players whose address contains it.
+    */
+  def listPlays(
+    slug: String,
+    requesterUserId: Long,
+    page: Int,
+    pageSize: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): IO[GameFailure, GamePlayPage]
+
+  /** One play's full answer history, for its game's owner — the owner-facing equivalent of [[getResults]]. Same
+    * failures as [[listPlays]], plus [[GameFailure.NotFound]] if `playId` does not belong to `slug`.
+    */
+  def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail]
 }
 
 object GameService {
@@ -131,9 +162,10 @@ object GameService {
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
+    trackResults: Boolean = false,
   ): ZIO[GameService, GameFailure, GameDetail] = {
     ZIO.serviceWithZIO[GameService](
-      _.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, randomizeEachPlay)
+      _.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, randomizeEachPlay, trackResults)
     )
   }
 
@@ -169,6 +201,23 @@ object GameService {
 
   def getResults(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GameResults] =
     ZIO.serviceWithZIO[GameService](_.getResults(playId, requesterUserId))
+
+  def listPlays(
+    slug: String,
+    requesterUserId: Long,
+    page: Int,
+    pageSize: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): ZIO[GameService, GameFailure, GamePlayPage] = {
+    ZIO.serviceWithZIO[GameService](
+      _.listPlays(slug, requesterUserId, page, pageSize, playerContains, sort, descending)
+    )
+  }
+
+  def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GamePlayDetail] =
+    ZIO.serviceWithZIO[GameService](_.getPlayDetail(slug, playId, requesterUserId))
 
   val live: URLayer[GameRepository & GameWordList, GameService] = {
     ZLayer.fromFunction((repo: GameRepository, words: GameWordList) => GameServiceLive(repo, words))
@@ -254,6 +303,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     tagIds: List[Long],
     wordLimit: Option[Int],
     randomizeEachPlay: Boolean,
+    trackResults: Boolean,
     wordPool: List[(Long, Long)],
     now: Long,
     attempt: Int,
@@ -274,6 +324,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
           updatedAt = now,
           wordLimit = wordLimit,
           randomizeEachPlay = randomizeEachPlay,
+          trackResults = trackResults,
         )
         repo.insertGame(row, tagIds, wordPool).catchAll { error =>
           // A concurrent caller may have taken this exact slug between the attempt and here; the unique
@@ -288,6 +339,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                 tagIds,
                 wordLimit,
                 randomizeEachPlay,
+                trackResults,
                 wordPool,
                 now,
                 attempt + 1,
@@ -308,6 +360,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     tagIds: List[Long],
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
+    trackResults: Boolean = false,
   ): IO[GameFailure, GameDetail] = {
     for {
       _              <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
@@ -338,6 +391,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                           tagIds,
                           validLimit,
                           !normalizedFixed,
+                          trackResults,
                           wordPool,
                           now,
                           attempt = 0,
@@ -352,6 +406,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       tags.map(_.name).sorted,
       row.wordLimit,
       row.randomizeEachPlay,
+      row.trackResults,
     )
   }
 
@@ -380,6 +435,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         tags.map(_.name).sorted,
         row.wordLimit,
         row.randomizeEachPlay,
+        row.trackResults,
       )
     }
   }
@@ -391,10 +447,22 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield detail
   }
 
+  /** Loads `slug` and checks it belongs to `requesterUserId` — the ownership check every owner-only game action needs,
+    * shared by [[rename]], [[reshuffle]], [[listPlays]] and [[getPlayDetail]]. Games reveal their existence to
+    * non-owners (a shared link must be viewable by anyone), so this fails [[GameFailure.NotOwner]] rather than
+    * [[GameFailure.NotFound]] for somebody else's game — the same 403, not 404, choice [[rename]]/[[reshuffle]] already
+    * made before this was extracted.
+    */
+  private def requireOwnGame(slug: String, requesterUserId: Long): IO[GameFailure, GameRow] = {
+    for {
+      row <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      _   <- ZIO.unless(row.ownerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+    } yield row
+  }
+
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail] = {
     for {
-      row    <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      _      <- ZIO.unless(row.ownerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+      row    <- requireOwnGame(slug, requesterUserId)
       valid  <- ZIO
                   .fromEither(Validation.validateGameName(newName))
                   .mapError(error => GameFailure.ValidationError(Map("name" -> error)))
@@ -406,8 +474,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
 
   def reshuffle(slug: String, requesterUserId: Long): IO[GameFailure, Unit] = {
     for {
-      game    <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      _       <- ZIO.unless(game.ownerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+      game    <- requireOwnGame(slug, requesterUserId)
       _       <- ZIO.when(game.randomizeEachPlay || game.wordLimit.isEmpty)(ZIO.fail(GameFailure.NotFixedPool))
       pool    <- eligibleWordPool(game)
       sampled <- sampleWordPool(pool, game.wordLimit)
@@ -572,21 +639,83 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield ()
   }
 
+  /** `answers` mapped to their display text, shared by [[getResults]] (player-facing) and [[getPlayDetail]]
+    * (owner-facing) — the two answer to the same shape, just addressed and gated differently.
+    */
+  private def answerResultsOf(answers: List[GamePlayAnswerRow]): UIO[List[GameAnswerResult]] = {
+    for {
+      words <- repo.wordsByIds(answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct).orDie
+      textOf = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+    } yield answers.map { a =>
+      GameAnswerResult(
+        wordText = textOf.getOrElse(a.wordId, ""),
+        expectedText = textOf.getOrElse(a.translationWordId, ""),
+        givenText = a.userAnswer,
+        outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
+      )
+    }
+  }
+
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults] = {
     for {
       play    <- requireOwnedPlay(playId, requesterUserId)
       answers <- repo.answersOf(playId).orDie
-      wordIds  = answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct
-      words   <- repo.wordsByIds(wordIds).orDie
-      textOf   = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
-      results  = answers.map { a =>
-                   GameAnswerResult(
-                     wordText = textOf.getOrElse(a.wordId, ""),
-                     expectedText = textOf.getOrElse(a.translationWordId, ""),
-                     givenText = a.userAnswer,
-                     outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
-                   )
-                 }
+      results <- answerResultsOf(answers)
     } yield GameResults(play.score, play.maxScore, play.wordCount, results)
+  }
+
+  private def summaryOf(play: GamePlayRow, usersById: Map[Long, UserRow]): GamePlaySummary = {
+    val player = usersById.get(play.playerUserId)
+    GamePlaySummary(
+      playId = play.id,
+      playerEmail = player.flatMap(_.email),
+      playerIsGuest = player.exists(_.isGuest),
+      score = play.score,
+      maxScore = play.maxScore,
+      wordCount = play.wordCount,
+      startedAt = play.startedAt,
+      finishedAt = play.finishedAt,
+    )
+  }
+
+  def listPlays(
+    slug: String,
+    requesterUserId: Long,
+    page: Int,
+    pageSize: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): IO[GameFailure, GamePlayPage] = {
+    for {
+      game      <- requireOwnGame(slug, requesterUserId)
+      _         <- ZIO.unless(game.trackResults)(ZIO.fail(GameFailure.NotTracked))
+      plays     <- repo
+                     .listPlaysPage(game.id, Paging.offset(page, pageSize), pageSize, playerContains, sort, descending)
+                     .orDie
+      total     <- repo.countPlaysMatching(game.id, playerContains).orDie
+      usersById <- repo.usersByIds(plays.map(_.playerUserId).distinct).orDie.map(_.map(u => u.id -> u).toMap)
+    } yield GamePlayPage(plays.map(play => summaryOf(play, usersById)), total)
+  }
+
+  def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail] = {
+    for {
+      game    <- requireOwnGame(slug, requesterUserId)
+      _       <- ZIO.unless(game.trackResults)(ZIO.fail(GameFailure.NotTracked))
+      play    <- repo.findPlayInGame(game.id, playId).orDie.someOrFail(GameFailure.NotFound)
+      player  <- repo.usersByIds(List(play.playerUserId)).orDie.map(_.headOption)
+      answers <- repo.answersOf(playId).orDie
+      results <- answerResultsOf(answers)
+    } yield GamePlayDetail(
+      playId = play.id,
+      playerEmail = player.flatMap(_.email),
+      playerIsGuest = player.exists(_.isGuest),
+      score = play.score,
+      maxScore = play.maxScore,
+      wordCount = play.wordCount,
+      startedAt = play.startedAt,
+      finishedAt = play.finishedAt,
+      answers = results,
+    )
   }
 }

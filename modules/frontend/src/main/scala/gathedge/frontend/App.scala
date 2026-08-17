@@ -13,6 +13,7 @@ import gathedge.frontend.pages.{
   ForbiddenPage,
   ForgotPasswordPage,
   GameInstancePage,
+  GameResultsPage,
   GameSetupPage,
   GamesPage,
   HomePage,
@@ -27,7 +28,7 @@ import gathedge.frontend.pages.{
   WordsPage,
 }
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AuditQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
 import gathedge.shared.dto.AuthResponse
@@ -45,6 +46,9 @@ object App {
     * `GameInstance` renderer — see its comment for why. Nothing else may read or write this.
     */
   private var latestGameSlug: String = ""
+
+  /** Same hand-off trick as [[latestGameSlug]], for the `GameResults` signal renderer below. */
+  private var latestGameResultsSlug: String = ""
 
   /** The *only* user-derived facts that change which page element is built. Deliberately not the whole `User`: a theme
     * toggle (or any other profile write) must not tear down and rebuild the mounted page, discarding its `Var`s,
@@ -133,6 +137,16 @@ object App {
       .collectSignalPF[Unit] { case (gate, page: Page.GameInstance) if gate.loaded => latestGameSlug = page.slug }(_ =>
         GameInstancePage.render(latestGameSlug)
       )
+      // Owner-only, but the ownership check is server-side (a 403 the page itself shows, the same as
+      // `GameInstancePage`'s rename/reshuffle controls) — `Gate` has no notion of "owns this particular game", so this
+      // renders for any signed-in reader once loaded, the same `gate.loaded` precondition `WordsPage` uses. Same
+      // slug/query split as `GameInstance` above: the slug is stashed as a side effect, the query is what the signal
+      // renderer tracks.
+      .collectSignalPF[GamePlayQuery] {
+        case (gate, page: Page.GameResults) if gate.loaded =>
+          latestGameResultsSlug = page.slug
+          page.query
+      }(query => GameResultsPage.render(latestGameResultsSlug, query, onGameResultsQuery))
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -195,6 +209,24 @@ object App {
   /** No refinement case: the audit trail's two filters are applied on a button, so every change here is deliberate. */
   private val onAdminAuditQuery: Observer[AuditQuery] = {
     Observer(query => navigate(Page.AdminAudit(query), replace = false))
+  }
+
+  /** Same rule as the user list, keyed to [[latestGameResultsSlug]] as well as the query: a query change on a
+    * *different* game's results page (only reachable via a hand-edited URL) must never be treated as a refinement of
+    * this one.
+    */
+  private val onGameResultsQuery: Observer[GamePlayQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.GameResults(slug, previous) if slug == latestGameResultsSlug =>
+            query.refines(previous)
+          case _                                                                 =>
+            false
+        }
+      }
+      navigate(Page.GameResults(latestGameResultsSlug, query), replace = refinesSearch)
+    }
   }
 
   /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the
@@ -262,6 +294,10 @@ object App {
         MyGamesPage.render()
       case Page.GameInstance(slug)                  =>
         GameInstancePage.render(slug)
+      // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
+      // `Page.Words` below.
+      case Page.GameResults(slug, query)            =>
+        GameResultsPage.render(slug, Val(query), onGameResultsQuery)
       case Page.VerifyEmail(token)                  =>
         VerifyEmailPage.render(token)
       case Page.CheckInbox                          =>

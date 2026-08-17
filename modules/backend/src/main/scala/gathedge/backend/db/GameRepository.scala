@@ -3,6 +3,7 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
+import gathedge.shared.dto.GamePlaySort
 import zio.*
 
 import javax.sql.DataSource
@@ -103,6 +104,30 @@ trait GameRepository {
   def recordAnswer(answer: GamePlayAnswerRow, newScore: Int, finishedAt: Option[Long]): Task[Unit]
 
   def wordsByIds(ids: List[Long]): Task[List[WordRow]]
+
+  /** One page of `gameId`'s plays, ordered by `sort` (a `dto.GamePlaySort` value; anything else falls back to newest
+    * first) and narrowed to players whose address contains `playerContains`. Paged in SQL — see [[countPlaysMatching]]
+    * for the other half. Player identity is resolved separately, via [[usersByIds]], the same split [[wordsByIds]]
+    * already draws for answer text — a play row alone is never enough to render.
+    */
+  def listPlaysPage(
+    gameId: Long,
+    offset: Int,
+    limit: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[GamePlayRow]]
+
+  /** How many of `gameId`'s plays [[listPlaysPage]] would return across every page. */
+  def countPlaysMatching(gameId: Long, playerContains: Option[String]): Task[Long]
+
+  /** `playId` if it belongs to `gameId`, so an owner can never be handed a play id that belongs to somebody else's game
+    * by knowing only its bare number.
+    */
+  def findPlayInGame(gameId: Long, playId: Long): Task[Option[GamePlayRow]]
+
+  def usersByIds(ids: List[Long]): Task[List[UserRow]]
 }
 
 object GameRepository {
@@ -173,6 +198,25 @@ object GameRepository {
   def wordsByIds(ids: List[Long]): RIO[GameRepository, List[WordRow]] =
     ZIO.serviceWithZIO[GameRepository](_.wordsByIds(ids))
 
+  def listPlaysPage(
+    gameId: Long,
+    offset: Int,
+    limit: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): RIO[GameRepository, List[GamePlayRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.listPlaysPage(gameId, offset, limit, playerContains, sort, descending))
+
+  def countPlaysMatching(gameId: Long, playerContains: Option[String]): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countPlaysMatching(gameId, playerContains))
+
+  def findPlayInGame(gameId: Long, playId: Long): RIO[GameRepository, Option[GamePlayRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.findPlayInGame(gameId, playId))
+
+  def usersByIds(ids: List[Long]): RIO[GameRepository, List[UserRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.usersByIds(ids))
+
   val live: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new GameRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GameRepository
   )
@@ -199,6 +243,10 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
   private inline def gamePlayWords   = quote(querySchema[GamePlayWordRow]("game_play_words"))
   private inline def gameWordPool    = quote(querySchema[GameWordPoolRow]("game_word_pool"))
+  // Read-only view of a table `UserRepository` owns, for the one question only this repository can ask: which
+  // player played a tracked game. Reading another repository's tables is fine — see `UserRepository`'s own note
+  // on this for `findAbandonedGuests`. The lambda parameter is `row`, never `user` — Postgres reserved word.
+  private inline def users           = quote(querySchema[UserRow]("users"))
 
   def findBySlug(slug: String): Task[Option[GameRow]] = {
     logged(run(ctx.run(quote(games.filter(_.slug == lift(slug))))).map(_.headOption)) { found =>
@@ -247,7 +295,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                       _.wordId            -> row.wordId,
                       _.translationWordId -> row.translationWordId,
                     )
-                 })
+                  })
                 })
               }
       } yield id
@@ -433,5 +481,86 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       words.filter(w => liftQuery(ids).contains(w.id))
     }
     logged(run(ctx.run(q)))(rows => s"games.wordsByIds requested=${ids.size} rows=${rows.size}")
+  }
+
+  /** The `LIKE` pattern behind the owner-facing player filter, or `None` when it is empty — same shape as
+    * `UserRepository.emailPattern`.
+    */
+  private def playerPattern(playerContains: Option[String]): Option[String] = {
+    playerContains.map(_.trim.toLowerCase).filter(_.nonEmpty).map(needle => s"%$needle%")
+  }
+
+  /** The rows a page is cut from, before ordering: the narrowing [[listPlaysPage]] and [[countPlaysMatching]] have to
+    * share, or the total would count a different set than the page shows. The player filter is a correlated subquery
+    * against `users` rather than a join — the same shape `WordRepository.taggedByUser` uses to narrow by another table
+    * without joining a `DynamicQuery`, which has no precedent in this codebase.
+    */
+  private def matchingPlays(gameId: Long, playerContains: Option[String]): DynamicQuery[GamePlayRow] = {
+    dynamicQuerySchema[GamePlayRow]("game_plays")
+      .filterOpt(Some(gameId))((play, id) => quote(play.gameId == unquote(id)))
+      .filterOpt(playerPattern(playerContains))((play, pattern) => {
+        quote(
+          users
+            .filter(row => row.id == play.playerUserId && row.email.exists(address => address.like(unquote(pattern))))
+            .nonEmpty
+        )
+      })
+  }
+
+  /** The `dto.GamePlaySort` vocabulary translated to an `ORDER BY`; anything else falls back to newest first, the same
+    * default `UserRepository.ordered` uses. There is no "player" case — sorting by player would need the same
+    * unprecedented dynamic join [[matchingPlays]] avoids for filtering, so that column is filterable only, the same
+    * split the user list's sign-in badge and the audit trail's target already draw.
+    */
+  private def orderedPlays(
+    query: DynamicQuery[GamePlayRow],
+    sort: Option[String],
+    descending: Boolean,
+  ): DynamicQuery[GamePlayRow] = {
+    sort match {
+      case Some(GamePlaySort.score)     =>
+        query.sortBy(_.score)(using ordering(descending))
+      case Some(GamePlaySort.wordCount) =>
+        query.sortBy(_.wordCount)(using ordering(descending))
+      case Some(GamePlaySort.startedAt) =>
+        query.sortBy(_.startedAt)(using ordering(descending))
+      case _                            =>
+        query.sortBy(_.startedAt)(using Ord.desc)
+    }
+  }
+
+  def listPlaysPage(
+    gameId: Long,
+    offset: Int,
+    limit: Int,
+    playerContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[GamePlayRow]] = {
+    val page = orderedPlays(matchingPlays(gameId, playerContains), sort, descending).drop(offset).take(limit)
+    // The player filter is a fragment of somebody's address, so it stays out of the message like every other one.
+    logged(run(ctx.run(page))) { rows =>
+      s"games.listPlaysPage game=$gameId offset=$offset limit=$limit sort=${sort.getOrElse("-")} rows=${rows.size}"
+    }
+  }
+
+  def countPlaysMatching(gameId: Long, playerContains: Option[String]): Task[Long] = {
+    logged(run(ctx.run(matchingPlays(gameId, playerContains).size))) { count =>
+      s"games.countPlaysMatching game=$gameId count=$count"
+    }
+  }
+
+  def findPlayInGame(gameId: Long, playId: Long): Task[Option[GamePlayRow]] = {
+    val q = quote(gamePlays.filter(play => play.id == lift(playId) && play.gameId == lift(gameId)))
+    logged(run(ctx.run(q)).map(_.headOption)) { found =>
+      s"games.findPlayInGame game=$gameId found=${found.isDefined}"
+    }
+  }
+
+  def usersByIds(ids: List[Long]): Task[List[UserRow]] = {
+    val q = quote {
+      users.filter(row => liftQuery(ids).contains(row.id))
+    }
+    logged(run(ctx.run(q)))(rows => s"games.usersByIds requested=${ids.size} rows=${rows.size}")
   }
 }

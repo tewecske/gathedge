@@ -125,6 +125,10 @@ object MessageKeys {
     */
   val gameNotFixedPool: String = key("games.notFixedPool")
 
+  /** `GameFailure.NotTracked` — the owner-facing results listing/detail on a game that never turned on `trackResults`.
+    */
+  val gameNotTracked: String = key("games.notTracked")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.

@@ -35,6 +35,9 @@ import gathedge.shared.dto.{
   GameAnswerResult,
   GameCreated,
   GameDetail,
+  GamePlayDetail,
+  GamePlayPage,
+  GamePlaySummary,
   GamePrompt,
   GameResults,
   GameSetupWord,
@@ -182,4 +185,7 @@ object ApiSchemas {
   given Schema[GameResults]         = DeriveSchema.gen[GameResults]
   given Schema[GameSetupWord]       = DeriveSchema.gen[GameSetupWord]
   given Schema[MyGameSummary]       = DeriveSchema.gen[MyGameSummary]
+  given Schema[GamePlaySummary]     = DeriveSchema.gen[GamePlaySummary]
+  given Schema[GamePlayPage]        = DeriveSchema.gen[GamePlayPage]
+  given Schema[GamePlayDetail]      = DeriveSchema.gen[GamePlayDetail]
 }
