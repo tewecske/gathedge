@@ -103,11 +103,12 @@ object WordCollect {
     */
   def withTag(tags: List[Tag], tag: Tag): List[Tag] = tags.filterNot(_.id == tag.id) :+ tag
 
-  /** Both tag `<select>`s, grouped the way [[Tag.sorted]] orders them: the reader's own tags under one heading,
-    * everyone else's under another. An `<option>` cannot carry a badge or a colour, so the group heading — an
-    * `<optgroup label>`, which every screen reader announces — is the marking the two dropdowns show, not an icon on
-    * each row. A group with nothing in it is left out rather than rendered empty, most often "My tags" for a reader who
-    * owns none yet.
+  /** Tag `<select>`s that deliberately show every tag, not just the reader's own — the listing filter narrows a *view*
+    * of the data, so a stranger's tag is as legitimate a thing to filter by as one's own. Grouped the way [[Tag.sorted]]
+    * orders them: the reader's own tags under one heading, everyone else's under another. An `<option>` cannot carry a
+    * badge or a colour, so the group heading — an `<optgroup label>`, which every screen reader announces — is the
+    * marking the dropdown shows, not an icon on each row. A group with nothing in it is left out rather than rendered
+    * empty, most often "My tags" for a reader who owns none yet.
     */
   def tagOptionGroups(tags: List[Tag]): List[HtmlElement] = {
     val (mine, others) = Tag.sorted(tags).partition(_.ownedByMe)
@@ -116,6 +117,12 @@ object WordCollect {
       Option.when(others.nonEmpty)(optGroup(labelAttr := I18n.t(UiKeys.wordsTagsOthersGroup), others.map(tagOption))),
     ).flatten
   }
+
+  /** What the collect select offers: the reader's own tags, and nothing else. A tick has to write somewhere the reader
+    * owns, so a stranger's tag is not merely mis-grouped here — it is absent, and there is no ownership heading to show
+    * because every row already is the reader's own.
+    */
+  def mineOptions(tags: List[Tag]): List[HtmlElement] = Tag.sorted(tags).filter(_.ownedByMe).map(tagOption)
 
   private def tagOption(tag: Tag): HtmlElement = option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})")
 }
@@ -161,9 +168,6 @@ final class WordCollect(
   private val newTagBus = new EventBus[Unit]()
   private val tagsBus   = new EventBus[Unit]()
 
-  /** A tag id the reader asked to copy — the collect select's "copy" button, offered on a tag that is not theirs. */
-  private val copyTagBus = new EventBus[Long]()
-
   /** A word the reader clicked, with what should happen to it. The stream is what the guest-minting detour hangs off.
     */
   private val toggleBus = new EventBus[(Long, Boolean)]()
@@ -206,21 +210,6 @@ final class WordCollect(
           case Left(err)       =>
             onError.onNext(Some(err.message))
         },
-      copyTagBus.events.flatMapSwitch(tagId => asReader(() => WordApiClient.copyTag(tagId))) -->
-        Observer[Either[ApiError, TagResponse]] {
-          case Right(response) =>
-            val tag = response.tag
-            // Straight to collecting under the copy: a reader copies a tag *in order to* file words under it, and the
-            // original stays exactly as narrowable-but-unwritable as it was.
-            onError.onNext(None)
-            tagsVar.update(existing => Tag.sorted(existing :+ tag))
-            setCollectTag(Some(tag.id))
-            onNotice.onNext(I18n.t(UiKeys.wordsTagCopied, tag.name))
-            response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
-            tagsBus.emit(())
-          case Left(err)       =>
-            onError.onNext(Some(err.message))
-        },
       EventStream.merge(toggleStream, pairStream) --> writeResult,
       AppState.currentUserSignal --> readerVar.writer,
       onMountCallback(_ => tagsBus.emit(())),
@@ -229,11 +218,6 @@ final class WordCollect(
 
   /** Asks for the reader's tags again — what a page calls when something outside a tick may have changed them. */
   def reloadTags(): Unit = tagsBus.emit(())
-
-  /** Seeds a tag of the caller's own from `tagId`'s name — the write behind the collect select's "copy" button. Public
-    * for the same reason [[collectTagOrDefault]] is: the page renders the button, this owns the write.
-    */
-  def copyTag(tagId: Long): Unit = copyTagBus.emit(tagId)
 
   private def setCollectTag(tagId: Option[Long]): Unit = {
     collectTagVar.set(tagId)
@@ -245,16 +229,14 @@ final class WordCollect(
     */
   private def setTags(tags: List[Tag]): Unit = tagsVar.set(Tag.sorted(tags))
 
-  /** Keeps the collect tag on a tag that still exists, and chooses one for a reader who has never picked — including a
-    * guest, whose first tag is minted by their first tick. A tag deleted on another device would otherwise leave every
-    * tick failing against an id nobody owns.
-    *
-    * The fallback is the reader's own first tag, never merely the list's first — the list is global now, and a reader
-    * with none of their own who inherited somebody else's id here would have every first tick fail with `TagNotFound`.
+  /** Keeps the collect tag on one of the reader's own, and chooses one for a reader who has never picked — including a
+    * guest, whose first tag is minted by their first tick. A tag deleted on another device, or one that turns out not
+    * to be theirs (a foreign id left over in `localStorage` from before the select stopped offering them), would
+    * otherwise leave every tick failing against an id they cannot write to.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
     val kept = {
-      collectTagVar.now().filter(id => tags.exists(_.id == id)).orElse(tags.find(_.ownedByMe).map(_.id))
+      collectTagVar.now().filter(id => tags.exists(t => t.id == id && t.ownedByMe)).orElse(tags.find(_.ownedByMe).map(_.id))
     }
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
@@ -415,8 +397,9 @@ final class WordCollect(
         cls := "card-body py-3 gap-2",
         div(
           cls := "flex flex-wrap items-end gap-3",
-          // Absent until there is a tag to name: a reader with none has the box below and nothing to choose between.
-          child.maybe <-- tagsSignal.map(tags => Option.when(tags.nonEmpty)(renderCollectSelect())),
+          // Absent until the reader owns a tag to name: the select offers only their own, so with none of those it
+          // would otherwise render with nothing to choose between, even while the global list is non-empty.
+          child.maybe <-- tagsSignal.map(tags => Option.when(tags.exists(_.ownedByMe))(renderCollectSelect())),
           form(
             cls        := "flex items-end gap-2",
             noValidate := true,
@@ -440,39 +423,21 @@ final class WordCollect(
   }
 
   /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
-    * the reader to discover that the empty entry silently meant "the first one". Grouped by ownership like the filter —
-    * see [[WordCollect.tagOptionGroups]] — and followed by a "copy" button whenever the choice lands on a tag that is
-    * not the reader's own, since a tick against it would otherwise fail with no visible way to fix that.
+    * the reader to discover that the empty entry silently meant "the first one". Offers only the reader's own tags —
+    * see [[WordCollect.mineOptions]] — since a tick against anyone else's would fail with `TagNotFound`.
     */
   private def renderCollectSelect(): HtmlElement = {
-    val selectedTag = {
-      collectTagSignal.combineWithFn(tagsSignal)((id, tags) => id.flatMap(i => tags.find(_.id == i))).distinct
-    }
     label(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
-      div(
-        cls    := "flex items-center gap-1",
-        select(
-          cls := "select select-sm select-primary w-52",
-          children <-- tagsSignal.map(WordCollect.tagOptionGroups),
-          controlled(
-            value <-- selectedTagValue(collectTagSignal),
-            onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
-          ),
+      select(
+        cls := "select select-sm select-primary w-52",
+        children <-- tagsSignal.map(WordCollect.mineOptions),
+        controlled(
+          value <-- selectedTagValue(collectTagSignal),
+          onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
         ),
-        child.maybe <-- selectedTag.map(_.filterNot(_.ownedByMe).map(renderCopyButton)),
       ),
-    )
-  }
-
-  /** Seeds the reader's own copy of `tag`'s name, and files the collect tag on it once it exists. */
-  private def renderCopyButton(tag: Tag): HtmlElement = {
-    button(
-      typ := "button",
-      cls := "btn btn-ghost btn-xs",
-      I18n.t(UiKeys.wordsTagCopy, tag.name),
-      onClick.mapTo(tag.id) --> Observer[Long](copyTag),
     )
   }
 
