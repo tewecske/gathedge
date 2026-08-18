@@ -3,6 +3,7 @@ package gathedge.backend.http
 import gathedge.backend.service.{
   AdminFailure,
   AuthFailure,
+  BulkUploadFailure,
   GameFailure,
   GuestAccountFailure,
   GuestClaimFailure,
@@ -253,6 +254,19 @@ object ApiFailures {
           MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
           s"You've reached the maximum of $limit practice pairs for your account",
         )
+    }
+  }
+
+  def bulkUpload(
+    failure: BulkUploadFailure
+  ): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.TooManyRequests = {
+    failure match {
+      case BulkUploadFailure.TagNotFound                  =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
+      case BulkUploadFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case BulkUploadFailure.RateLimited                  =>
+        rateLimited
     }
   }
 

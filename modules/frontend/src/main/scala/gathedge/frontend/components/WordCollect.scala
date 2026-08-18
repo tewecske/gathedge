@@ -104,11 +104,11 @@ object WordCollect {
   def withTag(tags: List[Tag], tag: Tag): List[Tag] = tags.filterNot(_.id == tag.id) :+ tag
 
   /** Tag `<select>`s that deliberately show every tag, not just the reader's own — the listing filter narrows a *view*
-    * of the data, so a stranger's tag is as legitimate a thing to filter by as one's own. Grouped the way [[Tag.sorted]]
-    * orders them: the reader's own tags under one heading, everyone else's under another. An `<option>` cannot carry a
-    * badge or a colour, so the group heading — an `<optgroup label>`, which every screen reader announces — is the
-    * marking the dropdown shows, not an icon on each row. A group with nothing in it is left out rather than rendered
-    * empty, most often "My tags" for a reader who owns none yet.
+    * of the data, so a stranger's tag is as legitimate a thing to filter by as one's own. Grouped the way
+    * [[Tag.sorted]] orders them: the reader's own tags under one heading, everyone else's under another. An `<option>`
+    * cannot carry a badge or a colour, so the group heading — an `<optgroup label>`, which every screen reader
+    * announces — is the marking the dropdown shows, not an icon on each row. A group with nothing in it is left out
+    * rather than rendered empty, most often "My tags" for a reader who owns none yet.
     */
   def tagOptionGroups(tags: List[Tag]): List[HtmlElement] = {
     val (mine, others) = Tag.sorted(tags).partition(_.ownedByMe)
@@ -236,7 +236,10 @@ final class WordCollect(
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
     val kept = {
-      collectTagVar.now().filter(id => tags.exists(t => t.id == id && t.ownedByMe)).orElse(tags.find(_.ownedByMe).map(_.id))
+      collectTagVar
+        .now()
+        .filter(id => tags.exists(t => t.id == id && t.ownedByMe))
+        .orElse(tags.find(_.ownedByMe).map(_.id))
     }
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
@@ -431,7 +434,7 @@ final class WordCollect(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
       select(
-        cls := "select select-sm select-primary w-52",
+        cls    := "select select-sm select-primary w-52",
         children <-- tagsSignal.map(WordCollect.mineOptions),
         controlled(
           value <-- selectedTagValue(collectTagSignal),

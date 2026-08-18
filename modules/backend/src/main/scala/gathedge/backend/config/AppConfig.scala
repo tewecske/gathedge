@@ -118,8 +118,13 @@ final case class QuotaSection(
 
 /** `maxThreads` is handed straight to Netty's event loop group, where 0 means "decide for me" (2× available
   * processors), so that is the default here too.
+  *
+  * `maxRequestBodyBytes` is a global belt-and-suspenders cap wired through `Server.Config.disableRequestStreaming` —
+  * nothing else in this application bounds a request body's size, and the bulk word upload
+  * (`WordService.maxBulkUploadBytes`) is the first endpoint to accept a substantial user-controlled one. Sized with
+  * headroom over that 2 MiB business rule for the JSON envelope around it.
   */
-final case class NettySection(maxThreads: Int)
+final case class NettySection(maxThreads: Int, maxRequestBodyBytes: Int)
 
 final case class AppConfig(
   app: AppSection,

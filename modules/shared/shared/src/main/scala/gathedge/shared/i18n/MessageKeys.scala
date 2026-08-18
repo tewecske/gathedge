@@ -94,6 +94,11 @@ object MessageKeys {
   val wordTranslationExists: String = key("words.translationExists")
   val wordNotOwn: String            = key("words.notOwn")
 
+  /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
+    * anything about the words found inside it, which never fails the request.
+    */
+  val wordBulkUploadInvalidFile: String = key("words.bulkUploadInvalidFile")
+
   // -- Usage quotas ------------------------------------------------------------------------------
   // Two independent per-account caps (`AppConfig.quotas`): how many tags one account may own, and
   // how many `word_tag_pairs` rows it may own summed across every tag it holds. Each has a soft

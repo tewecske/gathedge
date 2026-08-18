@@ -114,6 +114,23 @@ final case class TagResponse(tag: Tag, warning: Option[MessageRef]) derives Json
   */
 final case class PairSelectionResponse(warning: Option[MessageRef]) derives JsonCodec
 
+/** What a bulk upload asks: the file's raw text, and which two languages to scan it for.
+  *
+  * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUpload]]
+  * tokenizes it and matches or creates whichever words it finds in each language, all filed under one tag in a single
+  * batch.
+  */
+final case class BulkUploadWordsRequest(
+  content: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
+
+/** How many distinct words the upload matched or created and tagged. The tag's own name is not echoed back — the caller
+  * already knows it, from whichever tag it was collecting into.
+  */
+final case class BulkUploadWordsResponse(addedCount: Int) derives JsonCodec
+
 /** The columns `GET /api/words` will order by.
   *
   * `rank` is corpus frequency, which is also the listing's own order — commonest first, since that is the useful thing

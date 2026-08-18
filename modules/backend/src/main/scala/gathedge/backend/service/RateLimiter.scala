@@ -146,6 +146,13 @@ object RateLimitKey {
     * burst of guesses cannot spend the sign-in budget of whoever is behind the same address.
     */
   def claim(value: String): String = s"claim:${value.trim.toLowerCase}"
+
+  /** A bulk upload can create and tag thousands of rows in one call, unlike every other write behind a session — so it
+    * gets a budget of its own rather than sharing one with ordinary tagging, which has none. Keyed on the account
+    * rather than the address: this is a post-auth action, and the cost it is metering is per account, the same way
+    * `AppConfig.quotas` is.
+    */
+  def wordUpload(userId: Long): String = s"wordUpload:$userId"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single

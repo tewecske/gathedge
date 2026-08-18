@@ -2,6 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, QuotaSection}
 import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTranslationRow}
+import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   CreateWordRequest,
@@ -43,6 +44,19 @@ enum WordFailure {
     * (`AppConfig.quotas.wordPairsPerUserHard`) allows.
     */
   case PairQuotaExceeded(limit: Int)
+}
+
+/** [[WordService.bulkUpload]]'s own failure surface — separate from [[WordFailure]] because it needs a status
+  * ([[gathedge.shared.api.ApiFailure.TooManyRequests]]) nothing else in this file raises, and mirrors it rather than
+  * widening it for the reason recorded on `ApiFailures`: a shared mapping would force every other endpoint over
+  * [[WordFailure]] to describe a 429 it cannot produce.
+  */
+enum BulkUploadFailure {
+  case TagNotFound
+
+  /** The upload's own text, not one of `content`'s words: empty, or over [[WordService.maxBulkUploadBytes]]. */
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+  case RateLimited
 }
 
 /** Browsing the shared dictionary, and the per-account layer on top of it: tags, and translations somebody typed.
@@ -124,6 +138,24 @@ trait WordService {
 
   /** Unmarks it. Both words keep the tag: taking a word out of a vocabulary is the tick's job. */
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Scans `content` for words already in the dictionary — or not yet there — in each of `sourceLanguage` and
+    * `targetLanguage`, and tags every one of them into one of the caller's own tags, creating whichever tokens the
+    * dictionary does not have yet (the same "ensure" [[create]] does for a single word). Answers how many distinct
+    * words were matched or created and tagged.
+    *
+    * Unlike every other write in this file, a single call here can touch thousands of rows, so it carries its own
+    * rate-limit budget ([[gathedge.backend.service.RateLimitKey.wordUpload]]) and its own size/token caps
+    * ([[WordService.maxBulkUploadBytes]], [[WordService.maxBulkUploadTokens]]) — neither tag membership nor dictionary
+    * creation is otherwise quota-gated (see the note on [[create]]).
+    */
+  def bulkUpload(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, Int]
 }
 
 object WordService {
@@ -206,8 +238,19 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
 
-  val live: URLayer[WordRepository & AppConfig, WordService] = {
-    ZLayer.fromFunction((repo: WordRepository, config: AppConfig) => WordServiceLive(repo, config.quotas))
+  def bulkUpload(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): ZIO[WordService, BulkUploadFailure, Int] =
+    ZIO.serviceWithZIO[WordService](_.bulkUpload(tagId, content, sourceLanguage, targetLanguage, userId))
+
+  val live: URLayer[WordRepository & AppConfig & RateLimiter, WordService] = {
+    ZLayer.fromFunction((repo: WordRepository, config: AppConfig, limiter: RateLimiter) =>
+      WordServiceLive(repo, config.quotas, limiter)
+    )
   }
 
   /** What a word row a user typed is marked as, against the dictionary's own. */
@@ -225,9 +268,21 @@ object WordService {
     * dialects put NULLs in different places in an `ORDER BY` and this column decides the listing's own order.
     */
   val unrankedFrequency = 999999999
+
+  /** [[bulkUpload]]'s size cap on `content` itself, measured the way [[Validation.utf8Length]] measures a password — in
+    * bytes, since that is what the reader was told the limit was. The request body may be somewhat larger than this
+    * once the JSON envelope and the two language codes are added.
+    */
+  val maxBulkUploadBytes = 2 * 1024 * 1024
+
+  /** Bounds how many distinct words one [[bulkUpload]] call may touch. Neither tag membership nor dictionary creation
+    * is otherwise quota-gated (see the note on [[create]]), so this is the only thing standing between an upload of
+    * arbitrary text and an unbounded batch of sequential inserts.
+    */
+  val maxBulkUploadTokens = 2000
 }
 
-final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection) extends WordService {
+final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, limiter: RateLimiter) extends WordService {
 
   private def toDomain(row: WordRow): Word = {
     Word(
@@ -732,5 +787,59 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection) ext
       // lets the chip be safe to double-click.
       _ <- repo.unpairTranslation(wordId, tagId, translationWordId).orDie
     } yield ()
+  }
+
+  /** Unicode-letter runs, lowercased and deduplicated in the order they first appear, capped at
+    * [[WordService.maxBulkUploadTokens]] — what turns an uploaded file's raw text into candidate dictionary words.
+    * Apostrophes and hyphens are kept mid-word (`don't`, `mother-in-law`) but never lead a token.
+    */
+  private val bulkUploadTokenPattern = """\p{L}[\p{L}'’-]*""".r
+
+  private def tokenize(content: String): List[String] = {
+    bulkUploadTokenPattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
+  }
+
+  /** Every token already in the dictionary for `language`, plus one freshly created for every token that was not — the
+    * same "ensure" [[create]] does for a single word. [[ensure]] validates each token and is skipped rather than failed
+    * on the rare one it refuses (empty after trimming, too long), so one bad token cannot sink the whole upload.
+    */
+  private def matchOrCreate(language: WordLanguage, tokens: List[String], userId: Long): UIO[List[WordRow]] = {
+    for {
+      existing    <- repo.findWordsByKeys(WordLanguage.code(language), tokens).orDie
+      matchedNorms = existing.map(_.textNorm).toSet
+      missing      = tokens.filterNot(matchedNorms)
+      created     <- ZIO.foreach(missing)(token => ensure(language, token, PartOfSpeech.Other, None, userId).either)
+    } yield existing ++ created.collect { case Right(row) => row }
+  }
+
+  def bulkUpload(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, Int] = {
+    val rateLimitKey = RateLimitKey.wordUpload(userId)
+    val invalidFile  =
+      BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+    for {
+      blocked <- limiter.isBlocked(rateLimitKey)
+      _       <- ZIO.when(blocked) {
+                   SecurityLog.warn(s"Rate limit exceeded on bulk word upload for user $userId") *>
+                     ZIO.fail(BulkUploadFailure.RateLimited)
+                 }
+      _       <- limiter.recordFailure(rateLimitKey)
+      _       <- requireOwnTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
+      trimmed  = content.trim
+      _       <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
+                   ZIO.fail(invalidFile)
+                 )
+      tokens   = tokenize(trimmed)
+      source  <- matchOrCreate(sourceLanguage, tokens, userId)
+      target  <- matchOrCreate(targetLanguage, tokens, userId)
+      ids      = (source ++ target).map(_.id).distinct
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _       <- ZIO.foreachDiscard(ids)(id => repo.tagWord(id, tagId, now).orDie)
+    } yield ids.size
   }
 }

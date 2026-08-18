@@ -5,7 +5,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
 import gathedge.shared.dto.{CreateWordRequest, NewTranslation, Paging, TaggedPair, WordSort}
-import gathedge.shared.i18n.MessageKeys
+import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import zio._
 import zio.test._
 
@@ -16,7 +16,8 @@ import zio.test._
   */
 object WordServiceSpec extends ZIOSpecDefault {
 
-  private val layer = (TestDataSource.sqlite >>> WordRepository.test) ++ AppConfig.live >+> WordService.live
+  private val layer =
+    (TestDataSource.sqlite >>> WordRepository.test) ++ AppConfig.live ++ RateLimiter.live >+> WordService.live
 
   /** `AppConfig.live` with `quotas` overridden — the tests below need thresholds small enough to reach in a handful of
     * calls, and this is `TestAuthLayers.configWith`'s pattern for the same reason.
@@ -32,7 +33,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         )
       })
     })
-    (TestDataSource.sqlite >>> WordRepository.test) ++ config >+> WordService.live
+    (TestDataSource.sqlite >>> WordRepository.test) ++ config ++ RateLimiter.live >+> WordService.live
   }
 
   /** Unwraps [[WordService.createTag]]'s [[gathedge.shared.dto.TagResponse]] down to the [[Tag]] most tests only need —
@@ -710,5 +711,61 @@ object WordServiceSpec extends ZIOSpecDefault {
     )
   }
 
-  def spec = suite("WordService (SQLite)")(coreSpec, quotaSpec) @@ TestAspect.timeout(60.seconds)
+  private def bulkUploadSpec = {
+    suite("bulk upload")(
+      test("tags existing dictionary words per language and creates the rest, all under the caller's tag") {
+        for {
+          _      <- seed
+          tag    <- createTag("upload", 1L)
+          added  <- WordService.bulkUpload(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
+          dePage <- list(reader = Some(1L), tagId = Some(tag.id))
+          huPage <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          // "Haus" and "ház" already existed in their own language and are matched rather than duplicated;
+          // "brandneu" exists in neither, so it is created once per language — six distinct words tagged in total.
+          added == 6,
+          dePage.items.map(_.word.text.toLowerCase).toSet == Set("haus", "ház", "brandneu"),
+          huPage.items.map(_.word.text.toLowerCase).toSet == Set("haus", "ház", "brandneu"),
+        )
+      },
+      test("somebody else's tag answers TagNotFound, and so does one that does not exist") {
+        for {
+          tag    <- createTag("theirs", 1L)
+          denied <- WordService.bulkUpload(tag.id, "hello", WordLanguage.En, WordLanguage.De, 2L).either
+          absent <- WordService.bulkUpload(9999L, "hello", WordLanguage.En, WordLanguage.De, 1L).either
+        } yield assertTrue(
+          denied == Left(BulkUploadFailure.TagNotFound),
+          absent == Left(BulkUploadFailure.TagNotFound),
+        )
+      },
+      test("an empty file, or one over the byte limit, is refused before anything is written") {
+        val invalidFile =
+          BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+        for {
+          tag       <- createTag("upload", 1L)
+          blank     <- WordService.bulkUpload(tag.id, "   ", WordLanguage.En, WordLanguage.De, 1L).either
+          huge      <-
+            WordService
+              .bulkUpload(tag.id, "a" * (WordService.maxBulkUploadBytes + 1), WordLanguage.En, WordLanguage.De, 1L)
+              .either
+          tagsAfter <- WordRepository.countTagsOwnedBy(1L)
+        } yield assertTrue(
+          blank == Left(invalidFile),
+          huge == Left(invalidFile),
+          // Neither refusal wrote anything beyond the tag the account already owned.
+          tagsAfter == 1L,
+        )
+      },
+      test("more than five uploads from the same account in the window trips its own rate limit") {
+        for {
+          tag     <- createTag("upload", 1L)
+          results <- ZIO.foreach(1 to RateLimiter.maxAttempts + 1)(_ =>
+                       WordService.bulkUpload(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
+                     )
+        } yield assertTrue(results.last == Left(BulkUploadFailure.RateLimited))
+      },
+    ).provide(layer)
+  }
+
+  def spec = suite("WordService (SQLite)")(coreSpec, quotaSpec, bulkUploadSpec) @@ TestAspect.timeout(60.seconds)
 }

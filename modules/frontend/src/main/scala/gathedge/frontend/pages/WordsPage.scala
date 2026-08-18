@@ -4,7 +4,16 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, Pagination, SortHeader, WordCollect}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  BulkUploadDialog,
+  GuestBanner,
+  Labels,
+  Pagination,
+  SortHeader,
+  WordCollect,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
@@ -99,6 +108,16 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
+  /** Uploaded words land in the dictionary and the collect tag without changing what this listing is filtered to, so a
+    * re-fetch is the only way a newly tagged word already on screen shows its tick.
+    */
+  private val bulkUpload = new BulkUploadDialog(
+    collect,
+    querySignal.map(_.language).distinct,
+    targetSignal,
+    onUploaded = Observer[Unit](_ => reloadBus.emit(())),
+  )
+
   /** The term a reader searched for and the dictionary does not have — the only case where adding a word is offered.
     * `None` while a request is in flight, so the form does not flash up between keystrokes.
     */
@@ -129,12 +148,14 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
+      h1(cls  := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
       Alert.maybeWarning(warningSignal),
       renderDirection(),
       collect.renderBar(),
+      div(cls := "mb-4", bulkUpload.renderButton()),
+      bulkUpload.renderModal(),
       renderSearch(),
       // Offered only when the search found nothing: the dictionary is meant to already have the word, and a permanent
       // "add a word" form next to a hundred matches would invite duplicates of words that are already there.
@@ -150,7 +171,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
         busy = loadingSignal,
       ),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
-      p(cls  := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
+      p(cls   := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
       changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
       querySignal.map(_.search).distinct --> searchInputVar.writer,
       searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->

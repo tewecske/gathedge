@@ -3,7 +3,15 @@ package gathedge.backend.http
 import gathedge.backend.service.{AuthService, WordService}
 import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, User, WordLanguage}
-import gathedge.shared.dto.{AddTranslationRequest, CreateTagRequest, CreateWordRequest, Paging, SortDirection}
+import gathedge.shared.dto.{
+  AddTranslationRequest,
+  BulkUploadWordsRequest,
+  BulkUploadWordsResponse,
+  CreateTagRequest,
+  CreateWordRequest,
+  Paging,
+  SortDirection,
+}
 import zio.*
 import zio.http.*
 
@@ -170,6 +178,19 @@ object WordRoutes {
     )
   }
 
+  private val bulkUploadRoute = {
+    WordEndpoints.bulkUpload.implementHandler(
+      handler { (tagId: Long, body: BulkUploadWordsRequest) =>
+        userId.flatMap(id => {
+          WordService
+            .bulkUpload(tagId, body.content, body.sourceLanguage, body.targetLanguage, id)
+            .map(BulkUploadWordsResponse.apply)
+            .mapError(ApiFailures.bulkUpload)
+        })
+      }
+    )
+  }
+
   /** Two `Routes` values because they are guarded differently, `++`'d and then given the CSRF check together — the
     * arrangement `AuthRoutes` uses for the same reason.
     */
@@ -188,6 +209,7 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
+      bulkUploadRoute,
     ) @@ RouteSupport.authenticated
   }
 

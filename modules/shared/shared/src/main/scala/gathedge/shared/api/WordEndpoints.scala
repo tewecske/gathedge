@@ -3,6 +3,8 @@ package gathedge.shared.api
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkUploadWordsRequest,
+  BulkUploadWordsResponse,
   CreateTagRequest,
   CreateWordRequest,
   PairSelectionResponse,
@@ -221,6 +223,24 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
+  /** Scans an uploaded file's free text for words already in the dictionary, in each of the two languages named, and
+    * tags every match — creating whichever tokens are not there yet — into one of the caller's own tags. One batch
+    * write rather than "ensure and attach" per word, since a caller uploading a file expects one outcome for the whole
+    * of it.
+    *
+    * 404 is the tag: whoever's it is, or whether it exists at all, is not something a caller may learn by trying — the
+    * same rule every other write in this file follows. 429 is this endpoint's own budget (`RateLimitKey.wordUpload`):
+    * unlike every other write here, a single call can create and tag up to `WordService.maxBulkUploadTokens` words at
+    * once.
+    */
+  val bulkUpload = {
+    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload")
+      .in[BulkUploadWordsRequest]
+      .withCodecError
+      .out[BulkUploadWordsResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
+  }
+
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection. */
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
     List(
@@ -237,6 +257,7 @@ object WordEndpoints {
       untagWord,
       selectPair,
       deselectPair,
+      bulkUpload,
     )
   }
 

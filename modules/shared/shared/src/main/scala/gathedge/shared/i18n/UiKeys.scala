@@ -65,6 +65,7 @@ object UiKeys {
   val commonAdministrator: String = key("ui.common.administrator")
   val commonYes: String           = key("ui.common.yes")
   val commonNo: String            = key("ui.common.no")
+  val commonOk: String            = key("ui.common.ok")
   val commonOr: String            = key("ui.common.or")
   val commonWhen: String          = key("ui.common.when")
   val commonFrom: String          = key("ui.common.from")
@@ -538,6 +539,20 @@ object UiKeys {
 
   /** Required by the licence the dictionary data is under, and so not optional page furniture. */
   val wordsAttribution: String = key("ui.words.attribution")
+
+  // -- Bulk upload -------------------------------------------------------------------------------
+  // The modal that scans an uploaded text file for words in the page's current language pair and
+  // tags every match into the collect tag. See `BulkUploadDialog`.
+
+  val wordsBulkUploadButton: String    = key("ui.words.bulkUpload.button")
+  val wordsBulkUploadTitle: String     = key("ui.words.bulkUpload.title")
+  val wordsBulkUploadHint: String      = key("ui.words.bulkUpload.hint")
+  val wordsBulkUploadSizeError: String = key("ui.words.bulkUpload.sizeError")
+
+  /** `{0}` is the word count, `{1}` the tag name — a tag is data, not copy, so it is never translated (the same rule
+    * `WordCollect.defaultTagName` follows).
+    */
+  val wordsBulkUploadResult: String = pluralKey("ui.words.bulkUpload.result")
 
   val wordDetailTranslations: String      = key("ui.word.translations")
   val wordDetailTags: String              = key("ui.word.tags")

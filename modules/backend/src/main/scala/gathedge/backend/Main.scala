@@ -118,7 +118,13 @@ object Main extends ZIOAppDefault {
     UsageTracker.live,
     UsageStatsService.live,
     Server.customized,
-    ZLayer(ZIO.serviceWith[AppConfig](cfg => Server.Config.default.binding(cfg.app.serverHost, cfg.app.serverPort))),
+    ZLayer(
+      ZIO.serviceWith[AppConfig](cfg => {
+        Server.Config.default
+          .binding(cfg.app.serverHost, cfg.app.serverPort)
+          .disableRequestStreaming(cfg.netty.maxRequestBodyBytes)
+      })
+    ),
     ZLayer(ZIO.serviceWith[AppConfig](cfg => NettyConfig.default.maxThreads(cfg.netty.maxThreads))),
   )
 }

@@ -87,6 +87,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/{id}/translations/{translationId}",
               "/api/words/{id}/tags/{tagId}",
               "/api/words/{id}/tags/{tagId}/translations/{translationWordId}",
+              "/api/words/tags/{tagId}/bulk-upload",
               "/api/tags",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/copy",
@@ -217,6 +218,12 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/tags/{tagId}/translations/{translationWordId}") ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Scans an uploaded file's text for dictionary words in each of two languages and tags every match into
+              // one of the caller's own tags. 404 is the tag, for the reason every other write in this resource
+              // answers 404 for one. 429 is this endpoint's own rate-limit budget (`RateLimitKey.wordUpload`) — unlike
+              // every other write here, a single call can create and tag thousands of rows.
+              ("POST", "/api/words/tags/{tagId}/bulk-upload")                             ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Listing tags takes no input, so it has no 400 to declare.
               ("GET", "/api/tags")                                                        -> Set(Ok, Unauthorized),
               // 409 covers a name the account already has *and* already owning as many tags as the quota's hard
@@ -333,7 +340,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 167,
+          declared == 171,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and
@@ -352,8 +359,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/{slug}/plays"),
               ("GET", "/api/games/{slug}/plays/{playId}"),
             ),
-          // The rate limiter wraps signup, login, the verification resend and the password-reset request, and
-          // nothing else.
+          // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
+          // guest paths, plus the bulk word upload — the one non-auth write with a budget of its own, since a single
+          // call can create and tag thousands of rows.
           describes(TooManyRequests) ==
             Set(
               ("POST", "/api/auth/signup"),
@@ -363,6 +371,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Both are anonymous and both write: one mints an account, the other hands out a session.
               ("POST", "/api/guest"),
               ("POST", "/api/guest/claim"),
+              ("POST", "/api/words/tags/{tagId}/bulk-upload"),
             ),
           describes(InternalServerError).isEmpty,
         )
