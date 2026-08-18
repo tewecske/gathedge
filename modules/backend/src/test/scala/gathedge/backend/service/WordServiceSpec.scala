@@ -7,6 +7,7 @@ import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
+  BulkUploadSelectedTranslation,
   CreateWordRequest,
   NewTranslation,
   Paging,
@@ -798,36 +799,76 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("confirm answers TagNotFound for somebody else's tag and one that does not exist") {
         for {
           tag    <- createTag("theirs", 1L)
-          denied <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 2L).either
-          absent <- WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 1L).either
+          denied <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 2L).either
+          absent <-
+            WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 1L).either
         } yield assertTrue(
           denied == Left(BulkUploadFailure.TagNotFound),
           absent == Left(BulkUploadFailure.TagNotFound),
         )
       },
-      test("confirm tags an accepted matched word and marks its known translation, leaving a declined one untouched") {
+      test("confirm tags an accepted matched word and marks its selected translation, leaving a declined one untouched") {
         for {
-          _       <- seed
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
-          haus     = preview.matched.find(_.word.text == "Haus").get.word.id
-          added   <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, List(haus), Nil, Nil, 1L)
-          dePage  <- list(reader = Some(1L), tagId = Some(tag.id))
-          huPage  <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+          _        <- seed
+          tag      <- createTag("upload", 1L)
+          preview  <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
+          haus      = preview.matched.find(_.word.text == "Haus").get
+          selection = BulkUploadSelectedTranslation(haus.word.id, haus.translations.head.wordId)
+          added    <-
+            WordService.bulkUploadConfirm(
+              tag.id,
+              WordLanguage.De,
+              WordLanguage.Hu,
+              List(haus.word.id),
+              List(selection),
+              Nil,
+              Nil,
+              1L,
+            )
+          dePage   <- list(reader = Some(1L), tagId = Some(tag.id))
+          huPage   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
-          // Accepting "Haus" alone still tags two words: marking a pair's translation files both words under the tag,
-          // even though only "Haus" was named. "brandneu" was never previewed as a match, so accepting nothing for it
-          // leaves it out entirely.
+          // Accepting "Haus" with its one selected translation still tags two words: marking a pair's translation
+          // files both words under the tag, even though only "Haus" was named. "brandneu" was never previewed as a
+          // match, so accepting nothing for it leaves it out entirely.
           added == 2,
           dePage.items.map(_.word.text) == List("Haus"),
           huPage.items.map(_.word.text) == List("ház"),
+        )
+      },
+      test("confirm marks only the selected translation, not every one the dictionary has for the word") {
+        for {
+          _        <- seed
+          hunIds   <- seedTranslations
+          tag      <- createTag("upload", 1L)
+          preview  <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
+          haus      = preview.matched.find(_.word.text == "Haus").get
+          picked    = hunIds(1) // "lakás" — deliberately not the first (rank-commonest) translation
+          selection = BulkUploadSelectedTranslation(haus.word.id, picked)
+          _        <-
+            WordService.bulkUploadConfirm(
+              tag.id,
+              WordLanguage.De,
+              WordLanguage.Hu,
+              List(haus.word.id),
+              List(selection),
+              Nil,
+              Nil,
+              1L,
+            )
+          huPage   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          // The preview offered four Hungarian translations; only "lakás", the one the reader picked, gets tagged.
+          haus.translations.size == 4,
+          huPage.items.map(_.word.text) == List("lakás"),
         )
       },
       test("a manual pair creates both new words, links them as a translation, and tags and marks both") {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
+          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           dePage <- list(reader = Some(1L), tagId = Some(tag.id))
           huPage <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
@@ -842,21 +883,34 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          first  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
+          first  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           after1 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          second <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
+          second <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           after2 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
         } yield assertTrue(first == 2, second == 2, after1 == after2)
       },
-      test("a manual pair's German side keeps the gender its article named, and is created as a noun") {
+      test("a manual pair's German side keeps the gender its article named, is created as a noun, and is capitalized") {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("der zzztisch", "zzzasztal")
-          _      <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
+          _      <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           dePage <- list(reader = Some(1L), tagId = Some(tag.id))
         } yield assertTrue(
-          dePage.items.map(_.word.text.toLowerCase) == List("zzztisch"),
+          // German nouns are always capitalized; the target side (no article, not a noun) is left as typed.
+          dePage.items.map(_.word.text) == List("Zzztisch"),
           dePage.items.head.word.gender.contains(Gender.Der),
+        )
+      },
+      test("a standalone German word with an article is created capitalized") {
+        for {
+          tag   <- createTag("upload", 1L)
+          word   = BulkUploadManualWord("die zzzblume", WordLanguage.De)
+          added <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
+          page  <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.De, target = WordLanguage.En)
+        } yield assertTrue(
+          added == 1,
+          page.items.map(_.word.text) == List("Zzzblume"),
+          page.items.head.word.gender.contains(Gender.Die),
         )
       },
       test("a standalone word is created and tagged with no translation link") {
@@ -864,7 +918,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           tag    <- createTag("upload", 1L)
           word    = BulkUploadManualWord("zzzlonewolf", WordLanguage.En)
           before <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, List(word), 1L)
+          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
           after  <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
           page   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.En, target = WordLanguage.De)
         } yield assertTrue(
@@ -880,9 +934,9 @@ object WordServiceSpec extends ZIOSpecDefault {
           warmup  <- ZIO.foreach(1 to RateLimiter.maxAttempts)(n => {
                        if (n % 2 == 0) {
                          WordService
-                           .bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 1L)
+                           .bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 1L)
                            .either
-                      } else
+                       } else
                          WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
                      })
           blocked <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either

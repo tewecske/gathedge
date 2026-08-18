@@ -12,8 +12,11 @@ import gathedge.shared.dto.{
   BulkUploadMatch,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
+  BulkUploadSelectedTranslation,
+  TranslationOption,
 }
 import gathedge.shared.i18n.{MessageKeys, MessageRef, UiKeys}
+import gathedge.shared.validation.Validation
 import zio.json._
 
 /** The "Bulk upload" modal on the Words page: pick a text file, review what the dictionary already knows about it, and
@@ -85,6 +88,13 @@ final class BulkUploadDialog(
     */
   private val acceptedVar = Var(Set.empty[Long])
 
+  /** Which one of an accepted match's [[BulkUploadMatch.translations]] the reader has picked, keyed by the matched
+    * word's id — seeded to the first option the moment a preview lands, since a match usually carries just the one
+    * dictionary translation and defaulting to it is the ordinary case. Only the entry this map names is sent to
+    * `bulkUploadConfirm`; the rest of a match's translations are shown but never marked.
+    */
+  private val selectedTranslationVar = Var(Map.empty[Long, Long])
+
   /** An unmatched token's assigned language, keyed by the token text. Absent means "skip" — the token was never
     * assigned one and so never reaches the manual-matching columns.
     */
@@ -107,6 +117,11 @@ final class BulkUploadDialog(
   private val contentBus = new EventBus[String]()
 
   private val confirmBus = new EventBus[Unit]()
+
+  /** The textarea's bound value — the paste-text alternative to [[handleFile]], sharing [[contentBus]] as its entry
+    * point into the same preview pipeline.
+    */
+  private val pasteTextVar = Var("")
 
   private def isBusySignal: Signal[Boolean] = {
     phaseSignal.map {
@@ -131,16 +146,18 @@ final class BulkUploadDialog(
 
   def open(): Unit = {
     Var.set(
-      openVar             -> true,
-      phaseVar            -> Phase.Idle,
-      progressVar         -> 0,
-      xhrVar              -> None,
-      previewVar          -> None,
-      acceptedVar         -> Set.empty,
-      assignedLanguageVar -> Map.empty,
-      manualPairsVar      -> Nil,
-      pendingPickVar      -> None,
-      tagIdVar            -> None,
+      openVar                -> true,
+      phaseVar               -> Phase.Idle,
+      progressVar            -> 0,
+      xhrVar                 -> None,
+      previewVar             -> None,
+      acceptedVar            -> Set.empty,
+      selectedTranslationVar -> Map.empty,
+      assignedLanguageVar    -> Map.empty,
+      manualPairsVar         -> Nil,
+      pendingPickVar         -> None,
+      tagIdVar               -> None,
+      pasteTextVar           -> "",
     )
   }
 
@@ -151,16 +168,18 @@ final class BulkUploadDialog(
   private def cancel(): Unit = {
     xhrVar.now().foreach(_.abort())
     Var.set(
-      openVar             -> false,
-      xhrVar              -> None,
-      phaseVar            -> Phase.Idle,
-      progressVar         -> 0,
-      previewVar          -> None,
-      acceptedVar         -> Set.empty,
-      assignedLanguageVar -> Map.empty,
-      manualPairsVar      -> Nil,
-      pendingPickVar      -> None,
-      tagIdVar            -> None,
+      openVar                -> false,
+      xhrVar                 -> None,
+      phaseVar               -> Phase.Idle,
+      progressVar            -> 0,
+      previewVar             -> None,
+      acceptedVar            -> Set.empty,
+      selectedTranslationVar -> Map.empty,
+      assignedLanguageVar    -> Map.empty,
+      manualPairsVar         -> Nil,
+      pendingPickVar         -> None,
+      tagIdVar               -> None,
+      pasteTextVar           -> "",
     )
   }
 
@@ -180,6 +199,18 @@ final class BulkUploadDialog(
         phaseVar.set(Phase.Failed(I18n.t(MessageKeys.requestFailed)))
       }
       reader.readAsText(file)
+    }
+  }
+
+  /** The paste-text counterpart to [[handleFile]] — the text is already in hand, so this skips straight to
+    * [[contentBus]] instead of going through a `FileReader`.
+    */
+  private def handleText(text: String): Unit = {
+    if (Validation.utf8Length(text) > BulkUploadDialog.maxBytes) {
+      phaseVar.set(Phase.Failed(I18n.t(UiKeys.wordsBulkUploadSizeError)))
+    } else {
+      Var.set(phaseVar -> Phase.Uploading, progressVar -> 0)
+      contentBus.emit(text)
     }
   }
 
@@ -224,12 +255,17 @@ final class BulkUploadDialog(
     body.fromJson[BulkUploadPreviewResponse] match {
       case Right(response) =>
         Var.set(
-          previewVar  -> Some(response),
+          previewVar             -> Some(response),
           // Accepting everything a preview found is the ordinary case; "decline all" is the one click for the
           // exception.
-          acceptedVar -> response.matched.map(_.word.id).toSet,
-          phaseVar    -> Phase.ReviewMatched,
-          progressVar -> 100,
+          acceptedVar            -> response.matched.map(_.word.id).toSet,
+          // Defaulting to the first dictionary translation is the ordinary case; the reader picks a different one
+          // only when a match has more than one.
+          selectedTranslationVar -> response.matched.collect {
+            case m if m.translations.nonEmpty => m.word.id -> m.translations.head.wordId
+          }.toMap,
+          phaseVar               -> Phase.ReviewMatched,
+          progressVar            -> 100,
         )
       case Left(_)         =>
         Var.set(progressVar -> 0, phaseVar -> Phase.Failed(I18n.t(MessageKeys.requestFailed)))
@@ -261,11 +297,19 @@ final class BulkUploadDialog(
     */
   private def confirmStream: EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
     confirmBus.events.flatMapSwitch { _ =>
+      val accepted = acceptedVar.now()
       WordApiClient.bulkUploadConfirm(
         tagIdVar.now().getOrElse(0L),
         sourceLanguageVar.now(),
         targetLanguageVar.now(),
-        acceptedVar.now().toList,
+        accepted.toList,
+        selectedTranslationVar
+          .now()
+          .collect {
+            case (wordId, translationId) if accepted.contains(wordId) =>
+              BulkUploadSelectedTranslation(wordId, translationId)
+          }
+          .toList,
         manualPairsVar.now().map(BulkUploadManualPair.apply),
         standaloneWordsNow(),
       )
@@ -326,6 +370,7 @@ final class BulkUploadDialog(
         h3(cls := "font-bold text-lg", I18n.t(UiKeys.wordsBulkUploadTitle)),
         p(cls  := "text-sm opacity-70 py-2", I18n.t(UiKeys.wordsBulkUploadHint)),
         child.maybe <-- showFileInputSignal.map(Option.when(_)(renderFileInput())),
+        child.maybe <-- showFileInputSignal.map(Option.when(_)(renderPasteInput())),
         child.maybe <-- phaseSignal.map(renderPhaseBody),
         div(
           cls  := "modal-action",
@@ -369,6 +414,33 @@ final class BulkUploadDialog(
         val target = event.target.asInstanceOf[dom.html.Input]
         Option(target.files).filter(_.length > 0).map(_.item(0)).foreach(handleFile)
       },
+    )
+  }
+
+  private def renderPasteInput(): HtmlElement = {
+    div(
+      cls := "mt-3",
+      div(cls       := "divider text-xs", I18n.t(UiKeys.wordsBulkUploadPasteDivider)),
+      textArea(
+        cls         := "textarea textarea-bordered w-full",
+        rows        := 5,
+        placeholder := I18n.t(UiKeys.wordsBulkUploadPastePlaceholder),
+        disabled <-- isBusySignal,
+        controlled(
+          value <-- pasteTextVar.signal,
+          onInput.mapToValue --> pasteTextVar.writer,
+        ),
+      ),
+      div(
+        cls         := "flex justify-end mt-2",
+        button(
+          cls := "btn btn-sm btn-primary",
+          typ := "button",
+          disabled <-- isBusySignal.combineWithFn(pasteTextVar.signal)((busy, text) => busy || text.trim.isEmpty),
+          I18n.t(UiKeys.wordsBulkUploadPasteButton),
+          onClick.mapToUnit --> Observer[Unit](_ => handleText(pasteTextVar.now())),
+        ),
+      ),
     )
   }
 
@@ -585,12 +657,42 @@ final class BulkUploadDialog(
         ),
         if (m.translations.isEmpty)
           span(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadNoTranslation))
-        else {
-          div(
-            cls := "flex items-center gap-1 flex-wrap mt-0.5",
-            span(cls := "text-xs opacity-70", "→ " + m.translations.map(_.text).mkString(", ")),
-            span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromDictionary)),
-          )
+        else
+          renderTranslationChoices(m.word.id, m.translations),
+      ),
+    )
+  }
+
+  /** A match's dictionary translations, all shown but only one selectable — `bulkUploadConfirm` marks
+    * [[selectedTranslationVar]]'s entry for this word, never every option listed here. One option needs no radio (it is
+    * already the seeded selection); more than one gets a `join` of radio buttons the same style [[renderLanguageRadio]]
+    * uses, so picking the right match is one click.
+    */
+  private def renderTranslationChoices(wordId: Long, translations: List[TranslationOption]): HtmlElement = {
+    div(
+      cls := "flex items-center gap-1 flex-wrap mt-0.5",
+      span(cls := "text-xs opacity-70", "→"),
+      if (translations.sizeIs > 1) {
+        div(
+          cls    := "join",
+          translations.map(t => renderTranslationRadio(wordId, t)),
+        )
+      } else
+        span(cls := "text-xs opacity-70", translations.head.text),
+      span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromDictionary)),
+    )
+  }
+
+  private def renderTranslationRadio(wordId: Long, translation: TranslationOption): HtmlElement = {
+    input(
+      typ        := "radio",
+      cls        := "join-item btn btn-xs",
+      nameAttr   := s"bulk-upload-translation-$wordId",
+      aria.label := translation.text,
+      controlled(
+        checked <-- selectedTranslationVar.signal.map(_.get(wordId).contains(translation.wordId)),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          selectedTranslationVar.update(_.updated(wordId, translation.wordId))
         },
       ),
     )

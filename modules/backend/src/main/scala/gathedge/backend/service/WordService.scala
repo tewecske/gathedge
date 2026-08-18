@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   BulkUploadManualWord,
   BulkUploadMatch,
   BulkUploadPreviewResponse,
+  BulkUploadSelectedTranslation,
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
@@ -176,6 +177,7 @@ trait WordService {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
+    selectedTranslations: List[BulkUploadSelectedTranslation],
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
     userId: Long,
@@ -276,12 +278,22 @@ object WordService {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
+    selectedTranslations: List[BulkUploadSelectedTranslation],
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): ZIO[WordService, BulkUploadFailure, Int] = {
     ZIO.serviceWithZIO[WordService](
-      _.bulkUploadConfirm(tagId, sourceLanguage, targetLanguage, acceptedWordIds, manualPairs, standaloneWords, userId)
+      _.bulkUploadConfirm(
+        tagId,
+        sourceLanguage,
+        targetLanguage,
+        acceptedWordIds,
+        selectedTranslations,
+        manualPairs,
+        standaloneWords,
+        userId,
+      )
     )
   }
 
@@ -857,6 +869,14 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     }
   }
 
+  /** German nouns are always capitalized; every other word from an upload stays as typed/lowercased. Applied only at
+    * word creation ([[confirmManualPair]]/[[confirmStandaloneWord]]), never at [[matchTokens]]'s lookup key, since
+    * `textNorm` is the lowercase form regardless of a word's display casing.
+    */
+  private def capitalizeGermanNoun(text: String, gender: Option[Gender]): String = {
+    if (gender.isDefined) text.capitalize else text
+  }
+
   /** Checked at the top of both [[bulkUploadPreview]] and [[bulkUploadConfirm]]: one shared rate-limit budget (a full
     * upload is a preview call and a confirm call, so a five-attempt window covers two or three whole uploads) and the
     * same `TagNotFound` a caller of any other tag-scoped write here gets.
@@ -934,14 +954,18 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     } yield BulkUploadPreviewResponse(matched, unmatched)
   }
 
-  /** Tags an accepted matched word, and marks every translation the dictionary already has for it into whichever of the
-    * two declared languages it is not itself in — the same pairs [[bulkUploadPreview]] showed alongside it. `pairInTag`
-    * tags the translation word too, so every id it touches is answered, not only `wordId` itself. Answers no ids for a
-    * word id that no longer exists (the rare race of a preview going stale), the same leniency [[matchTokens]]'s
-    * callers already have toward one bad entry not sinking the whole batch.
+  /** Tags an accepted matched word, and marks only the one translation the reader picked out of whatever
+    * [[bulkUploadPreview]] showed alongside it (`selectedTranslationId`) — re-derived against the dictionary's current
+    * translations into the *other* of the two declared languages rather than trusting the id on its own, the same way
+    * [[BulkUploadConfirmRequest]]'s own scaladoc describes for `acceptedWordIds`. A word with no selection, or whose
+    * selection no longer matches a real translation, is still tagged, just with nothing paired. `pairInTag` tags the
+    * translation word too, so its id is answered alongside `wordId`. Answers no ids for a word id that no longer exists
+    * (the rare race of a preview going stale), the same leniency [[matchTokens]]'s callers already have toward one bad
+    * entry not sinking the whole batch.
     */
   private def acceptMatch(
     wordId: Long,
+    selectedTranslationId: Option[Long],
     tagId: Long,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
@@ -955,8 +979,11 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
         for {
           _            <- repo.tagWord(wordId, tagId, now).orDie
           translations <- repo.translationsOf(List(wordId), WordLanguage.code(other)).orDie
-          _            <- ZIO.foreachDiscard(translations) { case (_, target) => pairInTag(wordId, tagId, target.id) }
-        } yield wordId :: translations.map { case (_, target) => target.id }
+          selected      = translations.collectFirst {
+                            case (_, target) if selectedTranslationId.contains(target.id) => target.id
+                          }
+          _            <- ZIO.foreachDiscard(selected)(pairInTag(wordId, tagId, _))
+        } yield wordId :: selected.toList
     }
   }
 
@@ -974,12 +1001,14 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     targetLanguage: WordLanguage,
     userId: Long,
   ): UIO[List[Long]] = {
-    val (sourceText, sourceGender) =
+    val (sourceStripped, sourceGender) =
       if (sourceLanguage == WordLanguage.De) stripArticle(pair.sourceText) else (pair.sourceText, None)
-    val (targetText, targetGender) =
+    val (targetStripped, targetGender) =
       if (targetLanguage == WordLanguage.De) stripArticle(pair.targetText) else (pair.targetText, None)
-    val sourcePos                  = if (sourceGender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
-    val targetPos                  = if (targetGender.isDefined) Some(PartOfSpeech.Noun) else None
+    val sourceText                     = capitalizeGermanNoun(sourceStripped, sourceGender)
+    val targetText                     = capitalizeGermanNoun(targetStripped, targetGender)
+    val sourcePos                      = if (sourceGender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
+    val targetPos                      = if (targetGender.isDefined) Some(PartOfSpeech.Noun) else None
     (for {
       sourceRow     <- ensure(sourceLanguage, sourceText, sourcePos, sourceGender, userId)
       linked        <- linkOrExisting(sourceRow, NewTranslation(targetLanguage, targetText, targetPos, targetGender), userId)
@@ -993,8 +1022,9 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     * Leniently answers no ids on validation failure, the same as [[confirmManualPair]].
     */
   private def confirmStandaloneWord(word: BulkUploadManualWord, tagId: Long, userId: Long): UIO[List[Long]] = {
-    val (text, gender) = if (word.language == WordLanguage.De) stripArticle(word.text) else (word.text, None)
-    val pos            = if (gender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
+    val (stripped, gender) = if (word.language == WordLanguage.De) stripArticle(word.text) else (word.text, None)
+    val text               = capitalizeGermanNoun(stripped, gender)
+    val pos                = if (gender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
     (for {
       row <- ensure(word.language, text, pos, gender, userId)
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
@@ -1007,14 +1037,18 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
+    selectedTranslations: List[BulkUploadSelectedTranslation],
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): IO[BulkUploadFailure, Int] = {
+    val selectedByWordId = selectedTranslations.map(sel => sel.wordId -> sel.translationId).toMap
     for {
       _          <- bulkUploadGuard(tagId, userId)
       now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      accepted   <- ZIO.foreach(acceptedWordIds.distinct)(acceptMatch(_, tagId, sourceLanguage, targetLanguage, now))
+      accepted   <- ZIO.foreach(acceptedWordIds.distinct) { wordId =>
+                      acceptMatch(wordId, selectedByWordId.get(wordId), tagId, sourceLanguage, targetLanguage, now)
+                    }
       manual     <- ZIO.foreach(manualPairs.distinct)(confirmManualPair(_, tagId, sourceLanguage, targetLanguage, userId))
       standalone <- ZIO.foreach(standaloneWords.distinct)(confirmStandaloneWord(_, tagId, userId))
     } yield (accepted.flatten ++ manual.flatten ++ standalone.flatten).distinct.size

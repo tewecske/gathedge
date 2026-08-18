@@ -28,6 +28,7 @@ import gathedge.shared.dto.{
   BulkUploadMatch,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
+  BulkUploadSelectedTranslation,
   CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
@@ -139,24 +140,25 @@ object ApiSchemas {
   given Schema[UpgradeRequest]        = DeriveSchema.gen[UpgradeRequest]
   given Schema[CaptchaStatusResponse] = DeriveSchema.gen[CaptchaStatusResponse]
 
-  given Schema[TranslationOption]         = DeriveSchema.gen[TranslationOption]
-  given Schema[TaggedPair]                = DeriveSchema.gen[TaggedPair]
-  given Schema[WordSummary]               = DeriveSchema.gen[WordSummary]
-  given Schema[TranslationEntry]          = DeriveSchema.gen[TranslationEntry]
-  given Schema[WordDetail]                = DeriveSchema.gen[WordDetail]
-  given Schema[NewTranslation]            = DeriveSchema.gen[NewTranslation]
-  given Schema[CreateWordRequest]         = DeriveSchema.gen[CreateWordRequest]
-  given Schema[AddTranslationRequest]     = DeriveSchema.gen[AddTranslationRequest]
-  given Schema[CreateTagRequest]          = DeriveSchema.gen[CreateTagRequest]
-  given Schema[TagResponse]               = DeriveSchema.gen[TagResponse]
-  given Schema[PairSelectionResponse]     = DeriveSchema.gen[PairSelectionResponse]
-  given Schema[BulkUploadMatch]           = DeriveSchema.gen[BulkUploadMatch]
-  given Schema[BulkUploadPreviewRequest]  = DeriveSchema.gen[BulkUploadPreviewRequest]
-  given Schema[BulkUploadPreviewResponse] = DeriveSchema.gen[BulkUploadPreviewResponse]
-  given Schema[BulkUploadManualPair]      = DeriveSchema.gen[BulkUploadManualPair]
-  given Schema[BulkUploadManualWord]      = DeriveSchema.gen[BulkUploadManualWord]
-  given Schema[BulkUploadConfirmRequest]  = DeriveSchema.gen[BulkUploadConfirmRequest]
-  given Schema[BulkUploadConfirmResponse] = DeriveSchema.gen[BulkUploadConfirmResponse]
+  given Schema[TranslationOption]             = DeriveSchema.gen[TranslationOption]
+  given Schema[TaggedPair]                    = DeriveSchema.gen[TaggedPair]
+  given Schema[WordSummary]                   = DeriveSchema.gen[WordSummary]
+  given Schema[TranslationEntry]              = DeriveSchema.gen[TranslationEntry]
+  given Schema[WordDetail]                    = DeriveSchema.gen[WordDetail]
+  given Schema[NewTranslation]                = DeriveSchema.gen[NewTranslation]
+  given Schema[CreateWordRequest]             = DeriveSchema.gen[CreateWordRequest]
+  given Schema[AddTranslationRequest]         = DeriveSchema.gen[AddTranslationRequest]
+  given Schema[CreateTagRequest]              = DeriveSchema.gen[CreateTagRequest]
+  given Schema[TagResponse]                   = DeriveSchema.gen[TagResponse]
+  given Schema[PairSelectionResponse]         = DeriveSchema.gen[PairSelectionResponse]
+  given Schema[BulkUploadMatch]               = DeriveSchema.gen[BulkUploadMatch]
+  given Schema[BulkUploadPreviewRequest]      = DeriveSchema.gen[BulkUploadPreviewRequest]
+  given Schema[BulkUploadPreviewResponse]     = DeriveSchema.gen[BulkUploadPreviewResponse]
+  given Schema[BulkUploadManualPair]          = DeriveSchema.gen[BulkUploadManualPair]
+  given Schema[BulkUploadManualWord]          = DeriveSchema.gen[BulkUploadManualWord]
+  given Schema[BulkUploadSelectedTranslation] = DeriveSchema.gen[BulkUploadSelectedTranslation]
+  given Schema[BulkUploadConfirmRequest]      = DeriveSchema.gen[BulkUploadConfirmRequest]
+  given Schema[BulkUploadConfirmResponse]     = DeriveSchema.gen[BulkUploadConfirmResponse]
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]

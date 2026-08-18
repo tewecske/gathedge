@@ -201,6 +201,7 @@ object WordRoutes {
               body.sourceLanguage,
               body.targetLanguage,
               body.acceptedWordIds,
+              body.selectedTranslations,
               body.manualPairs,
               body.standaloneWords,
               id,

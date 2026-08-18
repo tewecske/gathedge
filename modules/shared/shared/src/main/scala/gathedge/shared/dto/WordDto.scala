@@ -147,15 +147,23 @@ final case class BulkUploadManualPair(sourceText: String, targetText: String) de
   */
 final case class BulkUploadManualWord(text: String, language: WordLanguage) derives JsonCodec
 
+/** Which one of an accepted matched word's [[BulkUploadMatch.translations]] the reader actually picked — a matched word
+  * can carry several dictionary translations, but only the one the reader chose gets marked, not all of them.
+  * `translationId` is a [[TranslationOption.wordId]].
+  */
+final case class BulkUploadSelectedTranslation(wordId: Long, translationId: Long) derives JsonCodec
+
 /** What a bulk upload confirms: which of the previewed matches to keep, which unmatched tokens the reader linked by
   * hand, and which unmatched tokens they assigned a language but left unpaired. `acceptedWordIds` names words only —
   * [[gathedge.backend.service.WordService.bulkUploadConfirm]] re-derives which translations belong to each one rather
-  * than trusting a client-supplied list of translation ids.
+  * than trusting a client-supplied list of translation ids; `selectedTranslations` narrows that re-derived set down to
+  * the single one the reader picked for each accepted word, when it had more than one.
   */
 final case class BulkUploadConfirmRequest(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   acceptedWordIds: List[Long],
+  selectedTranslations: List[BulkUploadSelectedTranslation],
   manualPairs: List[BulkUploadManualPair],
   standaloneWords: List[BulkUploadManualWord],
 ) derives JsonCodec

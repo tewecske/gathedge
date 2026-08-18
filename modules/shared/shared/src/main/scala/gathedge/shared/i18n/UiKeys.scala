@@ -549,6 +549,10 @@ object UiKeys {
   val wordsBulkUploadHint: String      = key("ui.words.bulkUpload.hint")
   val wordsBulkUploadSizeError: String = key("ui.words.bulkUpload.sizeError")
 
+  val wordsBulkUploadPasteDivider: String     = key("ui.words.bulkUpload.pasteDivider")
+  val wordsBulkUploadPastePlaceholder: String = key("ui.words.bulkUpload.pastePlaceholder")
+  val wordsBulkUploadPasteButton: String      = key("ui.words.bulkUpload.pasteButton")
+
   /** `{0}` is the word count, `{1}` the tag name — a tag is data, not copy, so it is never translated (the same rule
     * `WordCollect.defaultTagName` follows).
     */

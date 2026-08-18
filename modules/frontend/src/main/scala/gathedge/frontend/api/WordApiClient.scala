@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
   BulkUploadManualPair,
   BulkUploadManualWord,
+  BulkUploadSelectedTranslation,
   CreateTagRequest,
   CreateWordRequest,
   NewTranslation,
@@ -127,6 +128,7 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
+    selectedTranslations: List[BulkUploadSelectedTranslation],
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
   ): EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
@@ -134,7 +136,14 @@ object WordApiClient {
       executor(
         WordEndpoints.bulkUploadConfirm(
           tagId,
-          BulkUploadConfirmRequest(sourceLanguage, targetLanguage, acceptedWordIds, manualPairs, standaloneWords),
+          BulkUploadConfirmRequest(
+            sourceLanguage,
+            targetLanguage,
+            acceptedWordIds,
+            selectedTranslations,
+            manualPairs,
+            standaloneWords,
+          ),
         )
       )
     )
