@@ -87,7 +87,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/{id}/translations/{translationId}",
               "/api/words/{id}/tags/{tagId}",
               "/api/words/{id}/tags/{tagId}/translations/{translationWordId}",
-              "/api/words/tags/{tagId}/bulk-upload",
+              "/api/words/tags/{tagId}/bulk-upload/preview",
+              "/api/words/tags/{tagId}/bulk-upload/confirm",
               "/api/tags",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/copy",
@@ -218,11 +219,16 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/tags/{tagId}/translations/{translationWordId}") ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
-              // Scans an uploaded file's text for dictionary words in each of two languages and tags every match into
-              // one of the caller's own tags. 404 is the tag, for the reason every other write in this resource
-              // answers 404 for one. 429 is this endpoint's own rate-limit budget (`RateLimitKey.wordUpload`) — unlike
-              // every other write here, a single call can create and tag thousands of rows.
-              ("POST", "/api/words/tags/{tagId}/bulk-upload")                             ->
+              // Scans an uploaded file's text for dictionary words in each of two languages and answers the matches
+              // and unmatched tokens, writing nothing. 404 is the tag, for the reason every other write in this
+              // resource answers 404 for one, even though this call is read-only. 429 is this endpoint's own
+              // rate-limit budget (`RateLimitKey.wordUpload`), shared with confirm below — unlike every other write
+              // here, a single call can scan thousands of tokens.
+              ("POST", "/api/words/tags/{tagId}/bulk-upload/preview")                     ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
+              // Commits what the reader chose out of the preview: tags every accepted match and creates/links every
+              // manually paired word into the caller's own tag. Same 404/429 shape as preview, sharing its budget.
+              ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm")                     ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Listing tags takes no input, so it has no 400 to declare.
               ("GET", "/api/tags")                                                        -> Set(Ok, Unauthorized),
@@ -340,7 +346,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 171,
+          declared == 175,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and
@@ -360,8 +366,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/{slug}/plays/{playId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
-          // guest paths, plus the bulk word upload — the one non-auth write with a budget of its own, since a single
-          // call can create and tag thousands of rows.
+          // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,
+          // since a single confirm call can create and tag thousands of rows and preview shares its budget.
           describes(TooManyRequests) ==
             Set(
               ("POST", "/api/auth/signup"),
@@ -371,7 +377,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Both are anonymous and both write: one mints an account, the other hands out a session.
               ("POST", "/api/guest"),
               ("POST", "/api/guest/claim"),
-              ("POST", "/api/words/tags/{tagId}/bulk-upload"),
+              ("POST", "/api/words/tags/{tagId}/bulk-upload/preview"),
+              ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm"),
             ),
           describes(InternalServerError).isEmpty,
         )

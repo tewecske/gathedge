@@ -114,22 +114,49 @@ final case class TagResponse(tag: Tag, warning: Option[MessageRef]) derives Json
   */
 final case class PairSelectionResponse(warning: Option[MessageRef]) derives JsonCodec
 
-/** What a bulk upload asks: the file's raw text, and which two languages to scan it for.
+/** What a bulk upload preview asks: the file's raw text, and which two languages to scan it for.
   *
-  * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUpload]]
-  * tokenizes it and matches or creates whichever words it finds in each language, all filed under one tag in a single
-  * batch.
+  * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUploadPreview]]
+  * tokenizes it and matches whatever it finds in each language, writing nothing.
   */
-final case class BulkUploadWordsRequest(
+final case class BulkUploadPreviewRequest(
   content: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
 ) derives JsonCodec
 
-/** How many distinct words the upload matched or created and tagged. The tag's own name is not echoed back — the caller
+/** One word [[gathedge.backend.service.WordService.bulkUploadPreview]] found already in the dictionary, plus whichever
+  * of its translations the dictionary already has into the *other* of the two declared languages — shown so the reader
+  * can tell a genuine match from a coincidental substring before accepting it.
+  */
+final case class BulkUploadMatch(word: Word, translations: List[TranslationOption]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkUploadPreview]]'s answer: every match, and every token that matched neither
+  * language — the two lists the reader reviews before anything is written.
+  */
+final case class BulkUploadPreviewResponse(matched: List[BulkUploadMatch], unmatched: List[String]) derives JsonCodec
+
+/** One pair the reader linked by hand: an unmatched token they assigned to `sourceLanguage`, and one they assigned to
+  * `targetLanguage` — the two request-level languages [[gathedge.backend.service.WordService.bulkUploadConfirm]] was
+  * also given, so which language each side is in is never repeated per pair.
+  */
+final case class BulkUploadManualPair(sourceText: String, targetText: String) derives JsonCodec
+
+/** What a bulk upload confirms: which of the previewed matches to keep, and which unmatched tokens the reader linked by
+  * hand. `acceptedWordIds` names words only — [[gathedge.backend.service.WordService.bulkUploadConfirm]] re-derives
+  * which translations belong to each one rather than trusting a client-supplied list of translation ids.
+  */
+final case class BulkUploadConfirmRequest(
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+  acceptedWordIds: List[Long],
+  manualPairs: List[BulkUploadManualPair],
+) derives JsonCodec
+
+/** How many distinct words the confirm step tagged or created. The tag's own name is not echoed back — the caller
   * already knows it, from whichever tag it was collecting into.
   */
-final case class BulkUploadWordsResponse(addedCount: Int) derives JsonCodec
+final case class BulkUploadConfirmResponse(addedCount: Int) derives JsonCodec
 
 /** The columns `GET /api/words` will order by.
   *

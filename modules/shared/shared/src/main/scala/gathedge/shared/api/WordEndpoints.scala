@@ -3,8 +3,10 @@ package gathedge.shared.api
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AddTranslationRequest,
-  BulkUploadWordsRequest,
-  BulkUploadWordsResponse,
+  BulkUploadConfirmRequest,
+  BulkUploadConfirmResponse,
+  BulkUploadPreviewRequest,
+  BulkUploadPreviewResponse,
   CreateTagRequest,
   CreateWordRequest,
   PairSelectionResponse,
@@ -223,21 +225,37 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
-  /** Scans an uploaded file's free text for words already in the dictionary, in each of the two languages named, and
-    * tags every match — creating whichever tokens are not there yet — into one of the caller's own tags. One batch
-    * write rather than "ensure and attach" per word, since a caller uploading a file expects one outcome for the whole
-    * of it.
+  /** Scans an uploaded file's free text for words already in the dictionary, in each of the two languages named —
+    * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers every match, with its known
+    * translations into the other language, plus every token that matched neither. '''Writes nothing''': this is the
+    * reader's chance to review before [[bulkUploadConfirm]] commits any of it.
     *
     * 404 is the tag: whoever's it is, or whether it exists at all, is not something a caller may learn by trying — the
-    * same rule every other write in this file follows. 429 is this endpoint's own budget (`RateLimitKey.wordUpload`):
-    * unlike every other write here, a single call can create and tag up to `WordService.maxBulkUploadTokens` words at
-    * once.
+    * same rule every other write in this file follows, even though this call writes nothing itself. 429 is this
+    * endpoint's own budget (`RateLimitKey.wordUpload`), shared with [[bulkUploadConfirm]]: unlike every other call
+    * here, a single one can scan up to `WordService.maxBulkUploadTokens` tokens at once.
     */
-  val bulkUpload = {
-    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload")
-      .in[BulkUploadWordsRequest]
+  val bulkUploadPreview = {
+    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload" / "preview")
+      .in[BulkUploadPreviewRequest]
       .withCodecError
-      .out[BulkUploadWordsResponse]
+      .out[BulkUploadPreviewResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
+  }
+
+  /** Commits what the reader chose out of a [[bulkUploadPreview]]: tags every accepted matched word (marking its known
+    * translations as practice pairs), and for every manually linked pair, creates whichever side the dictionary does
+    * not have yet, links them as a translation, and tags and marks both — into one of the caller's own tags. One batch
+    * write rather than "ensure and attach" per word, since a caller confirming a review expects one outcome for the
+    * whole of it.
+    *
+    * 404 and 429 follow [[bulkUploadPreview]]'s own rules exactly, sharing its rate-limit budget.
+    */
+  val bulkUploadConfirm = {
+    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload" / "confirm")
+      .in[BulkUploadConfirmRequest]
+      .withCodecError
+      .out[BulkUploadConfirmResponse]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
   }
 
@@ -257,7 +275,8 @@ object WordEndpoints {
       untagWord,
       selectPair,
       deselectPair,
-      bulkUpload,
+      bulkUploadPreview,
+      bulkUploadConfirm,
     )
   }
 

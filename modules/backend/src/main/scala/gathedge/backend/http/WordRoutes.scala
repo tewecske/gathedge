@@ -5,8 +5,9 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
-  BulkUploadWordsRequest,
-  BulkUploadWordsResponse,
+  BulkUploadConfirmRequest,
+  BulkUploadConfirmResponse,
+  BulkUploadPreviewRequest,
   CreateTagRequest,
   CreateWordRequest,
   Paging,
@@ -178,13 +179,32 @@ object WordRoutes {
     )
   }
 
-  private val bulkUploadRoute = {
-    WordEndpoints.bulkUpload.implementHandler(
-      handler { (tagId: Long, body: BulkUploadWordsRequest) =>
+  private val bulkUploadPreviewRoute = {
+    WordEndpoints.bulkUploadPreview.implementHandler(
+      handler { (tagId: Long, body: BulkUploadPreviewRequest) =>
         userId.flatMap(id => {
           WordService
-            .bulkUpload(tagId, body.content, body.sourceLanguage, body.targetLanguage, id)
-            .map(BulkUploadWordsResponse.apply)
+            .bulkUploadPreview(tagId, body.content, body.sourceLanguage, body.targetLanguage, id)
+            .mapError(ApiFailures.bulkUpload)
+        })
+      }
+    )
+  }
+
+  private val bulkUploadConfirmRoute = {
+    WordEndpoints.bulkUploadConfirm.implementHandler(
+      handler { (tagId: Long, body: BulkUploadConfirmRequest) =>
+        userId.flatMap(id => {
+          WordService
+            .bulkUploadConfirm(
+              tagId,
+              body.sourceLanguage,
+              body.targetLanguage,
+              body.acceptedWordIds,
+              body.manualPairs,
+              id,
+            )
+            .map(BulkUploadConfirmResponse.apply)
             .mapError(ApiFailures.bulkUpload)
         })
       }
@@ -209,7 +229,8 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
-      bulkUploadRoute,
+      bulkUploadPreviewRoute,
+      bulkUploadConfirmRoute,
     ) @@ RouteSupport.authenticated
   }
 

@@ -5,6 +5,9 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, Tag, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkUploadConfirmRequest,
+  BulkUploadConfirmResponse,
+  BulkUploadManualPair,
   CreateTagRequest,
   CreateWordRequest,
   NewTranslation,
@@ -112,5 +115,26 @@ object WordApiClient {
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
     run(executor(WordEndpoints.deselectPair(wordId, tagId, translationWordId)))
+  }
+
+  /** Commits what the reader chose out of a bulk-upload preview — the confirm half only, since the preview itself needs
+    * upload-progress reporting `EndpointClient` has no hook for, and speaks to its endpoint directly
+    * (`BulkUploadDialog`).
+    */
+  def bulkUploadConfirm(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    acceptedWordIds: List[Long],
+    manualPairs: List[BulkUploadManualPair],
+  ): EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
+    run(
+      executor(
+        WordEndpoints.bulkUploadConfirm(
+          tagId,
+          BulkUploadConfirmRequest(sourceLanguage, targetLanguage, acceptedWordIds, manualPairs),
+        )
+      )
+    )
   }
 }

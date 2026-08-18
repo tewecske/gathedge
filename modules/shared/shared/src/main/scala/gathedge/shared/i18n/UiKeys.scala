@@ -554,6 +554,43 @@ object UiKeys {
     */
   val wordsBulkUploadResult: String = pluralKey("ui.words.bulkUpload.result")
 
+  // The review step: what a preview found, before anything is written. See `BulkUploadDialog.Phase.ReviewMatched`.
+
+  val wordsBulkUploadMatchedHeading: String   = key("ui.words.bulkUpload.matchedHeading")
+  val wordsBulkUploadAcceptAll: String        = key("ui.words.bulkUpload.acceptAll")
+  val wordsBulkUploadDeclineAll: String       = key("ui.words.bulkUpload.declineAll")
+  val wordsBulkUploadNoTranslation: String    = key("ui.words.bulkUpload.noTranslation")
+  val wordsBulkUploadUnmatchedHeading: String = key("ui.words.bulkUpload.unmatchedHeading")
+  val wordsBulkUploadLanguageSkip: String     = key("ui.words.bulkUpload.languageSkip")
+  val wordsBulkUploadNext: String             = key("ui.words.bulkUpload.next")
+
+  /** The matched list's two subgroups — a word with a known translation is one click away from done; a word with none
+    * needs a look before the reader accepts it.
+    */
+  val wordsBulkUploadMatchedWithTranslationHeading: String    =
+    key("ui.words.bulkUpload.matchedWithTranslationHeading")
+  val wordsBulkUploadMatchedWithoutTranslationHeading: String =
+    key("ui.words.bulkUpload.matchedWithoutTranslationHeading")
+  val wordsBulkUploadAcceptAllWithTranslation: String         = key("ui.words.bulkUpload.acceptAllWithTranslation")
+  val wordsBulkUploadDeclineAllWithTranslation: String        = key("ui.words.bulkUpload.declineAllWithTranslation")
+  val wordsBulkUploadAcceptAllWithoutTranslation: String      = key("ui.words.bulkUpload.acceptAllWithoutTranslation")
+  val wordsBulkUploadDeclineAllWithoutTranslation: String     = key("ui.words.bulkUpload.declineAllWithoutTranslation")
+
+  /** Badges on a matched row: the word itself always came from the upload; a translation next to it came from the
+    * dictionary and may never have appeared in the uploaded file at all.
+    */
+  val wordsBulkUploadFromUpload: String     = key("ui.words.bulkUpload.fromUpload")
+  val wordsBulkUploadFromDictionary: String = key("ui.words.bulkUpload.fromDictionary")
+
+  // The manual-matching step: unmatched tokens the reader assigned a language to, linked by hand. See
+  // `BulkUploadDialog.Phase.ReviewManual`.
+
+  val wordsBulkUploadManualHeading: String = key("ui.words.bulkUpload.manualHeading")
+  val wordsBulkUploadManualHint: String    = key("ui.words.bulkUpload.manualHint")
+  val wordsBulkUploadPairedHeading: String = key("ui.words.bulkUpload.pairedHeading")
+  val wordsBulkUploadBack: String          = key("ui.words.bulkUpload.back")
+  val wordsBulkUploadConfirmButton: String = key("ui.words.bulkUpload.confirmButton")
+
   val wordDetailTranslations: String      = key("ui.word.translations")
   val wordDetailTags: String              = key("ui.word.tags")
   val wordDetailNoTranslations: String    = key("ui.word.noTranslations")

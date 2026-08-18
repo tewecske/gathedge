@@ -5,6 +5,9 @@ import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, Wor
 import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
+  BulkUploadManualPair,
+  BulkUploadMatch,
+  BulkUploadPreviewResponse,
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
@@ -46,10 +49,10 @@ enum WordFailure {
   case PairQuotaExceeded(limit: Int)
 }
 
-/** [[WordService.bulkUpload]]'s own failure surface — separate from [[WordFailure]] because it needs a status
-  * ([[gathedge.shared.api.ApiFailure.TooManyRequests]]) nothing else in this file raises, and mirrors it rather than
-  * widening it for the reason recorded on `ApiFailures`: a shared mapping would force every other endpoint over
-  * [[WordFailure]] to describe a 429 it cannot produce.
+/** [[WordService.bulkUploadPreview]]/[[WordService.bulkUploadConfirm]]'s shared failure surface — separate from
+  * [[WordFailure]] because it needs a status ([[gathedge.shared.api.ApiFailure.TooManyRequests]]) nothing else in this
+  * file raises, and mirrors it rather than widening it for the reason recorded on `ApiFailures`: a shared mapping would
+  * force every other endpoint over [[WordFailure]] to describe a 429 it cannot produce.
   */
 enum BulkUploadFailure {
   case TagNotFound
@@ -139,21 +142,40 @@ trait WordService {
   /** Unmarks it. Both words keep the tag: taking a word out of a vocabulary is the tick's job. */
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
 
-  /** Scans `content` for words already in the dictionary — or not yet there — in each of `sourceLanguage` and
-    * `targetLanguage`, and tags every one of them into one of the caller's own tags, creating whichever tokens the
-    * dictionary does not have yet (the same "ensure" [[create]] does for a single word). Answers how many distinct
-    * words were matched or created and tagged.
+  /** Scans `content` for words already in the dictionary, in each of `sourceLanguage` and `targetLanguage` — matching
+    * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers what it found: every match,
+    * with whichever of its translations into the *other* declared language the dictionary already has, plus every token
+    * that matched neither. '''Writes nothing''': this is the reader's chance to see what an upload would do before any
+    * of it happens, since matching a whole file's worth of substrings unsupervised turned dictionary pollution into the
+    * ordinary case.
     *
-    * Unlike every other write in this file, a single call here can touch thousands of rows, so it carries its own
+    * Unlike every other read in this file, a single call here can scan thousands of tokens, so it carries its own
     * rate-limit budget ([[gathedge.backend.service.RateLimitKey.wordUpload]]) and its own size/token caps
-    * ([[WordService.maxBulkUploadBytes]], [[WordService.maxBulkUploadTokens]]) — neither tag membership nor dictionary
-    * creation is otherwise quota-gated (see the note on [[create]]).
+    * ([[WordService.maxBulkUploadBytes]], [[WordService.maxBulkUploadTokens]]), shared with [[bulkUploadConfirm]].
     */
-  def bulkUpload(
+  def bulkUploadPreview(
     tagId: Long,
     content: String,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, BulkUploadPreviewResponse]
+
+  /** The write [[bulkUploadPreview]] only previews: tags every accepted matched word (and marks its known translations
+    * into the other language as practice pairs), and for every manually paired token — one the reader assigned a
+    * language and linked to one on the other side themselves — creates both words if the dictionary does not have them
+    * yet (the same "ensure" [[create]] does for a single word), links them as a translation, and tags and marks both.
+    * Answers how many distinct words were touched.
+    *
+    * Neither tag membership nor dictionary creation is otherwise quota-gated (see the note on [[create]]), so this
+    * shares [[bulkUploadPreview]]'s rate-limit budget and token cap as the only thing bounding one call's size.
+    */
+  def bulkUploadConfirm(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    acceptedWordIds: List[Long],
+    manualPairs: List[BulkUploadManualPair],
     userId: Long,
   ): IO[BulkUploadFailure, Int]
 }
@@ -238,14 +260,27 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
 
-  def bulkUpload(
+  def bulkUploadPreview(
     tagId: Long,
     content: String,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     userId: Long,
-  ): ZIO[WordService, BulkUploadFailure, Int] =
-    ZIO.serviceWithZIO[WordService](_.bulkUpload(tagId, content, sourceLanguage, targetLanguage, userId))
+  ): ZIO[WordService, BulkUploadFailure, BulkUploadPreviewResponse] =
+    ZIO.serviceWithZIO[WordService](_.bulkUploadPreview(tagId, content, sourceLanguage, targetLanguage, userId))
+
+  def bulkUploadConfirm(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    acceptedWordIds: List[Long],
+    manualPairs: List[BulkUploadManualPair],
+    userId: Long,
+  ): ZIO[WordService, BulkUploadFailure, Int] = {
+    ZIO.serviceWithZIO[WordService](
+      _.bulkUploadConfirm(tagId, sourceLanguage, targetLanguage, acceptedWordIds, manualPairs, userId)
+    )
+  }
 
   val live: URLayer[WordRepository & AppConfig & RateLimiter, WordService] = {
     ZLayer.fromFunction((repo: WordRepository, config: AppConfig, limiter: RateLimiter) =>
@@ -799,29 +834,12 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     bulkUploadTokenPattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
   }
 
-  /** Every token already in the dictionary for `language`, plus one freshly created for every token that was not — the
-    * same "ensure" [[create]] does for a single word. [[ensure]] validates each token and is skipped rather than failed
-    * on the rare one it refuses (empty after trimming, too long), so one bad token cannot sink the whole upload.
+  /** Checked at the top of both [[bulkUploadPreview]] and [[bulkUploadConfirm]]: one shared rate-limit budget (a full
+    * upload is a preview call and a confirm call, so a five-attempt window covers two or three whole uploads) and the
+    * same `TagNotFound` a caller of any other tag-scoped write here gets.
     */
-  private def matchOrCreate(language: WordLanguage, tokens: List[String], userId: Long): UIO[List[WordRow]] = {
-    for {
-      existing    <- repo.findWordsByKeys(WordLanguage.code(language), tokens).orDie
-      matchedNorms = existing.map(_.textNorm).toSet
-      missing      = tokens.filterNot(matchedNorms)
-      created     <- ZIO.foreach(missing)(token => ensure(language, token, PartOfSpeech.Other, None, userId).either)
-    } yield existing ++ created.collect { case Right(row) => row }
-  }
-
-  def bulkUpload(
-    tagId: Long,
-    content: String,
-    sourceLanguage: WordLanguage,
-    targetLanguage: WordLanguage,
-    userId: Long,
-  ): IO[BulkUploadFailure, Int] = {
+  private def bulkUploadGuard(tagId: Long, userId: Long): IO[BulkUploadFailure, Unit] = {
     val rateLimitKey = RateLimitKey.wordUpload(userId)
-    val invalidFile  =
-      BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
     for {
       blocked <- limiter.isBlocked(rateLimitKey)
       _       <- ZIO.when(blocked) {
@@ -830,16 +848,124 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                  }
       _       <- limiter.recordFailure(rateLimitKey)
       _       <- requireOwnTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
-      trimmed  = content.trim
-      _       <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
-                   ZIO.fail(invalidFile)
-                 )
-      tokens   = tokenize(trimmed)
-      source  <- matchOrCreate(sourceLanguage, tokens, userId)
-      target  <- matchOrCreate(targetLanguage, tokens, userId)
-      ids      = (source ++ target).map(_.id).distinct
-      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _       <- ZIO.foreachDiscard(ids)(id => repo.tagWord(id, tagId, now).orDie)
-    } yield ids.size
+    } yield ()
+  }
+
+  /** The tokens already in the dictionary for `language`, and whatever is left. */
+  private def matchTokens(language: WordLanguage, tokens: List[String]): UIO[(List[WordRow], List[String])] = {
+    repo.findWordsByKeys(WordLanguage.code(language), tokens).orDie.map { existing =>
+      val matchedNorms = existing.map(_.textNorm).toSet
+      (existing, tokens.filterNot(matchedNorms))
+    }
+  }
+
+  /** Each word's existing translations into `language` — one batch query, the same [[WordRepository.translationsOf]]
+    * the listing itself reads, grouped back onto the word that owns them.
+    */
+  private def translationsInto(wordIds: List[Long], language: WordLanguage): UIO[Map[Long, List[TranslationOption]]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Map.empty)
+    else {
+      repo
+        .translationsOf(wordIds, WordLanguage.code(language))
+        .orDie
+        .map(
+          _.groupBy { case (edge, _) => edge.sourceWordId }.view
+            .mapValues(_.map { case (_, word) => TranslationOption(word.id, Word.display(toDomain(word))) })
+            .toMap
+        )
+    }
+  }
+
+  def bulkUploadPreview(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, BulkUploadPreviewResponse] = {
+    val invalidFile =
+      BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+    for {
+      _                         <- bulkUploadGuard(tagId, userId)
+      trimmed                    = content.trim
+      _                         <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
+                                     ZIO.fail(invalidFile)
+                                   )
+      tokens                     = tokenize(trimmed)
+      sourceMatched             <- matchTokens(sourceLanguage, tokens)
+      (sourceMatches, remaining) = sourceMatched
+      targetMatched             <- matchTokens(targetLanguage, remaining)
+      (targetMatches, unmatched) = targetMatched
+      sourceTranslations        <- translationsInto(sourceMatches.map(_.id), targetLanguage)
+      targetTranslations        <- translationsInto(targetMatches.map(_.id), sourceLanguage)
+      matched                    = {
+        sourceMatches.map(row => BulkUploadMatch(toDomain(row), sourceTranslations.getOrElse(row.id, Nil))) ++
+          targetMatches.map(row => BulkUploadMatch(toDomain(row), targetTranslations.getOrElse(row.id, Nil)))
+      }
+    } yield BulkUploadPreviewResponse(matched, unmatched)
+  }
+
+  /** Tags an accepted matched word, and marks every translation the dictionary already has for it into whichever of the
+    * two declared languages it is not itself in — the same pairs [[bulkUploadPreview]] showed alongside it. `pairInTag`
+    * tags the translation word too, so every id it touches is answered, not only `wordId` itself. Answers no ids for a
+    * word id that no longer exists (the rare race of a preview going stale), the same leniency [[matchTokens]]'s
+    * callers already have toward one bad entry not sinking the whole batch.
+    */
+  private def acceptMatch(
+    wordId: Long,
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    now: Long,
+  ): UIO[List[Long]] = {
+    repo.findWordById(wordId).orDie.flatMap {
+      case None       =>
+        ZIO.succeed(Nil)
+      case Some(word) =>
+        val other = if (word.language == WordLanguage.code(sourceLanguage)) targetLanguage else sourceLanguage
+        for {
+          _            <- repo.tagWord(wordId, tagId, now).orDie
+          translations <- repo.translationsOf(List(wordId), WordLanguage.code(other)).orDie
+          _            <- ZIO.foreachDiscard(translations) { case (_, target) => pairInTag(wordId, tagId, target.id) }
+        } yield wordId :: translations.map { case (_, target) => target.id }
+    }
+  }
+
+  /** Creates both sides of a manually paired word if the dictionary does not have them yet, links them as a translation
+    * (unless the caller already has, e.g. confirming the same upload twice), and tags and marks both — by reusing
+    * [[ensure]]/[[linkOrExisting]]/[[pairInTag]] exactly as [[create]] does for a single typed word. Leniently answers
+    * no ids for a pair either side of which fails validation, the same way a bad token in the old single-shot upload
+    * was dropped rather than failing the batch.
+    */
+  private def confirmManualPair(
+    pair: BulkUploadManualPair,
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): UIO[List[Long]] = {
+    (for {
+      sourceRow     <- ensure(sourceLanguage, pair.sourceText, PartOfSpeech.Other, None, userId)
+      linked        <- linkOrExisting(sourceRow, NewTranslation(targetLanguage, pair.targetText, None, None), userId)
+      (targetRow, _) = linked
+      _             <- pairInTag(sourceRow.id, tagId, targetRow.id)
+    } yield List(sourceRow.id, targetRow.id)).catchAll(_ => ZIO.succeed(Nil))
+  }
+
+  def bulkUploadConfirm(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    acceptedWordIds: List[Long],
+    manualPairs: List[BulkUploadManualPair],
+    userId: Long,
+  ): IO[BulkUploadFailure, Int] = {
+    for {
+      _        <- bulkUploadGuard(tagId, userId)
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      accepted <- ZIO.foreach(acceptedWordIds.distinct)(acceptMatch(_, tagId, sourceLanguage, targetLanguage, now))
+      manual   <- ZIO.foreach(manualPairs.distinct)(confirmManualPair(_, tagId, sourceLanguage, targetLanguage, userId))
+    } yield (accepted.flatten ++ manual.flatten).distinct.size
   }
 }
