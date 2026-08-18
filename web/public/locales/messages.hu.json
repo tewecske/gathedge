@@ -468,7 +468,7 @@
   "ui.words.bulkUpload.languageSkip": "Kihagyás",
   "ui.words.bulkUpload.next": "Tovább",
   "ui.words.bulkUpload.manualHeading": "Kézi párosítás",
-  "ui.words.bulkUpload.manualHint": "Kattints egy szóra mindkét oszlopban a párosításhoz.",
+  "ui.words.bulkUpload.manualHint": "Kattints egy szóra mindkét oszlopban a párosításhoz. Ami párosítatlan marad, önállóan is bekerül.",
   "ui.words.bulkUpload.pairedHeading": "Párosítva",
   "ui.words.bulkUpload.back": "Vissza",
   "ui.words.bulkUpload.confirmButton": "Megerősítés",

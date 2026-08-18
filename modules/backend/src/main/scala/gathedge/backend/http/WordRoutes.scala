@@ -202,6 +202,7 @@ object WordRoutes {
               body.targetLanguage,
               body.acceptedWordIds,
               body.manualPairs,
+              body.standaloneWords,
               id,
             )
             .map(BulkUploadConfirmResponse.apply)

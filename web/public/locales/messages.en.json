@@ -468,7 +468,7 @@
   "ui.words.bulkUpload.languageSkip": "Skip",
   "ui.words.bulkUpload.next": "Next",
   "ui.words.bulkUpload.manualHeading": "Match by hand",
-  "ui.words.bulkUpload.manualHint": "Click a word in each column to pair them.",
+  "ui.words.bulkUpload.manualHint": "Click a word in each column to pair them. Anything left unpaired is still added on its own.",
   "ui.words.bulkUpload.pairedHeading": "Paired",
   "ui.words.bulkUpload.back": "Back",
   "ui.words.bulkUpload.confirmButton": "Confirm",

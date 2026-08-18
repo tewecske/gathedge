@@ -8,6 +8,7 @@ import gathedge.shared.domain.{Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
   BulkUploadManualPair,
+  BulkUploadManualWord,
   BulkUploadMatch,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
@@ -254,8 +255,9 @@ final class BulkUploadDialog(
     confirmBus.emit(())
   }
 
-  /** Every id the reader's review actually touches: the matched words they kept checked, plus both sides of every pair
-    * they linked by hand. What they unchecked or never assigned a language to is simply never sent.
+  /** Every id the reader's review actually touches: the matched words they kept checked, both sides of every pair they
+    * linked by hand, and every unmatched token they assigned a language but never paired — imported standalone rather
+    * than dropped. What they unchecked or never assigned a language to is simply never sent.
     */
   private def confirmStream: EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
     confirmBus.events.flatMapSwitch { _ =>
@@ -265,8 +267,23 @@ final class BulkUploadDialog(
         targetLanguageVar.now(),
         acceptedVar.now().toList,
         manualPairsVar.now().map(BulkUploadManualPair.apply),
+        standaloneWordsNow(),
       )
     }
+  }
+
+  /** Unmatched tokens the reader assigned a language to but never clicked into a manual pair — see
+    * [[unpairedTokensSignal]] for the column-scoped version this mirrors, read here at confirm time instead of bound as
+    * a signal.
+    */
+  private def standaloneWordsNow(): List[BulkUploadManualWord] = {
+    val paired = manualPairsVar.now().flatMap { case (source, target) => List(source, target) }.toSet
+    assignedLanguageVar
+      .now()
+      .collect {
+        case (token, language) if !paired.contains(token) => BulkUploadManualWord(token, language)
+      }
+      .toList
   }
 
   /** A token clicked in either manual-matching column. The second click of a pair — one assigned `sourceLanguageVar`,
@@ -570,11 +587,12 @@ final class BulkUploadDialog(
           span(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadNoTranslation))
         else {
           div(
-            cls    := "flex items-center gap-1 flex-wrap mt-0.5",
+            cls := "flex items-center gap-1 flex-wrap mt-0.5",
             span(cls := "text-xs opacity-70", "→ " + m.translations.map(_.text).mkString(", ")),
             span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromDictionary)),
           )
-        }),
+        },
+      ),
     )
   }
 
@@ -590,25 +608,44 @@ final class BulkUploadDialog(
   }
 
   private def renderUnmatchedRow(token: String): HtmlElement = {
+    val groupName = s"unmatched-lang-$token"
     div(
       cls := "flex items-center justify-between gap-2",
       span(cls := "text-sm", token),
-      select(
-        cls    := "select select-xs w-32",
-        option(value := "", I18n.t(UiKeys.wordsBulkUploadLanguageSkip)),
-        option(value := WordLanguage.code(sourceLanguageVar.now()), Labels.language(sourceLanguageVar.now())),
-        option(value := WordLanguage.code(targetLanguageVar.now()), Labels.language(targetLanguageVar.now())),
-        controlled(
-          value <-- assignedLanguageVar.signal.map(_.get(token).map(WordLanguage.code).getOrElse("")),
-          onChange.mapToValue --> Observer[String] { code =>
-            assignedLanguageVar.update { assigned =>
-              WordLanguage.fromString(code) match {
-                case Some(language) => assigned.updated(token, language)
-                case None           => assigned - token
-              }
+      div(
+        cls    := "join",
+        renderLanguageRadio(groupName, token, None, I18n.t(UiKeys.wordsBulkUploadLanguageSkip)),
+        renderLanguageRadio(groupName, token, Some(sourceLanguageVar.now()), Labels.language(sourceLanguageVar.now())),
+        renderLanguageRadio(groupName, token, Some(targetLanguageVar.now()), Labels.language(targetLanguageVar.now())),
+      ),
+    )
+  }
+
+  /** One option in an unmatched token's language picker — a daisyUI `join` of btn-styled radio inputs rather than a
+    * dropdown, so assigning a language (or skipping) is one click. `None` is "skip": clicking it clears the token's
+    * assignment the same way picking `""` in the old `select` did.
+    */
+  private def renderLanguageRadio(
+    groupName: String,
+    token: String,
+    language: Option[WordLanguage],
+    label: String,
+  ): HtmlElement = {
+    input(
+      typ        := "radio",
+      cls        := "join-item btn btn-xs",
+      nameAttr   := groupName,
+      aria.label := label,
+      controlled(
+        checked <-- assignedLanguageVar.signal.map(_.get(token) == language),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          assignedLanguageVar.update { assigned =>
+            language match {
+              case Some(value) => assigned.updated(token, value)
+              case None        => assigned - token
             }
-          },
-        ),
+          }
+        },
       ),
     )
   }

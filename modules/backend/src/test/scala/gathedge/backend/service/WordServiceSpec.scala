@@ -4,7 +4,15 @@ import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
-import gathedge.shared.dto.{BulkUploadManualPair, CreateWordRequest, NewTranslation, Paging, TaggedPair, WordSort}
+import gathedge.shared.dto.{
+  BulkUploadManualPair,
+  BulkUploadManualWord,
+  CreateWordRequest,
+  NewTranslation,
+  Paging,
+  TaggedPair,
+  WordSort,
+}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import zio._
 import zio.test._
@@ -739,6 +747,20 @@ object WordServiceSpec extends ZIOSpecDefault {
           tagsAfter == tagsBefore,
         )
       },
+      test("a leading der/die/das merges into the noun that follows it as one token, only when German is asked for") {
+        for {
+          tag         <- createTag("upload", 1L)
+          germanSide  <- WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.De, WordLanguage.Hu, 1L)
+          neitherSide <-
+            WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.En, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // German is one of the two declared languages: "der" merges into "der tisch" rather than showing up as its
+          // own spurious token, and "neuwort" (no article) is unaffected.
+          germanSide.unmatched.toSet == Set("der tisch", "neuwort"),
+          // Neither declared language is German: no merging happens, so "der" and "tisch" are two separate tokens.
+          neitherSide.unmatched.toSet == Set("der", "tisch", "neuwort"),
+        )
+      },
       test("preview answers TagNotFound for somebody else's tag and one that does not exist") {
         for {
           tag    <- createTag("theirs", 1L)
@@ -776,8 +798,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("confirm answers TagNotFound for somebody else's tag and one that does not exist") {
         for {
           tag    <- createTag("theirs", 1L)
-          denied <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, 2L).either
-          absent <- WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, 1L).either
+          denied <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 2L).either
+          absent <- WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 1L).either
         } yield assertTrue(
           denied == Left(BulkUploadFailure.TagNotFound),
           absent == Left(BulkUploadFailure.TagNotFound),
@@ -789,7 +811,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           tag     <- createTag("upload", 1L)
           preview <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
           haus     = preview.matched.find(_.word.text == "Haus").get.word.id
-          added   <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, List(haus), Nil, 1L)
+          added   <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, List(haus), Nil, Nil, 1L)
           dePage  <- list(reader = Some(1L), tagId = Some(tag.id))
           huPage  <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
@@ -805,7 +827,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), 1L)
+          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
           dePage <- list(reader = Some(1L), tagId = Some(tag.id))
           huPage <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
@@ -820,21 +842,49 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          first  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), 1L)
+          first  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
           after1 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          second <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), 1L)
+          second <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
           after2 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
         } yield assertTrue(first == 2, second == 2, after1 == after2)
+      },
+      test("a manual pair's German side keeps the gender its article named, and is created as a noun") {
+        for {
+          tag    <- createTag("upload", 1L)
+          pair    = BulkUploadManualPair("der zzztisch", "zzzasztal")
+          _      <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, List(pair), Nil, 1L)
+          dePage <- list(reader = Some(1L), tagId = Some(tag.id))
+        } yield assertTrue(
+          dePage.items.map(_.word.text.toLowerCase) == List("zzztisch"),
+          dePage.items.head.word.gender.contains(Gender.Der),
+        )
+      },
+      test("a standalone word is created and tagged with no translation link") {
+        for {
+          tag    <- createTag("upload", 1L)
+          word    = BulkUploadManualWord("zzzlonewolf", WordLanguage.En)
+          before <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, List(word), 1L)
+          after  <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+          page   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.En, target = WordLanguage.De)
+        } yield assertTrue(
+          added == 1,
+          page.items.map(_.word.text.toLowerCase) == List("zzzlonewolf"),
+          page.items.head.pairs.isEmpty,
+          after == before,
+        )
       },
       test("the rate-limit budget is shared between preview and confirm") {
         for {
           tag     <- createTag("upload", 1L)
           warmup  <- ZIO.foreach(1 to RateLimiter.maxAttempts)(n => {
-                       if (n % 2 == 0)
-                         WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, 1L).either
-                       else
+                       if (n % 2 == 0) {
+                         WordService
+                           .bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, 1L)
+                           .either
+                      } else
                          WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
-                    })
+                     })
           blocked <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
         } yield assertTrue(warmup.forall(_.isRight), blocked == Left(BulkUploadFailure.RateLimited))
       },

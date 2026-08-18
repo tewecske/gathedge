@@ -142,15 +142,22 @@ final case class BulkUploadPreviewResponse(matched: List[BulkUploadMatch], unmat
   */
 final case class BulkUploadManualPair(sourceText: String, targetText: String) derives JsonCodec
 
-/** What a bulk upload confirms: which of the previewed matches to keep, and which unmatched tokens the reader linked by
-  * hand. `acceptedWordIds` names words only — [[gathedge.backend.service.WordService.bulkUploadConfirm]] re-derives
-  * which translations belong to each one rather than trusting a client-supplied list of translation ids.
+/** An unmatched token the reader assigned a language but never paired with a translation — imported on its own, with no
+  * translation link, rather than dropped for want of a pair.
+  */
+final case class BulkUploadManualWord(text: String, language: WordLanguage) derives JsonCodec
+
+/** What a bulk upload confirms: which of the previewed matches to keep, which unmatched tokens the reader linked by
+  * hand, and which unmatched tokens they assigned a language but left unpaired. `acceptedWordIds` names words only —
+  * [[gathedge.backend.service.WordService.bulkUploadConfirm]] re-derives which translations belong to each one rather
+  * than trusting a client-supplied list of translation ids.
   */
 final case class BulkUploadConfirmRequest(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   acceptedWordIds: List[Long],
   manualPairs: List[BulkUploadManualPair],
+  standaloneWords: List[BulkUploadManualWord],
 ) derives JsonCodec
 
 /** How many distinct words the confirm step tagged or created. The tag's own name is not echoed back — the caller

@@ -6,6 +6,7 @@ import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
+  BulkUploadManualWord,
   BulkUploadMatch,
   BulkUploadPreviewResponse,
   CreateWordRequest,
@@ -176,6 +177,7 @@ trait WordService {
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
     manualPairs: List[BulkUploadManualPair],
+    standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): IO[BulkUploadFailure, Int]
 }
@@ -275,10 +277,11 @@ object WordService {
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
     manualPairs: List[BulkUploadManualPair],
+    standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): ZIO[WordService, BulkUploadFailure, Int] = {
     ZIO.serviceWithZIO[WordService](
-      _.bulkUploadConfirm(tagId, sourceLanguage, targetLanguage, acceptedWordIds, manualPairs, userId)
+      _.bulkUploadConfirm(tagId, sourceLanguage, targetLanguage, acceptedWordIds, manualPairs, standaloneWords, userId)
     )
   }
 
@@ -830,8 +833,28 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     */
   private val bulkUploadTokenPattern = """\p{L}[\p{L}'’-]*""".r
 
-  private def tokenize(content: String): List[String] = {
-    bulkUploadTokenPattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
+  /** Same as [[bulkUploadTokenPattern]], but a leading `der`/`die`/`das` immediately before a word is consumed together
+    * with it as one token — the merged alternative comes first so `findAllIn` prefers it over matching the article
+    * alone. Used only when German is one of the upload's two declared languages (see [[bulkUploadPreview]]), since
+    * "die" and "das" are ordinary English/other-language words otherwise.
+    */
+  private val bulkUploadGermanTokenPattern =
+    """(?i)\b(?:der|die|das)\b\s+\p{L}[\p{L}'’-]*|\p{L}[\p{L}'’-]*""".r
+
+  private def tokenize(content: String, mergeGermanArticles: Boolean): List[String] = {
+    val pattern = if (mergeGermanArticles) bulkUploadGermanTokenPattern else bulkUploadTokenPattern
+    pattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
+  }
+
+  /** Splits a token's leading `der`/`die`/`das` off, answering the bare word and the gender it names — what
+    * [[matchTokens]] looks the word up by, and what [[confirmManualPair]]/[[confirmStandaloneWord]] create it with. A
+    * token with no such prefix (or a lone article with nothing after it) passes through unchanged.
+    */
+  private def stripArticle(token: String): (String, Option[Gender]) = {
+    token.trim.split("\\s+", 2) match {
+      case Array(article, rest) if Gender.fromString(article).isDefined => (rest, Gender.fromString(article))
+      case _                                                            => (token, None)
+    }
   }
 
   /** Checked at the top of both [[bulkUploadPreview]] and [[bulkUploadConfirm]]: one shared rate-limit budget (a full
@@ -851,11 +874,15 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     } yield ()
   }
 
-  /** The tokens already in the dictionary for `language`, and whatever is left. */
+  /** The tokens already in the dictionary for `language`, and whatever is left. Looks each token up by its bare word
+    * (see [[stripArticle]]) since `textNorm` never carries an article, but keeps the original token — article and all —
+    * in the unmatched remainder, so a reader still sees `"der tisch"` rather than a bare `"tisch"`.
+    */
   private def matchTokens(language: WordLanguage, tokens: List[String]): UIO[(List[WordRow], List[String])] = {
-    repo.findWordsByKeys(WordLanguage.code(language), tokens).orDie.map { existing =>
+    val keyed = tokens.map(token => token -> stripArticle(token)._1)
+    repo.findWordsByKeys(WordLanguage.code(language), keyed.map(_._2)).orDie.map { existing =>
       val matchedNorms = existing.map(_.textNorm).toSet
-      (existing, tokens.filterNot(matchedNorms))
+      (existing, keyed.collect { case (display, bare) if !matchedNorms.contains(bare) => display })
     }
   }
 
@@ -892,7 +919,8 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       _                         <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
                                      ZIO.fail(invalidFile)
                                    )
-      tokens                     = tokenize(trimmed)
+      mergeGermanArticles        = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
+      tokens                     = tokenize(trimmed, mergeGermanArticles)
       sourceMatched             <- matchTokens(sourceLanguage, tokens)
       (sourceMatches, remaining) = sourceMatched
       targetMatched             <- matchTokens(targetLanguage, remaining)
@@ -934,9 +962,10 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
 
   /** Creates both sides of a manually paired word if the dictionary does not have them yet, links them as a translation
     * (unless the caller already has, e.g. confirming the same upload twice), and tags and marks both — by reusing
-    * [[ensure]]/[[linkOrExisting]]/[[pairInTag]] exactly as [[create]] does for a single typed word. Leniently answers
-    * no ids for a pair either side of which fails validation, the same way a bad token in the old single-shot upload
-    * was dropped rather than failing the batch.
+    * [[ensure]]/[[linkOrExisting]]/[[pairInTag]] exactly as [[create]] does for a single typed word. Whichever side is
+    * German has its leading article stripped (see [[stripArticle]]) and created as a noun carrying that gender; the
+    * other side is created exactly as typed. Leniently answers no ids for a pair either side of which fails validation,
+    * the same way a bad token in the old single-shot upload was dropped rather than failing the batch.
     */
   private def confirmManualPair(
     pair: BulkUploadManualPair,
@@ -945,12 +974,32 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     targetLanguage: WordLanguage,
     userId: Long,
   ): UIO[List[Long]] = {
+    val (sourceText, sourceGender) =
+      if (sourceLanguage == WordLanguage.De) stripArticle(pair.sourceText) else (pair.sourceText, None)
+    val (targetText, targetGender) =
+      if (targetLanguage == WordLanguage.De) stripArticle(pair.targetText) else (pair.targetText, None)
+    val sourcePos                  = if (sourceGender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
+    val targetPos                  = if (targetGender.isDefined) Some(PartOfSpeech.Noun) else None
     (for {
-      sourceRow     <- ensure(sourceLanguage, pair.sourceText, PartOfSpeech.Other, None, userId)
-      linked        <- linkOrExisting(sourceRow, NewTranslation(targetLanguage, pair.targetText, None, None), userId)
+      sourceRow     <- ensure(sourceLanguage, sourceText, sourcePos, sourceGender, userId)
+      linked        <- linkOrExisting(sourceRow, NewTranslation(targetLanguage, targetText, targetPos, targetGender), userId)
       (targetRow, _) = linked
       _             <- pairInTag(sourceRow.id, tagId, targetRow.id)
     } yield List(sourceRow.id, targetRow.id)).catchAll(_ => ZIO.succeed(Nil))
+  }
+
+  /** Creates an unmatched token the reader assigned a language to but never paired with a translation, and tags it — no
+    * translation link, unlike [[confirmManualPair]]. German gets the same article-stripping/noun-gender treatment.
+    * Leniently answers no ids on validation failure, the same as [[confirmManualPair]].
+    */
+  private def confirmStandaloneWord(word: BulkUploadManualWord, tagId: Long, userId: Long): UIO[List[Long]] = {
+    val (text, gender) = if (word.language == WordLanguage.De) stripArticle(word.text) else (word.text, None)
+    val pos            = if (gender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
+    (for {
+      row <- ensure(word.language, text, pos, gender, userId)
+      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _   <- repo.tagWord(row.id, tagId, now).orDie
+    } yield List(row.id)).catchAll(_ => ZIO.succeed(Nil))
   }
 
   def bulkUploadConfirm(
@@ -959,13 +1008,15 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     targetLanguage: WordLanguage,
     acceptedWordIds: List[Long],
     manualPairs: List[BulkUploadManualPair],
+    standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): IO[BulkUploadFailure, Int] = {
     for {
-      _        <- bulkUploadGuard(tagId, userId)
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      accepted <- ZIO.foreach(acceptedWordIds.distinct)(acceptMatch(_, tagId, sourceLanguage, targetLanguage, now))
-      manual   <- ZIO.foreach(manualPairs.distinct)(confirmManualPair(_, tagId, sourceLanguage, targetLanguage, userId))
-    } yield (accepted.flatten ++ manual.flatten).distinct.size
+      _          <- bulkUploadGuard(tagId, userId)
+      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      accepted   <- ZIO.foreach(acceptedWordIds.distinct)(acceptMatch(_, tagId, sourceLanguage, targetLanguage, now))
+      manual     <- ZIO.foreach(manualPairs.distinct)(confirmManualPair(_, tagId, sourceLanguage, targetLanguage, userId))
+      standalone <- ZIO.foreach(standaloneWords.distinct)(confirmStandaloneWord(_, tagId, userId))
+    } yield (accepted.flatten ++ manual.flatten ++ standalone.flatten).distinct.size
   }
 }

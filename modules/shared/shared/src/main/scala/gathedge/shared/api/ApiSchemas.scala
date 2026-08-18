@@ -24,6 +24,7 @@ import gathedge.shared.dto.{
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
   BulkUploadManualPair,
+  BulkUploadManualWord,
   BulkUploadMatch,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
@@ -153,6 +154,7 @@ object ApiSchemas {
   given Schema[BulkUploadPreviewRequest]  = DeriveSchema.gen[BulkUploadPreviewRequest]
   given Schema[BulkUploadPreviewResponse] = DeriveSchema.gen[BulkUploadPreviewResponse]
   given Schema[BulkUploadManualPair]      = DeriveSchema.gen[BulkUploadManualPair]
+  given Schema[BulkUploadManualWord]      = DeriveSchema.gen[BulkUploadManualWord]
   given Schema[BulkUploadConfirmRequest]  = DeriveSchema.gen[BulkUploadConfirmRequest]
   given Schema[BulkUploadConfirmResponse] = DeriveSchema.gen[BulkUploadConfirmResponse]
 
