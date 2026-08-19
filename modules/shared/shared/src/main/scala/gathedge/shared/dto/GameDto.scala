@@ -129,6 +129,24 @@ final case class GamePlayDetail(
   answers: List[GameAnswerResult],
 ) derives JsonCodec
 
+/** One row of `GET /api/games/plays/mine` (or a shared/admin equivalent): one play, with enough of its game's own
+  * identity (`gameSlug`/`gameName`) to render in a listing that spans more than one game — unlike [[GamePlaySummary]],
+  * which is already scoped to a single game by the endpoint's own path.
+  */
+final case class MyPlaySummary(
+  playId: Long,
+  gameSlug: String,
+  gameName: String,
+  score: Int,
+  maxScore: Int,
+  wordCount: Int,
+  startedAt: Long,
+  finishedAt: Option[Long],
+) derives JsonCodec
+
+/** One page of a cross-game play history — the player's own, a viewer's shared read, or an admin's. */
+final case class MyPlayPage(items: List[MyPlaySummary], total: Long) derives JsonCodec
+
 /** The columns `GET /api/games/{slug}/plays` will order by. Player is absent: filtering by it is a substring match on
   * `users.email`, but ordering by it would need a join this listing deliberately avoids (see `GameRepository`'s
   * `matchingPlays` doc comment) — the same split the admin user list's sign-in badge draws between "shown/filterable"

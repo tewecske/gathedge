@@ -271,3 +271,22 @@ final case class GamePlayWordRow(id: Long, playId: Long, wordId: Long, translati
   * own sample the way [[GamePlayWordRow]] does for a `randomizeEachPlay = true` game.
   */
 final case class GameWordPoolRow(id: Long, gameId: Long, wordId: Long, translationWordId: Long)
+
+/** A progress-sharing code: the bearer credential a sharer mints and hands to whoever they want reading their game
+  * history. The `code` column *is* the credential, exactly like [[GuestClaimCodeRow.code]] — never logged — and the
+  * same reissue/revoke shape: minting is idempotent (the same code comes back until revoked) and redeeming does not
+  * consume it, so more than one viewer may redeem the same code.
+  */
+final case class ProgressShareCodeRow(
+  id: Long,
+  userId: Long,
+  code: String,
+  createdAt: Long,
+  lastUsedAt: Option[Long],
+  revokedAt: Option[Long],
+)
+
+/** One (sharer, viewer) grant: `viewerUserId` may read `sharerUserId`'s game history, subject to each game's own
+  * `trackResults` flag — the same rule a game's own owner is bound by.
+  */
+final case class ProgressShareRow(id: Long, sharerUserId: Long, viewerUserId: Long, createdAt: Long)

@@ -38,6 +38,26 @@ object GamesPage {
               )
             )
           }),
+          child.maybe <-- AppState.isSignedInSignal.map(signedIn => {
+            Option.when(signedIn)(
+              gameCard(
+                title = I18n.t(UiKeys.gamesMyPlaysTitle),
+                body = I18n.t(UiKeys.gamesMyPlaysBody),
+                playLabel = I18n.t(UiKeys.gamesMyPlaysOpen),
+                target = Page.MyPlays,
+              )
+            )
+          }),
+          child.maybe <-- AppState.isSignedInSignal.map(signedIn => {
+            Option.when(signedIn)(
+              gameCard(
+                title = I18n.t(UiKeys.gamesSharedProgressTitle),
+                body = I18n.t(UiKeys.gamesSharedProgressBody),
+                playLabel = I18n.t(UiKeys.gamesSharedProgressOpen),
+                target = Page.SharedProgress,
+              )
+            )
+          }),
         ),
       ),
     )

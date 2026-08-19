@@ -677,6 +677,16 @@ object UiKeys {
   val gamesMyGamesBody: String  = key("ui.games.myGames.body")
   val gamesMyGamesOpen: String  = key("ui.games.myGames.open")
 
+  /** The "my play history" card — a link to [[myPlaysTitle]]'s table, shown only when signed in. */
+  val gamesMyPlaysTitle: String = key("ui.games.myPlays.title")
+  val gamesMyPlaysBody: String  = key("ui.games.myPlays.body")
+  val gamesMyPlaysOpen: String  = key("ui.games.myPlays.open")
+
+  /** The "shared with me" card — a link to [[sharedProgressTitle]], shown only when signed in. */
+  val gamesSharedProgressTitle: String = key("ui.games.sharedProgress.title")
+  val gamesSharedProgressBody: String  = key("ui.games.sharedProgress.body")
+  val gamesSharedProgressOpen: String  = key("ui.games.sharedProgress.open")
+
   // -- My games --------------------------------------------------------------------------------
 
   /** The signed-in owner's own games: name, tags, language pair, and how many times each was played. */
@@ -793,6 +803,47 @@ object UiKeys {
   val gameResultsModalPrev: String    = key("ui.gameResults.modal.prev")
   val gameResultsModalNext: String    = key("ui.gameResults.modal.next")
   val gameResultsModalLoading: String = key("ui.gameResults.modal.loading")
+
+  // -- My play history ---------------------------------------------------------------------------
+  // The signed-in caller's own play history across every game — `GET /api/games/plays/mine`. Never gated by
+  // `trackResults`, unlike the owner-facing listing above.
+
+  val myPlaysTitle: String      = key("ui.myPlays.title")
+  val myPlaysEmpty: String      = key("ui.myPlays.empty")
+  val myPlaysGameCol: String    = key("ui.myPlays.gameCol")
+  val myPlaysScoreCol: String   = key("ui.myPlays.scoreCol")
+  val myPlaysWordsCol: String   = key("ui.myPlays.wordsCol")
+  val myPlaysStartedCol: String = key("ui.myPlays.startedCol")
+
+  // -- Progress sharing --------------------------------------------------------------------------
+  // Letting one account read another's game history, on either side's own say-so — a "sharer" whose plays become
+  // visible and a "viewer" who may read them, joined by a share code, never a role like "parent" or "teacher".
+
+  /** The share-my-progress card on the settings page: mint/display the caller's own code, and the list of accounts it
+    * has been redeemed by. Mirrors `guestBannerTitle`/`guestCodeOnce` etc — the same shape as the guest transfer code,
+    * minus the "once" framing, since this code is meant to be shared with more than one person.
+    */
+  val settingsShareTitle: String        = key("ui.settings.share.title")
+  val settingsShareHint: String         = key("ui.settings.share.hint")
+  val settingsShareGetCode: String      = key("ui.settings.share.getCode")
+  val settingsShareCopy: String         = key("ui.settings.share.copy")
+  val settingsShareCopied: String       = key("ui.settings.share.copied")
+  val settingsShareViewersTitle: String = key("ui.settings.share.viewersTitle")
+  val settingsShareViewersEmpty: String = key("ui.settings.share.viewersEmpty")
+  val settingsShareRevoke: String       = key("ui.settings.share.revoke")
+
+  /** The viewer-facing page: redeeming somebody else's code, and the list of accounts already sharing with the caller.
+    */
+  val sharedProgressTitle: String             = key("ui.sharedProgress.title")
+  val sharedProgressRedeemLabel: String       = key("ui.sharedProgress.redeemLabel")
+  val sharedProgressRedeemPlaceholder: String = key("ui.sharedProgress.redeemPlaceholder")
+  val sharedProgressRedeemButton: String      = key("ui.sharedProgress.redeemButton")
+  val sharedProgressRedeemSuccess: String     = key("ui.sharedProgress.redeemSuccess")
+  val sharedProgressListTitle: String         = key("ui.sharedProgress.listTitle")
+  val sharedProgressListEmpty: String         = key("ui.sharedProgress.listEmpty")
+  val sharedProgressViewButton: String        = key("ui.sharedProgress.viewButton")
+  val sharedProgressGuestBadge: String        = key("ui.sharedProgress.guestBadge")
+  val sharedProgressHistoryTitle: String      = key("ui.sharedProgress.historyTitle")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

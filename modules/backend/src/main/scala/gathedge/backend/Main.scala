@@ -13,12 +13,21 @@ import gathedge.backend.db.{
   MetricsRepository,
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
+  ProgressShareRepository,
   SessionRepository,
   UsageEventRepository,
   UserRepository,
   WordRepository,
 }
-import gathedge.backend.http.{AdminRoutes, AuthRoutes, DocsRoutes, GameRoutes, RouteSupport, WordRoutes}
+import gathedge.backend.http.{
+  AdminRoutes,
+  AuthRoutes,
+  DocsRoutes,
+  GameRoutes,
+  ProgressShareRoutes,
+  RouteSupport,
+  WordRoutes,
+}
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
 import gathedge.backend.service.{
@@ -32,6 +41,7 @@ import gathedge.backend.service.{
   GameService,
   GameWordList,
   OAuthClients,
+  ProgressShareService,
   RateLimiter,
   SessionReaper,
   SystemService,
@@ -54,8 +64,10 @@ object Main extends ZIOAppDefault {
   }
 
   private val allRoutes = {
-    val combined =
-      AuthRoutes.routes ++ WordRoutes.routes ++ AdminRoutes.routes ++ GameRoutes.routes ++ DocsRoutes.routes
+    val combined = {
+      AuthRoutes.routes ++ WordRoutes.routes ++ AdminRoutes.routes ++ GameRoutes.routes ++
+        ProgressShareRoutes.routes ++ DocsRoutes.routes
+    }
     // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and one of this API's URLs carries a
     // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
     RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging @@ RouteSupport.usageTracking
@@ -96,6 +108,7 @@ object Main extends ZIOAppDefault {
     UsageEventRepository.live,
     MetricsRepository.live,
     GuestClaimCodeRepository.live,
+    ProgressShareRepository.live,
     WordRepository.live,
     GameRepository.live,
     GameWordList.live,
@@ -113,6 +126,7 @@ object Main extends ZIOAppDefault {
     CaptchaService.live,
     WordService.live,
     GameService.live,
+    ProgressShareService.live,
     AdminService.live,
     SystemService.live,
     UsageTracker.live,

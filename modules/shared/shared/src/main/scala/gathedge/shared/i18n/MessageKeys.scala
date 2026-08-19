@@ -141,6 +141,15 @@ object MessageKeys {
   val guestCodeInvalid: String = key("guest.codeInvalid")
   val guestNotGuest: String    = key("guest.notGuest")
 
+  // -- Progress sharing --------------------------------------------------------------------------
+  // Letting one account read another's game history, on either side's own say-so. `codeInvalid`
+  // answers an unknown or revoked share code alike, the same reasoning `guestCodeInvalid` follows.
+
+  val progressShareCodeInvalid: String         = key("progressShares.codeInvalid")
+  val progressShareCannotShareWithSelf: String = key("progressShares.cannotShareWithSelf")
+  val progressShareAlreadyShared: String       = key("progressShares.alreadyShared")
+  val progressShareNotShared: String           = key("progressShares.notShared")
+
   // -- Responses built outside the endpoint codecs ----------------------------------------------
   // RouteSupport's aspects and the OAuth routes assemble `dto.ErrorResponse` by hand, and
   // ApiEndpoint.withCodecError turns an undecodable body into `malformedRequest`.

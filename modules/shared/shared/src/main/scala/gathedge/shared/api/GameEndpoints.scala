@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   MyGameSummary,
+  MyPlayPage,
   PlayStarted,
   RenameGameRequest,
   SubmitAnswerRequest,
@@ -45,6 +46,7 @@ object GameEndpoints {
   private val sortQuery     = HttpCodec.query[String]("sort").optional
   private val dirQuery      = HttpCodec.query[String]("dir").optional
   private val searchQuery   = HttpCodec.query[String]("q").optional
+  private val gameIdQuery   = HttpCodec.query[Long]("gameId").optional
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
@@ -171,10 +173,27 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
+  /** The caller's own play history across every game, most recently started first unless `sort` says otherwise — see
+    * `GameService.myPlays`. Unlike [[listPlays]] this is never gated by `trackResults`: it is always the caller's own
+    * data, the same reasoning [[results]] is never gated either.
+    */
+  val myPlays = {
+    Endpoint(Method.GET / "api" / "games" / "plays" / "mine")
+      .query(gameIdQuery)
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .withCodecError
+      .out[MyPlayPage]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(
     setup,
     setupWords,
     mine,
+    myPlays,
     create,
     get,
     rename,

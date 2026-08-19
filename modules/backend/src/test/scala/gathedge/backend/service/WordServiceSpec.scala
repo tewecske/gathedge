@@ -808,7 +808,9 @@ object WordServiceSpec extends ZIOSpecDefault {
           absent == Left(BulkUploadFailure.TagNotFound),
         )
       },
-      test("confirm tags an accepted matched word and marks its selected translation, leaving a declined one untouched") {
+      test(
+        "confirm tags an accepted matched word and marks its selected translation, leaving a declined one untouched"
+      ) {
         for {
           _        <- seed
           tag      <- createTag("upload", 1L)
@@ -868,7 +870,8 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
+          added  <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           dePage <- list(reader = Some(1L), tagId = Some(tag.id))
           huPage <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
@@ -883,9 +886,11 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag    <- createTag("upload", 1L)
           pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          first  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
+          first  <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           after1 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          second <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
+          second <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
           after2 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
         } yield assertTrue(first == 2, second == 2, after1 == after2)
       },
@@ -905,7 +910,8 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           tag   <- createTag("upload", 1L)
           word   = BulkUploadManualWord("die zzzblume", WordLanguage.De)
-          added <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
+          added <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
           page  <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.De, target = WordLanguage.En)
         } yield assertTrue(
           added == 1,
@@ -918,7 +924,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           tag    <- createTag("upload", 1L)
           word    = BulkUploadManualWord("zzzlonewolf", WordLanguage.En)
           before <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          added  <- WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
+          added  <-
+            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
           after  <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
           page   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.En, target = WordLanguage.De)
         } yield assertTrue(

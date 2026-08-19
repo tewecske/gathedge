@@ -3,10 +3,10 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, FormField}
+import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, FormField, PlayHistoryTable}
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.domain.User
-import gathedge.shared.dto.UpdateUserRequest
+import gathedge.shared.dto.{MyPlayPage, MyPlaySummary, UpdateUserRequest}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.{MessageKeys, MessageRef, UiKeys}
 import gathedge.shared.validation.Validation
@@ -88,6 +88,11 @@ private class AdminUserDetailPage(userId: Long) {
   // for a re-read rather than leaving the two views disagreeing.
   private val diagnostics = new AdminUserDiagnostics(userId, loadBus.writer)
 
+  // Closing the gap the games feature otherwise leaves in the admin screens: this account's own play history,
+  // narrowed to games whose owner turned on `trackResults` — the same rule that gates a game's own owner.
+  private val playsVar: Var[Option[List[MyPlaySummary]]] = Var(None)
+  private val playsReloadBus                             = new EventBus[Unit]()
+
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val saveStream   = saveBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
   private val deleteStream = deleteBus.events.filterWith(inFlightSignal.not)
@@ -107,6 +112,8 @@ private class AdminUserDetailPage(userId: Long) {
       // Same `distinct` for the same reason: the diagnostics own their own state and must survive a save.
       child.maybe <--
         userSignal.map(_.isDefined).distinct.map(Option.when(_)(diagnostics.render())),
+      child.maybe <--
+        userSignal.map(_.isDefined).distinct.map(Option.when(_)(renderPlays())),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.getUser(userId)) -->
         Observer[Either[ApiError, User]] {
           case Right(u)                       =>
@@ -121,6 +128,14 @@ private class AdminUserDetailPage(userId: Long) {
           case Left(err)                      =>
             errorVar.set(Some(err.message))
         },
+      playsReloadBus.events.flatMapSwitch(_ => AdminApiClient.userPlays(userId, pageSize = Some(100))) -->
+        Observer[Either[ApiError, MyPlayPage]] {
+          case Right(page) =>
+            playsVar.set(Some(page.items))
+          case Left(_)     =>
+            playsVar.set(Some(Nil))
+        },
+      onMountCallback(_ => playsReloadBus.emit(())),
       saveStream -->
         Observer[Option[UpdateUserRequest]] {
           case None    =>
@@ -167,6 +182,22 @@ private class AdminUserDetailPage(userId: Long) {
 
   private def renderNotFound(): HtmlElement = {
     Alert.warning(I18n.t(UiKeys.adminUserGone))
+  }
+
+  private def renderPlays(): HtmlElement = {
+    div(
+      cls := "mt-6",
+      h2(cls := "font-semibold text-lg mb-2", I18n.t(UiKeys.myPlaysTitle)),
+      child <--
+        playsVar.signal.map {
+          case None                       =>
+            div(cls := "flex justify-center p-4", span(cls := "loading loading-spinner"))
+          case Some(rows) if rows.isEmpty =>
+            div(cls := "text-base-content/70", I18n.t(UiKeys.myPlaysEmpty))
+          case Some(rows)                 =>
+            PlayHistoryTable.render(Val(rows))
+        },
+    )
   }
 
   private def renderForm(): HtmlElement = {

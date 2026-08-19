@@ -57,18 +57,24 @@ import gathedge.shared.dto.{
   LoginRequest,
   MigrationInfo,
   MyGameSummary,
+  MyPlayPage,
+  MyPlaySummary,
   NewTranslation,
   PairSelectionResponse,
   PlayStarted,
   ProvidersResponse,
   PruneResult,
   RateLimitEntry,
+  RedeemShareRequest,
   RenameGameRequest,
   ResendVerificationRequest,
   ResetPasswordRequest,
   RouteUsage,
   RuntimeInfo,
   SetPasswordRequest,
+  SharedViewer,
+  SharedWithMe,
+  ShareCodeResponse,
   SignupRequest,
   SignupResponse,
   SubmitAnswerRequest,
@@ -204,4 +210,11 @@ object ApiSchemas {
   given Schema[GamePlaySummary]     = DeriveSchema.gen[GamePlaySummary]
   given Schema[GamePlayPage]        = DeriveSchema.gen[GamePlayPage]
   given Schema[GamePlayDetail]      = DeriveSchema.gen[GamePlayDetail]
+  given Schema[MyPlaySummary]       = DeriveSchema.gen[MyPlaySummary]
+  given Schema[MyPlayPage]          = DeriveSchema.gen[MyPlayPage]
+
+  given Schema[ShareCodeResponse]  = DeriveSchema.gen[ShareCodeResponse]
+  given Schema[RedeemShareRequest] = DeriveSchema.gen[RedeemShareRequest]
+  given Schema[SharedViewer]       = DeriveSchema.gen[SharedViewer]
+  given Schema[SharedWithMe]       = DeriveSchema.gen[SharedWithMe]
 }

@@ -18,6 +18,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   OAuthIdentityRow,
   PasswordResetTokenRepository,
+  ProgressShareRepository,
   SessionRepository,
   UsageEventRepository,
   UsageEventRow,
@@ -32,6 +33,8 @@ import gathedge.backend.service.{
   AuditTrail,
   AuthService,
   EmailSender,
+  GameService,
+  GameWordList,
   RateLimiter,
   SessionReaper,
   WordService,
@@ -90,15 +93,16 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
-        WordRepository.live ++ GameRepository.live
+        WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live
     )
   }
 
   // `>+>` rather than `>>>` so the repositories stay in the environment alongside the services: the delete-user test
   // asserts on the rows a cascade removed, which no service exposes once their owner is gone.
   private val layer = {
-    repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++ TestAuthLayers.emailAndConfig >+>
-      (AuthService.live ++ AuditTrail.live) >+> AdminService.live >+> WordService.live
+    repoLayer ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++ TestAuthLayers.emailAndConfig ++
+      GameWordList.live >+>
+      (AuthService.live ++ AuditTrail.live ++ GameService.live) >+> AdminService.live >+> WordService.live
   }
 
   def spec = {
@@ -428,6 +432,32 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           swept.guests >= 0L,
           emptyGone.isDefined || swept.guests > 0L,
           keeperHere.isDefined,
+        )
+      },
+      // `progress_shares`/`progress_share_codes` are the newest tables referencing `users`, and both reference it
+      // twice over (`sharer_user_id`/`viewer_user_id`, and the code's own `user_id`) — the first table in this
+      // schema where one row can be cascaded away from either of two different accounts being deleted.
+      test("a progress share cascades away when either the sharer or the viewer account is deleted") {
+        for {
+          sharer      <- AuthService.signup("pgsharer@example.com", "password123").map(_._1)
+          viewerGone  <- AuthService.signup("pgviewergone@example.com", "password123").map(_._1)
+          viewerStays <- AuthService.signup("pgviewerstays@example.com", "password123").map(_._1)
+          admin       <- AdminService.createUser(AdminActor.system, "pgshareadmin@example.com", "password123", isAdmin = true)
+          now         <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _           <- ProgressShareRepository.insertCode(sharer.id, "PGSH-ARE0-CODE-0001", now)
+          _           <- ProgressShareRepository.insertShare(sharer.id, viewerGone.id, now)
+          _           <- ProgressShareRepository.insertShare(sharer.id, viewerStays.id, now)
+          _           <- AdminService.deleteUser(AdminActor(admin.id), viewerGone.id)
+          afterViewer <- ProgressShareRepository.listViewersFor(sharer.id)
+          _           <- AdminService.deleteUser(AdminActor(admin.id), sharer.id)
+          afterSharer <- ProgressShareRepository.listViewersFor(sharer.id)
+          codeGone    <- ProgressShareRepository.findActiveCodeForUser(sharer.id)
+        } yield assertTrue(
+          // Deleting the viewer takes only its own share; the other viewer's grant is untouched.
+          afterViewer.map(_.viewerUserId) == List(viewerStays.id),
+          // Deleting the sharer takes every remaining share, and its own code, with it.
+          afterSharer.isEmpty,
+          codeGone.isEmpty,
         )
       },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential

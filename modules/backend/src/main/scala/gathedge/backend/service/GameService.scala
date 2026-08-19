@@ -12,6 +12,8 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   MyGameSummary,
+  MyPlayPage,
+  MyPlaySummary,
   Paging,
   PlayStarted,
 }
@@ -141,6 +143,32 @@ trait GameService {
     * failures as [[listPlays]], plus [[GameFailure.NotFound]] if `playId` does not belong to `slug`.
     */
   def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail]
+
+  /** `userId`'s own plays across every game, most recently started first unless `sort` says otherwise. Never gated by
+    * `trackResults` — it is always the caller's own data, the same reasoning [[getResults]] is never gated either.
+    * `gameId` narrows to one game.
+    */
+  def myPlays(
+    userId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyPlayPage]
+
+  /** `targetUserId`'s plays across every game, narrowed to games whose owner turned on `trackResults` — the same rule
+    * that gates a game's own owner. Authorization (a progress share, or being an administrator) is the caller's job;
+    * this never fails on its own.
+    */
+  def trackedPlaysOf(
+    targetUserId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyPlayPage]
 }
 
 object GameService {
@@ -218,6 +246,26 @@ object GameService {
 
   def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GamePlayDetail] =
     ZIO.serviceWithZIO[GameService](_.getPlayDetail(slug, playId, requesterUserId))
+
+  def myPlays(
+    userId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): URIO[GameService, MyPlayPage] =
+    ZIO.serviceWithZIO[GameService](_.myPlays(userId, gameId, page, pageSize, sort, descending))
+
+  def trackedPlaysOf(
+    targetUserId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): URIO[GameService, MyPlayPage] =
+    ZIO.serviceWithZIO[GameService](_.trackedPlaysOf(targetUserId, gameId, page, pageSize, sort, descending))
 
   val live: URLayer[GameRepository & GameWordList, GameService] = {
     ZLayer.fromFunction((repo: GameRepository, words: GameWordList) => GameServiceLive(repo, words))
@@ -717,5 +765,70 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       finishedAt = play.finishedAt,
       answers = results,
     )
+  }
+
+  private def myPlaySummaryOf(play: GamePlayRow, gamesById: Map[Long, GameRow]): MyPlaySummary = {
+    val game = gamesById.get(play.gameId)
+    MyPlaySummary(
+      playId = play.id,
+      gameSlug = game.map(_.slug).getOrElse(""),
+      gameName = game.map(_.name).getOrElse(""),
+      score = play.score,
+      maxScore = play.maxScore,
+      wordCount = play.wordCount,
+      startedAt = play.startedAt,
+      finishedAt = play.finishedAt,
+    )
+  }
+
+  /** Shared by [[myPlays]] and [[trackedPlaysOf]] — the only difference between "my own history" and "someone else's,
+    * already authorized" is whether untracked games are filtered out.
+    */
+  private def playsPageFor(
+    targetUserId: Long,
+    gameId: Option[Long],
+    trackedOnly: Boolean,
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyPlayPage] = {
+    for {
+      plays     <- repo
+                     .listMyPlaysPage(
+                       targetUserId,
+                       gameId,
+                       trackedOnly,
+                       Paging.offset(page, pageSize),
+                       pageSize,
+                       sort,
+                       descending,
+                     )
+                     .orDie
+      total     <- repo.countMyPlaysMatching(targetUserId, gameId, trackedOnly).orDie
+      gamesById <- repo.gamesByIds(plays.map(_.gameId).distinct).orDie.map(_.map(g => g.id -> g).toMap)
+    } yield MyPlayPage(plays.map(play => myPlaySummaryOf(play, gamesById)), total)
+  }
+
+  def myPlays(
+    userId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyPlayPage] = {
+    playsPageFor(userId, gameId, trackedOnly = false, page, pageSize, sort, descending)
+  }
+
+  def trackedPlaysOf(
+    targetUserId: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyPlayPage] = {
+    playsPageFor(targetUserId, gameId, trackedOnly = true, page, pageSize, sort, descending)
   }
 }

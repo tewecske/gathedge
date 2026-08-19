@@ -28,6 +28,7 @@ import gathedge.shared.dto.{
   AuditPage,
   LockoutStatus,
   LoginAttemptEntry,
+  MyPlayPage,
   Paging,
   RateLimitEntry,
   UserPage,
@@ -98,6 +99,18 @@ trait AdminService {
 
   /** Everything the administrator's account screen shows, gathered in one call. */
   def userDetail(id: Long): IO[AdminFailure, AdminUserDetail]
+
+  /** One page of `id`'s game plays across every game, narrowed to games whose owner turned on `trackResults` — the same
+    * rule that gates a game's own owner. [[AdminFailure.NotFound]] for an unknown `id`.
+    */
+  def userPlays(
+    id: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): IO[AdminFailure, MyPlayPage]
 
   /** Confirms the address without a link, for a user who cannot receive one. */
   def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
@@ -172,6 +185,16 @@ object AdminService {
   def userDetail(id: Long): ZIO[AdminService, AdminFailure, AdminUserDetail] =
     ZIO.serviceWithZIO[AdminService](_.userDetail(id))
 
+  def userPlays(
+    id: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): ZIO[AdminService, AdminFailure, MyPlayPage] =
+    ZIO.serviceWithZIO[AdminService](_.userPlays(id, gameId, page, pageSize, sort, descending))
+
   def verifyEmailFor(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
     ZIO.serviceWithZIO[AdminService](_.verifyEmailFor(actor, id))
 
@@ -220,7 +243,8 @@ object AdminService {
 
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService,
+      LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService &
+      GameService,
     AdminService,
   ] = ZLayer.fromFunction(AdminServiceLive.apply)
 }
@@ -244,6 +268,7 @@ final case class AdminServiceLive(
   hasher: PasswordHasher,
   rateLimiter: RateLimiter,
   authService: AuthService,
+  gameService: GameService,
 ) extends AdminService {
 
   private def toDomain(row: UserRow): User = {
@@ -502,6 +527,17 @@ final case class AdminServiceLive(
       // account — or with it misspelt into another account's — are not silently dropped from the picture.
       recentLoginAttempts = attempts.map(toAttemptEntry),
     )
+  }
+
+  def userPlays(
+    id: Long,
+    gameId: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): IO[AdminFailure, MyPlayPage] = {
+    requireUser(id) *> gameService.trackedPlaysOf(id, gameId, page, pageSize, sort, descending)
   }
 
   def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {

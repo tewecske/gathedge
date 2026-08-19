@@ -53,6 +53,22 @@ object Page {
     */
   final case class GameResults(slug: String, query: GamePlayQuery = GamePlayQuery.default) extends Page
 
+  /** The signed-in caller's own play history across every game — the foundation [[SharedPlayerHistory]] and the admin
+    * games tab both reuse, addressed by a different account id and a different authorization check. Auth-only like
+    * [[MyGames]], for the same reason: personal, no shared link.
+    */
+  case object MyPlays extends Page
+
+  /** Progress sharing: the caller's own share code, who it is shared with, redeeming somebody else's code, and the list
+    * of accounts that have shared with the caller. Auth-only: sharing is between two signed-in accounts.
+    */
+  case object SharedProgress extends Page
+
+  /** One sharer's play history, for a viewer that sharer has granted access to — reuses [[MyPlays]]'s table, filtered
+    * server-side to `trackResults = true` games and gated by `ProgressShareService.requireShareAccess`.
+    */
+  final case class SharedPlayerHistory(sharerUserId: Long) extends Page
+
   /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
   case object ForgotPassword extends Page
 
@@ -138,14 +154,22 @@ object AppRouter {
     */
   private val basePath = CurrentLocale.prefix
 
-  private val signInRoute       = Route.static(SignIn, root / "sign-in", basePath)
-  private val signUpRoute       = Route.static(SignUp, root / "sign-up", basePath)
-  private val homeRoute         = Route.static(Home, root, basePath)
-  private val settingsRoute     = Route.static(Settings, root / "settings", basePath)
-  private val gamesRoute        = Route.static(Games, root / "games", basePath)
-  private val gameSetupRoute    = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
-  private val myGamesRoute      = Route.static(MyGames, root / "games" / "mine", basePath)
-  private val gameInstanceRoute = Route(
+  private val signInRoute              = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute              = Route.static(SignUp, root / "sign-up", basePath)
+  private val homeRoute                = Route.static(Home, root, basePath)
+  private val settingsRoute            = Route.static(Settings, root / "settings", basePath)
+  private val gamesRoute               = Route.static(Games, root / "games", basePath)
+  private val gameSetupRoute           = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
+  private val myGamesRoute             = Route.static(MyGames, root / "games" / "mine", basePath)
+  private val myPlaysRoute             = Route.static(MyPlays, root / "games" / "history", basePath)
+  private val sharedProgressRoute      = Route.static(SharedProgress, root / "games" / "shared", basePath)
+  private val sharedPlayerHistoryRoute = Route(
+    encode = (p: SharedPlayerHistory) => p.sharerUserId,
+    decode = (id: Long) => SharedPlayerHistory(id),
+    pattern = root / "games" / "shared" / segment[Long],
+    basePath = basePath,
+  )
+  private val gameInstanceRoute        = Route(
     encode = (p: GameInstance) => p.slug,
     decode = (slug: String) => GameInstance(slug),
     pattern = root / "g" / segment[String],
@@ -256,6 +280,12 @@ object AppRouter {
         "GameSetup"
       case MyGames                  =>
         "MyGames"
+      case MyPlays                  =>
+        "MyPlays"
+      case SharedProgress           =>
+        "SharedProgress"
+      case SharedPlayerHistory(id)  =>
+        s"SharedPlayerHistory:$id"
       case GameInstance(slug)       =>
         s"GameInstance:$slug"
       case GameResults(slug, query) =>
@@ -314,6 +344,8 @@ object AppRouter {
           .map(query => GameResults(slug, query))
           .getOrElse(GameResults(slug))
       }
+    } else if (tag.startsWith("SharedPlayerHistory:")) {
+      withId(tag, "SharedPlayerHistory:")(SharedPlayerHistory.apply)
     } else if (tag.startsWith("ResetPassword:")) {
       ResetPassword(tag.stripPrefix("ResetPassword:"))
     } else if (tag.startsWith("WordDetail:")) {
@@ -347,6 +379,10 @@ object AppRouter {
           GameSetup
         case "MyGames"        =>
           MyGames
+        case "MyPlays"        =>
+          MyPlays
+        case "SharedProgress" =>
+          SharedProgress
         case "CheckInbox"     =>
           CheckInbox
         case "ForgotPassword" =>
@@ -380,6 +416,9 @@ object AppRouter {
         gamesRoute,
         gameSetupRoute,
         myGamesRoute,
+        myPlaysRoute,
+        sharedProgressRoute,
+        sharedPlayerHistoryRoute,
         gameInstanceRoute,
         gameResultsRoute,
         verifyEmailRoute,

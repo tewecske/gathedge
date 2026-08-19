@@ -3,7 +3,7 @@ package gathedge.backend.http
 import gathedge.backend.security.SessionAuth
 import gathedge.backend.config.AppConfig
 import gathedge.shared.Branding
-import gathedge.shared.api.{AdminEndpoints, AuthEndpoints, GameEndpoints, WordEndpoints}
+import gathedge.shared.api.{AdminEndpoints, AuthEndpoints, GameEndpoints, ProgressShareEndpoints, WordEndpoints}
 import zio.http.*
 import zio.http.codec.Doc
 import zio.http.codec.PathCodec.path
@@ -24,7 +24,8 @@ import zio.http.endpoint.openapi.{OpenAPI, OpenAPIGen, SwaggerUI}
   */
 object DocsRoutes {
 
-  private val allEndpoints = AuthEndpoints.all ++ WordEndpoints.all ++ AdminEndpoints.all ++ GameEndpoints.all
+  private val allEndpoints =
+    AuthEndpoints.all ++ WordEndpoints.all ++ AdminEndpoints.all ++ GameEndpoints.all ++ ProgressShareEndpoints.all
 
   /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the
     * `authenticated` or `adminOnly` aspect. Everything else needs the session cookie.

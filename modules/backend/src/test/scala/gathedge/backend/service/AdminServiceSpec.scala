@@ -6,6 +6,7 @@ import gathedge.backend.i18n.Messages
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GameRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
@@ -26,7 +27,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GameRepository.test
     )
   }
 
@@ -41,8 +42,8 @@ object AdminServiceSpec extends ZIOSpecDefault {
   private val layer = {
     (
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ AppConfig.live ++ RecordingEmailSender.live ++
-        Messages.live ++ TestCaptchaService.live >+>
-        (AuthService.live ++ AuditTrail.live)
+        Messages.live ++ TestCaptchaService.live ++ GameWordList.live >+>
+        (AuthService.live ++ AuditTrail.live ++ GameService.live)
     ) >+> AdminService.live
   }
 

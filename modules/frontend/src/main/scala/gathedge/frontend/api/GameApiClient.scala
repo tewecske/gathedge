@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   MyGameSummary,
+  MyPlayPage,
   PlayStarted,
   RenameGameRequest,
   SubmitAnswerRequest,
@@ -124,5 +125,16 @@ object GameApiClient {
   /** Owner-only equivalent of [[getResults]]: one play's full answer history, for the result modal. */
   def getPlayDetail(slug: String, playId: Long): EventStream[Either[ApiError, GamePlayDetail]] = {
     run(executor(GameEndpoints.playDetail(slug, playId)))
+  }
+
+  /** The caller's own play history across every game — never gated by `trackResults`, unlike [[listPlays]]. */
+  def myPlays(
+    gameId: Option[Long] = None,
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+  ): EventStream[Either[ApiError, MyPlayPage]] = {
+    run(executor(GameEndpoints.myPlays(gameId, page, pageSize, sort, dir)))
   }
 }

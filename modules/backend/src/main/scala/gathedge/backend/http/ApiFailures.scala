@@ -9,6 +9,7 @@ import gathedge.backend.service.{
   GuestClaimFailure,
   GuestCodeFailure,
   GuestMintFailure,
+  ProgressShareFailure,
   WordFailure,
 }
 import gathedge.shared.api.ApiFailure
@@ -417,6 +418,44 @@ object ApiFailures {
     failure match {
       case GuestCodeFailure.NotGuest =>
         notGuest
+    }
+  }
+
+  // ProgressShareFailure gets two mappings, the same "one status set per endpoint" reasoning the guest mappings
+  // above are split for: redeeming a code can raise every case, but reading a share can only ever raise NotShared.
+
+  /** Redeeming a share code: an unknown/revoked code, one's own code, or a grant that already exists. */
+  def progressShareRedeem(
+    failure: ProgressShareFailure
+  ): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case ProgressShareFailure.CodeInvalid         =>
+        // Unknown and revoked answer alike, so the code space cannot be probed.
+        ApiFailure.NotFound(MessageRef(MessageKeys.progressShareCodeInvalid), "That share code is not valid")
+      case ProgressShareFailure.CannotShareWithSelf =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.progressShareCannotShareWithSelf),
+          "You cannot share your own progress with yourself",
+        )
+      case ProgressShareFailure.AlreadyShared       =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.progressShareAlreadyShared),
+          "This account can already see your progress",
+        )
+      case ProgressShareFailure.NotShared           =>
+        // Unreachable through this mapping: redeem never raises NotShared. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.progressShareCodeInvalid), "That share code is not valid")
+    }
+  }
+
+  /** Reading a share: the caller holds no grant from the account it asked to read. */
+  def progressShareAccess(failure: ProgressShareFailure): ApiFailure.Forbidden = {
+    failure match {
+      case _ =>
+        ApiFailure.Forbidden(
+          MessageRef(MessageKeys.progressShareNotShared),
+          "This account has not shared its progress with you",
+        )
     }
   }
 

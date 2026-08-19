@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   LoginAttemptEntry,
+  MyPlayPage,
   PruneResult,
   RateLimitEntry,
   RouteUsage,
@@ -57,6 +58,20 @@ object AdminApiClient {
 
   def userDetail(id: Long): EventStream[Either[ApiError, AdminUserDetail]] = {
     run(executor(AdminEndpoints.userDetail(id)))
+  }
+
+  /** One page of `id`'s game plays across every game — narrowed to games whose owner turned on `trackResults`, the same
+    * rule that gates a game's own owner.
+    */
+  def userPlays(
+    id: Long,
+    gameId: Option[Long] = None,
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+  ): EventStream[Either[ApiError, MyPlayPage]] = {
+    run(executor(AdminEndpoints.userPlays(id, gameId, page, pageSize, sort, dir)))
   }
 
   def verifyUserEmail(id: Long): EventStream[Either[ApiError, Unit]] = {

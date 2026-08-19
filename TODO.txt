@@ -1,6 +1,15 @@
-(empty)
+add ocr image to text to bulk upload options
+backup database daily to google drive and keep backups for 7 days
+do i need a cookie banner for my website?
+add robots.txt file to website
+do i need a sitemap.xml file for my website?
+how to improve SEO
+performance check of the webapp
+security check of the webapp
+remove unnecessary dependencies because the frontend build is too large
+CVE check for all dependencies and update to latest versions
 
-The four items that were here — back-button losing query params, pages numbered from zero, filter
-links dropping the filter, and the responsive collapsing menu — are all done. See the "Paged,
-sorted and filtered listings" and "Frontend routing/auth" sections of CLAUDE.md for what the fixes
-were and why each of them was a bug.
+Parent view of game progress is done — a new progress-share feature lets a user or admin
+share a player's game history (one game or all games) via a link, backed by
+ProgressShareService/ProgressShareRepository and the SharedProgressPage/MyPlayHistoryPage
+frontend pages. Uncommitted, ready to review and commit.

@@ -18,9 +18,12 @@ import gathedge.frontend.pages.{
   GamesPage,
   HomePage,
   MyGamesPage,
+  MyPlayHistoryPage,
   NotFoundPage,
   ResetPasswordPage,
   SettingsPage,
+  SharedPlayerHistoryPage,
+  SharedProgressPage,
   SignInPage,
   SignUpPage,
   VerifyEmailPage,
@@ -292,6 +295,12 @@ object App {
         GameSetupPage.render()
       case Page.MyGames                             =>
         MyGamesPage.render()
+      case Page.MyPlays                             =>
+        MyPlayHistoryPage.render()
+      case Page.SharedProgress                      =>
+        SharedProgressPage.render()
+      case Page.SharedPlayerHistory(sharerUserId)   =>
+        SharedPlayerHistoryPage.render(sharerUserId)
       case Page.GameInstance(slug)                  =>
         GameInstancePage.render(slug)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as

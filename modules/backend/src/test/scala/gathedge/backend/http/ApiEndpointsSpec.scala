@@ -5,6 +5,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GameRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
@@ -23,6 +24,8 @@ import gathedge.backend.service.{
   AuthService,
   BackgroundJobs,
   EmailSender,
+  GameService,
+  GameWordList,
   OAuthClients,
   RateLimiter,
   SystemService,
@@ -85,7 +88,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
         GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
-        MetricsRepository.test ++ WordRepository.test
+        MetricsRepository.test ++ WordRepository.test ++ GameRepository.test
     )
   }
 
@@ -95,7 +98,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // AdminService and SystemService both sit on top of AuthService/AuditTrail now, so the stack is built in
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
-          TestAuthLayers.emailAndConfig >+> (AuthService.live ++ AuditTrail.live) >+>
+          GameWordList.live ++ TestAuthLayers.emailAndConfig >+>
+          (AuthService.live ++ AuditTrail.live ++ GameService.live) >+>
           (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
       )
   }

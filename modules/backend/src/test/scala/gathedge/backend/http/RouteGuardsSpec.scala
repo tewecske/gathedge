@@ -5,6 +5,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GameRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
@@ -22,6 +23,8 @@ import gathedge.backend.service.{
   AuditTrail,
   AuthService,
   BackgroundJobs,
+  GameService,
+  GameWordList,
   OAuthClients,
   RateLimiter,
   SystemService,
@@ -50,7 +53,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++
         OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
         LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
-        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test
+        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test ++ GameRepository.test
     )
   }
 
@@ -61,9 +64,9 @@ object RouteGuardsSpec extends ZIOSpecDefault {
   private val layer = {
     val base = {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
-        TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
+        GameWordList.live ++ TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live) >+>
+    base >+> (AuthService.live ++ AuditTrail.live ++ GameService.live) >+>
       (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
   }
 

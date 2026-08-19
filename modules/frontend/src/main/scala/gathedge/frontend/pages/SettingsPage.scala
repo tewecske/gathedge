@@ -1,15 +1,23 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import gathedge.frontend.api.{ApiClient, ApiError}
+import gathedge.frontend.api.{ApiClient, ApiError, ProgressShareApiClient}
 import gathedge.frontend.Page
 import gathedge.frontend.components.{AppShell, CaptchaField, OAuthButtons, OAuthMessages}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{CaptchaStatusResponse, IdentitiesResponse, LinkedIdentity, SetPasswordRequest}
+import gathedge.shared.dto.{
+  CaptchaStatusResponse,
+  IdentitiesResponse,
+  LinkedIdentity,
+  SetPasswordRequest,
+  SharedViewer,
+  ShareCodeResponse,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.UiKeys
 import gathedge.shared.validation.Validation
+import org.scalajs.dom
 
 import OAuthProvider.display
 
@@ -53,6 +61,14 @@ private class SettingsPage {
   private val passwordSubmitBus = new EventBus[Unit]()
   private val resendBus         = new EventBus[Unit]()
 
+  // Progress sharing: the caller's own share code and who has redeemed it. Kept separate from the
+  // identities/password sections' own vars, but sharing the page's `errorVar`/`noticeVar` for feedback.
+  private val shareCodeVar: Var[Option[String]]   = Var(None)
+  private val viewersVar: Var[List[SharedViewer]] = Var(Nil)
+  private val shareCodeBus                        = new EventBus[Unit]()
+  private val viewersReloadBus                    = new EventBus[Unit]()
+  private val revokeViewerBus                     = new EventBus[Long]()
+
   /** The resend endpoint is the anonymous `/api/auth/verification/resend`, which is captcha-gated — so this page has to
     * present the widget and carry its token too, the same as the sign-in page's resend block.
     */
@@ -88,6 +104,7 @@ private class SettingsPage {
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderEmail(),
       renderIdentities(),
+      renderShareCard(),
       renderPasswordForm(),
       // One load on mount, and one after every successful mutation, so the lockout guard's view of
       // "how many credentials are left" is never stale enough to enable a button the server refuses.
@@ -142,6 +159,27 @@ private class SettingsPage {
             captchaStatusVar.set(Some(status))
           case Left(_)       =>
             captchaStatusVar.set(None)
+        },
+      shareCodeBus.events.flatMapSwitch(_ => ProgressShareApiClient.code()) -->
+        Observer[Either[ApiError, ShareCodeResponse]] {
+          case Right(response) =>
+            Var.set(shareCodeVar -> Some(response.code), errorVar -> None)
+          case Left(err)       =>
+            errorVar.set(Some(err.message))
+        },
+      EventStream.unit().mergeWith(viewersReloadBus.events).flatMapSwitch(_ => ProgressShareApiClient.viewers()) -->
+        Observer[Either[ApiError, List[SharedViewer]]] {
+          case Right(list) =>
+            viewersVar.set(list)
+          case Left(err)   =>
+            errorVar.set(Some(err.message))
+        },
+      revokeViewerBus.events.flatMapSwitch(ProgressShareApiClient.revokeViewer) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            viewersReloadBus.emit(())
+          case Left(err) =>
+            errorVar.set(Some(err.message))
         },
     )
   }
@@ -258,6 +296,83 @@ private class SettingsPage {
           ),
       ),
     )
+  }
+
+  private def renderShareCard(): HtmlElement = {
+    div(
+      cls := "card bg-base-100 shadow",
+      div(
+        cls := "card-body gap-3",
+        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsShareTitle)),
+        p(cls  := "text-sm opacity-70", I18n.t(UiKeys.settingsShareHint)),
+        div(
+          cls  := "card-actions",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.settingsShareGetCode),
+            onClick.mapToUnit --> shareCodeBus.writer,
+          ),
+        ),
+        child.maybe <-- shareCodeVar.signal.map(_.map(renderShareCode)),
+        renderViewers(),
+        onMountCallback(_ => viewersReloadBus.emit(())),
+      ),
+    )
+  }
+
+  private def renderShareCode(shareCode: String): HtmlElement = {
+    div(
+      cls  := "alert alert-info flex flex-wrap items-center gap-2",
+      role := "status",
+      code(cls := "font-mono text-lg tracking-wider whitespace-nowrap", shareCode),
+      button(
+        cls    := "btn btn-xs",
+        typ    := "button",
+        I18n.t(UiKeys.settingsShareCopy),
+        onClick.mapToUnit --> Observer[Unit](_ => copyShareCode(shareCode)),
+      ),
+    )
+  }
+
+  private def renderViewers(): HtmlElement = {
+    div(
+      h3(cls := "font-semibold text-sm mt-2", I18n.t(UiKeys.settingsShareViewersTitle)),
+      child.maybe <--
+        viewersVar.signal.map(list =>
+          Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.settingsShareViewersEmpty)))
+        ),
+      ul(
+        cls  := "flex flex-col divide-y divide-base-300",
+        children <-- viewersVar.signal.map(_.map(renderViewerRow)),
+      ),
+    )
+  }
+
+  private def renderViewerRow(viewer: SharedViewer): HtmlElement = {
+    li(
+      cls := "flex items-center justify-between gap-4 py-2",
+      span(cls := "text-sm", viewer.email.getOrElse("—")),
+      button(
+        cls    := "btn btn-ghost btn-xs",
+        typ    := "button",
+        I18n.t(UiKeys.settingsShareRevoke),
+        onClick.mapTo(viewer.userId) --> revokeViewerBus.writer,
+      ),
+    )
+  }
+
+  /** Feature-checked, like `GuestBanner.copyToClipboard`: the Clipboard API is absent in jsdom and on older browsers,
+    * and a copy button that throws would take the page with it.
+    */
+  private def copyShareCode(value: String): Unit = {
+    try {
+      val clipboard = dom.window.navigator.asInstanceOf[scala.scalajs.js.Dynamic].clipboard
+      if (!scala.scalajs.js.isUndefined(clipboard)) {
+        clipboard.writeText(value)
+        noticeVar.set(Some(I18n.t(UiKeys.settingsShareCopied)))
+      }
+    } catch { case _: Throwable => () }
   }
 
   private def renderPasswordForm(): HtmlElement = {

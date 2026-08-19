@@ -35,6 +35,11 @@ trait UserRepository {
   def findByEmail(email: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
 
+  /** Batch form of [[findById]] — what `ProgressShareService` resolves a page of shares' other-side accounts with, the
+    * same "resolve identity separately" split `GameRepository.usersByIds` draws for a play's player.
+    */
+  def findByIds(ids: List[Long]): Task[List[UserRow]]
+
   /** Guest accounts that have nothing on them and have been idle since `createdBefore`, oldest first.
     *
     * What `SessionReaper` sweeps. A guest holding tags is never in this list however long its session has been gone,
@@ -111,6 +116,9 @@ object UserRepository {
 
   def findById(id: Long): RIO[UserRepository, Option[UserRow]] =
     ZIO.serviceWithZIO[UserRepository](_.findById(id))
+
+  def findByIds(ids: List[Long]): RIO[UserRepository, List[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.findByIds(ids))
 
   def updateTheme(userId: Long, theme: String): RIO[UserRepository, Unit] =
     ZIO.serviceWithZIO[UserRepository](_.updateTheme(userId, theme))
@@ -237,6 +245,11 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(quote(users.filter(_.id == lift(id))))).map(_.headOption)) { found =>
       s"users.findById id=$id found=${found.isDefined}"
     }
+  }
+
+  def findByIds(ids: List[Long]): Task[List[UserRow]] = {
+    val q = quote(users.filter(row => liftQuery(ids).contains(row.id)))
+    logged(run(ctx.run(q)))(rows => s"users.findByIds requested=${ids.size} rows=${rows.size}")
   }
 
   def updateTheme(userId: Long, theme: String): Task[Unit] = {

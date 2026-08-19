@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   LoginAttemptEntry,
+  MyPlayPage,
   PruneResult,
   RateLimitEntry,
   RouteUsage,
@@ -65,6 +66,7 @@ object AdminEndpoints {
   private val windowQuery          = HttpCodec.query[Int]("windowHours").optional
   private val actionThresholdQuery = HttpCodec.query[Int]("actionThreshold").optional
   private val ipThresholdQuery     = HttpCodec.query[Int]("ipThreshold").optional
+  private val gameIdQuery          = HttpCodec.query[Long]("gameId").optional
 
   /** One page of accounts, narrowed by `q` — a case-insensitive substring of the address.
     *
@@ -255,6 +257,22 @@ object AdminEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** One page of `id`'s game plays across every game, most recently started first unless `sort` says otherwise,
+    * narrowed to games whose owner turned on `trackResults` — the same rule that gates a game's own owner. See
+    * `AdminService.userPlays`.
+    */
+  val userPlays = {
+    Endpoint(Method.GET / "api" / "admin" / "users" / userId / "plays")
+      .query(gameIdQuery)
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .withCodecError
+      .out[MyPlayPage]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
     List(
       listUsers,
@@ -263,6 +281,7 @@ object AdminEndpoints {
       updateUser,
       deleteUser,
       userDetail,
+      userPlays,
       verifyUserEmail,
       resendUserVerification,
       revokeUserSessions,

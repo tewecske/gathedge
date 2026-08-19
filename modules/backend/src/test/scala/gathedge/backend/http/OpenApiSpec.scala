@@ -96,6 +96,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games/setup",
               "/api/games/setup/words",
               "/api/games/mine",
+              "/api/games/plays/mine",
               "/api/games/{slug}",
               "/api/games/{slug}/reshuffle",
               "/api/games/{slug}/plays",
@@ -112,6 +113,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/users",
               "/api/admin/users/{id}",
               "/api/admin/users/{id}/detail",
+              "/api/admin/users/{id}/plays",
               "/api/admin/users/{id}/verify-email",
               "/api/admin/users/{id}/verification/resend",
               "/api/admin/users/{id}/sessions",
@@ -125,6 +127,12 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/system/prune",
               "/api/admin/usage/routes",
               "/api/admin/usage/suspicious",
+              "/api/progress-shares/code",
+              "/api/progress-shares/redeem",
+              "/api/progress-shares/viewers",
+              "/api/progress-shares/shared-with-me",
+              "/api/progress-shares/{sharerUserId}/plays",
+              "/api/progress-shares/viewers/{viewerUserId}",
             )
         )
       },
@@ -251,6 +259,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
               // Same shape as setup: no input the codec can fail to decode, so its only failure is the aspect's 401.
               ("GET", "/api/games/mine")                                                  -> Set(Ok, Unauthorized),
+              // The caller's own play history: never gated by trackResults, so its only failures are the query
+              // codec's 400 and the aspect's 401.
+              ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),
               // createGame's own failures are all BadRequest (no tags selected, a tag ineligible for the language
               // pair, or a validation error) — it never raises NotFound/NotOwner.
               ("POST", "/api/games")                                                      -> Set(Created, BadRequest, Unauthorized),
@@ -302,6 +313,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `AdminService`'s signatures rather than these descriptions. The 409 is real on the unlink (last
               // credential) and only theoretical on the rest.
               ("GET", "/api/admin/users/{id}/detail")                                     -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              // Same union as the other five account-diagnostic operations, through the same `ApiFailures.admin`.
+              ("GET", "/api/admin/users/{id}/plays")                                      -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/admin/users/{id}/verify-email")                              ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/admin/users/{id}/verification/resend")                       ->
@@ -324,12 +337,26 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/admin/system/prune")                                         -> Set(Ok, Unauthorized),
               ("GET", "/api/admin/usage/routes")                                          -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/admin/usage/suspicious")                                      -> Set(Ok, BadRequest, Unauthorized),
+              // Progress sharing: minting a code takes no input, so its only failure is the aspect's 401.
+              ("POST", "/api/progress-shares/code")                                       -> Set(Ok, Unauthorized),
+              // Redeeming can raise every ProgressShareFailure case: an unknown/revoked code, one's own code, or a
+              // grant that already exists.
+              ("POST", "/api/progress-shares/redeem")                                     ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/progress-shares/viewers")                                     -> Set(Ok, Unauthorized),
+              ("GET", "/api/progress-shares/shared-with-me")                              -> Set(Ok, Unauthorized),
+              // Forbidden covers a caller with no share from the requested sharer.
+              ("GET", "/api/progress-shares/{sharerUserId}/plays")                        ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden),
+              // Idempotent: revoking a viewer with no share answers the same 204 as one that had one, so its only
+              // failure is the aspect's 401.
+              ("DELETE", "/api/progress-shares/viewers/{viewerUserId}")                   -> Set(NoContent, Unauthorized),
             )
         )
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 116 across 39 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 192 across 47 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -346,7 +373,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 175,
+          declared == 192,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and
@@ -364,6 +391,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/plays/{playId}/results"),
               ("GET", "/api/games/{slug}/plays"),
               ("GET", "/api/games/{slug}/plays/{playId}"),
+              // `ProgressShareService.requireShareAccess`'s own refusal: the caller holds no grant from the
+              // requested sharer.
+              ("GET", "/api/progress-shares/{sharerUserId}/plays"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,

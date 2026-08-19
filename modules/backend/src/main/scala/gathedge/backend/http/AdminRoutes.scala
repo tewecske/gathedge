@@ -105,6 +105,32 @@ object AdminRoutes {
       .implementHandler(handler((id: Long) => AdminService.userDetail(id).mapError(ApiFailures.admin)))
   }
 
+  private val userPlaysRoute = {
+    AdminEndpoints.userPlays
+      .implementHandler(
+        handler {
+          (
+            id: Long,
+            gameId: Option[Long],
+            page: Option[Int],
+            pageSize: Option[Int],
+            sort: Option[String],
+            dir: Option[String],
+          ) =>
+            AdminService
+              .userPlays(
+                id,
+                gameId,
+                Paging.boundedPage(page),
+                Paging.boundedPageSize(pageSize),
+                sort,
+                SortDirection.isDescending(dir),
+              )
+              .mapError(ApiFailures.admin)
+        }
+      )
+  }
+
   private val verifyUserEmailRoute = {
     AdminEndpoints.verifyUserEmail
       .implementHandler(
@@ -246,6 +272,7 @@ object AdminRoutes {
       updateUserRoute,
       deleteUserRoute,
       userDetailRoute,
+      userPlaysRoute,
       verifyUserEmailRoute,
       resendUserVerificationRoute,
       revokeUserSessionsRoute,
