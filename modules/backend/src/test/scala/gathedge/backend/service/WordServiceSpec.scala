@@ -952,5 +952,75 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
-  def spec = suite("WordService (SQLite)")(coreSpec, quotaSpec, bulkUploadSpec) @@ TestAspect.timeout(60.seconds)
+  private def suggestionsSpec = {
+    suite("bulk upload suggestions")(
+      test("a near-miss token gets a suggestion and is not left unmatched") {
+        for {
+          _       <- seed
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "haos", WordLanguage.De, WordLanguage.Hu, 1L)
+          haosOnly = preview.suggestions.filter(_.token == "haos")
+        } yield assertTrue(
+          // "haos" is one substitution away from the seeded "Haus" ("u" -> "o").
+          haosOnly.map(_.candidate.word.text) == List("Haus"),
+          haosOnly.head.distance == 1,
+          // Already knows "Haus" translates to "ház" from the seed data.
+          haosOnly.head.candidate.translations.map(_.text) == List("ház"),
+          !preview.unmatched.contains("haos"),
+        )
+      },
+      test("a token too far from any dictionary word of the same length stays unmatched") {
+        for {
+          _       <- seed
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "zzzzz", WordLanguage.De, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // "zzzzz" is the same length as the seeded "hauen" but every character differs — distance 5, past the
+          // distance-2 bound, so it is offered as a candidate by length but rejected by EditDistance.within.
+          preview.suggestions.forall(_.token != "zzzzz"),
+          preview.unmatched.contains("zzzzz"),
+        )
+      },
+      test("a token shorter than the minimum suggestion length is never offered a suggestion") {
+        for {
+          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "ab", rank = 1))
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "ac", WordLanguage.De, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // "ac" is one substitution from "ab", but at length 2 it is below minSuggestionTokenLength and so never
+          // reaches the edit-distance check at all.
+          preview.suggestions.isEmpty,
+          preview.unmatched == List("ac"),
+        )
+      },
+      test("accepting a suggestion tags it through the ordinary bulkUploadConfirm path, unchanged") {
+        for {
+          _         <- seed
+          tag       <- createTag("upload", 1L)
+          preview   <- WordService.bulkUploadPreview(tag.id, "haos", WordLanguage.De, WordLanguage.Hu, 1L)
+          suggestion = preview.suggestions.find(_.token == "haos").get
+          selection  =
+            BulkUploadSelectedTranslation(suggestion.candidate.word.id, suggestion.candidate.translations.head.wordId)
+          added     <-
+            WordService.bulkUploadConfirm(
+              tag.id,
+              WordLanguage.De,
+              WordLanguage.Hu,
+              List(suggestion.candidate.word.id),
+              List(selection),
+              Nil,
+              Nil,
+              1L,
+            )
+          dePage    <- list(reader = Some(1L), tagId = Some(tag.id))
+        } yield assertTrue(added == 2, dePage.items.map(_.word.text) == List("Haus"))
+      },
+    ).provide(layer)
+  }
+
+  def spec = {
+    suite("WordService (SQLite)")(coreSpec, quotaSpec, bulkUploadSpec, suggestionsSpec) @@ TestAspect.timeout(
+      60.seconds
+    )
+  }
 }

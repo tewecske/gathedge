@@ -11,6 +11,7 @@ export default defineConfig({
       // `qrcode` and fails to resolve it. Aliasing pins it to the copy actually installed here. `.pathname`
       // rather than Node's `url.fileURLToPath`, so this needs no `@types/node` for `npm run typecheck`.
       qrcode: new URL('./node_modules/qrcode', import.meta.url).pathname,
+      'tesseract.js': new URL('./node_modules/tesseract.js', import.meta.url).pathname,
     },
   },
   plugins: [

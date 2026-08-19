@@ -553,6 +553,14 @@ object UiKeys {
   val wordsBulkUploadPastePlaceholder: String = key("ui.words.bulkUpload.pastePlaceholder")
   val wordsBulkUploadPasteButton: String      = key("ui.words.bulkUpload.pasteButton")
 
+  // The image-input alternative: OCR runs in the browser (see `ImageOcr`), and only the text it finds is sent.
+
+  val wordsBulkUploadImageDivider: String = key("ui.words.bulkUpload.imageDivider")
+  val wordsBulkUploadImageButton: String  = key("ui.words.bulkUpload.imageButton")
+  val wordsBulkUploadImageHint: String    = key("ui.words.bulkUpload.imageHint")
+  val wordsBulkUploadImageError: String   = key("ui.words.bulkUpload.imageError")
+  val wordsBulkUploadRecognizing: String  = key("ui.words.bulkUpload.recognizing")
+
   /** `{0}` is the word count, `{1}` the tag name — a tag is data, not copy, so it is never translated (the same rule
     * `WordCollect.defaultTagName` follows).
     */
@@ -585,6 +593,15 @@ object UiKeys {
     */
   val wordsBulkUploadFromUpload: String     = key("ui.words.bulkUpload.fromUpload")
   val wordsBulkUploadFromDictionary: String = key("ui.words.bulkUpload.fromDictionary")
+
+  /** The suggestions list: a dictionary word close enough to an OCR-misread token to guess at, shown separately from an
+    * exact match and never opt-out-accepted the way a match is — see `BulkUploadDialog.renderSuggestionsSection`. `{0}`
+    * in `suggestionOcrLabel` is the original, likely-misread token.
+    */
+  val wordsBulkUploadSuggestionsHeading: String = key("ui.words.bulkUpload.suggestionsHeading")
+  val wordsBulkUploadSuggestionsHint: String    = key("ui.words.bulkUpload.suggestionsHint")
+  val wordsBulkUploadSuggestionOcrLabel: String = key("ui.words.bulkUpload.suggestionOcrLabel")
+  val wordsBulkUploadSuggestionBadge: String    = key("ui.words.bulkUpload.suggestionBadge")
 
   // The manual-matching step: unmatched tokens the reader assigned a language to, linked by hand. See
   // `BulkUploadDialog.Phase.ReviewManual`.

@@ -131,10 +131,24 @@ final case class BulkUploadPreviewRequest(
   */
 final case class BulkUploadMatch(word: Word, translations: List[TranslationOption]) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.bulkUploadPreview]]'s answer: every match, and every token that matched neither
-  * language — the two lists the reader reviews before anything is written.
+/** A dictionary word within [[gathedge.backend.service.WordService.maxSuggestionDistance]] edits of `token`, offered
+  * because [[gathedge.backend.service.WordService.bulkUploadPreview]] found it in neither declared language exactly —
+  * the common case for an OCR misread. `candidate` carries the same shape as an exact [[BulkUploadMatch]] (the word,
+  * plus its own dictionary translations into the *other* declared language), so accepting a suggestion is the same
+  * `acceptedWordIds`/`selectedTranslations` path [[BulkUploadConfirmRequest]] already has for a real match. `token` is
+  * the original, likely-misread text, kept for context; `distance` is the raw edit count, closest first.
   */
-final case class BulkUploadPreviewResponse(matched: List[BulkUploadMatch], unmatched: List[String]) derives JsonCodec
+final case class BulkUploadSuggestion(token: String, candidate: BulkUploadMatch, distance: Int) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkUploadPreview]]'s answer: every exact match, every plausible correction for
+  * a token that matched neither language exactly, and every token that matched neither exactly nor near enough — the
+  * three lists the reader reviews before anything is written.
+  */
+final case class BulkUploadPreviewResponse(
+  matched: List[BulkUploadMatch],
+  suggestions: List[BulkUploadSuggestion],
+  unmatched: List[String],
+) derives JsonCodec
 
 /** One pair the reader linked by hand: an unmatched token they assigned to `sourceLanguage`, and one they assigned to
   * `targetLanguage` — the two request-level languages [[gathedge.backend.service.WordService.bulkUploadConfirm]] was

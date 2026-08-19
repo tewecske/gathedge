@@ -1,4 +1,8 @@
-add ocr image to text to bulk upload options
+[+] add ocr image to text to bulk upload options
+does the wiktionary database have info about plural forms and verb tenses? if yes then add this information to the database. add all forms to the database and apply special links between the words like plural, past tense, present tense, conjugation, etc.
+when importing then check the words in the source language, then check all words in the target language and try to match them, instead of the split source and target view only view them together in one list, like the current source view, in german don't add the same word capitalized and non-capitalized and with and without der/die/das, one word should have one version, unless there is the same word can mean different word types, but then still a noun should be only with der/die/das and capitalized, other types only non-capitalized. if a word was found with translation then it shouldn't appear in the no translation found list, deduplicate but first apply the rules i just mentioned. possible matches list should also not contain words from the previous lists.
+search without accents
+words sent one by one on import, triggers rate limiter, add bulk import option for words
 backup database daily to google drive and keep backups for 7 days
 do i need a cookie banner for my website?
 add robots.txt file to website
@@ -9,7 +13,6 @@ security check of the webapp
 remove unnecessary dependencies because the frontend build is too large
 CVE check for all dependencies and update to latest versions
 
-Parent view of game progress is done — a new progress-share feature lets a user or admin
-share a player's game history (one game or all games) via a link, backed by
-ProgressShareService/ProgressShareRepository and the SharedProgressPage/MyPlayHistoryPage
-frontend pages. Uncommitted, ready to review and commit.
+bugs:
+searhing for "das ei" doesn't find the existing Ei with das prefix
+

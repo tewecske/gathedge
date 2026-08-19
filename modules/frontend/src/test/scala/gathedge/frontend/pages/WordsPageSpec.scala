@@ -8,6 +8,8 @@ import gathedge.shared.domain.WordLanguage
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
+import scala.concurrent.Future
+
 /** The vocabulary listing under jsdom, with no backend: every request fails, so the page settles into its empty state
   * and what is left to assert is the part that is the page's own — the search box following the URL, and the controls
   * that appear only with a session.
@@ -17,12 +19,25 @@ import zio.test._
   */
 object WordsPageSpec extends ZIOSpecDefault {
 
+  /** Never actually called here — nothing in this spec opens the image input — but `WordsPage.render` takes it as an
+    * ordinary parameter rather than reaching for `ImageOcr` itself, precisely so a real `tesseract.js` import is never
+    * part of what this spec links. See [[gathedge.frontend.ocr.ImageOcr.Recognize]].
+    */
+  private def stubRecognize(
+    file: dom.File,
+    source: WordLanguage,
+    target: WordLanguage,
+    onProgress: Double => Unit,
+  ): Future[String] = {
+    Future.failed(new RuntimeException("OCR is not exercised in this spec"))
+  }
+
   /** The page reads its listing state from the URL and writes it back; a `Var` stands in for the router. */
   private def withPage[A](query: WordQuery)(use: (dom.Element, Var[WordQuery]) => A): A = {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
     val queryVar  = Var(query)
-    val rootNode  = L.render(container, WordsPage.render(queryVar.signal, queryVar.writer))
+    val rootNode  = L.render(container, WordsPage.render(queryVar.signal, queryVar.writer, stubRecognize))
     try {
       use(container, queryVar)
     } finally {
@@ -50,7 +65,7 @@ object WordsPageSpec extends ZIOSpecDefault {
           child <--
             mountVar.signal.map { mounted =>
               if (mounted)
-                WordsPage.render(queryVar.signal, queryVar.writer)
+                WordsPage.render(queryVar.signal, queryVar.writer, stubRecognize)
               else
                 emptyNode
             }

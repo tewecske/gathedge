@@ -170,6 +170,12 @@ trait WordRepository {
     */
   def findWordsByKeys(language: String, textNorms: List[String]): Task[List[WordRow]]
 
+  /** Every dictionary word in `language` whose `textNorm` length falls in `[minLength, maxLength]` — the candidate pool
+    * bulk-upload's suggestion pass narrows edit-distance comparisons to, one batched query per language pass rather
+    * than one per token, the same "one query, not N" shape as [[findWordsByKeys]].
+    */
+  def findWordsByLengthRange(language: String, minLength: Int, maxLength: Int): Task[List[WordRow]]
+
   /** Which `(source, target)` pairs already exist among those source words, so a re-run inserts nothing twice. */
   def existingTranslationPairs(sourceWordIds: List[Long]): Task[List[(Long, Long)]]
 
@@ -320,6 +326,9 @@ object WordRepository {
 
   def findWordsByKeys(language: String, textNorms: List[String]): RIO[WordRepository, List[WordRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findWordsByKeys(language, textNorms))
+
+  def findWordsByLengthRange(language: String, minLength: Int, maxLength: Int): RIO[WordRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.findWordsByLengthRange(language, minLength, maxLength))
 
   def existingTranslationPairs(sourceWordIds: List[Long]): RIO[WordRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[WordRepository](_.existingTranslationPairs(sourceWordIds))
@@ -855,6 +864,20 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         words.filter(word => word.language == lift(language) && liftQuery(textNorms).contains(word.textNorm))
       }
       logged(run(ctx.run(q)))(rows => s"words.findByKeys lang=$language asked=${textNorms.size} rows=${rows.size}")
+    }
+  }
+
+  def findWordsByLengthRange(language: String, minLength: Int, maxLength: Int): Task[List[WordRow]] = {
+    // Quill's own `.length` on a quoted String lowers to `LEN(...)`, a SQL Server spelling neither SQLite nor
+    // Postgres has — `LENGTH(...)` is the one function both dialects agree on.
+    val q = quote {
+      words.filter(word => {
+        val len = infix"LENGTH(${word.textNorm})".as[Int]
+        word.language == lift(language) && len >= lift(minLength) && len <= lift(maxLength)
+      })
+    }
+    logged(run(ctx.run(q))) { rows =>
+      s"words.findByLengthRange lang=$language range=[$minLength,$maxLength] rows=${rows.size}"
     }
   }
 

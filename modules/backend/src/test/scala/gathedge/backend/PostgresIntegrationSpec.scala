@@ -460,6 +460,24 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           codeGone.isEmpty,
         )
       },
+      // Not a referential-integrity case — `findWordsByLengthRange` touches only `words`, no FK. It earns a place here
+      // anyway because it is the first query in this codebase to call `.length` on a quoted String column, and Quill
+      // lowers that to `LEN(...)`, a SQL Server spelling neither dialect has: SQLite's own suite already caught this
+      // (`no such function: Len`) before the query was rewritten with an explicit `LENGTH(...)` infix. This is the
+      // dialect that would otherwise have let the same mistake back in silently.
+      test("findWordsByLengthRange filters by textNorm length on the real dialect") {
+        for {
+          _        <- WordRepository.ensureWord(WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L))
+          _        <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "Haufen", "haufen", "noun", "der", 900, "dictionary", None, 0L)
+                      )
+          inRange  <- WordRepository.findWordsByLengthRange("de", 4, 4)
+          outRange <- WordRepository.findWordsByLengthRange("de", 10, 20)
+        } yield assertTrue(
+          inRange.map(_.text) == List("Haus"),
+          outRange.isEmpty,
+        )
+      },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
   }
 }

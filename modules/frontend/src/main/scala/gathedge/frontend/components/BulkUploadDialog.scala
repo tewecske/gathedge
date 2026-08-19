@@ -4,6 +4,7 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.i18n.{CurrentLocale, I18n}
+import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
@@ -13,11 +14,15 @@ import gathedge.shared.dto.{
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
   BulkUploadSelectedTranslation,
+  BulkUploadSuggestion,
   TranslationOption,
 }
 import gathedge.shared.i18n.{MessageKeys, MessageRef, UiKeys}
 import gathedge.shared.validation.Validation
 import zio.json._
+
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.util.{Failure, Success}
 
 /** The "Bulk upload" modal on the Words page: pick a text file, review what the dictionary already knows about it, and
   * only then write anything.
@@ -47,10 +52,12 @@ final class BulkUploadDialog(
   sourceLanguage: Signal[WordLanguage],
   targetLanguage: Signal[WordLanguage],
   onUploaded: Observer[Unit],
+  recognizeImage: ImageOcr.Recognize,
 ) {
 
   private enum Phase {
     case Idle
+    case Recognizing
     case Uploading
     case Processing
     case ReviewMatched
@@ -125,15 +132,15 @@ final class BulkUploadDialog(
 
   private def isBusySignal: Signal[Boolean] = {
     phaseSignal.map {
-      case Phase.Uploading | Phase.Processing | Phase.Confirming => true
-      case _                                                     => false
+      case Phase.Recognizing | Phase.Uploading | Phase.Processing | Phase.Confirming => true
+      case _                                                                         => false
     }.distinct
   }
 
   private def showFileInputSignal: Signal[Boolean] = {
     phaseSignal.map {
-      case Phase.Idle | Phase.Uploading | Phase.Processing | Phase.Failed(_) => true
-      case _                                                                 => false
+      case Phase.Idle | Phase.Recognizing | Phase.Uploading | Phase.Processing | Phase.Failed(_) => true
+      case _                                                                                     => false
     }.distinct
   }
 
@@ -214,6 +221,20 @@ final class BulkUploadDialog(
     }
   }
 
+  /** The image-input alternative to [[handleFile]]/[[handleText]] — OCR runs entirely in the browser (see
+    * [[ImageOcr.recognize]]), and only the text it finds reaches [[contentBus]], the same choke point the other two
+    * inputs already share. [[uploadStream]]/[[sendPreviewRequest]] need no changes for this: by the time the text lands
+    * there, it looks exactly like a paste.
+    */
+  private def handleImage(file: dom.File): Unit = {
+    Var.set(phaseVar -> Phase.Recognizing, progressVar -> 0)
+    recognizeImage(file, sourceLanguageVar.now(), targetLanguageVar.now(), pct => progressVar.set((pct * 100).toInt))
+      .onComplete {
+        case Success(text) => handleText(text)
+        case Failure(_)    => phaseVar.set(Phase.Failed(I18n.t(UiKeys.wordsBulkUploadImageError)))
+      }
+  }
+
   private def uploadStream: EventStream[Either[ApiError, (Long, String)]] = {
     contentBus.events.flatMapSwitch { content =>
       collect.collectTagOrDefault.map(_.map(tagId => (tagId, content)))
@@ -260,10 +281,16 @@ final class BulkUploadDialog(
           // exception.
           acceptedVar            -> response.matched.map(_.word.id).toSet,
           // Defaulting to the first dictionary translation is the ordinary case; the reader picks a different one
-          // only when a match has more than one.
-          selectedTranslationVar -> response.matched.collect {
-            case m if m.translations.nonEmpty => m.word.id -> m.translations.head.wordId
-          }.toMap,
+          // only when a match has more than one. A suggestion's candidate is seeded the same way, so a pre-picked
+          // translation is ready the moment the reader accepts one — but unlike a match, a suggestion is never added
+          // to `acceptedVar` here: it is a guess, opt-in rather than opt-out-accepted.
+          selectedTranslationVar -> (
+            response.matched.collect {
+              case m if m.translations.nonEmpty => m.word.id -> m.translations.head.wordId
+            } ++ response.suggestions.collect {
+              case s if s.candidate.translations.nonEmpty => s.candidate.word.id -> s.candidate.translations.head.wordId
+            }
+          ).toMap,
           phaseVar               -> Phase.ReviewMatched,
           progressVar            -> 100,
         )
@@ -371,6 +398,7 @@ final class BulkUploadDialog(
         p(cls  := "text-sm opacity-70 py-2", I18n.t(UiKeys.wordsBulkUploadHint)),
         child.maybe <-- showFileInputSignal.map(Option.when(_)(renderFileInput())),
         child.maybe <-- showFileInputSignal.map(Option.when(_)(renderPasteInput())),
+        child.maybe <-- showFileInputSignal.map(Option.when(_)(renderImageInput())),
         child.maybe <-- phaseSignal.map(renderPhaseBody),
         div(
           cls  := "modal-action",
@@ -444,10 +472,40 @@ final class BulkUploadDialog(
     )
   }
 
+  private def renderImageInput(): HtmlElement = {
+    div(
+      cls := "mt-3",
+      div(cls  := "divider text-xs", I18n.t(UiKeys.wordsBulkUploadImageDivider)),
+      input(
+        typ    := "file",
+        cls    := "file-input file-input-bordered w-full",
+        accept := "image/*",
+        disabled <-- isBusySignal,
+        onChange --> Observer[dom.Event] { event =>
+          val target = event.target.asInstanceOf[dom.html.Input]
+          Option(target.files).filter(_.length > 0).map(_.item(0)).foreach(handleImage)
+        },
+      ),
+      p(cls    := "text-xs opacity-70 mt-1", I18n.t(UiKeys.wordsBulkUploadImageHint)),
+    )
+  }
+
   private def renderPhaseBody(phase: Phase): Option[HtmlElement] = {
     phase match {
       case Phase.Idle                         =>
         None
+      case Phase.Recognizing                  =>
+        Some(
+          div(
+            cls := "mt-3",
+            p(cls     := "text-xs opacity-70 mb-1", I18n.t(UiKeys.wordsBulkUploadRecognizing)),
+            progressTag(
+              cls     := "progress progress-primary w-full",
+              maxAttr := "100",
+              value <-- progressSignal.map(_.toString),
+            ),
+          )
+        )
       case Phase.Uploading | Phase.Processing =>
         Some(
           div(
@@ -557,7 +615,53 @@ final class BulkUploadDialog(
           UiKeys.wordsBulkUploadDeclineAllWithoutTranslation,
         )
       ),
+      Option.when(preview.suggestions.nonEmpty)(renderSuggestionsSection(preview.suggestions)),
       Option.when(preview.unmatched.nonEmpty)(renderUnmatchedSection(preview.unmatched)),
+    )
+  }
+
+  /** A near-miss the dictionary offers for a token OCR likely misread — shown separately from an exact match and,
+    * deliberately, with no accept-all/decline-all the way [[renderMatchedControls]] gives an exact match: a match is
+    * opt-out-accepted because the upload is trusted to have typed it correctly; a suggestion is only a guess, so each
+    * one gets its own checkbox and nothing more.
+    */
+  private def renderSuggestionsSection(suggestions: List[BulkUploadSuggestion]): HtmlElement = {
+    div(
+      cls := "mt-4",
+      h4(cls := "font-semibold text-sm", I18n.t(UiKeys.wordsBulkUploadSuggestionsHeading)),
+      p(cls  := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadSuggestionsHint)),
+      div(
+        cls  := "max-h-48 overflow-y-auto border border-base-300 rounded p-2 mt-1 flex flex-col gap-1",
+        suggestions.map(renderSuggestionRow),
+      ),
+    )
+  }
+
+  private def renderSuggestionRow(s: BulkUploadSuggestion): HtmlElement = {
+    label(
+      cls := "flex items-start gap-2 py-1",
+      input(
+        typ := "checkbox",
+        cls := "checkbox checkbox-sm mt-1",
+        controlled(
+          checked <-- acceptedVar.signal.map(_.contains(s.candidate.word.id)),
+          onClick.mapToChecked --> Observer[Boolean] { on =>
+            acceptedVar.update(ids => if (on) ids + s.candidate.word.id else ids - s.candidate.word.id)
+          },
+        ),
+      ),
+      div(
+        div(
+          cls   := "flex items-center gap-1 flex-wrap",
+          span(cls := "font-medium text-sm", Word.display(s.candidate.word)),
+          span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadSuggestionBadge)),
+        ),
+        div(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadSuggestionOcrLabel, s.token)),
+        if (s.candidate.translations.isEmpty)
+          span(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadNoTranslation))
+        else
+          renderTranslationChoices(s.candidate.word.id, s.candidate.translations),
+      ),
     )
   }
 
@@ -674,7 +778,7 @@ final class BulkUploadDialog(
       span(cls := "text-xs opacity-70", "→"),
       if (translations.sizeIs > 1) {
         div(
-          cls    := "join",
+          cls := "join",
           translations.map(t => renderTranslationRadio(wordId, t)),
         )
       } else

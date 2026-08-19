@@ -16,6 +16,7 @@ import gathedge.frontend.components.{
 }
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
+import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{CreateWordRequest, NewTranslation, TaggedPair, WordDetail, WordPage, WordSort, WordSummary}
@@ -39,12 +40,24 @@ import gathedge.shared.i18n.UiKeys
   */
 object WordsPage {
 
-  def render(query: Signal[WordQuery], onQuery: Observer[WordQuery]): HtmlElement = {
-    AppShell.render(Page.Words(), new WordsPage(query, onQuery).render())
+  /** `recognizeImage` is threaded through rather than called directly by [[BulkUploadDialog]] — see
+    * [[ImageOcr.Recognize]]'s own scaladoc for why: it keeps `tesseract.js`'s import out of this page's reachable graph
+    * under the test linker. `App` is the only caller that supplies the real one.
+    */
+  def render(
+    query: Signal[WordQuery],
+    onQuery: Observer[WordQuery],
+    recognizeImage: ImageOcr.Recognize,
+  ): HtmlElement = {
+    AppShell.render(Page.Words(), new WordsPage(query, onQuery, recognizeImage).render())
   }
 }
 
-private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuery]) {
+private class WordsPage(
+  pageQuery: Signal[WordQuery],
+  onQuery: Observer[WordQuery],
+  recognizeImage: ImageOcr.Recognize,
+) {
 
   /** `.distinct` because every reader here treats an emission as "ask the server again". */
   private val querySignal = pageQuery.distinct
@@ -116,6 +129,7 @@ private class WordsPage(pageQuery: Signal[WordQuery], onQuery: Observer[WordQuer
     querySignal.map(_.language).distinct,
     targetSignal,
     onUploaded = Observer[Unit](_ => reloadBus.emit(())),
+    recognizeImage = recognizeImage,
   )
 
   /** The term a reader searched for and the dictionary does not have — the only case where adding a word is offered.

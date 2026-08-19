@@ -10,6 +10,7 @@ import gathedge.shared.dto.{
   BulkUploadMatch,
   BulkUploadPreviewResponse,
   BulkUploadSelectedTranslation,
+  BulkUploadSuggestion,
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
@@ -330,6 +331,25 @@ object WordService {
     * arbitrary text and an unbounded batch of sequential inserts.
     */
   val maxBulkUploadTokens = 2000
+
+  /** Damerau-Levenshtein distance a bulk-upload token may be from a dictionary word and still be offered as a
+    * suggestion — 2 catches the common single-substitution/transposition/insertion OCR misread without matching
+    * unrelated words.
+    */
+  val maxSuggestionDistance = 2
+
+  /** How many suggestions [[WordServiceLive.suggestionsFor]] offers per token, closest distance first, ties broken by
+    * frequency rank.
+    */
+  val maxSuggestionsPerToken = 3
+
+  /** Below this length, a distance-[[maxSuggestionDistance]] match is too loose to be a useful suggestion. */
+  val minSuggestionTokenLength = 3
+
+  /** Bounds how many still-unmatched tokens one preview call attempts suggestions for — the CPU-cost analogue of
+    * [[maxBulkUploadTokens]]. A token past this bound is still listed as unmatched, just with no correction offered.
+    */
+  val maxSuggestionTokens = 300
 }
 
 final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, limiter: RateLimiter) extends WordService {
@@ -906,6 +926,38 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     }
   }
 
+  /** For up to [[WordService.maxSuggestionTokens]] of `tokens`, up to [[WordService.maxSuggestionsPerToken]] dictionary
+    * words in `language` within [[WordService.maxSuggestionDistance]] edits — one batched
+    * [[WordRepository.findWordsByLengthRange]] query for the whole call, not one per token, the same "one query, not N"
+    * shape [[matchTokens]] itself uses. Looks up by the token's bare word (see [[stripArticle]]), the same key
+    * [[matchTokens]] uses, since `textNorm` never carries an article. A token shorter than
+    * [[WordService.minSuggestionTokenLength]], or with no candidate within the bound, is simply absent from the result
+    * map — [[matchTokens]]'s own leniency toward "found nothing" applies here too.
+    */
+  private def suggestionsFor(language: WordLanguage, tokens: List[String]): UIO[Map[String, List[(WordRow, Int)]]] = {
+    val keyed = tokens
+      .map(token => token -> stripArticle(token)._1)
+      .filter { case (_, bare) => bare.length >= WordService.minSuggestionTokenLength }
+      .take(WordService.maxSuggestionTokens)
+    if (keyed.isEmpty) {
+      ZIO.succeed(Map.empty)
+    } else {
+      val lengths = keyed.map { case (_, bare) => bare.length }
+      val minLen  = math.max(1, lengths.min - WordService.maxSuggestionDistance)
+      val maxLen  = lengths.max + WordService.maxSuggestionDistance
+      repo.findWordsByLengthRange(WordLanguage.code(language), minLen, maxLen).orDie.map { candidates =>
+        keyed.flatMap { case (display, bare) =>
+          val nearby =
+            candidates.filter(c => math.abs(c.textNorm.length - bare.length) <= WordService.maxSuggestionDistance)
+          val scored =
+            nearby.flatMap(c => EditDistance.within(bare, c.textNorm, WordService.maxSuggestionDistance).map(c -> _))
+          val top    = scored.sortBy { case (c, d) => (d, c.frequencyRank) }.take(WordService.maxSuggestionsPerToken)
+          Option.when(top.nonEmpty)(display -> top)
+        }.toMap
+      }
+    }
+  }
+
   /** Each word's existing translations into `language` — one batch query, the same [[WordRepository.translationsOf]]
     * the listing itself reads, grouped back onto the word that owns them.
     */
@@ -934,24 +986,52 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     val invalidFile =
       BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
     for {
-      _                         <- bulkUploadGuard(tagId, userId)
-      trimmed                    = content.trim
-      _                         <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
-                                     ZIO.fail(invalidFile)
-                                   )
-      mergeGermanArticles        = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
-      tokens                     = tokenize(trimmed, mergeGermanArticles)
-      sourceMatched             <- matchTokens(sourceLanguage, tokens)
-      (sourceMatches, remaining) = sourceMatched
-      targetMatched             <- matchTokens(targetLanguage, remaining)
-      (targetMatches, unmatched) = targetMatched
-      sourceTranslations        <- translationsInto(sourceMatches.map(_.id), targetLanguage)
-      targetTranslations        <- translationsInto(targetMatches.map(_.id), sourceLanguage)
-      matched                    = {
+      _                            <- bulkUploadGuard(tagId, userId)
+      trimmed                       = content.trim
+      _                            <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
+                                        ZIO.fail(invalidFile)
+                                      )
+      mergeGermanArticles           = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
+      tokens                        = tokenize(trimmed, mergeGermanArticles)
+      sourceMatched                <- matchTokens(sourceLanguage, tokens)
+      (sourceMatches, remaining1)   = sourceMatched
+      targetMatched                <- matchTokens(targetLanguage, remaining1)
+      (targetMatches, remaining2)   = targetMatched
+      sourceSuggested              <- suggestionsFor(sourceLanguage, remaining2)
+      remaining3                    = remaining2.filterNot(sourceSuggested.contains)
+      targetSuggested              <- suggestionsFor(targetLanguage, remaining3)
+      unmatched                     = remaining3.filterNot(targetSuggested.contains)
+      sourceTranslations           <- translationsInto(sourceMatches.map(_.id), targetLanguage)
+      targetTranslations           <- translationsInto(targetMatches.map(_.id), sourceLanguage)
+      sourceSuggestionIds           = sourceSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
+      targetSuggestionIds           = targetSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
+      sourceSuggestionTranslations <- translationsInto(sourceSuggestionIds, targetLanguage)
+      targetSuggestionTranslations <- translationsInto(targetSuggestionIds, sourceLanguage)
+      matched                       = {
         sourceMatches.map(row => BulkUploadMatch(toDomain(row), sourceTranslations.getOrElse(row.id, Nil))) ++
           targetMatches.map(row => BulkUploadMatch(toDomain(row), targetTranslations.getOrElse(row.id, Nil)))
       }
-    } yield BulkUploadPreviewResponse(matched, unmatched)
+      suggestions                   = {
+        sourceSuggested.toList.flatMap { case (token, candidates) =>
+          candidates.map { case (row, distance) =>
+            BulkUploadSuggestion(
+              token,
+              BulkUploadMatch(toDomain(row), sourceSuggestionTranslations.getOrElse(row.id, Nil)),
+              distance,
+            )
+          }
+        } ++
+          targetSuggested.toList.flatMap { case (token, candidates) =>
+            candidates.map { case (row, distance) =>
+              BulkUploadSuggestion(
+                token,
+                BulkUploadMatch(toDomain(row), targetSuggestionTranslations.getOrElse(row.id, Nil)),
+                distance,
+              )
+            }
+          }
+      }
+    } yield BulkUploadPreviewResponse(matched, suggestions, unmatched)
   }
 
   /** Tags an accepted matched word, and marks only the one translation the reader picked out of whatever
