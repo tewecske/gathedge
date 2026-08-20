@@ -95,6 +95,36 @@ object PartOfSpeech {
   }
 }
 
+/** Which words a listing shows, narrowed by whether they carry a recorded translation.
+  *
+  * `HasTarget` and `HasAny` answer two different questions: whether the word is fully useful for the direction being
+  * browsed right now, or whether it has been translated into *something* — the wider check a reader chasing dictionary
+  * gaps wants, since a word translated only into a third language is still worth reviewing before adding one more.
+  */
+enum TranslationFilter derives JsonCodec, CanEqual {
+  case All, HasTarget, HasAny
+}
+
+object TranslationFilter {
+
+  val all: List[TranslationFilter] = List(All, HasTarget, HasAny)
+
+  def code(filter: TranslationFilter): String = {
+    filter match {
+      case All       =>
+        "all"
+      case HasTarget =>
+        "target"
+      case HasAny    =>
+        "any"
+    }
+  }
+
+  def fromString(value: String): Option[TranslationFilter] = {
+    all.find(filter => code(filter) == value.toLowerCase)
+  }
+}
+
 /** The definite article a German noun takes, which is the half of the word a learner actually has to memorise.
   *
   * Only German nouns carry one. It is part of a word's identity, so `der See` (the lake) and `die See` (the sea) are

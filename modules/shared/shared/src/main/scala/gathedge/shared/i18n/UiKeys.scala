@@ -489,7 +489,15 @@ object UiKeys {
   val wordsSwapLanguages: String     = key("ui.words.swapLanguages")
   val wordsPosAny: String            = key("ui.words.posAny")
   val wordsOnlyMine: String          = key("ui.words.onlyMine")
-  val wordsEmpty: String             = key("ui.words.empty")
+
+  /** The three-state filter shared by the word list and the bulk-upload review: every word, only those translated into
+    * the target language, or only those translated into any language at all. See `TranslationFilter`.
+    */
+  val wordsTranslationFilterLabel: String  = key("ui.words.translationFilterLabel")
+  val wordsTranslationFilterAll: String    = key("ui.words.translationFilterAll")
+  val wordsTranslationFilterTarget: String = key("ui.words.translationFilterTarget")
+  val wordsTranslationFilterAny: String    = key("ui.words.translationFilterAny")
+  val wordsEmpty: String                   = key("ui.words.empty")
 
   /** `{0}` is the matching row count. */
   val wordsCount: String = pluralKey("ui.words.count")

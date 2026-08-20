@@ -2,7 +2,7 @@ package gathedge.backend.http
 
 import gathedge.backend.service.{AuthService, WordService}
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{PartOfSpeech, User, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkUploadConfirmRequest,
@@ -64,12 +64,13 @@ object WordRoutes {
     Option[String],
     Option[Long],
     Option[Boolean],
+    Option[String],
   )
 
   private val listRoute = {
     WordEndpoints.list.implementHandler(
       handler { (input: ListQuery) =>
-        val (page, pageSize, sort, dir, q, lang, target, pos, tag, mine) = input
+        val (page, pageSize, sort, dir, q, lang, target, pos, tag, mine, tr) = input
         reader.flatMap { who =>
           WordService.list(
             page = Paging.boundedPage(page),
@@ -82,6 +83,7 @@ object WordRoutes {
             // Something has to be translated *into*; the browser always names it, and English is the hub the
             // dictionary is built around when nothing else was said.
             target = languageOf(target).getOrElse(WordLanguage.En),
+            translationFilter = tr.flatMap(TranslationFilter.fromString).getOrElse(TranslationFilter.All),
             sort = sort,
             descending = SortDirection.isDescending(dir),
             reader = who,

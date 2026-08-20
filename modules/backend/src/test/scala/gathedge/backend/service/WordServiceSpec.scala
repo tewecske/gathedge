@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{WordFormRow, WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
@@ -122,6 +122,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     mine: Boolean = false,
     language: WordLanguage = WordLanguage.De,
     target: WordLanguage = WordLanguage.Hu,
+    translationFilter: TranslationFilter = TranslationFilter.All,
   ) = {
     WordService.list(
       page = Paging.firstPage,
@@ -132,6 +133,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       tagId = tagId,
       mine = mine,
       target = target,
+      translationFilter = translationFilter,
       sort = None,
       descending = false,
       reader = reader,
@@ -151,6 +153,25 @@ object WordServiceSpec extends ZIOSpecDefault {
           page.items.head.translations.map(_.text) == List("ház"),
           // No reader, so no tags — and no failure either.
           page.items.forall(_.tagIds.isEmpty),
+        )
+      },
+      test("the translation filter narrows to words with a translation, in the target language or in any") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          hauen  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "hauen", pos = PartOfSpeech.Verb))
+          hit    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haufen", gender = Some(Gender.Der)))
+          _      <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
+          // Into English, not the Hungarian target: satisfies "any language" but not "the target language".
+          _      <- WordRepository.insertTranslationPair(hauen.id, hit.id, WordService.dictionaryOrigin, None, 0L)
+          all    <- list(search = Some("hau"))
+          target <- list(search = Some("hau"), translationFilter = TranslationFilter.HasTarget)
+          any    <- list(search = Some("hau"), translationFilter = TranslationFilter.HasAny)
+        } yield assertTrue(
+          all.total == 3L,
+          target.items.map(_.word.text) == List("Haus"),
+          any.items.map(_.word.text).toSet == Set("Haus", "hauen"),
         )
       },
       test("a German noun keeps its article, and two words differing only by it are two words") {
@@ -509,6 +530,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                        tagId = None,
                        mine = false,
                        target = WordLanguage.Hu,
+                       translationFilter = TranslationFilter.All,
                        sort = Some("nonsense"),
                        descending = false,
                        reader = None,
@@ -522,6 +544,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                        tagId = None,
                        mine = false,
                        target = WordLanguage.Hu,
+                       translationFilter = TranslationFilter.All,
                        sort = Some(WordSort.text),
                        descending = true,
                        reader = None,
@@ -722,6 +745,20 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def bulkUploadSpec = {
     suite("bulk upload")(
+      test("a matched word carries whether it has a translation in any language, not only the counterpart") {
+        for {
+          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          hit     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
+          // Into English, not the requested (Hungarian) counterpart.
+          _       <- WordRepository.insertTranslationPair(haus.id, hit.id, WordService.dictionaryOrigin, None, 0L)
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
+          matched  = preview.matched.find(_.word.text == "Haus")
+        } yield assertTrue(
+          matched.exists(_.translations.isEmpty),
+          matched.exists(_.hasAnyTranslation),
+        )
+      },
       test(
         "preview matches the source language first, offers only known cross-language translations, and writes nothing"
       ) {

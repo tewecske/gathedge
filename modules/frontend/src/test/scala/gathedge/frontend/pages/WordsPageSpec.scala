@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.listing.WordQuery
-import gathedge.shared.domain.WordLanguage
+import gathedge.shared.domain.{TranslationFilter, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -114,6 +114,23 @@ object WordsPageSpec extends ZIOSpecDefault {
         assertTrue(
           values.headOption.contains(WordLanguage.code(WordLanguage.En)),
           values.lift(1).contains(WordLanguage.code(WordLanguage.De)),
+        )
+      },
+      // The translation filter is a plain listing narrowing like part-of-speech, not an account feature, so it is
+      // visible and live for a visitor with no session too.
+      test("the translation filter select shows what the query says and narrows it on change") {
+        val (initial, changed) = {
+          withPage(WordQuery(translationFilter = TranslationFilter.HasTarget)) { (container, queryVar) =>
+            val select = selects(container)(3)
+            val before = select.value
+            select.value = TranslationFilter.code(TranslationFilter.HasAny)
+            select.dispatchEvent(new dom.Event("change"))
+            (before, queryVar.now().translationFilter)
+          }
+        }
+        assertTrue(
+          initial == TranslationFilter.code(TranslationFilter.HasTarget),
+          changed == TranslationFilter.HasAny,
         )
       },
       // The collect bar (where a tick files, and the way to make a tag) is shown to every visitor, session or none —

@@ -18,7 +18,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
@@ -240,6 +240,7 @@ private class WordsPage(
       partOfSpeech = query.partOfSpeech,
       tagId = query.tagId,
       mine = Option.when(query.mine)(true),
+      translationFilter = Some(query.translationFilter),
     )
   }
 
@@ -311,8 +312,36 @@ private class WordsPage(
           ),
         ),
       ),
+      renderTranslationFilter(),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
+    )
+  }
+
+  /** Narrows to words carrying a recorded translation — the target language specifically, or any language at all — the
+    * same plain listing filter `renderTagFilter`/[[renderMineToggle]] are, so it stays visible for a visitor with no
+    * session too.
+    */
+  private def renderTranslationFilter(): HtmlElement = {
+    label(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsTranslationFilterLabel)),
+      select(
+        cls    := "select select-sm w-40",
+        TranslationFilter.all.map(filter =>
+          option(value := TranslationFilter.code(filter), Labels.translationFilter(filter))
+        ),
+        controlled(
+          value <-- querySignal.map(query => TranslationFilter.code(query.translationFilter)),
+          onChange.mapToValue --> Observer[String] { code =>
+            change(
+              _.reset(
+                _.copy(translationFilter = TranslationFilter.fromString(code).getOrElse(TranslationFilter.All))
+              )
+            )
+          },
+        ),
+      ),
     )
   }
 

@@ -2,7 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{PartOfSpeech, Tag, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkUploadConfirmRequest,
@@ -41,6 +41,7 @@ object WordApiClient {
     partOfSpeech: Option[PartOfSpeech] = None,
     tagId: Option[Long] = None,
     mine: Option[Boolean] = None,
+    translationFilter: Option[TranslationFilter] = None,
   ): EventStream[Either[ApiError, WordPage]] = {
     run(
       executor(
@@ -55,6 +56,7 @@ object WordApiClient {
           partOfSpeech.map(PartOfSpeech.code),
           tagId,
           mine,
+          translationFilter.map(TranslationFilter.code),
         )
       )
     )

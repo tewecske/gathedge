@@ -1,7 +1,7 @@
 package gathedge.frontend.listing
 
 import gathedge.frontend.components.SortHeader
-import gathedge.shared.domain.WordLanguage
+import gathedge.shared.domain.{TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{Paging, WordSort}
 import zio.test._
 
@@ -19,6 +19,7 @@ object WordQuerySpec extends ZIOSpecDefault {
           onPageFour.reset(_.copy(search = "hau")).page == Paging.firstPage,
           onPageFour.reset(_.copy(target = WordLanguage.En)).page == Paging.firstPage,
           onPageFour.reset(_.copy(tagId = Some(3L))).page == Paging.firstPage,
+          onPageFour.reset(_.copy(translationFilter = TranslationFilter.HasTarget)).page == Paging.firstPage,
           onPageFour.reset(_.copy(sort = SortHeader.Sort.ascending(WordSort.text))).page == Paging.firstPage,
           // Turning the page is the one write that does not go through `reset`.
           onPageFour.copy(page = 5).page == 5,
@@ -45,6 +46,7 @@ object WordQuerySpec extends ZIOSpecDefault {
           WordQuery.default == WordQuery(),
           WordQuery.default.language == WordLanguage.De,
           WordQuery.default.target == WordLanguage.Hu,
+          WordQuery.default.translationFilter == TranslationFilter.All,
           !WordQuery.default.mine,
         )
       },

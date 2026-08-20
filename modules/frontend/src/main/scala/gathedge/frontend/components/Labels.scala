@@ -1,7 +1,7 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, TranslationFilter, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -50,6 +50,20 @@ object Labels {
         I18n.t(UiKeys.posAdverb)
       case PartOfSpeech.Other     =>
         I18n.t(UiKeys.posOtherKind)
+    }
+  }
+
+  /** The word list's and bulk upload's shared translation-presence filter. Matched exhaustively, like [[language]] —
+    * `TranslationFilter` is a fixed shared enum, not a stored code a newer build might widen.
+    */
+  def translationFilter(filter: TranslationFilter): String = {
+    filter match {
+      case TranslationFilter.All       =>
+        I18n.t(UiKeys.wordsTranslationFilterAll)
+      case TranslationFilter.HasTarget =>
+        I18n.t(UiKeys.wordsTranslationFilterTarget)
+      case TranslationFilter.HasAny    =>
+        I18n.t(UiKeys.wordsTranslationFilterAny)
     }
   }
 

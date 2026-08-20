@@ -3,6 +3,7 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
+import gathedge.shared.domain.TranslationFilter
 import gathedge.shared.dto.WordSort
 import zio.*
 
@@ -38,6 +39,9 @@ trait WordRepository {
     *
     * @param tagId
     *   narrows to words carrying one tag; @param taggedBy narrows to words the account has tagged at all.
+    * @param translationFilter
+    *   narrows to words carrying a translation, either into `targetLanguage` specifically or into any language at all;
+    *   `targetLanguage` is ignored under [[TranslationFilter.All]]/[[TranslationFilter.HasAny]].
     */
   def listPage(
     offset: Int,
@@ -47,6 +51,8 @@ trait WordRepository {
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[WordRow]]
@@ -58,6 +64,8 @@ trait WordRepository {
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
   ): Task[Long]
 
   /** Every translation of those words into one language, as the edge and the word it points at. One query for a whole
@@ -67,6 +75,12 @@ trait WordRepository {
 
   /** Every translation of one word, in any language, for the detail screen. */
   def allTranslationsOf(wordId: Long): Task[List[(WordTranslationRow, WordRow)]]
+
+  /** Which of those words carry a translation into any language at all — the wider check
+    * [[gathedge.shared.domain.TranslationFilter.HasAny]] and `BulkUploadMatch.hasAnyTranslation` both ask, batched the
+    * same shape [[translationsOf]] is.
+    */
+  def wordIdsWithAnyTranslation(wordIds: List[Long]): Task[Set[Long]]
 
   def findTranslationById(id: Long): Task[Option[WordTranslationRow]]
 
@@ -245,11 +259,25 @@ object WordRepository {
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
     sort: Option[String],
     descending: Boolean,
   ): RIO[WordRepository, List[WordRow]] = {
     ZIO.serviceWithZIO[WordRepository](
-      _.listPage(offset, limit, language, search, partOfSpeech, tagId, taggedBy, sort, descending)
+      _.listPage(
+        offset,
+        limit,
+        language,
+        search,
+        partOfSpeech,
+        tagId,
+        taggedBy,
+        translationFilter,
+        targetLanguage,
+        sort,
+        descending,
+      )
     )
   }
 
@@ -259,8 +287,13 @@ object WordRepository {
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
-  ): RIO[WordRepository, Long] =
-    ZIO.serviceWithZIO[WordRepository](_.countMatching(language, search, partOfSpeech, tagId, taggedBy))
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
+  ): RIO[WordRepository, Long] = {
+    ZIO.serviceWithZIO[WordRepository](
+      _.countMatching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage)
+    )
+  }
 
   def translationsOf(
     wordIds: List[Long],
@@ -270,6 +303,9 @@ object WordRepository {
 
   def allTranslationsOf(wordId: Long): RIO[WordRepository, List[(WordTranslationRow, WordRow)]] =
     ZIO.serviceWithZIO[WordRepository](_.allTranslationsOf(wordId))
+
+  def wordIdsWithAnyTranslation(wordIds: List[Long]): RIO[WordRepository, Set[Long]] =
+    ZIO.serviceWithZIO[WordRepository](_.wordIdsWithAnyTranslation(wordIds))
 
   def findTranslationById(id: Long): RIO[WordRepository, Option[WordTranslationRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findTranslationById(id))
@@ -472,15 +508,39 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       .nonEmpty
   }
 
-  /** The narrowing [[listPage]] and [[countMatching]] share, so the total counts the set the page is cut from. */
+  /** True when the word has a translation edge into `language` — a correlated subquery, doubly nested rather than
+    * joined: Quill's Dynamic Query cannot synthesize a `.join` inside a `filterOpt` closure ("free variables"), so this
+    * follows [[taggedByUser]]'s shape of one `.filter(...).nonEmpty` inside another instead of [[translationsOf]]'s
+    * ordinary join.
+    */
+  private inline def hasTranslationInto = quote { (wordId: Long, language: String) =>
+    translations
+      .filter(edge => {
+        edge.sourceWordId == wordId && words
+          .filter(word => word.id == edge.targetWordId && word.language == language)
+          .nonEmpty
+      })
+      .nonEmpty
+  }
+
+  /** True when the word has a translation edge into any language at all. */
+  private inline def hasAnyTranslationEdge = quote { (wordId: Long) =>
+    translations.filter(edge => edge.sourceWordId == wordId).nonEmpty
+  }
+
+  /** The narrowing [[listPage]] and [[countMatching]] share, so the total counts the set the page is cut from.
+    * `targetLanguage` is read only under [[TranslationFilter.HasTarget]].
+    */
   private def matching(
     language: Option[String],
     search: Option[String],
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
   ): DynamicQuery[WordRow] = {
-    dynamicQuerySchema[WordRow]("words")
+    val base = dynamicQuerySchema[WordRow]("words")
       .filterOpt(language)((word, value) => quote(word.language == unquote(value)))
       .filterOpt(searchPattern(search))((word, pattern) => quote(word.textNorm.like(unquote(pattern))))
       .filterOpt(partOfSpeech)((word, value) => quote(word.partOfSpeech == unquote(value)))
@@ -488,6 +548,14 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         quote(wordTags.filter(link => link.wordId == word.id && link.tagId == unquote(value)).nonEmpty)
       )
       .filterOpt(taggedBy)((word, userId) => quote(taggedByUser(word.id, unquote(userId))))
+    translationFilter match {
+      case TranslationFilter.All       =>
+        base
+      case TranslationFilter.HasTarget =>
+        base.filterOpt(Some(targetLanguage))((word, lang) => quote(hasTranslationInto(word.id, unquote(lang))))
+      case TranslationFilter.HasAny    =>
+        base.filterOpt(Some(true))((word, _) => quote(hasAnyTranslationEdge(word.id)))
+    }
   }
 
   /** The `dto.WordSort` vocabulary as an `ORDER BY`, defaulting to the listing's own order: commonest first.
@@ -520,12 +588,16 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[WordRow]] = {
-    val page = ordered(matching(language, search, partOfSpeech, tagId, taggedBy), sort, descending)
-      .drop(offset)
-      .take(limit)
+    val page = ordered(
+      matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage),
+      sort,
+      descending,
+    ).drop(offset).take(limit)
     // The search term is a fragment of somebody's vocabulary and stays out of the message, like an address.
     logged(run(ctx.run(page))) { rows =>
       s"words.listPage offset=$offset limit=$limit lang=${language.getOrElse("-")} rows=${rows.size}"
@@ -538,8 +610,10 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     partOfSpeech: Option[String],
     tagId: Option[Long],
     taggedBy: Option[Long],
+    translationFilter: TranslationFilter,
+    targetLanguage: String,
   ): Task[Long] = {
-    val q = matching(language, search, partOfSpeech, tagId, taggedBy).size
+    val q = matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage).size
     logged(run(ctx.run(q)))(count => s"words.countMatching count=$count")
   }
 
@@ -569,6 +643,19 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         .filter { case (edge, _) => edge.sourceWordId == lift(wordId) }
     }
     logged(run(ctx.run(q)))(rows => s"words.allTranslationsOf id=$wordId rows=${rows.size}")
+  }
+
+  def wordIdsWithAnyTranslation(wordIds: List[Long]): Task[Set[Long]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      val q = quote {
+        translations.filter(edge => liftQuery(wordIds).contains(edge.sourceWordId)).map(_.sourceWordId).distinct
+      }
+      logged(run(ctx.run(q)).map(_.toSet)) { ids =>
+        s"wordTranslations.withAny requested=${wordIds.size} rows=${ids.size}"
+      }
+    }
   }
 
   def findTranslationById(id: Long): Task[Option[WordTranslationRow]] = {

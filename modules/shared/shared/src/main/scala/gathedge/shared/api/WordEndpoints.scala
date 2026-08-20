@@ -58,12 +58,15 @@ object WordEndpoints {
   private val posQuery      = HttpCodec.query[String]("pos").optional
   private val tagQuery      = HttpCodec.query[Long]("tag").optional
   private val mineQuery     = HttpCodec.query[Boolean]("mine").optional
+  private val trQuery       = HttpCodec.query[String]("tr").optional
 
   /** The browse-and-tag listing, paged and counted by the database.
     *
     * `lang` narrows to one study language and `target` picks which language the rendered translations are in; both are
     * plain strings rather than a codec over `WordLanguage`, so an unrecognised one falls back to the default the way an
-    * unrecognised `sort` does, rather than failing a request a stale bookmark produced.
+    * unrecognised `sort` does, rather than failing a request a stale bookmark produced. `tr` narrows to words carrying
+    * a translation — `target` for `TranslationFilter.HasTarget`, any language for `HasAny` — the same lenient-string
+    * treatment, defaulting to `All` for anything unrecognised.
     *
     * The only declared failure is the 400 `withCodecError` answers for a query parameter that does not decode — `page`
     * or `tag` given as prose. Nothing else can fail: a filter that matches nothing is an empty page, not an error.
@@ -80,6 +83,7 @@ object WordEndpoints {
       .query(posQuery)
       .query(tagQuery)
       .query(mineQuery)
+      .query(trQuery)
       .withCodecError
       .out[WordPage]
       .outFailure(failure.badRequest)

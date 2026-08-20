@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.config.{AppConfig, QuotaSection}
 import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTagRow, WordTranslationRow}
 import gathedge.backend.security.SecurityLog
-import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
@@ -95,6 +95,7 @@ trait WordService {
     tagId: Option[Long],
     mine: Boolean,
     target: WordLanguage,
+    translationFilter: TranslationFilter,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
@@ -214,12 +215,26 @@ object WordService {
     tagId: Option[Long],
     mine: Boolean,
     target: WordLanguage,
+    translationFilter: TranslationFilter,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
   ): URIO[WordService, WordPage] = {
     ZIO.serviceWithZIO[WordService](
-      _.list(page, pageSize, language, search, partOfSpeech, tagId, mine, target, sort, descending, reader)
+      _.list(
+        page,
+        pageSize,
+        language,
+        search,
+        partOfSpeech,
+        tagId,
+        mine,
+        target,
+        translationFilter,
+        sort,
+        descending,
+        reader,
+      )
     )
   }
 
@@ -428,6 +443,7 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     tagId: Option[Long],
     mine: Boolean,
     target: WordLanguage,
+    translationFilter: TranslationFilter,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
@@ -450,6 +466,8 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                                  partOfSpeech.map(PartOfSpeech.code),
                                  tagId,
                                  taggedBy,
+                                 translationFilter,
+                                 WordLanguage.code(target),
                                  sort,
                                  descending,
                                )
@@ -461,6 +479,8 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                                  partOfSpeech.map(PartOfSpeech.code),
                                  tagId,
                                  taggedBy,
+                                 translationFilter,
+                                 WordLanguage.code(target),
                                )
                                .orDie
         ids                = rows.map(_.id)
@@ -1142,31 +1162,28 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       targetSuggestionIds            = targetSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
       sourceSuggestionTranslations  <- translationsInto(sourceSuggestionIds, targetLanguage)
       targetSuggestionTranslations  <- translationsInto(targetSuggestionIds, sourceLanguage)
+      // Wider than any of the maps above, which are each restricted to one counterpart language: this is what answers
+      // `BulkUploadMatch.hasAnyTranslation`, one batch query for every candidate this preview shows.
+      candidateIds                   =
+        (matchedIds ++ sourceSuggestionIds ++ targetSuggestionIds).toList
+      anyTranslationIds             <- repo.wordIdsWithAnyTranslation(candidateIds).orDie
+      buildMatch                     = {
+        (row: WordRow, translationMap: Map[Long, List[TranslationOption]]) =>
+          BulkUploadMatch(toDomain(row), translationMap.getOrElse(row.id, Nil), anyTranslationIds.contains(row.id))
+      }
       matched                        = {
-        collapseHomonyms(sourceMatches, sourceTranslations).map(row =>
-          BulkUploadMatch(toDomain(row), sourceTranslations.getOrElse(row.id, Nil))
-        ) ++
-          collapseHomonyms(targetMatches, targetTranslations).map(row =>
-            BulkUploadMatch(toDomain(row), targetTranslations.getOrElse(row.id, Nil))
-          )
+        collapseHomonyms(sourceMatches, sourceTranslations).map(row => buildMatch(row, sourceTranslations)) ++
+          collapseHomonyms(targetMatches, targetTranslations).map(row => buildMatch(row, targetTranslations))
       }
       suggestions                    = {
         sourceSuggested.toList.flatMap { case (token, candidates) =>
           candidates.map { case (row, distance) =>
-            BulkUploadSuggestion(
-              token,
-              BulkUploadMatch(toDomain(row), sourceSuggestionTranslations.getOrElse(row.id, Nil)),
-              distance,
-            )
+            BulkUploadSuggestion(token, buildMatch(row, sourceSuggestionTranslations), distance)
           }
         } ++
           targetSuggested.toList.flatMap { case (token, candidates) =>
             candidates.map { case (row, distance) =>
-              BulkUploadSuggestion(
-                token,
-                BulkUploadMatch(toDomain(row), targetSuggestionTranslations.getOrElse(row.id, Nil)),
-                distance,
-              )
+              BulkUploadSuggestion(token, buildMatch(row, targetSuggestionTranslations), distance)
             }
           }
       }

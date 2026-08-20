@@ -163,8 +163,13 @@ final case class BulkUploadPreviewRequest(
 /** One word [[gathedge.backend.service.WordService.bulkUploadPreview]] found already in the dictionary, plus whichever
   * of its translations the dictionary already has into the *other* of the two declared languages — shown so the reader
   * can tell a genuine match from a coincidental substring before accepting it.
+  *
+  * `hasAnyTranslation` is wider than `translations.nonEmpty`: it is true the moment the dictionary has recorded the
+  * word in '''any''' language, even one neither declared language names, which is what the reader's "any language"
+  * filter narrows to.
   */
-final case class BulkUploadMatch(word: Word, translations: List[TranslationOption]) derives JsonCodec
+final case class BulkUploadMatch(word: Word, translations: List[TranslationOption], hasAnyTranslation: Boolean)
+    derives JsonCodec
 
 /** A dictionary word within [[gathedge.backend.service.WordService.maxSuggestionDistance]] edits of `token`, offered
   * because [[gathedge.backend.service.WordService.bulkUploadPreview]] found it in neither declared language exactly —

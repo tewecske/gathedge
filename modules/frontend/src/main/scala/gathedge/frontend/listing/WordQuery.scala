@@ -3,7 +3,7 @@ package gathedge.frontend.listing
 import com.raquo.waypoint._
 import urldsl.vocabulary.Codec
 import gathedge.frontend.components.SortHeader
-import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{Paging, WordSort}
 
 /** Everything that decides which words the server sends back, in one value — the sibling of [[UserQuery]], and the
@@ -29,6 +29,7 @@ final case class WordQuery(
   partOfSpeech: Option[PartOfSpeech] = None,
   tagId: Option[Long] = None,
   mine: Boolean = false,
+  translationFilter: TranslationFilter = TranslationFilter.All,
 ) {
 
   /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing about
@@ -67,12 +68,13 @@ object WordQuery {
     Option[String],
     Option[String],
     Option[String],
+    Option[String],
   )
 
   private val codec: Codec[Args, WordQuery] = {
     Codec.factory(
       (args: Args) => {
-        val (page, size, sort, direction, search, language, target, pos, tag, mine) = args
+        val (page, size, sort, direction, search, language, target, pos, tag, mine, tr) = args
         WordQuery(
           page = ListingParams.decodePage(page),
           pageSize = ListingParams.decodePageSize(size),
@@ -87,6 +89,7 @@ object WordQuery {
           // page instead of no page at all — the arrangement `AuditQuery` uses for its actor filter.
           tagId = tag.flatMap(_.toLongOption),
           mine = mine.contains("true"),
+          translationFilter = tr.flatMap(TranslationFilter.fromString).getOrElse(default.translationFilter),
         )
       },
       (query: WordQuery) => {
@@ -102,6 +105,9 @@ object WordQuery {
           query.partOfSpeech.map(PartOfSpeech.code),
           query.tagId.map(_.toString),
           Option.when(query.mine)("true"),
+          Option.when(query.translationFilter != default.translationFilter)(
+            TranslationFilter.code(query.translationFilter)
+          ),
         )
       },
     )
@@ -111,7 +117,7 @@ object WordQuery {
   val params = {
     (
       ListingParams.common & param[String]("q").? & param[String]("lang").? & param[String]("target").? &
-        param[String]("pos").? & param[String]("tag").? & param[String]("mine").?
+        param[String]("pos").? & param[String]("tag").? & param[String]("mine").? & param[String]("tr").?
     ).as[WordQuery](using codec)
   }
 }

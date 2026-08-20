@@ -15,7 +15,7 @@ import gathedge.backend.db.{
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.dto.{CreateWordRequest, Paging}
-import gathedge.shared.domain.{PartOfSpeech, Theme, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, Theme, TranslationFilter, WordLanguage}
 import zio._
 import zio.test._
 
@@ -62,6 +62,7 @@ object GuestAccountSpec extends ZIOSpecDefault {
       tagId = None,
       mine = true,
       target = WordLanguage.Hu,
+      translationFilter = TranslationFilter.All,
       sort = None,
       descending = false,
       reader = Some(userId),

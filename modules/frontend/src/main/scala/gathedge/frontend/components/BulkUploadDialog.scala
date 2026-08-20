@@ -5,7 +5,7 @@ import org.scalajs.dom
 import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.i18n.{CurrentLocale, I18n}
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
   BulkUploadManualPair,
@@ -90,6 +90,12 @@ final class BulkUploadDialog(
 
   private val previewVar = Var(Option.empty[BulkUploadPreviewResponse])
 
+  /** Narrows [[renderReviewMatched]]'s matched list to those carrying a translation — the target/counterpart language,
+    * or any language at all — the same three-state choice `WordsPage`'s own listing filter offers, reused here so a
+    * reader working through a long upload can hide the entries they already know are complete.
+    */
+  private val translationFilterVar = Var[TranslationFilter](TranslationFilter.All)
+
   /** Matched word ids the reader has accepted — seeded to every match the moment a preview lands, since accepting
     * everything found is the ordinary case; "decline" clears it rather than the reader unchecking each one.
     */
@@ -165,6 +171,7 @@ final class BulkUploadDialog(
       pendingPickVar         -> None,
       tagIdVar               -> None,
       pasteTextVar           -> "",
+      translationFilterVar   -> TranslationFilter.All,
     )
   }
 
@@ -187,6 +194,7 @@ final class BulkUploadDialog(
       pendingPickVar         -> None,
       tagIdVar               -> None,
       pasteTextVar           -> "",
+      translationFilterVar   -> TranslationFilter.All,
     )
   }
 
@@ -595,10 +603,35 @@ final class BulkUploadDialog(
   }
 
   private def renderReviewMatched(preview: BulkUploadPreviewResponse): HtmlElement = {
-    val matchedIds                            = preview.matched.map(_.word.id).toSet
-    val (withTranslation, withoutTranslation) = preview.matched.partition(_.translations.nonEmpty)
+    val matchedIds = preview.matched.map(_.word.id).toSet
     div(
       Option.when(preview.matched.nonEmpty)(renderMatchedControls(matchedIds)),
+      Option.when(preview.matched.nonEmpty)(renderTranslationFilter()),
+      child <-- translationFilterVar.signal.map(filter => renderMatchedGroups(filterMatches(preview.matched, filter))),
+      Option.when(preview.suggestions.nonEmpty)(renderSuggestionsSection(preview.suggestions)),
+      Option.when(preview.unmatched.nonEmpty)(renderUnmatchedSection(preview.unmatched)),
+    )
+  }
+
+  /** [[translationFilterVar]] applied to a preview's matched list — `All` is every row, `HasTarget` is the same rows
+    * [[renderMatchedGroups]]'s own "with translation" subgroup would show, and `HasAny` is wider still: a word may
+    * carry no translation into the two declared languages and still have one into a third.
+    */
+  private def filterMatches(matched: List[BulkUploadMatch], filter: TranslationFilter): List[BulkUploadMatch] = {
+    filter match {
+      case TranslationFilter.All       =>
+        matched
+      case TranslationFilter.HasTarget =>
+        matched.filter(_.translations.nonEmpty)
+      case TranslationFilter.HasAny    =>
+        matched.filter(_.hasAnyTranslation)
+    }
+  }
+
+  /** The matched list's two subgroups, over whatever [[filterMatches]] left standing. */
+  private def renderMatchedGroups(matched: List[BulkUploadMatch]): HtmlElement = {
+    val (withTranslation, withoutTranslation) = matched.partition(_.translations.nonEmpty)
+    div(
       Option.when(withTranslation.nonEmpty)(
         renderMatchedSubgroup(
           UiKeys.wordsBulkUploadMatchedWithTranslationHeading,
@@ -615,8 +648,25 @@ final class BulkUploadDialog(
           UiKeys.wordsBulkUploadDeclineAllWithoutTranslation,
         )
       ),
-      Option.when(preview.suggestions.nonEmpty)(renderSuggestionsSection(preview.suggestions)),
-      Option.when(preview.unmatched.nonEmpty)(renderUnmatchedSection(preview.unmatched)),
+    )
+  }
+
+  private def renderTranslationFilter(): HtmlElement = {
+    label(
+      cls := "flex flex-col gap-1 mt-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsTranslationFilterLabel)),
+      select(
+        cls    := "select select-sm w-52",
+        TranslationFilter.all.map(filter =>
+          option(value := TranslationFilter.code(filter), Labels.translationFilter(filter))
+        ),
+        controlled(
+          value <-- translationFilterVar.signal.map(TranslationFilter.code),
+          onChange.mapToValue --> Observer[String] { code =>
+            translationFilterVar.set(TranslationFilter.fromString(code).getOrElse(TranslationFilter.All))
+          },
+        ),
+      ),
     )
   }
 
