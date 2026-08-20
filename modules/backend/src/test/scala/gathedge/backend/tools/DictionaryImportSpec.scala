@@ -47,8 +47,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
     * such form" placeholder (`"-"`), a periphrastic construction (a space), two flavours of template scaffolding
     * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), a form spelled identically to
     * its own lemma (real linguistic fact, not noise -- excluded at store time instead, see
-    * `DictionaryImport.formEdges`), and two flavours of wiktextract's own "could not classify this cell" marker
-    * (`error-unrecognized-form`, `error-unknown-tag`) -- each row dropped whole, not salvaged for its other tags.
+    * `DictionaryImport.formEdges`), two flavours of wiktextract's own "could not classify this cell" marker
+    * (`error-unrecognized-form`, `error-unknown-tag`), and four flavours of "not the standard, current spelling"
+    * (`nonstandard`, `obsolete`, `alternative`, `archaic`) -- each row dropped whole, not salvaged for its other tags.
     */
   private val formsLine = {
     """{"word":"Beispiel","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
@@ -62,7 +63,11 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |{"form":"de-ndecl","tags":["inflection-template"],"source":"declension"},
       |{"form":"back harmony","tags":["class"]},
       |{"form":"Beispielen","tags":["error-unrecognized-form","dative","plural"]},
-      |{"form":"Beispielem","tags":["error-unknown-tag","dative"]}
+      |{"form":"Beispielem","tags":["error-unknown-tag","dative"]},
+      |{"form":"Beyspiel","tags":["nonstandard","nominative","singular"]},
+      |{"form":"Bexempel","tags":["obsolete","nominative","singular"]},
+      |{"form":"Beyspil","tags":["alternative","nominative","singular"]},
+      |{"form":"Exempel","tags":["archaic","nominative","singular"]}
       |]}""".stripMargin.replace("\n", "")
   }
 
@@ -145,6 +150,15 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           !forms.exists(_.form.text == "Beispielem"),
         )
       },
+      test("a nonstandard, obsolete, alternative-spelling, or archaic form is not imported") {
+        val forms = WiktextractParser.parse(formsLine).forms
+        assertTrue(
+          !forms.exists(_.form.text == "Beyspiel"),
+          !forms.exists(_.form.text == "Bexempel"),
+          !forms.exists(_.form.text == "Beyspil"),
+          !forms.exists(_.form.text == "Exempel"),
+        )
+      },
       test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
         // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
         val put   = ParsedWord(WordLanguage.En, "put", PartOfSpeech.Verb, None)
@@ -155,6 +169,33 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           ids,
         )
         assertTrue(edges == List((1L, 2L, "past")))
+      },
+      test("a form's translation is inferred through its lemma's own translation, matched on relation") {
+        val house    = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
+        val houses   = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
+        val haus     = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val haeuser  = ParsedWord(WordLanguage.De, "Häuser", PartOfSpeech.Noun, None)
+        val teller   = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Der))
+        val pairs    = List(WiktextractParser.ParsedPair(house, haus, Some("building")))
+        val forms    = List(
+          ParsedForm(house, houses, "plural"),
+          ParsedForm(haus, haeuser, "plural"),
+          // Teller has no translation pair, so its plural (untagged here) contributes no edge.
+        )
+        val inferred = DictionaryImport.formPairs(pairs, forms)
+        assertTrue(
+          inferred.map(pair => (pair.source.text, pair.target.text)) == List(("houses", "Häuser")),
+          inferred.forall(_.sense.contains("building")),
+        )
+      },
+      test("formPairs finds nothing when a relation is not shared, or a lemma has no pair") {
+        val house  = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
+        val houses = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
+        val haus   = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val hauses = ParsedWord(WordLanguage.De, "Hauses", PartOfSpeech.Noun, None)
+        val pairs  = List(WiktextractParser.ParsedPair(house, haus, None))
+        val forms  = List(ParsedForm(house, houses, "plural"), ParsedForm(haus, hauses, "genitive"))
+        assertTrue(DictionaryImport.formPairs(pairs, forms).isEmpty)
       },
       test("a limit keeps the commonest words, and whatever they translate to") {
         val entry       = WiktextractParser.parse(houseLine)
@@ -218,6 +259,10 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           collected.forms.size > 100,
           // wiktextract's own "could not classify this cell" marker never survives the import.
           !collected.forms.exists(_.relation.split(",").exists(_.startsWith("error-"))),
+          // Nor does a nonstandard/obsolete/alternative-spelling/archaic form.
+          !collected.forms.exists(
+            _.relation.split(",").exists(Set("nonstandard", "obsolete", "alternative", "archaic").contains)
+          ),
           seeEntries == Set(Gender.Der, Gender.Die),
           // Every pair is stated from English, since that is the only direction any source has.
           collected.pairs.forall(_.source.language == WordLanguage.En),

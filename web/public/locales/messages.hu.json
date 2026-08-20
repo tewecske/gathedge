@@ -532,6 +532,7 @@
   "ui.pos.adverb": "határozószó",
   "ui.origin.dictionary": "szótár",
   "ui.origin.pivot": "angolon át",
+  "ui.origin.form": "a szótövön át",
   "ui.origin.user": "felhasználói",
   "ui.guest.bannerTitle": "A szavaid ezen az eszközön vannak elmentve",
   "ui.guest.bannerHint": "Kérj átviteli kódot, hogy máshol is használhasd őket, vagy hozz létre fiókot.",

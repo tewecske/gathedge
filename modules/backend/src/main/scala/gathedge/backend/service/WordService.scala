@@ -317,10 +317,12 @@ object WordService {
   val dictionarySource = "dictionary"
 
   /** Origins a translation edge can have. `pivot` is a German–Hungarian pair inferred through a shared English sense
-    * rather than asserted anywhere, and is marked so a screen can say so.
+    * rather than asserted anywhere; `form` is a form-to-form pair inferred through its lemmas' own translation (a
+    * plural paired with a plural because the singulars translate each other) — both marked so a screen can say so.
     */
   val dictionaryOrigin = "dictionary"
   val pivotOrigin      = "pivot"
+  val formOrigin       = "form"
   val userOrigin       = "user"
 
   /** The rank a word nobody has ranked gets. Matches the column default: a sentinel rather than NULL, because the two

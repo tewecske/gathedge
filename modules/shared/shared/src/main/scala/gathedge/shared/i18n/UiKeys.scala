@@ -742,6 +742,7 @@ object UiKeys {
 
   val originDictionary: String = key(originPrefix + "dictionary")
   val originPivot: String      = key(originPrefix + "pivot")
+  val originForm: String       = key(originPrefix + "form")
   val originUser: String       = key(originPrefix + "user")
 
   // -- Guest accounts --------------------------------------------------------------------------

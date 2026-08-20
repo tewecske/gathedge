@@ -267,6 +267,38 @@ object DictionaryImport extends ZIOAppDefault {
     Collected(allRanks, pairs, forms)
   }
 
+  /** Every lemma's forms, keyed by relation, one form per relation. When a lemma states the same relation more than
+    * once (a table cell repeated under two spellings) the alphabetically first wins, so a re-import derives the same
+    * edge rather than picking whichever happened to sort first in a `HashMap`.
+    */
+  private def formsByRelation(forms: List[ParsedForm]): Map[ParsedWord, Map[String, ParsedWord]] = {
+    forms
+      .groupBy(_.lemma)
+      .view
+      .mapValues(_.groupBy(_.relation).view.mapValues(_.map(_.form).minBy(_.text)).toMap)
+      .toMap
+  }
+
+  /** Translations between two lemmas' forms, inferred through the lemma pair itself: if `Haus` translates to `house`,
+    * and both have a form tagged `plural` (`Häuser`, `houses`), those two forms translate to each other too. No source
+    * states this directly — a plural is its own dictionary entry, not a row in a translation table — so it is derived
+    * here the same way [[pivot]] derives German–Hungarian from a shared English sense, and stored with its own origin
+    * so a screen can say where it came from.
+    *
+    * Runs over every lemma pair passed in, direct and pivoted alike, so a German plural picks up a Hungarian one
+    * through the same pivoted `Haus`/`ház` pair its singular already relies on.
+    */
+  def formPairs(pairs: List[ParsedPair], forms: List[ParsedForm]): List[ParsedPair] = {
+    val byLemma = formsByRelation(forms)
+    pairs.flatMap { pair =>
+      val sourceForms = byLemma.getOrElse(pair.source, Map.empty)
+      val targetForms = byLemma.getOrElse(pair.target, Map.empty)
+      sourceForms.keySet.intersect(targetForms.keySet).toList.sorted.map { relation =>
+        ParsedPair(sourceForms(relation), targetForms(relation), pair.sense)
+      }
+    }
+  }
+
   // -- The seed file ----------------------------------------------------------------------------
 
   /** A flat TSV with a record-type column, gzipped if the name says so.
@@ -574,10 +606,13 @@ object DictionaryImport extends ZIOAppDefault {
       _          <- ZIO.logInfo(s"Stored $direct direct translation row(s)")
       // The pivot runs over the collected pairs rather than the stored ones, so a re-import derives the same set and
       // inserts none of it a second time.
-      inferred   <- storePairs(pivot(collected.pairs), ids, WordService.pivotOrigin, now)
+      pivoted     = pivot(collected.pairs)
+      inferred   <- storePairs(pivoted, ids, WordService.pivotOrigin, now)
       _          <- ZIO.logInfo(s"Stored $inferred inferred German-Hungarian row(s)")
       forms      <- storeForms(collected.forms, ids, now)
       _          <- ZIO.logInfo(s"Stored $forms form relation row(s)")
+      formLinked <- storePairs(formPairs(collected.pairs ++ pivoted, collected.forms), ids, WordService.formOrigin, now)
+      _          <- ZIO.logInfo(s"Stored $formLinked form-to-form translation row(s)")
     } yield ()
   }
 

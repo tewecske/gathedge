@@ -191,6 +191,13 @@ object WiktextractParser {
     */
   private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class")
 
+  /** A form tagged with one of these is not the standard, current spelling a learner should be taught — a variant form
+    * wiktextract records alongside the real one, not a distinct grammatical fact the way `plural`/`dative` are. Dropped
+    * the same way `error-*` is: the whole row, since the rest of its tags describe a form of the word that happens to
+    * be nonstandard/obsolete/alternative/archaic, not a form worth teaching under a different label.
+    */
+  private val nonStandardFormTags: Set[String] = Set("nonstandard", "obsolete", "alternative", "archaic")
+
   /** `"-"` is the dump's own placeholder for "this word has no such form" (a mass noun with no plural, say), and a
     * space marks a periphrastic construction or, more often on inspection, a corrupted entry — the same rule [[wordOf]]
     * and [[pairsOf]] already apply to word text applies here too.
@@ -206,6 +213,7 @@ object WiktextractParser {
     tags.nonEmpty &&
     !tags.exists(tag => metaFormTags.contains(tag.toLowerCase)) &&
     !tags.exists(tag => tag.toLowerCase.startsWith("error-")) &&
+    !tags.exists(tag => nonStandardFormTags.contains(tag.toLowerCase)) &&
     text.nonEmpty && text != "-" && !text.contains(" ")
   }
 
