@@ -369,6 +369,22 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           ),
         )
       },
+      test("dedupeHomographs merges the genderless twin's forms onto the gendered survivor instead of dropping them") {
+        val frauGenderless = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, None)
+        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Die))
+        val frauen         = ParsedWord(WordLanguage.De, "Frauen", PartOfSpeech.Noun, None)
+        val deduped        = DictionaryImport.dedupeHomographs(
+          DictionaryImport.Collected(
+            words = Map(frauGenderless -> 1, frauGendered -> 1, frauen -> 1),
+            pairs = Nil,
+            forms = List(ParsedForm(frauGenderless, frauen, "plural")),
+          )
+        )
+        assertTrue(
+          deduped.words.keySet == Set(frauGendered, frauen),
+          deduped.forms == List(ParsedForm(frauGendered, frauen, "plural")),
+        )
+      },
       test("dedupeHomographs leaves an Other entry alone when it has its own translation, or nothing else translates") {
         val english         = ParsedWord(WordLanguage.En, "man", PartOfSpeech.Noun, None)
         val mannNoun        = ParsedWord(WordLanguage.De, "Mann", PartOfSpeech.Noun, Some(Gender.Der))

@@ -286,53 +286,66 @@ object DictionaryImport extends ZIOAppDefault {
   /** Wiktextract sometimes gives one spelling more than one entry that this application's schema cannot tell apart by
     * sense, only by shape: a German noun stated once with its article and once without, or a homograph that is not a
     * real word in its own right so much as wiktextract's placeholder for "this spelling, some other part of speech."
-    * Both collapse onto the entry that actually carries information. Grouped on `text.toLowerCase` because the two
-    * entries do not always agree on case (`Frau` the noun, `frau` the pronoun).
+    * Grouped on `text.toLowerCase` because the two entries do not always agree on case (`Frau` the noun, `frau` the
+    * pronoun).
     *
     *   - Within one part of speech, a gendered and a genderless entry for the same spelling are the same headword twice
     *     — [[WiktextractParser.genderOf]] finds the article on the entry that states it, so a gendered entry surviving
-    *     means some entry did. The genderless duplicate is dropped.
-    *   - An `Other`-tagged entry that carries no translation of its own is dropped once the same spelling already has
-    *     an entry in a real part of speech that does: `Other` is this application's catch-all for parts of speech it
-    *     does not model, and an untranslated one adds nothing a learner can use.
-    *
-    * Whatever is dropped takes its pairs and forms with it, the same way [[select]] does.
+    *     means some entry did. The genderless duplicate is *redirected* onto the gendered one rather than dropped
+    *     outright: its pairs and forms are the same headword's, so `Frau`'s plural stays imported even when it was
+    *     `Frau`-without-gender that stated `forms[]`, not `Frau`-`die`. Ties (more than one gendered entry for the same
+    *     spelling and part of speech, which does not happen in practice) resolve deterministically by gender then text,
+    *     rather than duplicating the redirect onto every one of them.
+    *   - An `Other`-tagged entry that carries no translation of its own is dropped outright once the same spelling
+    *     already has an entry in a real part of speech that does: `Other` is this application's catch-all for parts of
+    *     speech it does not model, an untranslated one adds nothing a learner can use, and — unlike the gender case —
+    *     it is not the same headword as the survivor, so there is nothing of its own worth keeping.
     */
   def dedupeHomographs(collected: Collected): Collected = {
     def hasTranslation(word: ParsedWord): Boolean = {
       collected.pairs.exists(pair => pair.source == word || pair.target == word)
     }
 
-    val dropped = collected.words.keys
+    val byHomograph = collected.words.keys
       .groupBy(word => (word.language, word.text.toLowerCase))
       .values
-      .flatMap { homographs =>
-        val genderless = homographs
-          .groupBy(_.partOfSpeech)
-          .values
-          .filter(_.exists(_.gender.isDefined))
-          .flatMap(_.filter(_.gender.isEmpty))
+      .toList
 
-        val survivors         = homographs.toSet -- genderless
-        val hasRealSense      = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
-        val untranslatedOther = {
-          if (hasRealSense)
-            survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
-          else
-            Set.empty[ParsedWord]
+    val redirects: Map[ParsedWord, ParsedWord] = byHomograph.flatMap { homographs =>
+      homographs.groupBy(_.partOfSpeech).values.flatMap { posGroup =>
+        posGroup.filter(_.gender.isDefined).toList.sortBy(word => (Gender.toColumn(word.gender), word.text)) match {
+          case survivor :: _ =>
+            posGroup.filter(_.gender.isEmpty).map(_ -> survivor)
+          case Nil           =>
+            Nil
         }
-
-        genderless ++ untranslatedOther
       }
-      .toSet
+    }.toMap
 
-    if (dropped.isEmpty)
+    val dropped = byHomograph.flatMap { homographs =>
+      val survivors    = homographs.toSet -- redirects.keySet
+      val hasRealSense = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
+      if (hasRealSense)
+        survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
+      else
+        Set.empty[ParsedWord]
+    }.toSet
+
+    if (redirects.isEmpty && dropped.isEmpty)
       collected
     else {
+      def resolve(word: ParsedWord): ParsedWord = redirects.getOrElse(word, word)
+
       Collected(
-        words = collected.words -- dropped,
-        pairs = collected.pairs.filterNot(pair => dropped.contains(pair.source) || dropped.contains(pair.target)),
-        forms = collected.forms.filterNot(form => dropped.contains(form.lemma) || dropped.contains(form.form)),
+        words = collected.words.filter { case (word, _) => !redirects.contains(word) && !dropped.contains(word) },
+        pairs = collected.pairs
+          .filterNot(pair => dropped.contains(pair.source) || dropped.contains(pair.target))
+          .map(pair => pair.copy(source = resolve(pair.source), target = resolve(pair.target)))
+          .distinct,
+        forms = collected.forms
+          .filterNot(form => dropped.contains(form.lemma) || dropped.contains(form.form))
+          .map(form => form.copy(lemma = resolve(form.lemma), form = resolve(form.form)))
+          .distinct,
       )
     }
   }
