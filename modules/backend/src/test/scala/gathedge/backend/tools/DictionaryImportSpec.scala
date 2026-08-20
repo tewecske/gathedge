@@ -112,6 +112,16 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           inferred.forall(pair => pair.source.language == WordLanguage.De && pair.target.language == WordLanguage.Hu),
         )
       },
+      test("pivot skips a pronoun or article: a shared sense there is too generic to trust") {
+        val which = ParsedWord(WordLanguage.En, "which", PartOfSpeech.Other, None)
+        val die   = ParsedWord(WordLanguage.De, "die", PartOfSpeech.Other, None)
+        val mik   = ParsedWord(WordLanguage.Hu, "mik", PartOfSpeech.Other, None)
+        val pairs = List(
+          WiktextractParser.ParsedPair(which, die, Some("interrogative")),
+          WiktextractParser.ParsedPair(which, mik, Some("interrogative")),
+        )
+        assertTrue(DictionaryImport.pivot(pairs).isEmpty)
+      },
       test("a language not being imported contributes nothing, and a malformed line is skipped") {
         val french = """{"word":"maison","lang_code":"fr","pos":"noun","senses":[{"glosses":["house"]}]}"""
         assertTrue(

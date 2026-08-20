@@ -223,6 +223,15 @@ object DictionaryImport extends ZIOAppDefault {
       }
   }
 
+  /** Parts of speech specific enough for a shared English sense to reliably mean the same thing on both sides. A
+    * pronoun or article has no finer bucket than [[PartOfSpeech.Other]] in this application's POS enum, and function
+    * words are exactly where pivoting goes wrong: German `die` (article, also the relative pronoun "who"/"which")
+    * pivoted onto Hungarian `mik`/`miket` ("what", plural) through a shared, too-generic English sense. Content words
+    * carry enough of their own meaning that a shared sense is trustworthy; anything landing in `Other` does not.
+    */
+  private val pivotablePos: Set[PartOfSpeech] =
+    Set(PartOfSpeech.Noun, PartOfSpeech.Verb, PartOfSpeech.Adjective, PartOfSpeech.Adverb)
+
   /** German ↔ Hungarian, which no free source states directly.
     *
     * Both sides come out of the *English* entry that names them, so two translations of the same English sense are
@@ -231,7 +240,10 @@ object DictionaryImport extends ZIOAppDefault {
     */
   def pivot(pairs: List[ParsedPair]): List[ParsedPair] = {
     val bySense = pairs
-      .filter(pair => pair.source.language == WordLanguage.En && pair.sense.exists(_.trim.nonEmpty))
+      .filter(pair => {
+        pair.source.language == WordLanguage.En && pair.sense.exists(_.trim.nonEmpty) &&
+          pivotablePos.contains(pair.source.partOfSpeech)
+      })
       .groupBy(pair => (pair.source.key, pair.sense.map(_.trim.toLowerCase)))
 
     bySense.values.toList.flatMap { group =>
