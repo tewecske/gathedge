@@ -492,6 +492,29 @@ object GameServiceSpec extends ZIOSpecDefault {
           fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
+      test("includeDefiniteArticles defaults to true and, when false, strips the article everywhere") {
+        for {
+          owner       <- newUser()
+          tag         <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L)
+          source      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "szekreny"))
+          target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Der)))
+          _           <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          defaultGame <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          bareGame    <-
+            GameService
+              .createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id), includeDefiniteArticles = false)
+          started     <- GameService.startPlay(bareGame.slug, owner)
+          prompt      <- GameService.nextPrompt(started.playId, owner)
+          _           <- GameService.submitAnswer(started.playId, prompt.wordId.get, "Schrank", owner)
+          results     <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          defaultGame.includeDefiniteArticles,
+          !bareGame.includeDefiniteArticles,
+          // The article-free game scores the bare noun as correct, and shows it without "der" throughout.
+          results.answers.head.outcome == AnswerOutcome.Correct,
+          results.answers.head.expectedText == "Schrank",
+        )
+      },
       test("createGame's trackResults defaults to false and round-trips when set") {
         for {
           owner   <- newUser()

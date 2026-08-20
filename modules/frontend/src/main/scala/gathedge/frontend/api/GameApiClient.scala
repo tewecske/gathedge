@@ -61,11 +61,12 @@ object GameApiClient {
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
     trackResults: Boolean = false,
+    includeDefiniteArticles: Boolean = true,
   ): EventStream[Either[ApiError, GameCreated]] = {
     run(
       executor(
         GameEndpoints.create(
-          CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay, trackResults)
+          CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay, trackResults, includeDefiniteArticles)
         )
       )
     )

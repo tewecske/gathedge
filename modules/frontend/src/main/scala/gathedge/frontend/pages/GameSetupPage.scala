@@ -87,12 +87,27 @@ private class GameSetupPage {
     */
   private val trackResultsVar = Var(false)
 
+  /** Whether a German noun's article is part of the prompt/answer/results text — see `GameRow.includeDefiniteArticles`.
+    * On by default, unlike [[trackResultsVar]]: this mirrors the article being shown everywhere else in the app. Only
+    * offered when [[germanInvolvedSignal]] is true; sent as `true` regardless when hidden, which is a no-op for a
+    * language pair with no German noun to gender in the first place.
+    */
+  private val includeArticlesVar = Var(true)
+
+  /** Whether the current language pair has a German noun to put an article on at all — gates whether
+    * [[renderIncludeArticlesControl]] renders anything.
+    */
+  private val germanInvolvedSignal: Signal[Boolean] = {
+    formSignal.map { case (source, target) => source == WordLanguage.De || target == WordLanguage.De }
+  }
+
   private val formAndTagsSignal = {
     formSignal.combineWith(
       selectedTagIdsVar.signal,
       wordLimitSignal,
       randomizeEachPlayVar.signal,
       trackResultsVar.signal,
+      includeArticlesVar.signal,
     )
   }
 
@@ -206,10 +221,18 @@ private class GameSetupPage {
         },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
       playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
-        case (source, target, tagIds, wordLimit, randomizeEachPlay, trackResults) =>
-          asReader(() =>
-            GameApiClient.create(source, target, tagIds.toList, wordLimit, randomizeEachPlay, trackResults)
-          )
+        case (source, target, tagIds, wordLimit, randomizeEachPlay, trackResults, includeArticles) =>
+          asReader(() => {
+            GameApiClient.create(
+              source,
+              target,
+              tagIds.toList,
+              wordLimit,
+              randomizeEachPlay,
+              trackResults,
+              includeArticles,
+            )
+          })
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -267,6 +290,7 @@ private class GameSetupPage {
       renderWordLimitControls(),
       renderRandomizeControls(),
       renderTrackResultsControl(),
+      renderIncludeArticlesControl(),
       renderWordsList(),
     )
   }
@@ -426,6 +450,31 @@ private class GameSetupPage {
           p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
         ),
       ),
+    )
+  }
+
+  /** A single checkbox, shown only while [[germanInvolvedSignal]] is true — a language pair with no German noun has
+    * nothing to put an article on, the same reasoning the word-limit/randomize pair skip rendering when meaningless.
+    */
+  private def renderIncludeArticlesControl(): HtmlElement = {
+    div(
+      cls := "mb-4",
+      child.maybe <-- germanInvolvedSignal.map { involved =>
+        Option.when(involved)(
+          label(
+            cls := "flex items-center gap-2 cursor-pointer",
+            input(
+              typ := "checkbox",
+              cls := "checkbox checkbox-sm",
+              controlled(checked <-- includeArticlesVar.signal, onClick.mapToChecked --> includeArticlesVar.writer),
+            ),
+            div(
+              span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupIncludeArticlesLabel)),
+              p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupIncludeArticlesHint)),
+            ),
+          )
+        )
+      },
     )
   }
 

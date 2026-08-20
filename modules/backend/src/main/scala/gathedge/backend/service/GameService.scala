@@ -70,7 +70,10 @@ trait GameService {
     * `wordLimit` is `None`, regardless of what is passed — a fixed sample of "everything" is meaningless.
     * `trackResults`: `false` (the default, and the only behaviour before this parameter existed) means
     * [[listPlays]]/[[getPlayDetail]] answer [[GameFailure.NotTracked]] for this game; `true` opts into the owner-facing
-    * results listing. Set once, here — there is no route to change it after creation.
+    * results listing. Set once, here — there is no route to change it after creation. `includeDefiniteArticles`: `true`
+    * (the default, and the only behaviour before this parameter existed) keeps a German noun's "der"/"die"/"das" in the
+    * prompt, the accepted answer, and the results text; `false` strips it at every one of those call sites. Set once,
+    * here, like `trackResults`.
     */
   def createGame(
     userId: Long,
@@ -80,6 +83,7 @@ trait GameService {
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
     trackResults: Boolean = false,
+    includeDefiniteArticles: Boolean = true,
   ): IO[GameFailure, GameDetail]
 
   /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from — deduped to one
@@ -191,9 +195,19 @@ object GameService {
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
     trackResults: Boolean = false,
+    includeDefiniteArticles: Boolean = true,
   ): ZIO[GameService, GameFailure, GameDetail] = {
     ZIO.serviceWithZIO[GameService](
-      _.createGame(userId, sourceLanguage, targetLanguage, tagIds, wordLimit, randomizeEachPlay, trackResults)
+      _.createGame(
+        userId,
+        sourceLanguage,
+        targetLanguage,
+        tagIds,
+        wordLimit,
+        randomizeEachPlay,
+        trackResults,
+        includeDefiniteArticles,
+      )
     )
   }
 
@@ -288,6 +302,14 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     Tag(row.id, row.name, wordCount, row.userId == viewerId)
   }
 
+  /** `Word.displayText`, gated by a game's own `includeDefiniteArticles` — the choke point [[nextPrompt]],
+    * [[submitAnswer]] and [[answerResultsOf]] all go through, so a game that turned the article off never sees it in a
+    * prompt, a scored answer, or a results row.
+    */
+  private def wordText(row: WordRow, includeDefiniteArticles: Boolean): String = {
+    if (includeDefiniteArticles) Word.displayText(row.text, row.gender) else row.text
+  }
+
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]] = {
     repo
       .eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
@@ -352,6 +374,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     wordLimit: Option[Int],
     randomizeEachPlay: Boolean,
     trackResults: Boolean,
+    includeDefiniteArticles: Boolean,
     wordPool: List[(Long, Long)],
     now: Long,
     attempt: Int,
@@ -373,6 +396,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
           wordLimit = wordLimit,
           randomizeEachPlay = randomizeEachPlay,
           trackResults = trackResults,
+          includeDefiniteArticles = includeDefiniteArticles,
         )
         repo.insertGame(row, tagIds, wordPool).catchAll { error =>
           // A concurrent caller may have taken this exact slug between the attempt and here; the unique
@@ -388,6 +412,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                 wordLimit,
                 randomizeEachPlay,
                 trackResults,
+                includeDefiniteArticles,
                 wordPool,
                 now,
                 attempt + 1,
@@ -409,6 +434,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     wordLimit: Option[Int] = None,
     randomizeEachPlay: Boolean = true,
     trackResults: Boolean = false,
+    includeDefiniteArticles: Boolean = true,
   ): IO[GameFailure, GameDetail] = {
     for {
       _              <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
@@ -440,6 +466,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                           validLimit,
                           !normalizedFixed,
                           trackResults,
+                          includeDefiniteArticles,
                           wordPool,
                           now,
                           attempt = 0,
@@ -455,6 +482,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       row.wordLimit,
       row.randomizeEachPlay,
       row.trackResults,
+      row.includeDefiniteArticles,
     )
   }
 
@@ -484,6 +512,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         row.wordLimit,
         row.randomizeEachPlay,
         row.trackResults,
+        row.includeDefiniteArticles,
       )
     }
   }
@@ -618,6 +647,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
     for {
       play       <- requireOwnedPlay(playId, requesterUserId)
+      game       <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
       pool       <- repo.wordPairsOf(playId).orDie
       answered   <- repo.answersOf(playId).orDie
       answeredIds = answered.map(_.wordId).toSet
@@ -630,11 +660,11 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                           index      <- Random.nextIntBounded(choices.size)
                           (wordId, _) = choices(index)
                           wordRows   <- repo.wordsByIds(List(wordId)).orDie
-                          wordText    = wordRows.headOption.map(row => Word.displayText(row.text, row.gender)).getOrElse("")
+                          text        = wordRows.headOption.map(row => wordText(row, game.includeDefiniteArticles)).getOrElse("")
                         } yield GamePrompt(
                           finished = false,
                           wordId = Some(wordId),
-                          wordText = Some(wordText),
+                          wordText = Some(text),
                           position = Some(answeredIds.size + 1),
                         )
                     }
@@ -660,7 +690,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       game            <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
       candidateIds    <- candidateTranslationIds(game, wordId, translationId)
       candidateWords  <- repo.wordsByIds(candidateIds).orDie
-      textById         = candidateWords.map(row => row.id -> Word.displayText(row.text, row.gender)).toMap
+      textById         = candidateWords.map(row => row.id -> wordText(row, game.includeDefiniteArticles)).toMap
       scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> GameScoring.score(text, answerText)))
       (bestId, scored) = {
         scoredById
@@ -690,10 +720,13 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   /** `answers` mapped to their display text, shared by [[getResults]] (player-facing) and [[getPlayDetail]]
     * (owner-facing) — the two answer to the same shape, just addressed and gated differently.
     */
-  private def answerResultsOf(answers: List[GamePlayAnswerRow]): UIO[List[GameAnswerResult]] = {
+  private def answerResultsOf(
+    answers: List[GamePlayAnswerRow],
+    includeDefiniteArticles: Boolean,
+  ): UIO[List[GameAnswerResult]] = {
     for {
       words <- repo.wordsByIds(answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct).orDie
-      textOf = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+      textOf = words.map(w => w.id -> wordText(w, includeDefiniteArticles)).toMap
     } yield answers.map { a =>
       GameAnswerResult(
         wordText = textOf.getOrElse(a.wordId, ""),
@@ -707,8 +740,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults] = {
     for {
       play    <- requireOwnedPlay(playId, requesterUserId)
+      game    <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
       answers <- repo.answersOf(playId).orDie
-      results <- answerResultsOf(answers)
+      results <- answerResultsOf(answers, game.includeDefiniteArticles)
     } yield GameResults(play.score, play.maxScore, play.wordCount, results)
   }
 
@@ -753,7 +787,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       play    <- repo.findPlayInGame(game.id, playId).orDie.someOrFail(GameFailure.NotFound)
       player  <- repo.usersByIds(List(play.playerUserId)).orDie.map(_.headOption)
       answers <- repo.answersOf(playId).orDie
-      results <- answerResultsOf(answers)
+      results <- answerResultsOf(answers, game.includeDefiniteArticles)
     } yield GamePlayDetail(
       playId = play.id,
       playerEmail = player.flatMap(_.email),

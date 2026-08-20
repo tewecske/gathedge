@@ -9,7 +9,10 @@ import zio.json.*
   * `Some(n)` means "sample exactly n of them" — see `GameService.startPlay`. `randomizeEachPlay` decides *when* that
   * sample is drawn: `true` (the default, and the only behaviour before this field existed) draws it fresh every time
   * this quiz is played; `false` draws it once, here, and every later playthrough reuses that same fixed set until the
-  * owner reshuffles it. Meaningless (and ignored server-side) when `wordLimit` is `None`.
+  * owner reshuffles it. Meaningless (and ignored server-side) when `wordLimit` is `None`. `includeDefiniteArticles`
+  * (`true`, the default, and the only behaviour before this field existed) decides whether a German noun's
+  * "der"/"die"/"das" is part of the prompt, the accepted answer, and the results text — see `GameService`'s
+  * `Word.displayText` call sites.
   */
 final case class CreateGameRequest(
   sourceLanguage: WordLanguage,
@@ -18,6 +21,7 @@ final case class CreateGameRequest(
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
   trackResults: Boolean = false,
+  includeDefiniteArticles: Boolean = true,
 ) derives JsonCodec
 
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name — the caller already knows
@@ -38,7 +42,8 @@ final case class GameSetupWord(wordId: Long, text: String) derives JsonCodec
   * mirrors [[CreateGameRequest.wordLimit]] — `None` for "every eligible word", `Some(n)` for a fixed sample size —
   * cheap to carry here so a game's own page or listing can show "20 words" instead of staying silent about the setting.
   * `randomizeEachPlay` mirrors [[CreateGameRequest.randomizeEachPlay]] — the instance page uses it to decide whether to
-  * offer the owner a reshuffle control.
+  * offer the owner a reshuffle control. `includeDefiniteArticles` mirrors
+  * [[CreateGameRequest.includeDefiniteArticles]].
   */
 final case class GameDetail(
   slug: String,
@@ -49,6 +54,7 @@ final case class GameDetail(
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
   trackResults: Boolean = false,
+  includeDefiniteArticles: Boolean = true,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s answer: enough for the play loop to start — the id every later play call addresses,

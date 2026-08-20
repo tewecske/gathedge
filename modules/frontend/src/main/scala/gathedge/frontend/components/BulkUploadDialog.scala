@@ -688,8 +688,10 @@ final class BulkUploadDialog(
     )
   }
 
-  /** One matched subgroup — "with translation" or "without" — its own Accept all / Decline all scoped to just its ids,
-    * and the source/target language split as two columns.
+  /** One matched subgroup — "with translation" or "without" — its own Accept all / Decline all scoped to just its ids.
+    * Source- and target-language words sit in one list together, each row carrying its own language badge, rather than
+    * two side-by-side columns: a match already shows its translation inline, so splitting by language added a second
+    * axis a reader had to scan without adding information.
     */
   private def renderMatchedSubgroup(
     headingKey: String,
@@ -720,25 +722,15 @@ final class BulkUploadDialog(
         ),
       ),
       div(
-        cls := "grid grid-cols-2 gap-2 mt-1",
-        renderMatchedColumn(sourceLanguageVar.now(), matches.filter(_.word.language == sourceLanguageVar.now())),
-        renderMatchedColumn(targetLanguageVar.now(), matches.filter(_.word.language == targetLanguageVar.now())),
-      ),
-    )
-  }
-
-  private def renderMatchedColumn(language: WordLanguage, matches: List[BulkUploadMatch]): HtmlElement = {
-    div(
-      h5(cls := "text-xs font-semibold", Labels.language(language)),
-      div(
-        cls  := "max-h-48 overflow-y-auto border border-base-300 rounded p-2 mt-1 flex flex-col gap-1",
+        cls := "max-h-48 overflow-y-auto border border-base-300 rounded p-2 mt-1 flex flex-col gap-1",
         matches.map(renderMatchedRow),
       ),
     )
   }
 
   /** The word itself always came from the uploaded file — that is what a match is. Its translations came from the
-    * dictionary and may never have appeared in the upload at all, so each carries its own badge saying so.
+    * dictionary and may never have appeared in the upload at all, so each carries its own badge saying so. The language
+    * badge tells source- and target-language rows apart now that they share one list.
     */
   private def renderMatchedRow(m: BulkUploadMatch): HtmlElement = {
     label(
@@ -757,6 +749,7 @@ final class BulkUploadDialog(
         div(
           cls := "flex items-center gap-1 flex-wrap",
           span(cls := "font-medium text-sm", Word.display(m.word)),
+          span(cls := "badge badge-ghost badge-xs", Labels.language(m.word.language)),
           span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromUpload)),
         ),
         if (m.translations.isEmpty)

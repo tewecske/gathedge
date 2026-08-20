@@ -384,6 +384,8 @@
   "ui.gameSetup.randomize.fixed": "Válogatás most, és ugyanazok a szavak minden alkalommal",
   "ui.gameSetup.trackResults.label": "Eredmények követése",
   "ui.gameSetup.trackResults.hint": "Lásd, ki játszott és milyen eredménnyel",
+  "ui.gameSetup.includeArticles.label": "Határozott névelők megjelenítése",
+  "ui.gameSetup.includeArticles.hint": "A német főnevek „der”/„die”/„das” névelővel jelenjenek meg a kvízben",
   "ui.gameInstance.notFound": "Ez a kvízlink nem érvényes.",
   "ui.gameInstance.start": "Indítás",
   "ui.gameInstance.progress": "{0}. / {1}.",

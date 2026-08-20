@@ -384,6 +384,8 @@
   "ui.gameSetup.randomize.fixed": "Randomize now, and keep the same words every time",
   "ui.gameSetup.trackResults.label": "Track results",
   "ui.gameSetup.trackResults.hint": "See who played and how they scored",
+  "ui.gameSetup.includeArticles.label": "Include definite articles",
+  "ui.gameSetup.includeArticles.hint": "Show \"der\"/\"die\"/\"das\" with German nouns in the quiz",
   "ui.gameInstance.notFound": "This quiz link is not valid.",
   "ui.gameInstance.start": "Start",
   "ui.gameInstance.progress": "{0} of {1}",

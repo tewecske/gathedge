@@ -978,6 +978,50 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     if (gender.isDefined) text.capitalize else text
   }
 
+  /** Collapses tokens that share a bare word (see [[stripArticle]]) into one, so a reader who typed both `"Hund"` and
+    * `"der Hund"` in the same upload sees one leftover entry, not two. If any variant carried an article, that marks
+    * the word a noun: the merged entry is shown articled and capitalized, the same convention [[capitalizeGermanNoun]]
+    * applies at word creation. Order-preserving by each group's first occurrence, since [[tokenize]]'s own dedup is.
+    */
+  private def dedupeGermanVariants(tokens: List[String]): List[String] = {
+    tokens
+      .map(token => token -> stripArticle(token))
+      .groupBy { case (_, (bare, _)) => bare }
+      .toList
+      .sortBy { case (_, group) => tokens.indexOf(group.head._1) }
+      .map { case (bare, group) =>
+        group.collectFirst { case (_, (_, Some(gender))) => gender } match {
+          case Some(gender) => Gender.article(gender) + " " + bare.capitalize
+          case None         => bare
+        }
+      }
+  }
+
+  /** Collapses dictionary rows sharing one `textNorm` down to at most one noun and one non-noun -- a reader thinks of
+    * "bitte" as one word, not the five senses/tagging gaps [[matchTokens]]'s bare-key lookup happens to return. Two
+    * rows survive only for a genuine noun/non-noun split (`der See`/`die See` never collide here, since gender is part
+    * of a noun's own identity, not a second sense sharing a bare key with a non-noun). Within each half, the row
+    * carrying a translation wins -- more useful to show than a bare duplicate -- then the one with a gender set (a real
+    * German noun always has an article; a genderless noun row alongside a gendered one is an import gap, not a second
+    * sense), then the commoner by [[WordRow.frequencyRank]] for a deterministic tie.
+    */
+  private def collapseHomonyms(rows: List[WordRow], translations: Map[Long, List[TranslationOption]]): List[WordRow] = {
+    val nounCode                                         = PartOfSpeech.code(PartOfSpeech.Noun)
+    def best(candidates: List[WordRow]): Option[WordRow] = {
+      candidates
+        .sortBy(row => (translations.getOrElse(row.id, Nil).isEmpty, row.gender.isEmpty, row.frequencyRank))
+        .headOption
+    }
+    rows
+      .groupBy(_.textNorm)
+      .toList
+      .sortBy { case (_, group) => rows.indexWhere(_.textNorm == group.head.textNorm) }
+      .flatMap { case (_, group) =>
+        val (nouns, others) = group.partition(_.partOfSpeech == nounCode)
+        List(best(nouns), best(others)).flatten
+      }
+  }
+
   /** Checked at the top of both [[bulkUploadPreview]] and [[bulkUploadConfirm]]: one shared rate-limit budget (a full
     * upload is a preview call and a confirm call, so a five-attempt window covers two or three whole uploads) and the
     * same `TagNotFound` a caller of any other tag-scoped write here gets.
@@ -1067,32 +1111,46 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     val invalidFile =
       BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
     for {
-      _                            <- bulkUploadGuard(tagId, userId)
-      trimmed                       = content.trim
-      _                            <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
-                                        ZIO.fail(invalidFile)
-                                      )
-      mergeGermanArticles           = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
-      tokens                        = tokenize(trimmed, mergeGermanArticles)
-      sourceMatched                <- matchTokens(sourceLanguage, tokens)
-      (sourceMatches, remaining1)   = sourceMatched
-      targetMatched                <- matchTokens(targetLanguage, remaining1)
-      (targetMatches, remaining2)   = targetMatched
-      sourceSuggested              <- suggestionsFor(sourceLanguage, remaining2)
-      remaining3                    = remaining2.filterNot(sourceSuggested.contains)
-      targetSuggested              <- suggestionsFor(targetLanguage, remaining3)
-      unmatched                     = remaining3.filterNot(targetSuggested.contains)
-      sourceTranslations           <- translationsInto(sourceMatches.map(_.id), targetLanguage)
-      targetTranslations           <- translationsInto(targetMatches.map(_.id), sourceLanguage)
-      sourceSuggestionIds           = sourceSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
-      targetSuggestionIds           = targetSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
-      sourceSuggestionTranslations <- translationsInto(sourceSuggestionIds, targetLanguage)
-      targetSuggestionTranslations <- translationsInto(targetSuggestionIds, sourceLanguage)
-      matched                       = {
-        sourceMatches.map(row => BulkUploadMatch(toDomain(row), sourceTranslations.getOrElse(row.id, Nil))) ++
-          targetMatches.map(row => BulkUploadMatch(toDomain(row), targetTranslations.getOrElse(row.id, Nil)))
+      _                             <- bulkUploadGuard(tagId, userId)
+      trimmed                        = content.trim
+      _                             <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
+                                         ZIO.fail(invalidFile)
+                                       )
+      mergeGermanArticles            = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
+      tokens                         = tokenize(trimmed, mergeGermanArticles)
+      sourceMatched                 <- matchTokens(sourceLanguage, tokens)
+      (sourceMatches, remaining1)    = sourceMatched
+      targetMatched                 <- matchTokens(targetLanguage, remaining1)
+      (targetMatches, remaining2Raw) = targetMatched
+      matchedIds                     = (sourceMatches.map(_.id) ++ targetMatches.map(_.id)).toSet
+      remaining2                     = dedupeGermanVariants(remaining2Raw)
+      sourceSuggested0              <- suggestionsFor(sourceLanguage, remaining2)
+      sourceSuggested                = sourceSuggested0.view
+                                         .mapValues(_.filterNot { case (row, _) => matchedIds.contains(row.id) })
+                                         .filter { case (_, cs) => cs.nonEmpty }
+                                         .toMap
+      remaining3                     = remaining2.filterNot(sourceSuggested.contains)
+      targetSuggested0              <- suggestionsFor(targetLanguage, remaining3)
+      targetSuggested                = targetSuggested0.view
+                                         .mapValues(_.filterNot { case (row, _) => matchedIds.contains(row.id) })
+                                         .filter { case (_, cs) => cs.nonEmpty }
+                                         .toMap
+      unmatched                      = remaining3.filterNot(targetSuggested.contains)
+      sourceTranslations            <- translationsInto(sourceMatches.map(_.id), targetLanguage)
+      targetTranslations            <- translationsInto(targetMatches.map(_.id), sourceLanguage)
+      sourceSuggestionIds            = sourceSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
+      targetSuggestionIds            = targetSuggested.values.flatten.map { case (row, _) => row.id }.toList.distinct
+      sourceSuggestionTranslations  <- translationsInto(sourceSuggestionIds, targetLanguage)
+      targetSuggestionTranslations  <- translationsInto(targetSuggestionIds, sourceLanguage)
+      matched                        = {
+        collapseHomonyms(sourceMatches, sourceTranslations).map(row =>
+          BulkUploadMatch(toDomain(row), sourceTranslations.getOrElse(row.id, Nil))
+        ) ++
+          collapseHomonyms(targetMatches, targetTranslations).map(row =>
+            BulkUploadMatch(toDomain(row), targetTranslations.getOrElse(row.id, Nil))
+          )
       }
-      suggestions                   = {
+      suggestions                    = {
         sourceSuggested.toList.flatMap { case (token, candidates) =>
           candidates.map { case (row, distance) =>
             BulkUploadSuggestion(

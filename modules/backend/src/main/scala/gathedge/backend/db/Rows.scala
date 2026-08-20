@@ -221,6 +221,7 @@ final case class GameRow(
   wordLimit: Option[Int] = None,
   randomizeEachPlay: Boolean = true,
   trackResults: Boolean = false,
+  includeDefiniteArticles: Boolean = true,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like

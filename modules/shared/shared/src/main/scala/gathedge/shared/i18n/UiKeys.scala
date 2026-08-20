@@ -860,6 +860,12 @@ object UiKeys {
   val gameSetupTrackResultsLabel: String = key("ui.gameSetup.trackResults.label")
   val gameSetupTrackResultsHint: String  = key("ui.gameSetup.trackResults.hint")
 
+  // Whether a German noun's "der"/"die"/"das" appears in the prompt, the accepted answer, and the results text —
+  // see `GameRow.includeDefiniteArticles`. On by default, unlike `trackResults`: this mirrors the article being
+  // shown everywhere else in the app. Only offered on the setup form when German is one of the two languages.
+  val gameSetupIncludeArticlesLabel: String = key("ui.gameSetup.includeArticles.label")
+  val gameSetupIncludeArticlesHint: String  = key("ui.gameSetup.includeArticles.hint")
+
   // -- Game instance -----------------------------------------------------------------------------
 
   val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")

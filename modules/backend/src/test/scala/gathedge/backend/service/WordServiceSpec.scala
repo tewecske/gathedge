@@ -748,6 +748,26 @@ object WordServiceSpec extends ZIOSpecDefault {
           tagsAfter == tagsBefore,
         )
       },
+      test(
+        "matched dictionary rows sharing one bare text collapse to at most one noun and one non-noun, the way a reader thinks of it as one word"
+      ) {
+        for {
+          _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", rank = 1))
+          gendered <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", gender = Some(Gender.Die), rank = 2))
+          _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Other, rank = 3))
+          adverb   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Adverb, rank = 4))
+          hu       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kérem", rank = 1))
+          _        <- WordRepository.insertTranslationPair(adverb.id, hu.id, WordService.dictionaryOrigin, None, 0L)
+          tag      <- createTag("upload", 1L)
+          preview  <- WordService.bulkUploadPreview(tag.id, "bitte", WordLanguage.De, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // Of the two noun rows, the gendered one wins over the genderless duplicate; of the two non-noun rows, the
+          // translated adverb wins over the untranslated one with no other signal to prefer it.
+          preview.matched.map(_.word.id).toSet == Set(gendered.id, adverb.id)
+        )
+      },
       test("a leading der/die/das merges into the noun that follows it as one token, only when German is asked for") {
         for {
           tag         <- createTag("upload", 1L)
@@ -756,10 +776,23 @@ object WordServiceSpec extends ZIOSpecDefault {
             WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.En, WordLanguage.Hu, 1L)
         } yield assertTrue(
           // German is one of the two declared languages: "der" merges into "der tisch" rather than showing up as its
-          // own spurious token, and "neuwort" (no article) is unaffected.
-          germanSide.unmatched.toSet == Set("der tisch", "neuwort"),
+          // own spurious token; the merge also marks it a noun, so it displays articled and capitalized. "neuwort"
+          // (no article) is unaffected.
+          germanSide.unmatched.toSet == Set("der Tisch", "neuwort"),
           // Neither declared language is German: no merging happens, so "der" and "tisch" are two separate tokens.
           neitherSide.unmatched.toSet == Set("der", "tisch", "neuwort"),
+        )
+      },
+      test(
+        "a bare German word and its der/die/das-prefixed variant collapse into one unmatched entry, capitalized as a noun"
+      ) {
+        for {
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "Hund der Hund", WordLanguage.De, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // Neither "hund" nor "der hund" is in the dictionary; since one of the two typed variants carried an
+          // article, the pair collapses to one entry rather than two, capitalized and articled as a noun.
+          preview.unmatched == List("der Hund")
         )
       },
       test("preview answers TagNotFound for somebody else's tag and one that does not exist") {
@@ -1014,6 +1047,20 @@ object WordServiceSpec extends ZIOSpecDefault {
             )
           dePage    <- list(reader = Some(1L), tagId = Some(tag.id))
         } yield assertTrue(added == 2, dePage.items.map(_.word.text) == List("Haus"))
+      },
+      test(
+        "a suggestion is never offered for a dictionary word another token in the same upload already exact-matched"
+      ) {
+        for {
+          _       <- seed
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "Haus haos", WordLanguage.De, WordLanguage.Hu, 1L)
+        } yield assertTrue(
+          // "Haus" exact-matches; "haos" would otherwise suggest that same "Haus", so instead it falls to unmatched.
+          preview.matched.map(_.word.text).contains("Haus"),
+          preview.suggestions.forall(_.token != "haos"),
+          preview.unmatched.contains("haos"),
+        )
       },
     ).provide(layer)
   }

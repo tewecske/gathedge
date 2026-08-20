@@ -331,7 +331,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           found.exists(anomaly => {
             anomaly.formWordId == haben.id && anomaly.relation == "auxiliary" &&
-              anomaly.lemmaCount == lemmas.size.toLong
+            anomaly.lemmaCount == lemmas.size.toLong
           }),
           !found.exists(_.formWordId == plural.id),
         )
