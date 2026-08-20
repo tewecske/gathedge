@@ -23,6 +23,7 @@ import gathedge.backend.db.{
   UsageEventRepository,
   UsageEventRow,
   UserRepository,
+  WordFormRow,
   WordRepository,
   WordRow,
 }
@@ -88,8 +89,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     } yield ds: DataSource
   }
 
+  // `>+>` rather than `>>>` so `DataSource` stays in the environment alongside the repositories: the word-forms
+  // cascade test below deletes a `words` row directly, which no repository method exposes -- there is no
+  // `deleteWord` anywhere in the app.
   private val repoLayer = {
-    containerDataSource >>> (
+    containerDataSource >+> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
@@ -458,6 +462,54 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // Deleting the sharer takes every remaining share, and its own code, with it.
           afterSharer.isEmpty,
           codeGone.isEmpty,
+        )
+      },
+      // `word_forms` is the first table in this schema that references `words` twice over from the same row
+      // (`lemma_word_id`/`form_word_id`), the same shape the progress-share test above exercises against `users`.
+      // There is no `deleteWord` anywhere in the app — a `words` row is never deleted through a service — so the
+      // delete here is issued as raw SQL directly against the pooled `DataSource`, which `repoLayer`'s `>+>` keeps
+      // in the environment for exactly this reason.
+      test("a word's forms cascade away when either the lemma or the form word is deleted") {
+        def deleteWord(id: Long): RIO[DataSource, Unit] = {
+          ZIO.serviceWithZIO[DataSource] { ds =>
+            ZIO.attemptBlocking {
+              val conn = ds.getConnection()
+              try {
+                val stmt = conn.prepareStatement("DELETE FROM words WHERE id = ?")
+                try {
+                  stmt.setLong(1, id)
+                  stmt.executeUpdate()
+                  ()
+                } finally stmt.close()
+              } finally conn.close()
+            }
+          }
+        }
+
+        for {
+          haus       <- WordRepository.ensureWord(WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L))
+          hauser     <- WordRepository.ensureWord(
+                          WordRow(0L, "de", "Häuser", "häuser", "noun", "", 1, "dictionary", None, 0L)
+                        )
+          hauses     <- WordRepository.ensureWord(
+                          WordRow(0L, "de", "Hauses", "hauses", "noun", "", 1, "dictionary", None, 0L)
+                        )
+          now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _          <- WordRepository.insertForms(
+                          List(
+                            WordFormRow(0L, haus.id, hauser.id, "plural", now),
+                            WordFormRow(0L, haus.id, hauses.id, "genitive", now),
+                          )
+                        )
+          _          <- deleteWord(hauser.id)
+          afterForm  <- WordRepository.formsOf(haus.id)
+          _          <- deleteWord(haus.id)
+          afterLemma <- WordRepository.lemmaOf(hauses.id)
+        } yield assertTrue(
+          // Deleting the plural form takes only its own relation; the genitive's is untouched.
+          afterForm.map(_.relation) == List("genitive"),
+          // Deleting the lemma takes every remaining relation with it.
+          afterLemma.isEmpty,
         )
       },
       // Not a referential-integrity case — `findWordsByLengthRange` touches only `words`, no FK. It earns a place here

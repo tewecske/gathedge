@@ -1,7 +1,15 @@
 package gathedge.backend.tools
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{DataSourceFactory, DbDialect, FlywayMigrator, WordRepository, WordRow, WordTranslationRow}
+import gathedge.backend.db.{
+  DataSourceFactory,
+  DbDialect,
+  FlywayMigrator,
+  WordFormRow,
+  WordRepository,
+  WordRow,
+  WordTranslationRow,
+}
 import gathedge.backend.service.WordService
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import zio.*
@@ -14,7 +22,7 @@ import java.util.concurrent.TimeUnit
 
 import javax.sql.DataSource
 
-import WiktextractParser.{ParsedPair, ParsedWord}
+import WiktextractParser.{ParsedForm, ParsedPair, ParsedWord}
 
 /** Loads the shared dictionary: English, German and Hungarian words with their parts of speech, German gender, and the
   * translations between them.
@@ -117,7 +125,7 @@ object DictionaryImport extends ZIOAppDefault {
     * per language, not the dump's millions — and having the lot at once is what makes the German–Hungarian pivot
     * possible at all.
     */
-  final case class Collected(words: Map[ParsedWord, Int], pairs: List[ParsedPair]) {
+  final case class Collected(words: Map[ParsedWord, Int], pairs: List[ParsedPair], forms: List[ParsedForm]) {
 
     def withWord(word: ParsedWord, rank: Int): Collected = {
       // The best rank wins: a word reached both as a headword and as somebody's translation keeps the one that says
@@ -131,7 +139,7 @@ object DictionaryImport extends ZIOAppDefault {
   }
 
   object Collected {
-    val empty: Collected = Collected(Map.empty, Nil)
+    val empty: Collected = Collected(Map.empty, Nil, Nil)
   }
 
   // -- Reading a wiktextract dump ---------------------------------------------------------------
@@ -197,17 +205,21 @@ object DictionaryImport extends ZIOAppDefault {
     bytes
       .filter(line => WiktextractParser.mayConcern(line, options.languages))
       .map(WiktextractParser.parse)
-      .runFold(Collected.empty) { case (collected, (word, pairs)) =>
-        val withWord  = word
+      .runFold(Collected.empty) { case (collected, entry) =>
+        val withWord      = entry.word
           .filter(w => options.languages.contains(w.language))
           .fold(collected)(w => collected.withWord(w, WordService.unrankedFrequency))
-        val relevant  = pairs.filter(pair =>
+        val relevantPairs = entry.pairs.filter(pair =>
           options.languages.contains(pair.source.language) && options.languages.contains(pair.target.language)
         )
-        val withPairs = relevant.foldLeft(withWord)((acc, pair) =>
+        val withPairs     = relevantPairs.foldLeft(withWord)((acc, pair) =>
           acc.withWord(pair.source, WordService.unrankedFrequency).withWord(pair.target, WordService.unrankedFrequency)
         )
-        withPairs.copy(pairs = relevant ++ withPairs.pairs)
+        // The form-word itself is not added to `collected.words` here -- that happens in `select`, once the
+        // frequency cut has run, so a lemma's whole case/tense table is not materialised for every one of the
+        // dump's millions of entries before `--limit` narrows anything down.
+        val relevantForms = entry.forms.filter(form => options.languages.contains(form.lemma.language))
+        withPairs.copy(pairs = relevantPairs ++ withPairs.pairs, forms = relevantForms ++ withPairs.forms)
       }
   }
 
@@ -240,11 +252,19 @@ object DictionaryImport extends ZIOAppDefault {
     * at nothing.
     */
   def select(collected: Collected, frequencies: Map[WordLanguage, Map[String, Int]], limit: Int): Collected = {
-    val ranked = collected.words.keys.map(word => (word, rankOf(frequencies, word))).toMap
-    val kept   = ranked.filter { case (_, rank) => rank <= limit }.keySet
-    val pairs  = collected.pairs.filter(pair => kept.contains(pair.source) || kept.contains(pair.target))
-    val needed = kept ++ pairs.flatMap(pair => List(pair.source, pair.target))
-    Collected(needed.map(word => (word, ranked.getOrElse(word, WordService.unrankedFrequency))).toMap, pairs)
+    val ranked    = collected.words.keys.map(word => (word, rankOf(frequencies, word))).toMap
+    val kept      = ranked.filter { case (_, rank) => rank <= limit }.keySet
+    val pairs     = collected.pairs.filter(pair => kept.contains(pair.source) || kept.contains(pair.target))
+    val needed    = kept ++ pairs.flatMap(pair => List(pair.source, pair.target))
+    // A form is kept only if its lemma's own word row is going to exist -- whether that word made the frequency
+    // cut directly, or is kept only because something translates to or from it. Anything whose lemma did not
+    // survive contributes no form either.
+    val forms     = collected.forms.filter(form => needed.contains(form.lemma))
+    val baseRanks = needed.map(word => (word, ranked.getOrElse(word, WordService.unrankedFrequency))).toMap
+    val allRanks  = forms.foldLeft(baseRanks) { (acc, form) =>
+      if (acc.contains(form.form)) acc else acc.updated(form.form, WordService.unrankedFrequency)
+    }
+    Collected(allRanks, pairs, forms)
   }
 
   // -- The seed file ----------------------------------------------------------------------------
@@ -253,6 +273,12 @@ object DictionaryImport extends ZIOAppDefault {
     *
     * Chosen over JSON because it is diffable: the committed sample is reviewed like any other file in the repository,
     * and a one-word change should read as a one-line change.
+    *
+    * Three record types, one per line:
+    *   - `W  language text pos gender rank` — a word.
+    *   - `T  <word columns> <word columns> sense` — a translation pair, source then target.
+    *   - `F  <word columns> <word columns> relation` — a form relation, lemma then form, `relation` in the sense
+    *     column's place.
     */
   object SeedFormat {
 
@@ -285,7 +311,25 @@ object DictionaryImport extends ZIOAppDefault {
           ).mkString("\t")
         }
       }
-      words ++ pairs
+      val forms = {
+        collected.forms.distinct
+          .sortBy(form => (form.lemma.key.toString, form.form.key.toString, form.relation))
+          .map { form =>
+            List(
+              "F",
+              WordLanguage.code(form.lemma.language),
+              form.lemma.text,
+              PartOfSpeech.code(form.lemma.partOfSpeech),
+              Gender.toColumn(form.lemma.gender),
+              WordLanguage.code(form.form.language),
+              form.form.text,
+              PartOfSpeech.code(form.form.partOfSpeech),
+              Gender.toColumn(form.form.gender),
+              form.relation,
+            ).mkString("\t")
+          }
+      }
+      words ++ pairs ++ forms
     }
 
     private def wordAt(columns: Array[String], offset: Int): Option[ParsedWord] = {
@@ -325,6 +369,21 @@ object DictionaryImport extends ZIOAppDefault {
                     .withWord(target, WordService.unrankedFrequency)
                     .copy(pairs = ParsedPair(source, target, sense) :: collected.pairs)
                 case _                            =>
+                  collected
+              }
+            case Some("F") =>
+              (wordAt(columns, 1), wordAt(columns, 5)) match {
+                case (Some(lemma), Some(form)) =>
+                  columns.lift(9).map(_.trim).filter(_.nonEmpty) match {
+                    case None           =>
+                      collected
+                    case Some(relation) =>
+                      collected
+                        .withWord(lemma, WordService.unrankedFrequency)
+                        .withWord(form, WordService.unrankedFrequency)
+                        .copy(forms = ParsedForm(lemma, form, relation) :: collected.forms)
+                  }
+                case _                         =>
                   collected
               }
             case _         =>
@@ -464,6 +523,43 @@ object DictionaryImport extends ZIOAppDefault {
       .map(_.sum)
   }
 
+  /** The `(lemmaId, formId, relation)` edges this batch of forms resolves to, once ids are known: a form whose lemma or
+    * form-word did not get stored contributes nothing, and a form spelled identically to its own lemma (English `put`'s
+    * past tense is `put`) is dropped, the same rule [[storePairs]] applies to a translation pair that would otherwise
+    * link a word to itself.
+    *
+    * Pulled out as a pure function, like [[dedupeByKey]] and [[pivot]], so it is unit-testable without a database.
+    */
+  def formEdges(forms: List[ParsedForm], ids: Map[ParsedWord, Long]): List[(Long, Long, String)] = {
+    forms.flatMap { form =>
+      for {
+        lemmaId <- ids.get(form.lemma)
+        formId  <- ids.get(form.form)
+        if lemmaId != formId
+      } yield (lemmaId, formId, form.relation)
+    }.distinct
+  }
+
+  /** Writes every form relation that is not already recorded. Unlike [[storePairs]], a form relation is directional and
+    * stored once -- `formsOf`/`lemmaOf` answer the two directions with two different queries, rather than two rows.
+    */
+  private def storeForms(forms: List[ParsedForm], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
+    val edges = formEdges(forms, ids)
+
+    ZIO
+      .foreach(edges.grouped(batchSize).toList) { batch =>
+        val lemmaIds = batch.map { case (lemmaId, _, _) => lemmaId }.distinct
+        for {
+          known <- WordRepository.existingFormRelations(lemmaIds).map(_.toSet)
+          rows   = batch.filterNot(known.contains).map { case (lemmaId, formId, relation) =>
+                     WordFormRow(0L, lemmaId, formId, relation, now)
+                   }
+          _     <- WordRepository.insertForms(rows)
+        } yield rows.size.toLong
+      }
+      .map(_.sum)
+  }
+
   private def store(collected: Collected): RIO[WordRepository & DataSource & AppConfig, Unit] = {
     for {
       config     <- ZIO.service[AppConfig]
@@ -480,6 +576,8 @@ object DictionaryImport extends ZIOAppDefault {
       // inserts none of it a second time.
       inferred   <- storePairs(pivot(collected.pairs), ids, WordService.pivotOrigin, now)
       _          <- ZIO.logInfo(s"Stored $inferred inferred German-Hungarian row(s)")
+      forms      <- storeForms(collected.forms, ids, now)
+      _          <- ZIO.logInfo(s"Stored $forms form relation row(s)")
     } yield ()
   }
 
@@ -499,7 +597,10 @@ object DictionaryImport extends ZIOAppDefault {
                            }
                            .map(_.headOption.getOrElse(Map.empty[WordLanguage, Map[String, Int]]))
           collected   <- readDump(path, options)
-          _           <- ZIO.logInfo(s"Read ${collected.words.size} word(s) and ${collected.pairs.size} pair(s)")
+          _           <- ZIO.logInfo(
+                           s"Read ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
+                             s"${collected.forms.size} form(s)"
+                         )
         } yield select(collected, frequencies, options.limit)
     }
   }
@@ -509,7 +610,10 @@ object DictionaryImport extends ZIOAppDefault {
       args      <- ZIOAppArgs.getArgs
       options   <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
       collected <- load(options)
-      _         <- ZIO.logInfo(s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s)")
+      _         <- ZIO.logInfo(
+                     s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
+                       s"${collected.forms.size} form(s)"
+                   )
       _         <- ZIO.foreachDiscard(options.exportTo)(path => writeSeed(path, collected))
       // Exporting is an offline transformation of a dump into the committed sample: it touches no database, so it
       // does not need one to be running.

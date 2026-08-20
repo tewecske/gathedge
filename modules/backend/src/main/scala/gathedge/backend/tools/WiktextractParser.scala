@@ -36,6 +36,16 @@ object WiktextractParser {
     tags: Option[List[String]] = None,
   ) derives JsonDecoder
 
+  /** One row of `forms[]`: an inflected or declined spelling of the entry, tagged with what it is (`plural`,
+    * `genitive`, `past`, one cell of a declension/conjugation table, ...). `source` names the table the row came from
+    * when there is one (`"declension"`, `"conjugation"`); it is absent for a bare, untabled form.
+    */
+  final case class RawForm(
+    form: String,
+    tags: Option[List[String]] = None,
+    source: Option[String] = None,
+  ) derives JsonDecoder
+
   final case class RawEntry(
     word: String,
     lang_code: Option[String] = None,
@@ -43,6 +53,7 @@ object WiktextractParser {
     tags: Option[List[String]] = None,
     senses: Option[List[RawSense]] = None,
     translations: Option[List[RawTranslation]] = None,
+    forms: Option[List[RawForm]] = None,
   ) derives JsonDecoder
 
   /** A word as it will be stored, before it has an id. */
@@ -61,6 +72,23 @@ object WiktextractParser {
     * of the same sense joinable later.
     */
   final case class ParsedPair(source: ParsedWord, target: ParsedWord, sense: Option[String])
+
+  /** One form of a lemma, with the canonical tag string as its relation. */
+  final case class ParsedForm(lemma: ParsedWord, form: ParsedWord, relation: String)
+
+  object ParsedForm {
+
+    /** Sorted, lower-cased, deduplicated, comma-joined -- so the same tag set decoded twice, or decoded on a re-import
+      * months later, always produces the same string. This is what keeps a re-run idempotent without the importer
+      * having to compare tag lists structurally.
+      */
+    def relationOf(tags: List[String]): String = {
+      tags.map(_.trim.toLowerCase).filter(_.nonEmpty).distinct.sorted.mkString(",")
+    }
+  }
+
+  /** Both halves of one wiktextract line: the entry as a word, what it translates to, and what forms it has. */
+  final case class ParsedEntry(word: Option[ParsedWord], pairs: List[ParsedPair], forms: List[ParsedForm])
 
   /** Wiktionary's part-of-speech vocabulary is much wider than this application's five values; everything unmapped
     * becomes `Other`, and the handful that are not words at all are dropped by [[isUsablePos]].
@@ -156,17 +184,59 @@ object WiktextractParser {
     }
   }
 
-  /** Both halves of one line: the entry as a word, and whatever it says about other languages.
+  /** Rows in `forms[]` that are template scaffolding rather than an actual word form: a declension/conjugation table's
+    * own header cell (`table-tags`), the name of the inflection template that produced the table
+    * (`inflection-template`), or a Hungarian vowel-harmony/stem-class label (`class`) that names how the word inflects
+    * rather than a form of the word itself.
+    */
+  private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class")
+
+  /** `"-"` is the dump's own placeholder for "this word has no such form" (a mass noun with no plural, say), and a
+    * space marks a periphrastic construction or, more often on inspection, a corrupted entry — the same rule [[wordOf]]
+    * and [[pairsOf]] already apply to word text applies here too.
+    */
+  private def isUsableForm(form: RawForm): Boolean = {
+    val tags = form.tags.getOrElse(Nil)
+    val text = form.form.trim
+    tags.nonEmpty &&
+    !tags.exists(tag => metaFormTags.contains(tag.toLowerCase)) &&
+    text.nonEmpty && text != "-" && !text.contains(" ")
+  }
+
+  /** The forms this entry's own `forms[]` array states, keyed to the entry as a lemma. `None` if the entry itself is
+    * not a word this application stores ([[wordOf]] already decided that); a form-of page such as `Häuser` has no
+    * meaningful `forms[]` of its own and is excluded the same way.
+    *
+    * Gender is read from each form's own tags rather than inherited from the lemma: a German plural form's tags never
+    * repeat `masculine`/`feminine`/`neuter`, so inheriting the lemma's gender would wrongly stamp `das` onto `Häuser`,
+    * which grammatically takes `die` in every case. Part of speech, on the other hand, is inherited — a plural is still
+    * a noun, and the dump does not repeat it per form.
+    */
+  def formsOf(entry: RawEntry): List[ParsedForm] = {
+    wordOf(entry) match {
+      case None        =>
+        Nil
+      case Some(lemma) =>
+        entry.forms.getOrElse(Nil).filter(isUsableForm).map { raw =>
+          val tags   = raw.tags.getOrElse(Nil)
+          val gender = genderOf(lemma.language, lemma.partOfSpeech, tags)
+          val word   = ParsedWord(lemma.language, raw.form.trim, lemma.partOfSpeech, gender)
+          ParsedForm(lemma, word, ParsedForm.relationOf(tags))
+        }
+    }
+  }
+
+  /** Both halves of one line: the entry as a word, and whatever it says about other languages and its own forms.
     *
     * A line that decodes to nothing usable is silently skipped rather than failing the import. The dump has millions of
     * entries and a handful of them are malformed; stopping on one would mean nobody ever finishes an import.
     */
-  def parse(line: String): (Option[ParsedWord], List[ParsedPair]) = {
+  def parse(line: String): ParsedEntry = {
     line.fromJson[RawEntry] match {
       case Left(_)      =>
-        (None, Nil)
+        ParsedEntry(None, Nil, Nil)
       case Right(entry) =>
-        (wordOf(entry), pairsOf(entry))
+        ParsedEntry(wordOf(entry), pairsOf(entry), formsOf(entry))
     }
   }
 

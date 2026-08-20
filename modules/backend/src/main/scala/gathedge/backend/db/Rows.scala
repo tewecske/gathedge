@@ -145,6 +145,20 @@ final case class WordTranslationRow(
   createdAt: Long,
 )
 
+/** One relation between two `words` rows: `formWordId` is a form of `lemmaWordId`, tagged by `relation` -- a
+  * lower-cased, sorted, comma-joined serialisation of wiktextract's own tag set for that form (`"plural"`,
+  * `"dative,definite,plural"`), following the same free-form-string convention [[WordTranslationRow.origin]] does.
+  * Never a closed enum: German case x number x definiteness, and Hungarian's case system, are both larger than any list
+  * this application would maintain by hand.
+  */
+final case class WordFormRow(
+  id: Long,
+  lemmaWordId: Long,
+  formWordId: Long,
+  relation: String,
+  createdAt: Long,
+)
+
 /** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on. */
 final case class TagRow(id: Long, userId: Long, name: String, nameNorm: String, createdAt: Long)
 

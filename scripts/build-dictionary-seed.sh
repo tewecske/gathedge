@@ -16,10 +16,11 @@
 # German and Hungarian are a few per cent.
 #
 # None of it belongs on a server. DictionaryImport's --export mode turns a dump into a flat TSV of
-# just the words and pairs that survived the frequency cut, which at --limit 20000 is a few megabytes
-# gzipped; that file is what gets shipped, and `--seed <path>` on the server loads it. So this script
-# is the dev-machine half: fetch the inputs, run the export, and print the two commands that move the
-# result across.
+# just the words, pairs, and word forms (plurals, verb tenses, declension/case tables) that survived
+# the frequency cut; most of the file's size is forms, since German and Hungarian words can carry
+# dozens of them each regardless of --limit. That file is what gets shipped, and `--seed <path>` on
+# the server loads it. So this script is the dev-machine half: fetch the inputs, run the export, and
+# print the two commands that move the result across.
 #
 # The dump is cached rather than deleted, and the download resumes, because the whole point is that a
 # second run at a different --limit costs nothing. --drop-dump opts out of that.
@@ -116,15 +117,16 @@ report() {
   head1 "Result"
   ok "$out — $(du -h "$out" | cut -f1)"
 
-  # Record types, as SeedFormat writes them: W is a word, T a direct translation pair. The pivot
-  # (German-Hungarian) rows are not in the file; the importer re-derives them from the T rows when it
-  # stores, which is why the seed stays this small.
+  # Record types, as SeedFormat writes them: W is a word, T a direct translation pair, F a form
+  # relation (plural, past tense, declension/case table cell, ...). The pivot (German-Hungarian) rows
+  # are not in the file; the importer re-derives them from the T rows when it stores.
   local reader=cat
   case "$out" in *.gz) reader="gzip -dc" ;; esac
-  local words pairs
+  local words pairs forms
   words=$($reader "$out" | grep -c '^W' || true)
   pairs=$($reader "$out" | grep -c '^T' || true)
-  say "  $words word(s), $pairs direct translation pair(s)"
+  forms=$($reader "$out" | grep -c '^F' || true)
+  say "  $words word(s), $pairs direct translation pair(s), $forms form relation(s)"
 
   head1 "Load it into the deployment"
   say "  scp $out <host>:/tmp/"

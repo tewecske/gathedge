@@ -179,9 +179,23 @@ trait WordRepository {
   /** Which `(source, target)` pairs already exist among those source words, so a re-run inserts nothing twice. */
   def existingTranslationPairs(sourceWordIds: List[Long]): Task[List[(Long, Long)]]
 
+  def insertForms(rows: List[WordFormRow]): Task[Long]
+
+  /** Which `(lemma, form, relation)` triples already exist for those lemma ids, so a re-run inserts nothing twice --
+    * the forms equivalent of [[existingTranslationPairs]].
+    */
+  def existingFormRelations(lemmaWordIds: List[Long]): Task[List[(Long, Long, String)]]
+
+  /** Every form of one word -- what a future "show inflections" screen would call. */
+  def formsOf(lemmaWordId: Long): Task[List[WordFormRow]]
+
+  /** Every lemma one word is a form of -- the reverse direction of [[formsOf]]. */
+  def lemmaOf(formWordId: Long): Task[List[WordFormRow]]
+
   def countWords: Task[Long]
   def countTranslations: Task[Long]
   def countTags: Task[Long]
+  def countWordForms: Task[Long]
 }
 
 object WordRepository {
@@ -333,6 +347,18 @@ object WordRepository {
   def existingTranslationPairs(sourceWordIds: List[Long]): RIO[WordRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[WordRepository](_.existingTranslationPairs(sourceWordIds))
 
+  def insertForms(rows: List[WordFormRow]): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.insertForms(rows))
+
+  def existingFormRelations(lemmaWordIds: List[Long]): RIO[WordRepository, List[(Long, Long, String)]] =
+    ZIO.serviceWithZIO[WordRepository](_.existingFormRelations(lemmaWordIds))
+
+  def formsOf(lemmaWordId: Long): RIO[WordRepository, List[WordFormRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.formsOf(lemmaWordId))
+
+  def lemmaOf(formWordId: Long): RIO[WordRepository, List[WordFormRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.lemmaOf(formWordId))
+
   val live: ZLayer[DataSource, Nothing, WordRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new WordRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): WordRepository
   )
@@ -352,6 +378,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   private inline def words        = quote(querySchema[WordRow]("words"))
   private inline def translations = quote(querySchema[WordTranslationRow]("word_translations"))
+  private inline def wordForms    = quote(querySchema[WordFormRow]("word_forms"))
   private inline def tags         = quote(querySchema[TagRow]("tags"))
   private inline def wordTags     = quote(querySchema[WordTagRow]("word_tags"))
   private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
@@ -894,6 +921,47 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
+  def insertForms(rows: List[WordFormRow]): Task[Long] = {
+    if (rows.isEmpty)
+      ZIO.succeed(0L)
+    else {
+      val q = quote {
+        liftQuery(rows).foreach(row => {
+          wordForms.insert(
+            _.lemmaWordId -> row.lemmaWordId,
+            _.formWordId  -> row.formWordId,
+            _.relation    -> row.relation,
+            _.createdAt   -> row.createdAt,
+          )
+        })
+      }
+      logged(run(ctx.run(q)).map(_.sum))(inserted => s"wordForms.insertBatch rows=${rows.size} inserted=$inserted")
+    }
+  }
+
+  def existingFormRelations(lemmaWordIds: List[Long]): Task[List[(Long, Long, String)]] = {
+    if (lemmaWordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordForms
+          .filter(row => liftQuery(lemmaWordIds).contains(row.lemmaWordId))
+          .map(row => (row.lemmaWordId, row.formWordId, row.relation))
+      }
+      logged(run(ctx.run(q)))(rows => s"wordForms.existingRelations lemmas=${lemmaWordIds.size} rows=${rows.size}")
+    }
+  }
+
+  def formsOf(lemmaWordId: Long): Task[List[WordFormRow]] = {
+    val q = quote(wordForms.filter(_.lemmaWordId == lift(lemmaWordId)))
+    logged(run(ctx.run(q)))(rows => s"wordForms.formsOf lemma=$lemmaWordId rows=${rows.size}")
+  }
+
+  def lemmaOf(formWordId: Long): Task[List[WordFormRow]] = {
+    val q = quote(wordForms.filter(_.formWordId == lift(formWordId)))
+    logged(run(ctx.run(q)))(rows => s"wordForms.lemmaOf form=$formWordId rows=${rows.size}")
+  }
+
   def countWords: Task[Long] = {
     logged(run(ctx.run(quote(words.size))))(count => s"words.count count=$count")
   }
@@ -904,5 +972,9 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def countTags: Task[Long] = {
     logged(run(ctx.run(quote(tags.size))))(count => s"tags.count count=$count")
+  }
+
+  def countWordForms: Task[Long] = {
+    logged(run(ctx.run(quote(wordForms.size))))(count => s"wordForms.count count=$count")
   }
 }
