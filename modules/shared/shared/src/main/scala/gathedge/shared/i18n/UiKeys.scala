@@ -483,6 +483,17 @@ object UiKeys {
   val wordsColTranslations: String = key("ui.words.colTranslations")
   val wordsColTagged: String       = key("ui.words.colTagged")
 
+  /** The three form/variant columns: `colMainWord`/`colVariantType` are populated only on a row that is itself an
+    * inflected/declined form of another word; `colVariants` only on a row that is a lemma with forms of its own. See
+    * `dto.WordSummary`'s doc comment.
+    */
+  val wordsColMainWord: String    = key("ui.words.colMainWord")
+  val wordsColVariantType: String = key("ui.words.colVariantType")
+  val wordsColVariants: String    = key("ui.words.colVariants")
+
+  /** `{0}` is how many more of a lemma's forms exist beyond the ones shown inline in its Variants cell. */
+  val wordsVariantsMore: String = pluralKey("ui.words.variantsMore")
+
   /** Read out beside each row's toggle, so the control says which word it acts on. `{0}` is the word. */
   val wordsTagAdd: String    = key("ui.words.tagAdd")
   val wordsTagRemove: String = key("ui.words.tagRemove")
@@ -625,6 +636,87 @@ object UiKeys {
     */
   val wordDetailAddTitle: String    = key("ui.word.addTitle")
   val wordDetailAddLanguage: String = key("ui.word.addLanguage")
+
+  /** Shown when this word is itself an inflected/declined form of another — `dto.WordDetail.mainWords`. */
+  val wordDetailMainWordLabel: String = key("ui.word.mainWord.label")
+
+  /** The Forms section, shown when this word is a lemma with forms of its own — `dto.WordDetail.forms`, grouped by
+    * `GrammarCategory` in the same priority order `GrammarTag.priorityOf` sorts by, so the two never disagree about
+    * which group of forms comes first.
+    */
+  val wordDetailFormsHeading: String             = key("ui.word.forms.heading")
+  val wordDetailFormsCategoryPluralCase: String  = key("ui.word.forms.category.pluralCase")
+  val wordDetailFormsCategoryTense: String       = key("ui.word.forms.category.tense")
+  val wordDetailFormsCategoryComparison: String  = key("ui.word.forms.category.comparison")
+  val wordDetailFormsCategoryDiminutive: String  = key("ui.word.forms.category.diminutive")
+  val wordDetailFormsCategoryAlternative: String = key("ui.word.forms.category.alternative")
+  val wordDetailFormsCategoryOther: String       = key("ui.word.forms.category.otherKind")
+
+  /** Every individual `word_forms.relation` tag this catalog names — `Labels.grammarTag` resolves through these, one
+    * suffix per canonical wiktextract tag, falling back to a plain humanized rendering of the tag itself for anything
+    * not listed here (see `Labels.grammarTag`'s doc comment — that fallback is required, not a gap to close, since
+    * `relation` is deliberately not a closed enum). Coverage matches `GrammarTag.known`.
+    */
+  val grammarTagPrefix: String = "ui.grammarTag."
+
+  val grammarTagPlural: String            = key(grammarTagPrefix + "plural")
+  val grammarTagSingular: String          = key(grammarTagPrefix + "singular")
+  val grammarTagDefinite: String          = key(grammarTagPrefix + "definite")
+  val grammarTagIndefinite: String        = key(grammarTagPrefix + "indefinite")
+  val grammarTagNominative: String        = key(grammarTagPrefix + "nominative")
+  val grammarTagAccusative: String        = key(grammarTagPrefix + "accusative")
+  val grammarTagDative: String            = key(grammarTagPrefix + "dative")
+  val grammarTagGenitive: String          = key(grammarTagPrefix + "genitive")
+  val grammarTagPossessedSingle: String   = key(grammarTagPrefix + "possessed-single")
+  val grammarTagPossessedMany: String     = key(grammarTagPrefix + "possessed-many")
+  val grammarTagSuperessive: String       = key(grammarTagPrefix + "superessive")
+  val grammarTagSublative: String         = key(grammarTagPrefix + "sublative")
+  val grammarTagAllative: String          = key(grammarTagPrefix + "allative")
+  val grammarTagAblative: String          = key(grammarTagPrefix + "ablative")
+  val grammarTagInstrumental: String      = key(grammarTagPrefix + "instrumental")
+  val grammarTagInessive: String          = key(grammarTagPrefix + "inessive")
+  val grammarTagIllative: String          = key(grammarTagPrefix + "illative")
+  val grammarTagElative: String           = key(grammarTagPrefix + "elative")
+  val grammarTagDelative: String          = key(grammarTagPrefix + "delative")
+  val grammarTagAdessive: String          = key(grammarTagPrefix + "adessive")
+  val grammarTagTranslative: String       = key(grammarTagPrefix + "translative")
+  val grammarTagCausalFinal: String       = key(grammarTagPrefix + "causal-final")
+  val grammarTagTerminative: String       = key(grammarTagPrefix + "terminative")
+  val grammarTagEssiveFormal: String      = key(grammarTagPrefix + "essive-formal")
+  val grammarTagPast: String              = key(grammarTagPrefix + "past")
+  val grammarTagPresent: String           = key(grammarTagPrefix + "present")
+  val grammarTagFuture: String            = key(grammarTagPrefix + "future")
+  val grammarTagPreterite: String         = key(grammarTagPrefix + "preterite")
+  val grammarTagParticiple: String        = key(grammarTagPrefix + "participle")
+  val grammarTagInfinitive: String        = key(grammarTagPrefix + "infinitive")
+  val grammarTagInfinitiveZu: String      = key(grammarTagPrefix + "infinitive-zu")
+  val grammarTagSubjunctive: String       = key(grammarTagPrefix + "subjunctive")
+  val grammarTagSubjunctiveI: String      = key(grammarTagPrefix + "subjunctive-i")
+  val grammarTagSubjunctiveIi: String     = key(grammarTagPrefix + "subjunctive-ii")
+  val grammarTagIndicative: String        = key(grammarTagPrefix + "indicative")
+  val grammarTagImperative: String        = key(grammarTagPrefix + "imperative")
+  val grammarTagSubordinateClause: String = key(grammarTagPrefix + "subordinate-clause")
+  val grammarTagFirstPerson: String       = key(grammarTagPrefix + "first-person")
+  val grammarTagSecondPerson: String      = key(grammarTagPrefix + "second-person")
+  val grammarTagThirdPerson: String       = key(grammarTagPrefix + "third-person")
+  val grammarTagAuxiliary: String         = key(grammarTagPrefix + "auxiliary")
+  val grammarTagCausative: String         = key(grammarTagPrefix + "causative")
+  val grammarTagNounFromVerb: String      = key(grammarTagPrefix + "noun-from-verb")
+  val grammarTagComparative: String       = key(grammarTagPrefix + "comparative")
+  val grammarTagSuperlative: String       = key(grammarTagPrefix + "superlative")
+  val grammarTagDiminutive: String        = key(grammarTagPrefix + "diminutive")
+  val grammarTagAlternative: String       = key(grammarTagPrefix + "alternative")
+  val grammarTagDialectal: String         = key(grammarTagPrefix + "dialectal")
+  val grammarTagNonstandard: String       = key(grammarTagPrefix + "nonstandard")
+  val grammarTagColloquial: String        = key(grammarTagPrefix + "colloquial")
+  val grammarTagArchaic: String           = key(grammarTagPrefix + "archaic")
+  val grammarTagRare: String              = key(grammarTagPrefix + "rare")
+  val grammarTagDated: String             = key(grammarTagPrefix + "dated")
+  val grammarTagRegional: String          = key(grammarTagPrefix + "regional")
+  val grammarTagPoetic: String            = key(grammarTagPrefix + "poetic")
+  val grammarTagProscribed: String        = key(grammarTagPrefix + "proscribed")
+  val grammarTagUncommon: String          = key(grammarTagPrefix + "uncommon")
+  val grammarTagObsolete: String          = key(grammarTagPrefix + "obsolete")
 
   /** Every `WordLanguage`, `PartOfSpeech` and translation origin, resolved by suffix the way [[loginOutcomePrefix]] is.
     * The `<select>` values stay the wire codes.

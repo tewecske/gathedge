@@ -192,6 +192,18 @@ trait WordRepository {
   /** Every lemma one word is a form of -- the reverse direction of [[formsOf]]. */
   def lemmaOf(formWordId: Long): Task[List[WordFormRow]]
 
+  /** Every form relation whose *form* word is one of `formWordIds`, joined to the lemma's own row. Batched, the same
+    * shape [[translationsOf]] is -- what a listing row's Main word column and a variant's detail-page Main word block
+    * are both built from.
+    */
+  def lemmaContextOf(formWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]]
+
+  /** Every form relation whose *lemma* is one of `lemmaWordIds`, joined to the form's own row. Batched, the same shape
+    * [[translationsOf]] is -- what a listing row's Variants column (capped by `WordService.wordFormsPerRow`) and a
+    * lemma's detail-page Forms section (uncapped) are both built from.
+    */
+  def formsContextOf(lemmaWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]]
+
   def countWords: Task[Long]
   def countTranslations: Task[Long]
   def countTags: Task[Long]
@@ -358,6 +370,12 @@ object WordRepository {
 
   def lemmaOf(formWordId: Long): RIO[WordRepository, List[WordFormRow]] =
     ZIO.serviceWithZIO[WordRepository](_.lemmaOf(formWordId))
+
+  def lemmaContextOf(formWordIds: List[Long]): RIO[WordRepository, List[(WordFormRow, WordRow)]] =
+    ZIO.serviceWithZIO[WordRepository](_.lemmaContextOf(formWordIds))
+
+  def formsContextOf(lemmaWordIds: List[Long]): RIO[WordRepository, List[(WordFormRow, WordRow)]] =
+    ZIO.serviceWithZIO[WordRepository](_.formsContextOf(lemmaWordIds))
 
   val live: ZLayer[DataSource, Nothing, WordRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new WordRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): WordRepository
@@ -960,6 +978,34 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def lemmaOf(formWordId: Long): Task[List[WordFormRow]] = {
     val q = quote(wordForms.filter(_.formWordId == lift(formWordId)))
     logged(run(ctx.run(q)))(rows => s"wordForms.lemmaOf form=$formWordId rows=${rows.size}")
+  }
+
+  def lemmaContextOf(formWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]] = {
+    if (formWordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordForms
+          .join(words)
+          .on((form, word) => form.lemmaWordId == word.id)
+          .filter { case (form, _) => liftQuery(formWordIds).contains(form.formWordId) }
+      }
+      logged(run(ctx.run(q)))(rows => s"wordForms.lemmaContextOf forms=${formWordIds.size} rows=${rows.size}")
+    }
+  }
+
+  def formsContextOf(lemmaWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]] = {
+    if (lemmaWordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordForms
+          .join(words)
+          .on((form, word) => form.formWordId == word.id)
+          .filter { case (form, _) => liftQuery(lemmaWordIds).contains(form.lemmaWordId) }
+      }
+      logged(run(ctx.run(q)))(rows => s"wordForms.formsContextOf lemmas=${lemmaWordIds.size} rows=${rows.size}")
+    }
   }
 
   def countWords: Task[Long] = {

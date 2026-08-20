@@ -45,9 +45,10 @@ object DictionaryImportSpec extends ZIOSpecDefault {
 
   /** One `forms[]` array exercising every filter `WiktextractParser.formsOf` applies: a real plural, the dump's own "no
     * such form" placeholder (`"-"`), a periphrastic construction (a space), two flavours of template scaffolding
-    * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), and a form spelled
-    * identically to its own lemma (real linguistic fact, not noise -- excluded at store time instead, see
-    * `DictionaryImport.formEdges`).
+    * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), a form spelled identically to
+    * its own lemma (real linguistic fact, not noise -- excluded at store time instead, see
+    * `DictionaryImport.formEdges`), and two flavours of wiktextract's own "could not classify this cell" marker
+    * (`error-unrecognized-form`, `error-unknown-tag`) -- each row dropped whole, not salvaged for its other tags.
     */
   private val formsLine = {
     """{"word":"Beispiel","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
@@ -59,7 +60,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |{"form":"Beispiel","tags":["nominative","singular"]},
       |{"form":"strong","tags":["table-tags"],"source":"declension"},
       |{"form":"de-ndecl","tags":["inflection-template"],"source":"declension"},
-      |{"form":"back harmony","tags":["class"]}
+      |{"form":"back harmony","tags":["class"]},
+      |{"form":"Beispielen","tags":["error-unrecognized-form","dative","plural"]},
+      |{"form":"Beispielem","tags":["error-unknown-tag","dative"]}
       |]}""".stripMargin.replace("\n", "")
   }
 
@@ -133,6 +136,15 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           forms.find(_.form.text == "Beispiel").map(_.relation).contains("nominative,singular"),
         )
       },
+      test(
+        "a form wiktextract itself could not classify (error-*) is dropped entirely, not just the offending tag"
+      ) {
+        val forms = WiktextractParser.parse(formsLine).forms
+        assertTrue(
+          !forms.exists(_.form.text == "Beispielen"),
+          !forms.exists(_.form.text == "Beispielem"),
+        )
+      },
       test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
         // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
         val put   = ParsedWord(WordLanguage.En, "put", PartOfSpeech.Verb, None)
@@ -204,6 +216,8 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           collected.words.size > 100,
           collected.pairs.size > 100,
           collected.forms.size > 100,
+          // wiktextract's own "could not classify this cell" marker never survives the import.
+          !collected.forms.exists(_.relation.split(",").exists(_.startsWith("error-"))),
           seeEntries == Set(Gender.Der, Gender.Die),
           // Every pair is stated from English, since that is the only direction any source has.
           collected.pairs.forall(_.source.language == WordLanguage.En),

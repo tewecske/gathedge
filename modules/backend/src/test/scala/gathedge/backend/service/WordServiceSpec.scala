@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{WordRepository, WordRow}
+import gathedge.backend.db.{WordFormRow, WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
@@ -1018,9 +1018,108 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  /** Word forms (plural/tense/declension) as `WordService.list`/`.detail` expose them — the lemma/variant columns and
+    * the "bring the lemma along as context" search mechanic. `Häuser` never shares a prefix with `Haus`/`hau...` (the
+    * umlaut breaks it), so a search for one never incidentally matches the other — every assertion below about which
+    * rows a search returns is exercising the form-context machinery, not an accidental prefix collision.
+    */
+  private def wordFormsSpec = {
+    suite("word forms")(
+      test("searching a variant's spelling returns its own row and the lemma as context, without inflating total") {
+        for {
+          _      <- seed
+          hausId <- list(search = Some("haus")).map(_.items.head.word.id)
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = Int.MaxValue))
+          _      <- WordRepository.insertForms(List(WordFormRow(0L, hausId, form.id, "plural", 0L)))
+          page   <- list(search = Some("häuser"))
+        } yield assertTrue(
+          // One real match ("Häuser"); "Haus" rides along as context and does not count toward it.
+          page.total == 1L,
+          page.items.map(_.word.text) == List("Haus", "Häuser"),
+          page.items.head.isContext,
+          !page.items(1).isContext,
+          page.items(1).mainWord.exists(ref => ref.word.text == "Haus" && ref.relation == "plural"),
+          page.items.head.variants.exists(v => v.word.text == "Häuser" && v.matched),
+        )
+      },
+      test(
+        "a lemma already on the page from its own match is not duplicated as context, but its matched variant is " +
+          "still starred"
+      ) {
+        for {
+          _      <- seed
+          hausId <- list(search = Some("hau")).map(_.items.find(_.word.text == "Haus").get.word.id)
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = Int.MaxValue))
+          _      <- WordRepository.insertForms(List(WordFormRow(0L, hausId, form.id, "plural", 0L)))
+          page   <- list(search = Some("hau"))
+        } yield assertTrue(
+          // Same three matches as the plain `seed` search — "Häuser" itself never matches the "hau" prefix, and no
+          // context row was added for a lemma that is already on the page in its own right.
+          page.total == 3L,
+          page.items.count(_.word.text == "Haus") == 1,
+          page.items.find(_.word.text == "Haus").get.variants.exists(v => v.word.text == "Häuser" && !v.matched),
+        )
+      },
+      test("a variant's detail page names its lemma and the relation, and carries no forms of its own") {
+        for {
+          _      <- seed
+          hausId <- list(search = Some("haus")).map(_.items.head.word.id)
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = Int.MaxValue))
+          _      <- WordRepository.insertForms(List(WordFormRow(0L, hausId, form.id, "plural", 0L)))
+          detail <- WordService.detail(form.id, None)
+        } yield assertTrue(
+          detail.mainWords.map(ref => (ref.word.text, ref.relation)) == List(("Haus", "plural")),
+          detail.forms.isEmpty,
+        )
+      },
+      test("a lemma's detail page lists its forms, each carrying the reader's own tags on that form word") {
+        for {
+          _      <- seed
+          hausId <- list(search = Some("haus")).map(_.items.head.word.id)
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = Int.MaxValue))
+          _      <- WordRepository.insertForms(List(WordFormRow(0L, hausId, form.id, "plural", 0L)))
+          tag    <- createTag("lesson1", 1L)
+          _      <- WordService.tagWord(form.id, tag.id, 1L)
+          mine   <- WordService.detail(hausId, Some(1L))
+          seen   <- WordService.detail(hausId, None)
+        } yield assertTrue(
+          mine.forms.map(entry => (entry.word.text, entry.relation)) == List(("Häuser", "plural")),
+          // The tick on a form is that form word's own tag, not the lemma's — Haus itself carries none here.
+          mine.forms.head.tagIds == List(tag.id),
+          mine.tags.isEmpty,
+          seen.forms.head.tagIds.isEmpty,
+          mine.mainWords.isEmpty,
+        )
+      },
+      test("wordFormsPerRow caps a listing row's variants, but the detail page carries every one of them") {
+        for {
+          _      <- seed
+          hausId <- list(search = Some("haus")).map(_.items.head.word.id)
+          forms  <- ZIO.foreach((1 to WordService.wordFormsPerRow + 2).toList)(n =>
+                      WordRepository.ensureWord(dictionaryWord(WordLanguage.De, s"Formx$n", rank = Int.MaxValue))
+                    )
+          _      <- WordRepository.insertForms(forms.map(w => WordFormRow(0L, hausId, w.id, "plural", 0L)))
+          page   <- list(search = Some("haus"))
+          detail <- WordService.detail(hausId, None)
+        } yield {
+          val hausRow = page.items.find(_.word.text == "Haus").get
+          assertTrue(
+            hausRow.variants.size == WordService.wordFormsPerRow,
+            hausRow.variantsTotal == forms.size,
+            detail.forms.size == forms.size,
+          )
+        }
+      },
+    ).provide(layer)
+  }
+
   def spec = {
-    suite("WordService (SQLite)")(coreSpec, quotaSpec, bulkUploadSpec, suggestionsSpec) @@ TestAspect.timeout(
-      60.seconds
-    )
+    suite("WordService (SQLite)")(
+      coreSpec,
+      quotaSpec,
+      bulkUploadSpec,
+      suggestionsSpec,
+      wordFormsSpec,
+    ) @@ TestAspect.timeout(60.seconds)
   }
 }

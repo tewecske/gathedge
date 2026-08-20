@@ -17,6 +17,10 @@ object WordCollectSpec extends ZIOSpecDefault {
     translations = List(TranslationOption(2L, "ház"), TranslationOption(3L, "otthon")),
     tagIds = List(10L, 11L),
     pairs = List(TaggedPair(10L, 2L), TaggedPair(11L, 3L)),
+    mainWord = None,
+    variants = Nil,
+    variantsTotal = 0,
+    isContext = false,
   )
 
   def spec = {
@@ -48,6 +52,10 @@ object WordCollectSpec extends ZIOSpecDefault {
           translations = List(),
           tagIds = Nil,
           pairs = Nil,
+          mainWord = None,
+          variants = Nil,
+          variantsTotal = 0,
+          isContext = false,
         )
         val change  = WordCollect.PairChange(1L, 20L, 2L, true)
         val updated = empty.copy(

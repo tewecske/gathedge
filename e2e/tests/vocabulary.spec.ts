@@ -41,6 +41,19 @@ test('a visitor with no account can search the dictionary', async () => {
   await expect(page.locator('tr', { hasText: 'das Haus' })).toContainText('ház');
 });
 
+test('searching a plural form shows it as its own row, with the lemma alongside for context', async () => {
+  // "Häuser" (plural of "Haus") never shares a prefix with "haus" (the umlaut breaks it), so this is the search
+  // landing on the variant's own spelling directly, not a leftover match from the test above.
+  await page.goto('/en/words?q=h%C3%A4user');
+  const variantRow = page.locator('tr').filter({ has: page.getByRole('link', { name: 'Häuser', exact: true }) });
+  await expect(variantRow).toBeVisible();
+  // Variant type column, in the language this row was searched in.
+  await expect(variantRow).toContainText('plural');
+  const lemmaRow = page.locator('tr', { hasText: 'das Haus' });
+  await expect(lemmaRow).toBeVisible();
+  await expect(lemmaRow).toContainText('★');
+});
+
 test('the collect bar is there for a visitor with no account yet, but the tag filter is not', async () => {
   // Where a tick files, and the way to make a tag: shown to everybody, so a first-time visitor can see and use it
   // before their first tick mints an account. The tag *filter* and the guest banner still belong to an account.

@@ -19,7 +19,16 @@ import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{CreateWordRequest, NewTranslation, TaggedPair, WordDetail, WordPage, WordSort, WordSummary}
+import gathedge.shared.dto.{
+  CreateWordRequest,
+  NewTranslation,
+  TaggedPair,
+  WordDetail,
+  WordFormPreview,
+  WordPage,
+  WordSort,
+  WordSummary,
+}
 import gathedge.shared.i18n.UiKeys
 
 /** Browse the dictionary and tag what you want to learn.
@@ -589,8 +598,11 @@ private class WordsPage(
             th(cls := "w-12", span(cls := "sr-only", I18n.t(UiKeys.wordsColTagged))),
             SortHeader.render(I18n.t(UiKeys.wordsColWord), WordSort.text, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.wordsColPos), WordSort.pos, sortSignal, onSort),
-            // Translations are a list rendered into one cell, so there is no `ORDER BY` that produces them — the same
-            // reason the audit trail's target column carries no sort.
+            // Main word/Variant type/Variants are all a list or a single link rendered into one cell, so there is no
+            // `ORDER BY` that produces them — the same reason Translations carries no sort either.
+            th(I18n.t(UiKeys.wordsColMainWord)),
+            th(I18n.t(UiKeys.wordsColVariantType)),
+            th(I18n.t(UiKeys.wordsColVariants)),
             th(I18n.t(UiKeys.wordsColTranslations)),
           )
         ),
@@ -616,7 +628,11 @@ private class WordsPage(
       taggedSignal.combineWithFn(selectedSignal)((tagged, marked) => tagged && marked.isEmpty).distinct
 
     tr(
+      // A context row: a lemma the search reached through a matched variant rather than a match of its own — see
+      // `dto.WordSummary.isContext`. Muted so it reads as "shown for context", not as one more row against the count
+      // `Pagination` is showing.
       cls := "hover",
+      cls("bg-base-200/60") <-- row.map(_.isContext).distinct,
       td(collect.renderTick(id, row.map(summary => Word.display(summary.word)), tagIdsSignal)),
       td(
         div(
@@ -633,6 +649,9 @@ private class WordsPage(
         cls := "text-sm opacity-70",
         child.text <-- row.map(summary => Labels.partOfSpeech(summary.word.partOfSpeech)),
       ),
+      renderMainWordCell(row),
+      renderVariantTypeCell(row),
+      renderVariantsCell(row),
       td(
         // The chips sit in a div rather than on the cell: `display:flex` on a `<td>` takes it out of the table's own
         // layout and the column stops lining up with its heading.
@@ -644,6 +663,63 @@ private class WordsPage(
             .splitSeq(_.wordId)(option => collect.renderChip(id, option.key, option.map(_.text), pairsSignal)),
         )
       ),
+    )
+  }
+
+  /** Populated only when this row is itself an inflected/declined form of another word — links back to the lemma. */
+  private def renderMainWordCell(row: Signal[WordSummary]): HtmlElement = {
+    td(
+      cls := "text-sm",
+      child.maybe <-- row
+        .map(_.mainWord)
+        .distinct
+        .map(_.map { ref =>
+          a(
+            cls := "link link-hover",
+            AppRouter.router.navigateTo(Page.WordDetail(ref.word.id)),
+            Word.display(ref.word),
+          )
+        }),
+    )
+  }
+
+  /** Populated only alongside [[renderMainWordCell]] — the relation that word is a form of, worded for the reader. */
+  private def renderVariantTypeCell(row: Signal[WordSummary]): HtmlElement = {
+    td(
+      cls := "text-sm opacity-70",
+      child.maybe <-- row.map(_.mainWord).distinct.map(_.map(ref => Labels.grammarRelation(ref.relation))),
+    )
+  }
+
+  /** Populated only when this row is a lemma with forms of its own: up to `WordService.wordFormsPerRow` shown inline,
+    * the matched one (if any — see `dto.WordSummary.isContext`) starred and always kept in view by the backend's own
+    * sort, with a "+N more" pointing at the detail page for the rest.
+    */
+  private def renderVariantsCell(row: Signal[WordSummary]): HtmlElement = {
+    td(
+      div(
+        cls := "flex flex-col gap-0.5 text-sm",
+        children <-- row.map(_.variants).distinct.splitSeq(_.word.id)(preview => renderVariantEntry(preview)),
+        child.maybe <-- row
+          .map(summary =>
+            Option.when(summary.variantsTotal > summary.variants.size)(summary.variantsTotal - summary.variants.size)
+          )
+          .distinct
+          .map(_.map(more => span(cls := "opacity-60", I18n.plural(UiKeys.wordsVariantsMore, more)))),
+      )
+    )
+  }
+
+  private def renderVariantEntry(preview: KeyedStrictSignal[Long, WordFormPreview]): HtmlElement = {
+    div(
+      cls := "flex items-center gap-1",
+      child.maybe <-- preview.map(_.matched).distinct.map(Option.when(_)(span(cls := "text-warning", "★"))),
+      a(
+        cls    := "link link-hover",
+        AppRouter.router.navigateTo(Page.WordDetail(preview.key)),
+        child.text <-- preview.map(p => Word.display(p.word)),
+      ),
+      span(cls := "opacity-60", child.text <-- preview.map(p => Labels.grammarRelation(p.relation))),
     )
   }
 

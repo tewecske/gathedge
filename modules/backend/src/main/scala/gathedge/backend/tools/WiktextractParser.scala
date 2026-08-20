@@ -194,12 +194,18 @@ object WiktextractParser {
   /** `"-"` is the dump's own placeholder for "this word has no such form" (a mass noun with no plural, say), and a
     * space marks a periphrastic construction or, more often on inspection, a corrupted entry — the same rule [[wordOf]]
     * and [[pairsOf]] already apply to word text applies here too.
+    *
+    * An `error-*` tag (`error-unrecognized-form`, `error-unknown-tag`, ...) is wiktextract's own admission that it
+    * could not classify this table cell — mostly Hungarian conjugation-table cells its template logic failed on. The
+    * whole row is dropped, not just the offending tag: the remaining tags on such a row describe an incomplete,
+    * unreliable grammatical fact (person/number without the tense that made the cell what it was), not a real one.
     */
   private def isUsableForm(form: RawForm): Boolean = {
     val tags = form.tags.getOrElse(Nil)
     val text = form.form.trim
     tags.nonEmpty &&
     !tags.exists(tag => metaFormTags.contains(tag.toLowerCase)) &&
+    !tags.exists(tag => tag.toLowerCase.startsWith("error-")) &&
     text.nonEmpty && text != "-" && !text.contains(" ")
   }
 

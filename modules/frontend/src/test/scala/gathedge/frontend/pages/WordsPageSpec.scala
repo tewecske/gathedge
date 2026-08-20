@@ -144,6 +144,17 @@ object WordsPageSpec extends ZIOSpecDefault {
         }
         assertTrue(text.contains(UiKeys.wordsEmpty), text.contains(UiKeys.wordsColWord))
       },
+      // The three form/variant columns render as headers regardless of whether any row ever populates them.
+      test("the table always carries the form/variant columns") {
+        val text = withPage(WordQuery()) { (container, _) =>
+          container.textContent
+        }
+        assertTrue(
+          text.contains(UiKeys.wordsColMainWord),
+          text.contains(UiKeys.wordsColVariantType),
+          text.contains(UiKeys.wordsColVariants),
+        )
+      },
     )
   }
 }

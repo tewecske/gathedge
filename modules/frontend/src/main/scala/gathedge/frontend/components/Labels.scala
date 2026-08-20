@@ -1,7 +1,7 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{AnswerOutcome, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -72,6 +72,48 @@ object Labels {
       case AnswerOutcome.Wrong   =>
         I18n.t(UiKeys.gameInstanceOutcomeWrong)
     }
+  }
+
+  /** One tag from a `word_forms.relation` string (e.g. the `"dative"` in `"dative,definite,plural"`), worded for the
+    * reader. Falls back to a plain hyphens-to-spaces, title-cased rendering of the token itself for anything
+    * `UiKeys.grammarTagPrefix` does not yet name — `relation` is deliberately not a closed enum (see `WordFormRow`'s
+    * doc comment), and a future wiktextract dump can carry a tag this catalog has never seen. That fallback is a plain
+    * string transform, not a translation: it calls `I18n.get` only the once `translatedOr` already does, so an unlisted
+    * tag registers nothing in `UiKeys.all` and cannot trip `MessagesSpec`'s exhaustiveness checks.
+    */
+  def grammarTag(tag: String): String = {
+    translatedOr(UiKeys.grammarTagPrefix + tag, humanizeTag(tag))
+  }
+
+  /** A whole `relation` string, each constituent tag resolved through [[grammarTag]] and joined the way the word list
+    * and detail page both show it: `"dative,definite,plural"` becomes `"dative · definite · plural"`.
+    */
+  def grammarRelation(relation: String): String = {
+    relation.split(',').iterator.filter(_.nonEmpty).map(grammarTag).mkString(" · ")
+  }
+
+  /** The heading over one group of a lemma's Forms section. Matched exhaustively, like [[language]] — `GrammarCategory`
+    * is a fixed shared enum, not a stored code a newer build might widen.
+    */
+  def grammarCategory(category: GrammarCategory): String = {
+    category match {
+      case GrammarCategory.PluralCase          =>
+        I18n.t(UiKeys.wordDetailFormsCategoryPluralCase)
+      case GrammarCategory.Tense               =>
+        I18n.t(UiKeys.wordDetailFormsCategoryTense)
+      case GrammarCategory.Comparison          =>
+        I18n.t(UiKeys.wordDetailFormsCategoryComparison)
+      case GrammarCategory.Diminutive          =>
+        I18n.t(UiKeys.wordDetailFormsCategoryDiminutive)
+      case GrammarCategory.AlternativeSpelling =>
+        I18n.t(UiKeys.wordDetailFormsCategoryAlternative)
+      case GrammarCategory.Other               =>
+        I18n.t(UiKeys.wordDetailFormsCategoryOther)
+    }
+  }
+
+  private def humanizeTag(tag: String): String = {
+    tag.split('-').filter(_.nonEmpty).map(_.capitalize).mkString(" ")
   }
 
   private def translatedOr(key: String, fallback: String): String = {

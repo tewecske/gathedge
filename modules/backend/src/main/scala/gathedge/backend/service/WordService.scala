@@ -1,9 +1,9 @@
 package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, QuotaSection}
-import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTranslationRow}
+import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTagRow, WordTranslationRow}
 import gathedge.backend.security.SecurityLog
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
@@ -19,6 +19,9 @@ import gathedge.shared.dto.{
   TranslationEntry,
   TranslationOption,
   WordDetail,
+  WordFormEntry,
+  WordFormPreview,
+  WordFormRef,
   WordPage,
   WordSummary,
 }
@@ -191,6 +194,11 @@ object WordService {
     * where the rest of them are.
     */
   val translationsPerRow = 3
+
+  /** How many of a lemma's forms a listing row's Variants column carries, for the reason [[translationsPerRow]] caps
+    * translations: the cell is a line, not a declension table — the detail page's Forms section is where the rest are.
+    */
+  val wordFormsPerRow = 3
 
   /** Where a word goes when the reader tagged one without choosing a tag. Not a translated string: it is a row in
     * `tags` like any other, which the reader can rename or delete.
@@ -431,55 +439,110 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       ZIO.succeed(WordPage(Nil, 0L))
     else {
       for {
-        rows         <- repo
-                          .listPage(
-                            offset,
-                            pageSize,
-                            language.map(WordLanguage.code),
-                            search,
-                            partOfSpeech.map(PartOfSpeech.code),
-                            tagId,
-                            taggedBy,
-                            sort,
-                            descending,
-                          )
-                          .orDie
-        total        <- repo
-                          .countMatching(
-                            language.map(WordLanguage.code),
-                            search,
-                            partOfSpeech.map(PartOfSpeech.code),
-                            tagId,
-                            taggedBy,
-                          )
-                          .orDie
-        ids           = rows.map(_.id)
+        rows              <- repo
+                               .listPage(
+                                 offset,
+                                 pageSize,
+                                 language.map(WordLanguage.code),
+                                 search,
+                                 partOfSpeech.map(PartOfSpeech.code),
+                                 tagId,
+                                 taggedBy,
+                                 sort,
+                                 descending,
+                               )
+                               .orDie
+        total             <- repo
+                               .countMatching(
+                                 language.map(WordLanguage.code),
+                                 search,
+                                 partOfSpeech.map(PartOfSpeech.code),
+                                 tagId,
+                                 taggedBy,
+                               )
+                               .orDie
+        ids                = rows.map(_.id)
         // Three batch queries for the whole page rather than three per row.
-        translations <- repo.translationsOf(ids, WordLanguage.code(target)).orDie
-        links        <- ZIO.foreach(reader)(userId => repo.tagsFor(userId, ids)).map(_.toList.flatten).orDie
-        marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, ids)).map(_.toList.flatten).orDie
-        byWord        = sortTranslations(translations).groupBy { case (edge, _) => edge.sourceWordId }
-        tagsByWord    = links.groupBy(_.wordId)
-        pairsByWord   = marked.groupBy(_.wordId)
-      } yield WordPage(
-        items = rows.map { row =>
-          val rowPairs = pairsByWord.getOrElse(row.id, Nil)
-          val offered  = translationsShown(byWord.getOrElse(row.id, Nil), rowPairs)
-          val shownIds = offered.map(_.id).toSet
+        translations      <- repo.translationsOf(ids, WordLanguage.code(target)).orDie
+        links             <- ZIO.foreach(reader)(userId => repo.tagsFor(userId, ids)).map(_.toList.flatten).orDie
+        marked            <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, ids)).map(_.toList.flatten).orDie
+        // Every row's lemma (if it is itself a form) and every row's forms (if it is a lemma) -- what fills the
+        // listing's Main word/Variants columns. A row reached only as a variant's lemma (`contextLemmaIds`) was not
+        // itself part of the page `repo.listPage` returned, so it needs the same three batch reads over again.
+        lemmaLinks        <- repo.lemmaContextOf(ids).orDie
+        contextLemmaIds    = lemmaLinks.map { case (_, lemma) => lemma.id }.distinct.filterNot(ids.contains)
+        formLinks         <- repo.formsContextOf((ids ++ contextLemmaIds).distinct).orDie
+        extraTranslations <- repo.translationsOf(contextLemmaIds, WordLanguage.code(target)).orDie
+        extraTagLinks     <-
+          ZIO.foreach(reader)(userId => repo.tagsFor(userId, contextLemmaIds)).map(_.toList.flatten).orDie
+        extraMarked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, contextLemmaIds)).map(_.toList.flatten).orDie
+        byWord             = sortTranslations(translations).groupBy { case (edge, _) => edge.sourceWordId }
+        extraByWord        = sortTranslations(extraTranslations).groupBy { case (edge, _) => edge.sourceWordId }
+        tagsByWord         = links.groupBy(_.wordId)
+        extraTagsByWord    = extraTagLinks.groupBy(_.wordId)
+        pairsByWord        = marked.groupBy(_.wordId)
+        extraPairsByWord   = extraMarked.groupBy(_.wordId)
+        pageIds            = ids.toSet
+        mainWordByForm     = {
+          lemmaLinks
+            .groupBy { case (form, _) => form.formWordId }
+            .view
+            .mapValues(_.headOption.map { case (form, lemma) => WordFormRef(toDomain(lemma), form.relation) })
+            .toMap
+        }
+        variantsByLemma    = formLinks.groupBy { case (form, _) => form.lemmaWordId }
+        lemmaRowById       = lemmaLinks.map { case (_, lemma) => lemma.id -> lemma }.toMap
+      } yield {
+        // Matched entries first (the ★ the reader searched for), then the lemma's own commonest-first order --
+        // capped for a listing row, uncapped nowhere on this path (that is `detailOf`'s job).
+        def variantsFor(lemmaId: Long): (List[WordFormPreview], Int) = {
+          val all    = variantsByLemma.getOrElse(lemmaId, Nil)
+          val sorted = all.sortBy { case (_, word) => (!pageIds.contains(word.id), word.frequencyRank, word.textNorm) }
+          val shown  = sorted.take(WordService.wordFormsPerRow).map { case (form, word) =>
+            WordFormPreview(toDomain(word), form.relation, matched = pageIds.contains(word.id))
+          }
+          (shown, all.size)
+        }
+
+        def summaryOf(
+          row: WordRow,
+          byWordTranslations: Map[Long, List[(WordTranslationRow, WordRow)]],
+          byWordTags: Map[Long, List[WordTagRow]],
+          byWordPairs: Map[Long, List[WordTagPairRow]],
+          isContext: Boolean,
+        ): WordSummary = {
+          val rowPairs                  = byWordPairs.getOrElse(row.id, Nil)
+          val offered                   = translationsShown(byWordTranslations.getOrElse(row.id, Nil), rowPairs)
+          val shownIds                  = offered.map(_.id).toSet
+          val (variants, variantsTotal) = variantsFor(row.id)
           WordSummary(
             word = toDomain(row),
             translations = offered.map(word => TranslationOption(word.id, Word.display(word))),
-            tagIds = tagsByWord.getOrElse(row.id, Nil).map(_.tagId),
+            tagIds = byWordTags.getOrElse(row.id, Nil).map(_.tagId),
             // Only the marks this row can render: one whose answer is in a language the listing is not translating
             // into would otherwise ship to a client with no chip to put it on.
             pairs = rowPairs
               .filter(pair => shownIds.contains(pair.translationWordId))
               .map(pair => TaggedPair(pair.tagId, pair.translationWordId))
               .distinct,
+            mainWord = mainWordByForm.get(row.id).flatten,
+            variants = variants,
+            variantsTotal = variantsTotal,
+            isContext = isContext,
           )
-        },
-        total = total,
-      )
+        }
+
+        val pageSummaries    = rows.map(row => summaryOf(row, byWord, tagsByWord, pairsByWord, isContext = false))
+        // Context rows are listed first: a reader who searched a variant's spelling sees "here is the lemma" right
+        // above the row they actually matched. They are not part of `rows`, so they cannot double-count against
+        // `total`/pagination -- they are context, not a match.
+        val contextSummaries = contextLemmaIds.flatMap(id => {
+          lemmaRowById
+            .get(id)
+            .map(row => summaryOf(row, extraByWord, extraTagsByWord, extraPairsByWord, isContext = true))
+        })
+        WordPage(items = contextSummaries ++ pageSummaries, total = total)
+      }
     }
   }
 
@@ -488,10 +551,17 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       translations <- repo.allTranslationsOf(row.id).orDie
       tags         <- ZIO.foreach(reader)(userId => repo.tagsOfWord(userId, row.id)).map(_.toList.flatten).orDie
       marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, List(row.id))).map(_.toList.flatten).orDie
+      mainLinks    <- repo.lemmaContextOf(List(row.id)).orDie
+      formLinks    <- repo.formsContextOf(List(row.id)).orDie
+      formTags     <- ZIO
+                        .foreach(reader)(userId => repo.tagsFor(userId, formLinks.map { case (_, word) => word.id }))
+                        .map(_.toList.flatten)
+                        .orDie
       // Carried with a count of zero: the detail screen renders these as chips on one word, where "lesson1 (37)"
       // would be answering a question nobody asked. The tag bar gets the real counts from `listTags`. `tagsOfWord`
       // only ever answers the reader's own tags, so every one of them is owned.
       counted       = tags.map(tag => toTag(tag, 0L, ownedByMe = true))
+      tagsByForm    = formTags.groupBy(_.wordId)
     } yield WordDetail(
       word = toDomain(row),
       translations = sortTranslations(translations).map { case (edge, word) =>
@@ -506,6 +576,15 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       // Every mark on this word, in whichever tag: this screen shows every translation, so unlike the listing
       // (which narrows them to the three it offers) there is no chip a mark could arrive without.
       pairs = marked.map(pair => TaggedPair(pair.tagId, pair.translationWordId)).distinct,
+      mainWords = mainLinks.map { case (form, lemma) => WordFormRef(toDomain(lemma), form.relation) },
+      // Grouped and ordered by GrammarTag's category priority -- the same numbering the frontend groups by, so the two
+      // never disagree about which category of forms comes first.
+      forms = formLinks
+        .map { case (form, word) => (form, word, GrammarTag.categoryOf(form.relation)) }
+        .sortBy { case (_, word, category) => (GrammarTag.priorityOf(category), word.textNorm) }
+        .map { case (form, word, _) =>
+          WordFormEntry(toDomain(word), form.relation, tagsByForm.getOrElse(word.id, Nil).map(_.tagId))
+        },
     )
   }
 

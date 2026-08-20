@@ -7,8 +7,8 @@ import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
-import gathedge.shared.dto.{NewTranslation, TaggedPair, TranslationEntry, WordDetail}
+import gathedge.shared.domain.{Gender, GrammarCategory, GrammarTag, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.dto.{NewTranslation, TaggedPair, TranslationEntry, WordDetail, WordFormEntry, WordFormRef}
 import gathedge.shared.i18n.UiKeys
 
 /** One word: what it is, what it means in the other two languages, and which of the reader's tags it carries.
@@ -149,7 +149,7 @@ private class WordDetailPage(id: Long) {
     change match {
       case WordCollect.TagChange(wordId, tagId, tagged)                     =>
         detailVar.update {
-          case Some(detail) if detail.word.id == wordId =>
+          case Some(detail) if detail.word.id == wordId                 =>
             if (tagged) {
               // Add the tag id. Look up the tag name from the tag list; if it's not there yet (tag just created),
               // it will be added by the tagsBus refresh moments later.
@@ -169,7 +169,21 @@ private class WordDetailPage(id: Long) {
                 )
               )
             }
-          case other                                    =>
+          // A tick on one of this word's own forms, in the Forms section — that word's own tags, not this page's.
+          case Some(detail) if detail.forms.exists(_.word.id == wordId) =>
+            Some(
+              detail.copy(forms = {
+                detail.forms.map(entry => {
+                  if (entry.word.id == wordId) {
+                    entry.copy(tagIds =
+                      if (tagged) (entry.tagIds :+ tagId).distinct else entry.tagIds.filterNot(_ == tagId)
+                    )
+                  } else
+                    entry
+                })
+              })
+            )
+          case other                                                    =>
             other
         }
       case WordCollect.PairChange(wordId, tagId, translationWordId, marked) =>
@@ -231,12 +245,73 @@ private class WordDetailPage(id: Long) {
           cls  := "text-sm opacity-70",
           s"${Labels.language(detail.word.language)} · ${Labels.partOfSpeech(detail.word.partOfSpeech)}",
         ),
+        // Shown only when this word is itself an inflected/declined form of another — see `dto.WordDetail.mainWords`.
+        child.maybe <-- Val(Option.when(detail.mainWords.nonEmpty)(renderMainWords(detail.mainWords))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTranslations)),
         renderTranslations(detail.word, detail.translations),
         child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
+        // Shown only when this word is a lemma with forms of its own — see `dto.WordDetail.forms`.
+        child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.forms))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTags)),
         renderTags(detail.tags),
       ),
+    )
+  }
+
+  /** Every lemma this word is a form of — ordinarily zero or one, but rendered as a list either way. */
+  private def renderMainWords(mainWords: List[WordFormRef]): HtmlElement = {
+    div(
+      cls := "mt-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordDetailMainWordLabel)),
+      div(
+        cls    := "flex flex-col gap-1",
+        mainWords.map(ref => {
+          div(
+            cls := "flex items-center gap-2 text-sm",
+            a(
+              cls    := "link link-hover",
+              AppRouter.router.navigateTo(Page.WordDetail(ref.word.id)),
+              Word.display(ref.word),
+            ),
+            span(cls := "opacity-60", Labels.grammarRelation(ref.relation)),
+          )
+        }),
+      ),
+    )
+  }
+
+  /** Grouped by [[GrammarCategory]], in the same priority order `GrammarTag.priorityOf` sorts by, so this never
+    * disagrees with the order `WordService.detailOf` already sorted `forms` into.
+    */
+  private def renderForms(forms: List[WordFormEntry]): HtmlElement = {
+    val byCategory = forms.groupBy(entry => GrammarTag.categoryOf(entry.relation))
+    div(
+      h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailFormsHeading)),
+      GrammarCategory.values.toList.flatMap(category => {
+        byCategory
+          .get(category)
+          .filter(_.nonEmpty)
+          .map(entries => {
+            div(
+              cls := "mt-2",
+              div(cls := "badge badge-ghost badge-sm", Labels.grammarCategory(category)),
+              div(cls := "flex flex-col gap-1 mt-1", entries.map(renderFormEntry)),
+            )
+          })
+      }),
+    )
+  }
+
+  private def renderFormEntry(entry: WordFormEntry): HtmlElement = {
+    div(
+      cls := "flex items-center gap-2",
+      collect.renderTick(entry.word.id, Val(Word.display(entry.word)), Val(entry.tagIds)),
+      a(
+        cls    := "link link-hover",
+        AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)),
+        Word.display(entry.word),
+      ),
+      span(cls := "text-xs opacity-60", Labels.grammarRelation(entry.relation)),
     )
   }
 

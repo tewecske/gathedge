@@ -43,7 +43,13 @@ object WordDetailPageSpec extends ZIOSpecDefault {
       // empty card. A failed request is not a missing word, so it is the error, not the "no such word" line.
       test("a failed load leaves no half-rendered word behind") {
         val text = withPage(12L)(_.textContent)
-        assertTrue(!text.contains(UiKeys.wordDetailTranslations), !text.contains(UiKeys.wordDetailTags))
+        assertTrue(
+          !text.contains(UiKeys.wordDetailTranslations),
+          !text.contains(UiKeys.wordDetailTags),
+          // The Main word block and Forms section are gated on the word arriving too, the same as Translations/Tags.
+          !text.contains(UiKeys.wordDetailMainWordLabel),
+          !text.contains(UiKeys.wordDetailFormsHeading),
+        )
       },
     )
   }

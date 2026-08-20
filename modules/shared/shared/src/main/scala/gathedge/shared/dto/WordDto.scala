@@ -21,18 +21,48 @@ final case class TranslationOption(wordId: Long, text: String) derives JsonCodec
   */
 final case class TaggedPair(tagId: Long, translationWordId: Long) derives JsonCodec
 
+/** One `word_forms` relation resolved to the word on the other end, with nothing else attached — a passive link plus a
+  * type label. Used where the direction is shown but not interacted with: [[WordSummary.mainWord]] and
+  * [[WordDetail.mainWords]]. `relation` is the raw canonical tag string (e.g. `"dative,definite,plural"`); rendering it
+  * into words is `Labels.grammarRelation` on the client, so it follows the reader's own locale.
+  */
+final case class WordFormRef(word: Word, relation: String) derives JsonCodec
+
+/** One entry of a lemma's [[WordSummary.variants]] column: the form, its relation, and whether it is the row a search
+  * landed on directly — the ★ marker the listing shows when this exact word id is also present as its own row on the
+  * same page. Still a passive link: the interactive tick/chip controls live on that other row, not here.
+  */
+final case class WordFormPreview(word: Word, relation: String, matched: Boolean) derives JsonCodec
+
+/** One entry of [[WordDetail.forms]]: the form, its relation, and the reader's own tags on *that* word — what lets the
+  * Forms section give each entry its own live tick, the same control the page's own title carries for itself. `tagIds`
+  * is empty for a caller with no session, the same rule [[WordSummary.tagIds]] follows.
+  */
+final case class WordFormEntry(word: Word, relation: String, tagIds: List[Long]) derives JsonCodec
+
 /** One row of the browse-and-tag listing.
   *
   * Carries its translations already rendered into the target language the caller asked for, the ids of the reader's own
   * tags on it, and which of those translations they have marked as practice answers — the three things the screen shows
   * beside a word, all of which would otherwise be a query per row. A caller with no session gets an empty `tagIds` and
   * an empty `pairs`, which is what lets the listing be public.
+  *
+  * `mainWord` is populated only when this row is itself an inflected/declined form of another word; `variants` and
+  * `variantsTotal` only when this row is a lemma with forms of its own, `variants` capped to
+  * `WordService.wordFormsPerRow` and `variantsTotal` carrying the real count for a "+N more" indicator. `isContext`
+  * marks a lemma row that was not itself part of the search match, but was added alongside a variant that did match, so
+  * the reader sees the word in relation to its lemma — it is excluded from [[WordPage.total]] and pagination, since it
+  * is context, not a match.
   */
 final case class WordSummary(
   word: Word,
   translations: List[TranslationOption],
   tagIds: List[Long],
   pairs: List[TaggedPair],
+  mainWord: Option[WordFormRef],
+  variants: List[WordFormPreview],
+  variantsTotal: Int,
+  isContext: Boolean,
 ) derives JsonCodec
 
 /** One translation edge, as the detail page shows it.
@@ -55,12 +85,17 @@ final case class TranslationEntry(
   * `pairs` is carried for the reason [[WordSummary.pairs]] is, and filtered by the browser the same way: the tag a
   * click files into is page-local state that never reaches the server. Unlike the listing's, it is not narrowed to the
   * translations being shown — this screen shows every one of them, in both other languages.
+  *
+  * `mainWords` names every lemma this word is a form of — ordinarily zero or one. `forms` lists every form of this
+  * word, uncapped (unlike [[WordSummary.variants]]'s listing-row cap): the detail screen is where the whole set lives.
   */
 final case class WordDetail(
   word: Word,
   translations: List[TranslationEntry],
   tags: List[Tag],
   pairs: List[TaggedPair],
+  mainWords: List[WordFormRef],
+  forms: List[WordFormEntry],
 ) derives JsonCodec
 
 /** One page of the vocabulary, counted the way [[UserPage]] is: `total` counts what the filter matches, not what the
