@@ -348,6 +348,57 @@ object DictionaryImportSpec extends ZIOSpecDefault {
             .map { case (_, rank) => rank } == List(17940),
         )
       },
+      test("dedupeHomographs keeps only the gendered noun, and drops an untranslated Other twin") {
+        val english        = ParsedWord(WordLanguage.En, "woman", PartOfSpeech.Noun, None)
+        val frauGenderless = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, None)
+        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Die))
+        val frauOther      = ParsedWord(WordLanguage.De, "frau", PartOfSpeech.Other, None)
+        val collected      = DictionaryImport.Collected(
+          words = Map(english -> 1, frauGenderless -> 1, frauGendered -> 1, frauOther -> 1),
+          pairs = List(
+            gathedge.backend.tools.WiktextractParser.ParsedPair(english, frauGenderless, Some("person")),
+            gathedge.backend.tools.WiktextractParser.ParsedPair(english, frauGendered, Some("person")),
+          ),
+          forms = Nil,
+        )
+        val deduped        = DictionaryImport.dedupeHomographs(collected)
+        assertTrue(
+          deduped.words.keySet == Set(english, frauGendered),
+          deduped.pairs == List(
+            gathedge.backend.tools.WiktextractParser.ParsedPair(english, frauGendered, Some("person"))
+          ),
+        )
+      },
+      test("dedupeHomographs leaves an Other entry alone when it has its own translation, or nothing else translates") {
+        val english         = ParsedWord(WordLanguage.En, "man", PartOfSpeech.Noun, None)
+        val mannNoun        = ParsedWord(WordLanguage.De, "Mann", PartOfSpeech.Noun, Some(Gender.Der))
+        val manOther        = ParsedWord(WordLanguage.De, "man", PartOfSpeech.Other, None)
+        val translatedOther = DictionaryImport.dedupeHomographs(
+          DictionaryImport.Collected(
+            words = Map(english -> 1, mannNoun -> 1, manOther -> 1),
+            pairs = List(
+              gathedge.backend.tools.WiktextractParser.ParsedPair(english, mannNoun, Some("adult male")),
+              gathedge.backend.tools.WiktextractParser.ParsedPair(english, manOther, Some("indefinite pronoun")),
+            ),
+            forms = Nil,
+          )
+        )
+        val onlyOther       = DictionaryImport.dedupeHomographs(
+          DictionaryImport.Collected(words = Map(manOther -> 1), pairs = Nil, forms = Nil)
+        )
+        assertTrue(
+          translatedOther.words.keySet == Set(english, mannNoun, manOther),
+          onlyOther.words.keySet == Set(manOther),
+        )
+      },
+      test("dedupeHomographs never touches der/die See -- gender, not case, decides identity") {
+        val seeLake = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Der))
+        val seeSea  = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Die))
+        val deduped = DictionaryImport.dedupeHomographs(
+          DictionaryImport.Collected(words = Map(seeLake -> 1, seeSea -> 1), pairs = Nil, forms = Nil)
+        )
+        assertTrue(deduped.words.keySet == Set(seeLake, seeSea))
+      },
       test("--seed takes an optional path, and does not swallow the option after it") {
         assertTrue(
           DictionaryImport.parseArgs(List("--seed")).map(_.seedPath) == Right(None),

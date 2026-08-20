@@ -283,6 +283,60 @@ object DictionaryImport extends ZIOAppDefault {
     Collected(allRanks, pairs, forms)
   }
 
+  /** Wiktextract sometimes gives one spelling more than one entry that this application's schema cannot tell apart by
+    * sense, only by shape: a German noun stated once with its article and once without, or a homograph that is not a
+    * real word in its own right so much as wiktextract's placeholder for "this spelling, some other part of speech."
+    * Both collapse onto the entry that actually carries information. Grouped on `text.toLowerCase` because the two
+    * entries do not always agree on case (`Frau` the noun, `frau` the pronoun).
+    *
+    *   - Within one part of speech, a gendered and a genderless entry for the same spelling are the same headword twice
+    *     — [[WiktextractParser.genderOf]] finds the article on the entry that states it, so a gendered entry surviving
+    *     means some entry did. The genderless duplicate is dropped.
+    *   - An `Other`-tagged entry that carries no translation of its own is dropped once the same spelling already has
+    *     an entry in a real part of speech that does: `Other` is this application's catch-all for parts of speech it
+    *     does not model, and an untranslated one adds nothing a learner can use.
+    *
+    * Whatever is dropped takes its pairs and forms with it, the same way [[select]] does.
+    */
+  def dedupeHomographs(collected: Collected): Collected = {
+    def hasTranslation(word: ParsedWord): Boolean = {
+      collected.pairs.exists(pair => pair.source == word || pair.target == word)
+    }
+
+    val dropped = collected.words.keys
+      .groupBy(word => (word.language, word.text.toLowerCase))
+      .values
+      .flatMap { homographs =>
+        val genderless = homographs
+          .groupBy(_.partOfSpeech)
+          .values
+          .filter(_.exists(_.gender.isDefined))
+          .flatMap(_.filter(_.gender.isEmpty))
+
+        val survivors         = homographs.toSet -- genderless
+        val hasRealSense      = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
+        val untranslatedOther = {
+          if (hasRealSense)
+            survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
+          else
+            Set.empty[ParsedWord]
+        }
+
+        genderless ++ untranslatedOther
+      }
+      .toSet
+
+    if (dropped.isEmpty)
+      collected
+    else {
+      Collected(
+        words = collected.words -- dropped,
+        pairs = collected.pairs.filterNot(pair => dropped.contains(pair.source) || dropped.contains(pair.target)),
+        forms = collected.forms.filterNot(form => dropped.contains(form.lemma) || dropped.contains(form.form)),
+      )
+    }
+  }
+
   /** Every lemma's forms, keyed by relation, one form per relation. When a lemma states the same relation more than
     * once (a table cell repeated under two spellings) the alphabetically first wins, so a re-import derives the same
     * edge rather than picking whichever happened to sort first in a `HashMap`.
@@ -660,7 +714,7 @@ object DictionaryImport extends ZIOAppDefault {
     for {
       args      <- ZIOAppArgs.getArgs
       options   <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
-      collected <- load(options)
+      collected <- load(options).map(dedupeHomographs)
       _         <- ZIO.logInfo(
                      s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
                        s"${collected.forms.size} form(s)"
