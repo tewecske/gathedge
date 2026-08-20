@@ -184,12 +184,14 @@ object WiktextractParser {
     }
   }
 
-  /** Rows in `forms[]` that are template scaffolding rather than an actual word form: a declension/conjugation table's
-    * own header cell (`table-tags`), the name of the inflection template that produced the table
-    * (`inflection-template`), or a Hungarian vowel-harmony/stem-class label (`class`) that names how the word inflects
-    * rather than a form of the word itself.
+  /** Rows in `forms[]` that are template scaffolding or metadata rather than an actual word form: a
+    * declension/conjugation table's own header cell (`table-tags`), the name of the inflection template that produced
+    * the table (`inflection-template`), a Hungarian vowel-harmony/stem-class label (`class`) that names how the word
+    * inflects rather than a form of the word itself, or (`auxiliary`) a German conjugation table's note of which verb
+    * (`haben`/`sein`) forms that lemma's Perfekt tense — a fact about the lemma, not a form of it. Left unfiltered,
+    * `auxiliary` rows make `haben`/`sein` a "form" of nearly every German verb.
     */
-  private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class")
+  private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class", "auxiliary")
 
   /** A form tagged with one of these is not the standard, current spelling a learner should be taught — a variant form
     * wiktextract records alongside the real one, not a distinct grammatical fact the way `plural`/`dative` are. Dropped

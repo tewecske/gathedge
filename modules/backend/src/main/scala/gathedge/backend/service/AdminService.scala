@@ -13,6 +13,7 @@ import gathedge.backend.db.{
   SessionRow,
   UserRepository,
   UserRow,
+  WordRepository,
 }
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.domain.{Locale, OAuthProvider, Theme, User}
@@ -26,12 +27,14 @@ import gathedge.shared.dto.{
   AuditAction,
   AuditEntry,
   AuditPage,
+  DeleteWordFormRequest,
   LockoutStatus,
   LoginAttemptEntry,
   MyPlayPage,
   Paging,
   RateLimitEntry,
   UserPage,
+  WordFormAnomaly,
 }
 import gathedge.shared.validation.Validation
 import zio.*
@@ -147,6 +150,14 @@ trait AdminService {
 
   /** Clears one key, or every key when `key` is empty. */
   def clearRateLimits(actor: AdminActor, key: Option[String]): UIO[Unit]
+
+  /** Every `word_forms` fan-out anomaly past [[AdminService.wordFormAnomalyThreshold]]. Reads `WordRepository`, so
+    * cannot fail beyond a defect.
+    */
+  def wordFormAnomalies: UIO[List[WordFormAnomaly]]
+
+  /** Deletes every `word_forms` row for one anomaly's `(form word, relation)` pair. */
+  def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit]
 }
 
 object AdminService {
@@ -230,6 +241,17 @@ object AdminService {
   def clearRateLimits(actor: AdminActor, key: Option[String]): URIO[AdminService, Unit] =
     ZIO.serviceWithZIO[AdminService](_.clearRateLimits(actor, key))
 
+  def wordFormAnomalies: URIO[AdminService, List[WordFormAnomaly]] =
+    ZIO.serviceWithZIO[AdminService](_.wordFormAnomalies)
+
+  def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): URIO[AdminService, Unit] =
+    ZIO.serviceWithZIO[AdminService](_.deleteWordFormAnomaly(actor, request))
+
+  /** More than this many distinct lemmas claiming the same `(form word, relation)` is not a real inflection table --
+    * see `WordRepository.formFanOutAnomalies`.
+    */
+  val wordFormAnomalyThreshold: Int = 50
+
   /** The window `clearLockout` looks back over when collecting the origins to unblock. The limiter's own window is 15
     * minutes, so an hour comfortably covers every key that could still be holding a failure while leaving out addresses
     * from days ago.
@@ -244,7 +266,7 @@ object AdminService {
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
       LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService &
-      GameService,
+      GameService & WordRepository,
     AdminService,
   ] = ZLayer.fromFunction(AdminServiceLive.apply)
 }
@@ -269,6 +291,7 @@ final case class AdminServiceLive(
   rateLimiter: RateLimiter,
   authService: AuthService,
   gameService: GameService,
+  wordRepo: WordRepository,
 ) extends AdminService {
 
   private def toDomain(row: UserRow): User = {
@@ -658,6 +681,25 @@ final case class AdminServiceLive(
             s"cleared every rate-limit key ($dropped held)",
           )
         }
+    }
+  }
+
+  def wordFormAnomalies: UIO[List[WordFormAnomaly]] = {
+    wordRepo
+      .formFanOutAnomalies(AdminService.wordFormAnomalyThreshold)
+      .orDie
+      .map(_.map { case (word, relation, count) =>
+        WordFormAnomaly(word.id, word.text, word.language, relation, count)
+      })
+  }
+
+  def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit] = {
+    wordRepo.deleteWordForms(request.formWordId, request.relation).orDie.flatMap { rows =>
+      auditTrail.recordSystem(
+        actor,
+        AuditAction.systemWordFormAnomalyDeleted,
+        s"deleted $rows word_forms row(s) for form word id=${request.formWordId} relation=${request.relation}",
+      )
     }
   }
 }

@@ -39,6 +39,7 @@ import gathedge.shared.dto.{
   CreateUserRequest,
   CreateWordRequest,
   DbStats,
+  DeleteWordFormRequest,
   ForgotPasswordRequest,
   GameAnswerResult,
   GameCreated,
@@ -91,6 +92,7 @@ import gathedge.shared.dto.{
   UserPage,
   VerifyEmailRequest,
   WordDetail,
+  WordFormAnomaly,
   WordPage,
   WordSummary,
 }
@@ -187,6 +189,9 @@ object ApiSchemas {
   given Schema[WordPage]  = DeriveSchema.gen[WordPage]
 
   given Schema[ClearRateLimitRequest] = DeriveSchema.gen[ClearRateLimitRequest]
+
+  given Schema[WordFormAnomaly]       = DeriveSchema.gen[WordFormAnomaly]
+  given Schema[DeleteWordFormRequest] = DeriveSchema.gen[DeleteWordFormRequest]
 
   given Schema[ConfigSummary]  = DeriveSchema.gen[ConfigSummary]
   given Schema[MigrationInfo]  = DeriveSchema.gen[MigrationInfo]

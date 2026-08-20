@@ -5,10 +5,11 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.i18n.UiKeys
 
-/** Sub-navigation across the four administrator screens.
+/** Sub-navigation across the five administrator screens.
   *
-  * The navbar keeps one "Admin" link, pointing at the user list; these tabs are how the audit log, the usage screen and
-  * the system overview are reached, so none needs a navbar entry of its own for a screen most sessions never open.
+  * The navbar keeps one "Admin" link, pointing at the user list; these tabs are how the audit log, the usage screen,
+  * the system overview and the word-forms diagnostics are reached, so none needs a navbar entry of its own for a screen
+  * most sessions never open.
   *
   * `Page.AdminUserDetail` counts as the Users tab: it is reached from that list and returns to it.
   */
@@ -21,6 +22,7 @@ object AdminSubmenu {
       tabLink(Page.AdminAudit(), I18n.t(UiKeys.adminAuditTitle), isAuditTab(active)),
       tabLink(Page.AdminUsage, I18n.t(UiKeys.navAdminUsage), active == Page.AdminUsage),
       tabLink(Page.AdminSystem, I18n.t(UiKeys.navAdminSystem), active == Page.AdminSystem),
+      tabLink(Page.AdminWordForms, I18n.t(UiKeys.navAdminWordForms), active == Page.AdminWordForms),
     )
   }
 

@@ -8,6 +8,7 @@ import gathedge.shared.dto.{
   AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
+  DeleteWordFormRequest,
   LoginAttemptEntry,
   MyPlayPage,
   PruneResult,
@@ -17,6 +18,7 @@ import gathedge.shared.dto.{
   SystemOverview,
   UpdateUserRequest,
   UserPage,
+  WordFormAnomaly,
 }
 
 import EndpointClient.{executor, run}
@@ -129,6 +131,14 @@ object AdminApiClient {
 
   def systemPrune: EventStream[Either[ApiError, PruneResult]] = {
     run(executor(AdminEndpoints.systemPrune(())))
+  }
+
+  def wordFormAnomalies: EventStream[Either[ApiError, List[WordFormAnomaly]]] = {
+    run(executor(AdminEndpoints.wordFormAnomalies(())))
+  }
+
+  def deleteWordFormAnomaly(formWordId: Long, relation: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(AdminEndpoints.deleteWordFormAnomaly(DeleteWordFormRequest(formWordId, relation))))
   }
 
   def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {

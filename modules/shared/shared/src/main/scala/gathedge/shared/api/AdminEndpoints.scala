@@ -6,6 +6,7 @@ import gathedge.shared.dto.{
   AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
+  DeleteWordFormRequest,
   LoginAttemptEntry,
   MyPlayPage,
   PruneResult,
@@ -15,6 +16,7 @@ import gathedge.shared.dto.{
   SystemOverview,
   UpdateUserRequest,
   UserPage,
+  WordFormAnomaly,
 }
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -233,6 +235,24 @@ object AdminEndpoints {
     Endpoint(Method.POST / "api" / "admin" / "system" / "prune").out[PruneResult].outFailure(failure.unauthorized)
   }
 
+  /** Every `word_forms` `(form word, relation)` pair claiming more than the anomaly threshold's worth of distinct
+    * lemmas — see `gathedge.shared.dto.WordFormAnomaly`. `AdminService.wordFormAnomalies` is a `UIO`.
+    */
+  val wordFormAnomalies = {
+    Endpoint(Method.GET / "api" / "admin" / "word-forms" / "anomalies")
+      .out[List[WordFormAnomaly]]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** Deletes every `word_forms` row for one `(form word, relation)` pair. */
+  val deleteWordFormAnomaly = {
+    Endpoint(Method.POST / "api" / "admin" / "word-forms" / "anomalies" / "delete")
+      .in[DeleteWordFormRequest]
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   /** Every (method, route) pair `usage_events` holds a row for, most-used first is the caller's job — the same list
     * sorted the other way is the least-used report, so there is only one endpoint for both.
     */
@@ -293,6 +313,8 @@ object AdminEndpoints {
       clearRateLimits,
       systemOverview,
       systemPrune,
+      wordFormAnomalies,
+      deleteWordFormAnomaly,
       usageRoutes,
       usageSuspicious,
     )

@@ -148,17 +148,18 @@ final case class AuditEntry(
 
 /** The `action` vocabulary of [[AuditEntry]]. Strings, for the reason given on [[LoginOutcome]]. */
 object AuditAction {
-  val userCreate: String              = "user.create"
-  val userUpdate: String              = "user.update"
-  val userDelete: String              = "user.delete"
-  val userPasswordReset: String       = "user.password_reset"
-  val userVerifyEmail: String         = "user.verify_email"
-  val userVerificationResend: String  = "user.verification_resend"
-  val userSessionsRevoked: String     = "user.sessions_revoked"
-  val userOAuthUnlink: String         = "user.oauth_unlink"
-  val userLockoutCleared: String      = "user.lockout_cleared"
-  val systemPrune: String             = "system.prune"
-  val systemRateLimitsCleared: String = "system.rate_limits_cleared"
+  val userCreate: String                   = "user.create"
+  val userUpdate: String                   = "user.update"
+  val userDelete: String                   = "user.delete"
+  val userPasswordReset: String            = "user.password_reset"
+  val userVerifyEmail: String              = "user.verify_email"
+  val userVerificationResend: String       = "user.verification_resend"
+  val userSessionsRevoked: String          = "user.sessions_revoked"
+  val userOAuthUnlink: String              = "user.oauth_unlink"
+  val userLockoutCleared: String           = "user.lockout_cleared"
+  val systemPrune: String                  = "system.prune"
+  val systemRateLimitsCleared: String      = "system.rate_limits_cleared"
+  val systemWordFormAnomalyDeleted: String = "system.word_form_anomaly_deleted"
 
   val all: List[String] = {
     List(
@@ -173,6 +174,7 @@ object AuditAction {
       userLockoutCleared,
       systemPrune,
       systemRateLimitsCleared,
+      systemWordFormAnomalyDeleted,
     )
   }
 }
@@ -190,6 +192,22 @@ final case class RateLimitEntry(
 
 /** Clears one rate-limiter key, or every key when `key` is empty. */
 final case class ClearRateLimitRequest(key: Option[String]) derives JsonCodec
+
+/** One `word_forms` fan-out anomaly: `formText` claimed as a form of `lemmaCount` distinct lemmas under `relation`,
+  * which is far more than a real inflected form ever is. The shape of the bug where a mislabeled wiktextract tag (a
+  * German conjugation table's `auxiliary` note) turned `haben`/`sein` into a "form" of hundreds of verbs.
+  */
+final case class WordFormAnomaly(
+  formWordId: Long,
+  formText: String,
+  language: String,
+  relation: String,
+  lemmaCount: Long,
+) derives JsonCodec
+
+/** Deletes every `word_forms` row for one `(form word, relation)` pair -- the cleanup action for a [[WordFormAnomaly]].
+  */
+final case class DeleteWordFormRequest(formWordId: Long, relation: String) derives JsonCodec
 
 /** What this deployment is configured to do — never a value that would be a secret.
   *

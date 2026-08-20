@@ -125,6 +125,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/rate-limits/clear",
               "/api/admin/system",
               "/api/admin/system/prune",
+              "/api/admin/word-forms/anomalies",
+              "/api/admin/word-forms/anomalies/delete",
               "/api/admin/usage/routes",
               "/api/admin/usage/suspicious",
               "/api/progress-shares/code",
@@ -335,6 +337,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/admin/rate-limits/clear")                                    -> Set(NoContent, BadRequest, Unauthorized),
               ("GET", "/api/admin/system")                                                -> Set(Ok, Unauthorized),
               ("POST", "/api/admin/system/prune")                                         -> Set(Ok, Unauthorized),
+              ("GET", "/api/admin/word-forms/anomalies")                                  -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/word-forms/anomalies/delete")                          -> Set(NoContent, BadRequest, Unauthorized),
               ("GET", "/api/admin/usage/routes")                                          -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/admin/usage/suspicious")                                      -> Set(Ok, BadRequest, Unauthorized),
               // Progress sharing: minting a code takes no input, so its only failure is the aspect's 401.
@@ -356,7 +360,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 192 across 47 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 195 across 49 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -373,7 +377,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 192,
+          declared == 195,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and

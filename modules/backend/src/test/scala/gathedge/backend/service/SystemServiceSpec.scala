@@ -15,6 +15,7 @@ import gathedge.backend.db.{
   SessionRepository,
   UsageEventRepository,
   UserRepository,
+  WordRepository,
 }
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.dto.{AuditAction, Paging}
@@ -32,7 +33,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
         GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
-        MetricsRepository.test ++ GameRepository.test
+        MetricsRepository.test ++ GameRepository.test ++ WordRepository.test
     )
   }
 

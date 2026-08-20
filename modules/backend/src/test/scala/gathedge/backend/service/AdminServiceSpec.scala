@@ -13,10 +13,14 @@ import gathedge.backend.db.{
   PasswordResetTokenRepository,
   SessionRepository,
   UserRepository,
+  WordFormRow,
+  WordRepository,
+  WordRow,
 }
 import gathedge.backend.security.PasswordHasher
+import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{AuditAction, LoginOutcome, Paging}
+import gathedge.shared.dto.{AuditAction, DeleteWordFormRequest, LoginOutcome, Paging}
 import zio._
 import zio.json._
 import zio.test._
@@ -27,7 +31,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
     TestDataSource.sqlite >>> (
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GameRepository.test
+        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GameRepository.test ++ WordRepository.test
     )
   }
 
@@ -45,6 +49,22 @@ object AdminServiceSpec extends ZIOSpecDefault {
         Messages.live ++ TestCaptchaService.live ++ GameWordList.live >+>
         (AuthService.live ++ AuditTrail.live ++ GameService.live)
     ) >+> AdminService.live
+  }
+
+  /** A dictionary row, as the importer would write it -- mirrors `WordServiceSpec.dictionaryWord`. */
+  private def dictionaryWord(language: WordLanguage, text: String, pos: PartOfSpeech = PartOfSpeech.Noun): WordRow = {
+    WordRow(
+      id = 0L,
+      language = WordLanguage.code(language),
+      text = text,
+      textNorm = text.toLowerCase,
+      partOfSpeech = PartOfSpeech.code(pos),
+      gender = Gender.toColumn(None),
+      frequencyRank = WordService.unrankedFrequency,
+      source = WordService.dictionarySource,
+      createdBy = None,
+      createdAt = 0L,
+    )
   }
 
   def spec = suite("AdminService (SQLite)")(
@@ -297,5 +317,51 @@ object AdminServiceSpec extends ZIOSpecDefault {
         listed <- AdminService.listUsers(page = Paging.firstPage, pageSize = 100, None, None, descending = false)
       } yield assertTrue(!listed.items.exists(_.id == victim.id))
     },
+    suite("word_forms fan-out anomalies")(
+      test("a form word linked to more lemmas than the threshold is reported, one word not is not") {
+        for {
+          haben  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "haben", pos = PartOfSpeech.Verb))
+          plural <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser"))
+          lemmas <- ZIO.foreach((1 to AdminService.wordFormAnomalyThreshold + 1).toList)(n =>
+                      WordRepository.ensureWord(dictionaryWord(WordLanguage.De, s"verb$n", pos = PartOfSpeech.Verb))
+                    )
+          _      <- WordRepository.insertForms(lemmas.map(lemma => WordFormRow(0L, lemma.id, haben.id, "auxiliary", 0L)))
+          _      <- WordRepository.insertForms(List(WordFormRow(0L, plural.id, plural.id, "plural", 0L)))
+          found  <- AdminService.wordFormAnomalies
+        } yield assertTrue(
+          found.exists(anomaly => {
+            anomaly.formWordId == haben.id && anomaly.relation == "auxiliary" &&
+              anomaly.lemmaCount == lemmas.size.toLong
+          }),
+          !found.exists(_.formWordId == plural.id),
+        )
+      },
+      test("deleting an anomaly removes its word_forms rows and writes one audit entry") {
+        for {
+          admin  <-
+            AdminService.createUser(AdminActor.system, "wordforms-admin@example.com", "password123", isAdmin = true)
+          sein   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "sein", pos = PartOfSpeech.Verb))
+          lemmas <- ZIO.foreach((1 to AdminService.wordFormAnomalyThreshold + 1).toList)(n =>
+                      WordRepository.ensureWord(dictionaryWord(WordLanguage.De, s"seinverb$n", pos = PartOfSpeech.Verb))
+                    )
+          _      <- WordRepository.insertForms(lemmas.map(lemma => WordFormRow(0L, lemma.id, sein.id, "auxiliary", 0L)))
+          _      <- AdminService.deleteWordFormAnomaly(AdminActor(admin.id), DeleteWordFormRequest(sein.id, "auxiliary"))
+          after  <- AdminService.wordFormAnomalies
+          audit  <-
+            AdminService.auditLog(
+              Paging.firstPage,
+              50,
+              None,
+              false,
+              Some(AuditAction.systemWordFormAnomalyDeleted),
+              Some(admin.id),
+              None,
+            )
+        } yield assertTrue(
+          !after.exists(_.formWordId == sein.id),
+          audit.items.size == 1,
+        )
+      },
+    ),
   ).provide(layer)
 }

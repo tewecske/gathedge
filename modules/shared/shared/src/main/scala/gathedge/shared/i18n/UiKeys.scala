@@ -101,16 +101,17 @@ object UiKeys {
     */
   val navLanguage: String = key("ui.nav.language")
 
-  val navWords: String       = key("ui.nav.words")
-  val navGames: String       = key("ui.nav.games")
-  val navAdmin: String       = key("ui.nav.admin")
-  val navAccountMenu: String = key("ui.nav.accountMenu")
-  val navLogOut: String      = key("ui.nav.logOut")
-  val navThemeDark: String   = key("ui.nav.themeDark")
-  val navThemeLight: String  = key("ui.nav.themeLight")
-  val navAdminUsers: String  = key("ui.nav.adminUsers")
-  val navAdminSystem: String = key("ui.nav.adminSystem")
-  val navAdminUsage: String  = key("ui.nav.adminUsage")
+  val navWords: String          = key("ui.nav.words")
+  val navGames: String          = key("ui.nav.games")
+  val navAdmin: String          = key("ui.nav.admin")
+  val navAccountMenu: String    = key("ui.nav.accountMenu")
+  val navLogOut: String         = key("ui.nav.logOut")
+  val navThemeDark: String      = key("ui.nav.themeDark")
+  val navThemeLight: String     = key("ui.nav.themeLight")
+  val navAdminUsers: String     = key("ui.nav.adminUsers")
+  val navAdminSystem: String    = key("ui.nav.adminSystem")
+  val navAdminUsage: String     = key("ui.nav.adminUsage")
+  val navAdminWordForms: String = key("ui.nav.adminWordForms")
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
@@ -459,6 +460,21 @@ object UiKeys {
   val adminUsageColIps: String          = key("ui.admin.usage.colIps")
   val adminUsageSuspiciousEmpty: String = key("ui.admin.usage.suspiciousEmpty")
   val adminUsageSuspiciousCount: String = pluralKey("ui.admin.usage.suspicious.count")
+
+  // -- Administration: word-form fan-out anomalies -----------------------------------------------
+  // A dictionary-import data check: a word wrongly linked as an inflected "form" of far more lemmas than any real
+  // inflection table ever has. See `gathedge.shared.dto.WordFormAnomaly`.
+
+  val adminWordFormsTitle: String         = key("ui.admin.wordForms.title")
+  val adminWordFormsHint: String          = key("ui.admin.wordForms.hint")
+  val adminWordFormsEmpty: String         = key("ui.admin.wordForms.empty")
+  val adminWordFormsColWord: String       = key("ui.admin.wordForms.colWord")
+  val adminWordFormsColLanguage: String   = key("ui.admin.wordForms.colLanguage")
+  val adminWordFormsColRelation: String   = key("ui.admin.wordForms.colRelation")
+  val adminWordFormsColLemmaCount: String = key("ui.admin.wordForms.colLemmaCount")
+  val adminWordFormsDelete: String        = key("ui.admin.wordForms.delete")
+  val adminWordFormsDeleteConfirm: String = key("ui.admin.wordForms.deleteConfirm")
+  val adminWordFormsDeleted: String       = key("ui.admin.wordForms.deleted")
 
   // -- Vocabulary ------------------------------------------------------------------------------
   // The browse-and-tag screen. Note what is *not* here: a German noun's article is never

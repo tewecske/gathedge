@@ -105,8 +105,14 @@ object Page {
     * bookmarking a particular value of.
     */
   case object AdminUsage extends Page
-  case object Forbidden  extends Page
-  case object NotFound   extends Page
+
+  /** The `word_forms` fan-out diagnostics — see `gathedge.shared.dto.WordFormAnomaly`. No listing state, same as
+    * [[AdminSystem]]/[[AdminUsage]]: it is a report with a delete action, not something worth bookmarking a filtered
+    * view of.
+    */
+  case object AdminWordForms extends Page
+  case object Forbidden      extends Page
+  case object NotFound       extends Page
 
   enum AuthGuard {
 
@@ -211,6 +217,7 @@ object AppRouter {
   )
   private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
   private val adminUsageRoute      = Route.static(AdminUsage, root / "admin" / "usage", basePath)
+  private val adminWordFormsRoute  = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
@@ -312,6 +319,8 @@ object AppRouter {
         "AdminSystem"
       case AdminUsage               =>
         "AdminUsage"
+      case AdminWordForms           =>
+        "AdminWordForms"
       case Forbidden                =>
         "Forbidden"
       case NotFound                 =>
@@ -398,6 +407,8 @@ object AppRouter {
           AdminSystem
         case "AdminUsage"     =>
           AdminUsage
+        case "AdminWordForms" =>
+          AdminWordForms
         case "Forbidden"      =>
           Forbidden
         case _                =>
@@ -436,6 +447,7 @@ object AppRouter {
         adminAuditRoute,
         adminSystemRoute,
         adminUsageRoute,
+        adminWordFormsRoute,
         forbiddenRoute,
       ),
       serializePage = serialize,

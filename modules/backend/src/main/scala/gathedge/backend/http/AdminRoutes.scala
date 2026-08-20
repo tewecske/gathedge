@@ -4,7 +4,14 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService, UsageStatsService}
 import gathedge.shared.api.AdminEndpoints
 import gathedge.shared.domain.{OAuthProvider, User}
-import gathedge.shared.dto.{ClearRateLimitRequest, CreateUserRequest, Paging, SortDirection, UpdateUserRequest}
+import gathedge.shared.dto.{
+  ClearRateLimitRequest,
+  CreateUserRequest,
+  DeleteWordFormRequest,
+  Paging,
+  SortDirection,
+  UpdateUserRequest,
+}
 import zio.*
 import zio.http.*
 
@@ -240,6 +247,19 @@ object AdminRoutes {
       .implementHandler(handler((_: Unit) => actor.flatMap(acting => SystemService.prune(acting))))
   }
 
+  private val wordFormAnomaliesRoute = {
+    AdminEndpoints.wordFormAnomalies.implementHandler(handler((_: Unit) => AdminService.wordFormAnomalies))
+  }
+
+  private val deleteWordFormAnomalyRoute = {
+    AdminEndpoints.deleteWordFormAnomaly
+      .implementHandler(
+        handler { (body: DeleteWordFormRequest) =>
+          actor.flatMap(acting => AdminService.deleteWordFormAnomaly(acting, body))
+        }
+      )
+  }
+
   private val usageRoutesRoute = {
     AdminEndpoints.usageRoutes
       .implementHandler(
@@ -284,6 +304,8 @@ object AdminRoutes {
       clearRateLimitsRoute,
       systemOverviewRoute,
       systemPruneRoute,
+      wordFormAnomaliesRoute,
+      deleteWordFormAnomalyRoute,
       usageRoutesRoute,
       usageSuspiciousRoute,
     ) @@ RouteSupport.adminOnly @@ RouteSupport.requestContext @@ RouteSupport.csrf

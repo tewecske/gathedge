@@ -242,7 +242,7 @@ object DictionaryImport extends ZIOAppDefault {
     val bySense = pairs
       .filter(pair => {
         pair.source.language == WordLanguage.En && pair.sense.exists(_.trim.nonEmpty) &&
-          pivotablePos.contains(pair.source.partOfSpeech)
+        pivotablePos.contains(pair.source.partOfSpeech)
       })
       .groupBy(pair => (pair.source.key, pair.sense.map(_.trim.toLowerCase)))
 
@@ -273,8 +273,12 @@ object DictionaryImport extends ZIOAppDefault {
     // survive contributes no form either.
     val forms     = collected.forms.filter(form => needed.contains(form.lemma))
     val baseRanks = needed.map(word => (word, ranked.getOrElse(word, WordService.unrankedFrequency))).toMap
+    // A form has no frequency entry of its own -- "Häuser" is never a line in a frequency list -- so it inherits its
+    // lemma's rank instead of the sentinel, which is what makes a common word's plural searchable near it rather than
+    // buried at the bottom of every result.
     val allRanks  = forms.foldLeft(baseRanks) { (acc, form) =>
-      if (acc.contains(form.form)) acc else acc.updated(form.form, WordService.unrankedFrequency)
+      if (acc.contains(form.form)) acc
+      else acc.updated(form.form, acc.getOrElse(form.lemma, WordService.unrankedFrequency))
     }
     Collected(allRanks, pairs, forms)
   }

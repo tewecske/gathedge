@@ -9,6 +9,7 @@ import gathedge.frontend.pages.{
   AdminUsagePage,
   AdminUserDetailPage,
   AdminUsersPage,
+  AdminWordFormsPage,
   CheckInboxPage,
   ForbiddenPage,
   ForgotPasswordPage,
@@ -338,6 +339,10 @@ object App {
       case Page.AdminUsage if gate.isAdmin          =>
         AdminUsagePage.render()
       case Page.AdminUsage                          =>
+        ForbiddenPage.render()
+      case Page.AdminWordForms if gate.isAdmin      =>
+        AdminWordFormsPage.render()
+      case Page.AdminWordForms                      =>
         ForbiddenPage.render()
       case Page.Forbidden                           =>
         ForbiddenPage.render()

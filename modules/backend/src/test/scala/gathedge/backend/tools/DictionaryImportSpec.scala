@@ -45,11 +45,12 @@ object DictionaryImportSpec extends ZIOSpecDefault {
 
   /** One `forms[]` array exercising every filter `WiktextractParser.formsOf` applies: a real plural, the dump's own "no
     * such form" placeholder (`"-"`), a periphrastic construction (a space), two flavours of template scaffolding
-    * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), a form spelled identically to
-    * its own lemma (real linguistic fact, not noise -- excluded at store time instead, see
-    * `DictionaryImport.formEdges`), two flavours of wiktextract's own "could not classify this cell" marker
-    * (`error-unrecognized-form`, `error-unknown-tag`), and four flavours of "not the standard, current spelling"
-    * (`nonstandard`, `obsolete`, `alternative`, `archaic`) -- each row dropped whole, not salvaged for its other tags.
+    * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), a German conjugation table's
+    * auxiliary-verb note (`auxiliary`), a form spelled identically to its own lemma (real linguistic fact, not noise --
+    * excluded at store time instead, see `DictionaryImport.formEdges`), two flavours of wiktextract's own "could not
+    * classify this cell" marker (`error-unrecognized-form`, `error-unknown-tag`), and four flavours of "not the
+    * standard, current spelling" (`nonstandard`, `obsolete`, `alternative`, `archaic`) -- each row dropped whole, not
+    * salvaged for its other tags.
     */
   private val formsLine = {
     """{"word":"Beispiel","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
@@ -62,6 +63,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |{"form":"strong","tags":["table-tags"],"source":"declension"},
       |{"form":"de-ndecl","tags":["inflection-template"],"source":"declension"},
       |{"form":"back harmony","tags":["class"]},
+      |{"form":"haben","tags":["auxiliary"]},
       |{"form":"Beispielen","tags":["error-unrecognized-form","dative","plural"]},
       |{"form":"Beispielem","tags":["error-unknown-tag","dative"]},
       |{"form":"Beyspiel","tags":["nonstandard","nominative","singular"]},
@@ -168,6 +170,13 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           !forms.exists(_.form.text == "Beyspil"),
           !forms.exists(_.form.text == "Exempel"),
         )
+      },
+      test(
+        "a German conjugation table's auxiliary-verb note is not imported as a form: it would make 'haben'/'sein' a " +
+          "form of nearly every German verb"
+      ) {
+        val forms = WiktextractParser.parse(formsLine).forms
+        assertTrue(!forms.exists(_.form.text == "haben"))
       },
       test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
         // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
