@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, QuotaSection}
-import gathedge.backend.db.{TagRow, WordRepository, WordRow, WordTagPairRow, WordTagRow, WordTranslationRow}
+import gathedge.backend.db.{TagRow, TextSearch, WordRepository, WordRow, WordTagPairRow, WordTagRow, WordTranslationRow}
 import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
@@ -654,6 +654,7 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                      source = WordService.userSource,
                      createdBy = Some(userId),
                      createdAt = now,
+                     textSearch = TextSearch.fold(valid.toLowerCase),
                    )
                  )
                  .orDie
@@ -1167,9 +1168,8 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       candidateIds                   =
         (matchedIds ++ sourceSuggestionIds ++ targetSuggestionIds).toList
       anyTranslationIds             <- repo.wordIdsWithAnyTranslation(candidateIds).orDie
-      buildMatch                     = {
-        (row: WordRow, translationMap: Map[Long, List[TranslationOption]]) =>
-          BulkUploadMatch(toDomain(row), translationMap.getOrElse(row.id, Nil), anyTranslationIds.contains(row.id))
+      buildMatch                     = { (row: WordRow, translationMap: Map[Long, List[TranslationOption]]) =>
+        BulkUploadMatch(toDomain(row), translationMap.getOrElse(row.id, Nil), anyTranslationIds.contains(row.id))
       }
       matched                        = {
         collapseHomonyms(sourceMatches, sourceTranslations).map(row => buildMatch(row, sourceTranslations)) ++

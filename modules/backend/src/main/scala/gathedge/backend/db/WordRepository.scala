@@ -34,8 +34,8 @@ trait WordRepository {
     */
   def ensureWord(row: WordRow): Task[WordRow]
 
-  /** One page of the listing. `search` is matched as a **prefix** of the normalised text, which is what an autocomplete
-    * needs and what `idx_words_lookup` answers.
+  /** One page of the listing. `search` is matched as a **prefix** of the accent-folded text, which is what an
+    * autocomplete needs and what `idx_words_search` answers.
     *
     * @param tagId
     *   narrows to words carrying one tag; @param taggedBy narrows to words the account has tagged at all.
@@ -491,12 +491,13 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   /** The prefix pattern behind the search box, or `None` when it is empty.
     *
-    * A prefix rather than a substring: it is what an autocomplete means, and it is the shape `idx_words_lookup`
-    * answers. Text is stored lowercased, so lowercasing the needle is the whole of the case-insensitivity, with no
-    * `lower()` for the two dialects to disagree about — the rule `UserRepository.emailPattern` follows.
+    * A prefix rather than a substring: it is what an autocomplete means, and it is the shape `idx_words_search`
+    * answers. Text is stored lowercased and accent-folded in `textSearch`, so lowercasing and folding the needle the
+    * same way is the whole of the case- and accent-insensitivity, with no `lower()` for the two dialects to disagree
+    * about — the rule `UserRepository.emailPattern` follows. This means "hau" finds "häuser" and "o" finds "ő".
     */
   private def searchPattern(search: Option[String]): Option[String] = {
-    search.map(_.trim.toLowerCase).filter(_.nonEmpty).map(needle => s"$needle%")
+    search.map(needle => TextSearch.fold(needle.trim.toLowerCase)).filter(_.nonEmpty).map(needle => s"$needle%")
   }
 
   /** True when the account has this word under any of its own tags. */
@@ -542,7 +543,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   ): DynamicQuery[WordRow] = {
     val base = dynamicQuerySchema[WordRow]("words")
       .filterOpt(language)((word, value) => quote(word.language == unquote(value)))
-      .filterOpt(searchPattern(search))((word, pattern) => quote(word.textNorm.like(unquote(pattern))))
+      .filterOpt(searchPattern(search))((word, pattern) => quote(word.textSearch.like(unquote(pattern))))
       .filterOpt(partOfSpeech)((word, value) => quote(word.partOfSpeech == unquote(value)))
       .filterOpt(tagId)((word, value) =>
         quote(wordTags.filter(link => link.wordId == word.id && link.tagId == unquote(value)).nonEmpty)

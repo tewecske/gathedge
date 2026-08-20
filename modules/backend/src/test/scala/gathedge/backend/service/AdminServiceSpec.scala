@@ -12,6 +12,7 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  TextSearch,
   UserRepository,
   WordFormRow,
   WordRepository,
@@ -64,6 +65,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
       source = WordService.dictionarySource,
       createdBy = None,
       createdAt = 0L,
+      textSearch = TextSearch.fold(text.toLowerCase),
     )
   }
 

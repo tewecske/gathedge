@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
-import gathedge.backend.db.{GameRepository, UserRepository, WordRepository, WordRow}
+import gathedge.backend.db.{GameRepository, TextSearch, UserRepository, WordRepository, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage}
 import zio._
 import zio.test._
@@ -42,6 +42,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       source = WordService.dictionarySource,
       createdBy = None,
       createdAt = 0L,
+      textSearch = TextSearch.fold(text.toLowerCase),
     )
   }
 

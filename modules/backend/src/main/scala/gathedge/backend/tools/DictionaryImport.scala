@@ -5,6 +5,7 @@ import gathedge.backend.db.{
   DataSourceFactory,
   DbDialect,
   FlywayMigrator,
+  TextSearch,
   WordFormRow,
   WordRepository,
   WordRow,
@@ -550,6 +551,7 @@ object DictionaryImport extends ZIOAppDefault {
       source = WordService.dictionarySource,
       createdBy = None,
       createdAt = now,
+      textSearch = TextSearch.fold(word.text.toLowerCase),
     )
   }
 

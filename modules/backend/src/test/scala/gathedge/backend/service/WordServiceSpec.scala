@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{WordFormRow, WordRepository, WordRow}
+import gathedge.backend.db.{TextSearch, WordFormRow, WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
@@ -77,6 +77,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       source = WordService.dictionarySource,
       createdBy = None,
       createdAt = 0L,
+      textSearch = TextSearch.fold(text.toLowerCase),
     )
   }
 
@@ -153,6 +154,17 @@ object WordServiceSpec extends ZIOSpecDefault {
           page.items.head.translations.map(_.text) == List("ház"),
           // No reader, so no tags — and no failure either.
           page.items.forall(_.tagIds.isEmpty),
+        )
+      },
+      test("a search finds an accented word from an unaccented spelling, and vice versa") {
+        for {
+          _      <- seed
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = 2))
+          hauser <- list(search = Some("hau"))
+          haz    <- list(search = Some("haz"), language = WordLanguage.Hu, target = WordLanguage.De)
+        } yield assertTrue(
+          hauser.items.map(_.word.text).contains("Häuser"),
+          haz.items.map(_.word.text) == List("ház"),
         )
       },
       test("the translation filter narrows to words with a translation, in the target language or in any") {
@@ -1103,9 +1115,10 @@ object WordServiceSpec extends ZIOSpecDefault {
   }
 
   /** Word forms (plural/tense/declension) as `WordService.list`/`.detail` expose them — the lemma/variant columns and
-    * the "bring the lemma along as context" search mechanic. `Häuser` never shares a prefix with `Haus`/`hau...` (the
-    * umlaut breaks it), so a search for one never incidentally matches the other — every assertion below about which
-    * rows a search returns is exercising the form-context machinery, not an accidental prefix collision.
+    * the "bring the lemma along as context" search mechanic. Except where a test deliberately searches the variant's
+    * own spelling, the fixture words below share no prefix with `Haus`/`hau...` even after accent-folding, so a search
+    * for one never incidentally matches the other — every assertion below about which rows a search returns is
+    * exercising the form-context machinery, not an accidental prefix collision.
     */
   private def wordFormsSpec = {
     suite("word forms")(
@@ -1133,15 +1146,15 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           _      <- seed
           hausId <- list(search = Some("hau")).map(_.items.find(_.word.text == "Haus").get.word.id)
-          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuser", rank = Int.MaxValue))
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Gebäude", rank = Int.MaxValue))
           _      <- WordRepository.insertForms(List(WordFormRow(0L, hausId, form.id, "plural", 0L)))
           page   <- list(search = Some("hau"))
         } yield assertTrue(
-          // Same three matches as the plain `seed` search — "Häuser" itself never matches the "hau" prefix, and no
+          // Same three matches as the plain `seed` search — "Gebäude" itself never matches the "hau" prefix, and no
           // context row was added for a lemma that is already on the page in its own right.
           page.total == 3L,
           page.items.count(_.word.text == "Haus") == 1,
-          page.items.find(_.word.text == "Haus").get.variants.exists(v => v.word.text == "Häuser" && !v.matched),
+          page.items.find(_.word.text == "Haus").get.variants.exists(v => v.word.text == "Gebäude" && !v.matched),
         )
       },
       test("a variant's detail page names its lemma and the relation, and carries no forms of its own") {

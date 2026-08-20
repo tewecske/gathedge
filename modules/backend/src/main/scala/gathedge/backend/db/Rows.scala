@@ -112,10 +112,13 @@ final case class AuditLogRow(
 
 /** One lexical unit, shared by every account.
   *
-  * `textNorm` is the lowercased form and the only column search touches. `gender` and `frequencyRank` are never null —
-  * `""` and a large sentinel stand in — because a NULL is distinct in a `UNIQUE` index on both dialects and sorts in a
-  * dialect-dependent place; see the migration's comment. `createdBy` is `None` for an imported row, and becomes `None`
-  * again if the account that typed one is deleted: a word other people have tagged outlives its author.
+  * `textNorm` is the lowercased form and the identity key the `UNIQUE` index and `findWord` use. `textSearch` is
+  * `textNorm` with accents folded off (see [[TextSearch.fold]]) and is the only column the search box's `LIKE` touches
+  * — kept separate so an accented and an unaccented spelling still count as different words, while the search box still
+  * finds either from a keyboard with no accents on it. `gender` and `frequencyRank` are never null — `""` and a large
+  * sentinel stand in — because a NULL is distinct in a `UNIQUE` index on both dialects and sorts in a dialect-dependent
+  * place; see the migration's comment. `createdBy` is `None` for an imported row, and becomes `None` again if the
+  * account that typed one is deleted: a word other people have tagged outlives its author.
   */
 final case class WordRow(
   id: Long,
@@ -128,6 +131,7 @@ final case class WordRow(
   source: String,
   createdBy: Option[Long],
   createdAt: Long,
+  textSearch: String,
 )
 
 /** One direction of a translation. Both directions are stored, so every read is a filter on `sourceWordId` and the

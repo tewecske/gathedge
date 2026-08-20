@@ -20,6 +20,7 @@ import gathedge.backend.db.{
   PasswordResetTokenRepository,
   ProgressShareRepository,
   SessionRepository,
+  TextSearch,
   UsageEventRepository,
   UsageEventRow,
   UserRepository,
@@ -173,9 +174,23 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // The vocabulary's three per-account tables, and the one table it shares with everybody.
           tag        <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L)
           word       <- WordRepository.ensureWord(
-                          WordRow(0L, "de", "Löffel", "löffel", "noun", "der", 1, "user", Some(target.id), 0L)
+                          WordRow(
+                            0L,
+                            "de",
+                            "Löffel",
+                            "löffel",
+                            "noun",
+                            "der",
+                            1,
+                            "user",
+                            Some(target.id),
+                            0L,
+                            TextSearch.fold("löffel"),
+                          )
                         )
-          spoon      <- WordRepository.ensureWord(WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L))
+          spoon      <- WordRepository.ensureWord(
+                          WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L, TextSearch.fold("kanál"))
+                        )
           _          <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
           _          <- WordRepository.tagWord(word.id, tag.id, 0L)
           // `word_tag_pairs` reaches `users` only through `tags`, but that is the path that breaks: declared without an
@@ -226,9 +241,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           (target, _) = signup
           tag        <- WordRepository.insertTag(target.id, "pgwordlimit", "pgwordlimit", 0L)
           source     <- WordRepository.ensureWord(
-                          WordRow(0L, "de", "Pgword", "pgword", "noun", "", 1, "user", Some(target.id), 0L)
+                          WordRow(0L, "de", "Pgword", "pgword", "noun", "", 1, "user", Some(target.id), 0L, "pgword")
                         )
-          dest       <- WordRepository.ensureWord(WordRow(0L, "hu", "Pgszo", "pgszo", "noun", "", 1, "user", None, 0L))
+          dest       <-
+            WordRepository.ensureWord(WordRow(0L, "hu", "Pgszo", "pgszo", "noun", "", 1, "user", None, 0L, "pgszo"))
           _          <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
           game       <- GameRepository.insertGame(
                           GameRow(0L, target.id, "pg-wordlimit-slug", "PG Word Limit", "de", "hu", 0L, 0L, Some(1)),
@@ -268,9 +284,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           bob           <- AuthService.signup("pgbob@example.com", "password123").map(_._1)
           tag           <- WordRepository.insertTag(owner.id, "pgtracked", "pgtracked", 0L)
           source        <- WordRepository.ensureWord(
-                             WordRow(0L, "de", "Pgtrack", "pgtrack", "noun", "", 1, "user", Some(owner.id), 0L)
+                             WordRow(0L, "de", "Pgtrack", "pgtrack", "noun", "", 1, "user", Some(owner.id), 0L, "pgtrack")
                            )
-          dest          <- WordRepository.ensureWord(WordRow(0L, "hu", "Pgnyom", "pgnyom", "noun", "", 1, "user", None, 0L))
+          dest          <-
+            WordRepository.ensureWord(WordRow(0L, "hu", "Pgnyom", "pgnyom", "noun", "", 1, "user", None, 0L, "pgnyom"))
           _             <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
           gameA         <- GameRepository.insertGame(
                              GameRow(0L, owner.id, "pg-tracked-a", "PG Tracked A", "de", "hu", 0L, 0L, trackResults = true),
@@ -394,9 +411,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           reader  <- AuthService.createGuest(Some("10.9.2.1")).map(_._1)
           tag     <- WordService.createTag("pglesson", reader.id).map(_.tag)
           word    <- WordRepository.ensureWord(
-                       WordRow(0L, "de", "Gabel", "gabel", "noun", "die", 1, "user", Some(reader.id), 0L)
+                       WordRow(0L, "de", "Gabel", "gabel", "noun", "die", 1, "user", Some(reader.id), 0L, "gabel")
                      )
-          fork    <- WordRepository.ensureWord(WordRow(0L, "hu", "villa", "villa", "noun", "", 1, "user", None, 0L))
+          fork    <-
+            WordRepository.ensureWord(WordRow(0L, "hu", "villa", "villa", "noun", "", 1, "user", None, 0L, "villa"))
           _       <- WordRepository.insertTranslationPair(word.id, fork.id, "user", Some(reader.id), 0L)
           _       <- WordService.selectPair(word.id, tag.id, fork.id, reader.id)
           marked  <- WordRepository.pairsFor(reader.id, List(word.id, fork.id))
@@ -487,12 +505,15 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         }
 
         for {
-          haus       <- WordRepository.ensureWord(WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L))
-          hauser     <- WordRepository.ensureWord(
-                          WordRow(0L, "de", "Häuser", "häuser", "noun", "", 1, "dictionary", None, 0L)
+          haus       <- WordRepository.ensureWord(
+                          WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L, "haus")
                         )
+          hauser     <-
+            WordRepository.ensureWord(
+              WordRow(0L, "de", "Häuser", "häuser", "noun", "", 1, "dictionary", None, 0L, TextSearch.fold("häuser"))
+            )
           hauses     <- WordRepository.ensureWord(
-                          WordRow(0L, "de", "Hauses", "hauses", "noun", "", 1, "dictionary", None, 0L)
+                          WordRow(0L, "de", "Hauses", "hauses", "noun", "", 1, "dictionary", None, 0L, "hauses")
                         )
           now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
           _          <- WordRepository.insertForms(
@@ -519,9 +540,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // dialect that would otherwise have let the same mistake back in silently.
       test("findWordsByLengthRange filters by textNorm length on the real dialect") {
         for {
-          _        <- WordRepository.ensureWord(WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L))
           _        <- WordRepository.ensureWord(
-                        WordRow(0L, "de", "Haufen", "haufen", "noun", "der", 900, "dictionary", None, 0L)
+                        WordRow(0L, "de", "Haus", "haus", "noun", "das", 1, "dictionary", None, 0L, "haus")
+                      )
+          _        <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "Haufen", "haufen", "noun", "der", 900, "dictionary", None, 0L, "haufen")
                       )
           inRange  <- WordRepository.findWordsByLengthRange("de", 4, 4)
           outRange <- WordRepository.findWordsByLengthRange("de", 10, 20)
