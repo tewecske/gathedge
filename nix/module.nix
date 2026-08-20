@@ -266,6 +266,27 @@ in
       };
     };
 
+    # The dictionary loader (bin/gathedge-dictionary-import, built alongside bin/gathedge-backend
+    # in the same package — see nix/scala.nix) is run by hand, not by a systemd unit, so nothing
+    # else puts it on PATH or gives it the DB_* variables the backend's own unit gets from
+    # `environment`/`EnvironmentFile` above. This wraps it with both, the same way, so an operator
+    # can just run `gathedge-dictionary-import --seed <path>` after a DB reset.
+    environment.systemPackages = [
+      (pkgs.writeShellScriptBin "gathedge-dictionary-import" ''
+        set -euo pipefail
+        if [ "$(id -u)" -ne 0 ]; then
+          echo "gathedge-dictionary-import must run as root (reads DB_PASSWORD from ${toString cfg.environmentFile})" >&2
+          exit 1
+        fi
+        set -a
+        source ${toString cfg.environmentFile}
+        set +a
+        export DB_URL="jdbc:postgresql://127.0.0.1:${toString config.services.postgresql.settings.port}/${cfg.database.name}"
+        export DB_USER="${cfg.database.user}"
+        exec ${cfg.package}/bin/gathedge-dictionary-import "$@"
+      '')
+    ];
+
     # Translation of docker/nginx.conf.
     services.nginx = {
       recommendedGzipSettings = lib.mkDefault true;
