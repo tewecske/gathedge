@@ -518,7 +518,11 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
         // Matched entries first (the ★ the reader searched for), then the lemma's own commonest-first order --
         // capped for a listing row, uncapped nowhere on this path (that is `detailOf`'s job).
         def variantsFor(lemmaId: Long): (List[WordFormPreview], Int) = {
-          val all    = variantsByLemma.getOrElse(lemmaId, Nil)
+          // `word_forms` is unique on (lemma, form, relation), not (lemma, form): a dirty wiktextract tag set can
+          // link the same form word to the same lemma under two different relations. Deduplicated on the form
+          // word's id, same shape as `translationsShown`'s dedup, so each survivor's id is unique -- what the
+          // listing's Variants column keys its rows on.
+          val all    = variantsByLemma.getOrElse(lemmaId, Nil).distinctBy { case (_, word) => word.id }
           val sorted = all.sortBy { case (_, word) => (!pageIds.contains(word.id), word.frequencyRank, word.textNorm) }
           val shown  = sorted.take(WordService.wordFormsPerRow).map { case (form, word) =>
             WordFormPreview(toDomain(word), form.relation, matched = pageIds.contains(word.id))
