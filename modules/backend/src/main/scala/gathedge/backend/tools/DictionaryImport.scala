@@ -306,9 +306,9 @@ object DictionaryImport extends ZIOAppDefault {
     *     it is not the same headword as the survivor, so there is nothing of its own worth keeping.
     */
   def dedupeHomographs(collected: Collected): Collected = {
-    def hasTranslation(word: ParsedWord): Boolean = {
-      collected.pairs.exists(pair => pair.source == word || pair.target == word)
-    }
+    val translated: Set[ParsedWord]               =
+      collected.pairs.iterator.flatMap(pair => Iterator(pair.source, pair.target)).toSet
+    def hasTranslation(word: ParsedWord): Boolean = translated.contains(word)
 
     val byHomograph = collected.words.keys
       .groupBy(word => (word.language, word.text.toLowerCase))
@@ -735,25 +735,27 @@ object DictionaryImport extends ZIOAppDefault {
   }
 
   def run: ZIO[ZIOAppArgs, Any, Any] = {
-    for {
-      args      <- ZIOAppArgs.getArgs
-      options   <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
-      loaded    <- load(options)
-      _         <- ZIO.logInfo("Deduping homographs...")
-      collected  = dedupeHomographs(loaded)
-      _         <- ZIO.logInfo(
-                     s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
-                       s"${collected.forms.size} form(s)"
-                   )
-      _         <- ZIO.foreachDiscard(options.exportTo)(path =>
-                     ZIO.logInfo(s"Writing seed to $path...") *> writeSeed(path, collected)
-                   )
+    val imported = for {
+      args     <- ZIOAppArgs.getArgs
+      options  <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
+      loaded   <- load(options)
+      _        <- ZIO.logInfo("Deduping homographs...")
+      collected = dedupeHomographs(loaded)
+      _        <- ZIO.logInfo(
+                    s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
+                      s"${collected.forms.size} form(s)"
+                  )
+      _        <- ZIO.foreachDiscard(options.exportTo)(path =>
+                    ZIO.logInfo(s"Writing seed to $path...") *> writeSeed(path, collected)
+                  )
       // Exporting is an offline transformation of a dump into the committed sample: it touches no database, so it
       // does not need one to be running.
-      _         <- ZIO
-                     .when(options.exportTo.isEmpty)(store(collected))
-                     .provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
-      _         <- ZIO.logInfo("Dictionary import finished")
+      _        <- ZIO
+                    .when(options.exportTo.isEmpty)(store(collected))
+                    .provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
+      _        <- ZIO.logInfo("Dictionary import finished")
     } yield ()
+
+    GcStats.logPeriodically().forkDaemon.flatMap(gcFiber => imported.ensuring(gcFiber.interrupt))
   }
 }
