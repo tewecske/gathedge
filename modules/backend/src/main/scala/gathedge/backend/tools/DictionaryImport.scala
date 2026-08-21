@@ -75,6 +75,7 @@ object DictionaryImport extends ZIOAppDefault {
     frequencies: Option[String] = None,
     exportTo: Option[String] = None,
     languages: Set[WordLanguage] = WordLanguage.all.toSet,
+    includeAltOf: Boolean = false,
   )
 
   def parseArgs(args: List[String]): Either[String, Options] = {
@@ -108,6 +109,8 @@ object DictionaryImport extends ZIOAppDefault {
             Left(s"--languages needs codes out of en,de,hu; got '$value'")
           else
             loop(tail, options.copy(languages = parsed.toSet))
+        case "--include-alt-of" :: tail                         =>
+          loop(tail, options.copy(includeAltOf = true))
         case unknown :: _                                       =>
           Left(s"Unrecognised argument '$unknown'")
       }
@@ -205,7 +208,7 @@ object DictionaryImport extends ZIOAppDefault {
 
     bytes
       .filter(line => WiktextractParser.mayConcern(line, options.languages))
-      .map(WiktextractParser.parse)
+      .map(WiktextractParser.parse(_, options.includeAltOf))
       .runFold(Collected.empty) { case (collected, entry) =>
         val withWord      = entry.word
           .filter(w => options.languages.contains(w.language))
@@ -721,7 +724,13 @@ object DictionaryImport extends ZIOAppDefault {
                            s"Read ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
                              s"${collected.forms.size} form(s)"
                          )
-        } yield select(collected, frequencies, options.limit)
+          _           <- ZIO.logInfo(s"Selecting the commonest ${options.limit} word(s)...")
+          selected     = select(collected, frequencies, options.limit)
+          _           <- ZIO.logInfo(
+                           s"Selected ${selected.words.size} word(s), ${selected.pairs.size} pair(s), " +
+                             s"${selected.forms.size} form(s)"
+                         )
+        } yield selected
     }
   }
 
@@ -729,12 +738,16 @@ object DictionaryImport extends ZIOAppDefault {
     for {
       args      <- ZIOAppArgs.getArgs
       options   <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
-      collected <- load(options).map(dedupeHomographs)
+      loaded    <- load(options)
+      _         <- ZIO.logInfo("Deduping homographs...")
+      collected  = dedupeHomographs(loaded)
       _         <- ZIO.logInfo(
                      s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
                        s"${collected.forms.size} form(s)"
                    )
-      _         <- ZIO.foreachDiscard(options.exportTo)(path => writeSeed(path, collected))
+      _         <- ZIO.foreachDiscard(options.exportTo)(path =>
+                     ZIO.logInfo(s"Writing seed to $path...") *> writeSeed(path, collected)
+                   )
       // Exporting is an offline transformation of a dump into the committed sample: it touches no database, so it
       // does not need one to be running.
       _         <- ZIO

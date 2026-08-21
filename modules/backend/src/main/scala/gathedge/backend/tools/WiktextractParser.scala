@@ -24,9 +24,13 @@ object WiktextractParser {
   /** Only the fields used are decoded. The dump has dozens more per entry — etymology, pronunciation, inflection tables
     * — and decoding them would be most of the cost of reading it.
     */
+  final case class RawFormOf(word: Option[String] = None) derives JsonDecoder
+
   final case class RawSense(
     glosses: Option[List[String]] = None,
     tags: Option[List[String]] = None,
+    form_of: Option[List[RawFormOf]] = None,
+    alt_of: Option[List[RawFormOf]] = None,
   ) derives JsonDecoder
 
   final case class RawTranslation(
@@ -124,6 +128,9 @@ object WiktextractParser {
 
   /** The article a German noun takes, from the entry's own tags. Read only for German nouns: an English noun tagged
     * `masculine` (they exist, for ships and countries) would otherwise become a second, unfindable copy of itself.
+    *
+    * Most entries state it on the entry itself; some (`Apfelsaft`, no top-level `tags` at all) state it only on a
+    * sense. [[wordOf]] passes both, entry tags first, so an entry-level tag still wins when both are present.
     */
   def genderOf(language: WordLanguage, pos: PartOfSpeech, tags: List[String]): Option[Gender] = {
     if (language != WordLanguage.De || pos != PartOfSpeech.Noun)
@@ -157,7 +164,8 @@ object WiktextractParser {
       text      = entry.word.trim
       if text.nonEmpty && !text.contains(" ")
       parsedPos = partOfSpeechOf(pos)
-    } yield ParsedWord(language, text, parsedPos, genderOf(language, parsedPos, entry.tags.getOrElse(Nil)))
+      senseTags = entry.senses.getOrElse(Nil).flatMap(_.tags.getOrElse(Nil))
+    } yield ParsedWord(language, text, parsedPos, genderOf(language, parsedPos, entry.tags.getOrElse(Nil) ++ senseTags))
   }
 
   /** The pairs this entry asserts directly.
@@ -242,17 +250,68 @@ object WiktextractParser {
     }
   }
 
+  /** Tags that only say "this page is a form-of page" rather than naming which form -- the real relation, if any, sits
+    * alongside them (`infinitive`, `plural`, ...).
+    */
+  private val formOfMarkerTags: Set[String] = Set("form-of", "inflection-of")
+
+  /** `alt-of` marks a spelling variant (`daß` alt of `dass`) rather than a grammatical form, which is why it is not in
+    * [[formOfMarkerTags]] by default -- [[skippedSenseTags]] already excludes it from ever being taught as its own
+    * lemma. [[formOfPageOf]] only reads it when `includeAltOf` says so.
+    */
+  private val altOfMarkerTag: String = "alt-of"
+
+  /** A form stated the other way around from [[formsOf]]: instead of the lemma's own `forms[]` naming this spelling,
+    * the inflected word has its own page (`hozni`) whose sense names what it is a form of. This is the only path for
+    * a form wiktextract's own table logic could not classify -- `hozni` as a row in `hoz`'s conjugation table carries
+    * `error-unrecognized-form` and [[isUsableForm]] drops it, but `hozni`'s own page states the same fact cleanly.
+    *
+    * `includeAltOf` additionally treats `alt-of` (spelling variants, not grammatical forms) as a marker tag and reads
+    * `sense.alt_of` alongside `sense.form_of`. Off by default: a spelling variant is a different kind of relation
+    * than a grammatical form, and callers that want it opt in explicitly.
+    *
+    * The lemma's part of speech is assumed to match this page's own `pos` (true for every real case), and its gender
+    * is never known here, so it is left `None`. That matches every real case except a German noun whose own
+    * `forms[]` also failed to capture this spelling -- rare enough, and caught only as a missed link rather than a
+    * wrong one, since [[DictionaryImport]] resolves a form's lemma by exact key and drops the edge on a mismatch.
+    */
+  def formOfPageOf(entry: RawEntry, includeAltOf: Boolean = false): List[ParsedForm] = {
+    val markerTags = if (includeAltOf) formOfMarkerTags + altOfMarkerTag else formOfMarkerTags
+    for {
+      code      <- entry.lang_code.toList
+      language  <- WordLanguage.fromString(code).toList
+      pos       <- entry.pos.toList
+      if isUsablePos(pos)
+      text       = entry.word.trim
+      if text.nonEmpty && !text.contains(" ")
+      parsedPos  = partOfSpeechOf(pos)
+      sense     <- entry.senses.getOrElse(Nil)
+      tags       = sense.tags.getOrElse(Nil)
+      if tags.exists(tag => markerTags.contains(tag.toLowerCase))
+      relation   = tags.filterNot(tag => markerTags.contains(tag.toLowerCase))
+      if relation.nonEmpty
+      lemmaRow  <- sense.form_of.getOrElse(Nil) ++ sense.alt_of.getOrElse(Nil)
+      lemmaText <- lemmaRow.word.map(_.trim).toList
+      if lemmaText.nonEmpty && !lemmaText.contains(" ")
+    } yield {
+      val gender = genderOf(language, parsedPos, tags)
+      val lemma  = ParsedWord(language, lemmaText, parsedPos, None)
+      val form   = ParsedWord(language, text, parsedPos, gender)
+      ParsedForm(lemma, form, ParsedForm.relationOf(relation))
+    }
+  }
+
   /** Both halves of one line: the entry as a word, and whatever it says about other languages and its own forms.
     *
     * A line that decodes to nothing usable is silently skipped rather than failing the import. The dump has millions of
     * entries and a handful of them are malformed; stopping on one would mean nobody ever finishes an import.
     */
-  def parse(line: String): ParsedEntry = {
+  def parse(line: String, includeAltOf: Boolean = false): ParsedEntry = {
     line.fromJson[RawEntry] match {
       case Left(_)      =>
         ParsedEntry(None, Nil, Nil)
       case Right(entry) =>
-        ParsedEntry(wordOf(entry), pairsOf(entry), formsOf(entry))
+        ParsedEntry(wordOf(entry), pairsOf(entry), formsOf(entry) ++ formOfPageOf(entry, includeAltOf))
     }
   }
 

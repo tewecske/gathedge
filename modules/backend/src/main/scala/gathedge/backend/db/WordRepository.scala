@@ -978,6 +978,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
             _.source        -> row.source,
             _.createdBy     -> row.createdBy,
             _.createdAt     -> row.createdAt,
+            _.textSearch    -> row.textSearch,
           )
         })
       }
