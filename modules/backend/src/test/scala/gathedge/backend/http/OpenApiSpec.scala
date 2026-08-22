@@ -98,8 +98,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games/mine",
               "/api/games/plays/mine",
               "/api/games/{slug}",
-              "/api/games/{slug}/reshuffle",
               "/api/games/{slug}/plays",
+              "/api/games/{slug}/plays/setup",
               "/api/games/{slug}/plays/{playId}",
               "/api/games/plays/{playId}/prompt",
               "/api/games/plays/{playId}/answers",
@@ -278,14 +278,13 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `NotOwner` for anyone but the game's owner.
               ("PATCH", "/api/games/{slug}")                                              ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
-              // Owner-only, the same shape as rename: NotFound for an unknown slug, Forbidden for one that
-              // belongs to somebody else, Conflict for a game with nothing fixed to reshuffle.
-              ("POST", "/api/games/{slug}/reshuffle")                                     ->
-                Set(NoContent, Unauthorized, Forbidden, NotFound, Conflict),
-              // startPlay's own failures are NotFound (unknown slug) and BadRequest (the pool came back empty);
-              // it never raises NotOwner, so no Forbidden.
+              // startPlay's own failures are BadRequest (an out-of-range wordLimit, or a resolved direction with
+              // nothing eligible right now) or NotFound (an unknown slug).
               ("POST", "/api/games/{slug}/plays")                                         ->
                 Set(Created, BadRequest, Unauthorized, NotFound),
+              // The play-variant picker's preview — session-gated like every other play action, NotFound for an
+              // unknown slug.
+              ("GET", "/api/games/{slug}/plays/setup")                                    -> Set(Ok, Unauthorized, NotFound),
               // The three play-id operations share one shape: NotFound for an unknown playId, Forbidden for one
               // that belongs to somebody else.
               ("GET", "/api/games/plays/{playId}/prompt")                                 ->
@@ -364,7 +363,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 200 across 50 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 198 across 50 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -381,10 +380,10 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 200,
+          declared == 198,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
-          // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and
+          // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
           // the owner-facing results listing/detail), are the ones in the skeleton. A feature whose service raises a
           // permission failure of its own adds its paths here.
           describes(Forbidden) ==
@@ -393,7 +392,6 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/guest/code"),
               ("POST", "/api/auth/upgrade"),
               ("PATCH", "/api/games/{slug}"),
-              ("POST", "/api/games/{slug}/reshuffle"),
               ("GET", "/api/games/plays/{playId}/prompt"),
               ("POST", "/api/games/plays/{playId}/answers"),
               ("GET", "/api/games/plays/{playId}/results"),
