@@ -210,6 +210,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
             th(I18n.t(UiKeys.gameResultsPlayerCol)),
             SortHeader.render(I18n.t(UiKeys.gameResultsScoreCol), GamePlaySort.score, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.gameResultsWordCountCol), GamePlaySort.wordCount, sortSignal, onSort),
+            th(I18n.t(UiKeys.gameResultsVariantCol)),
             SortHeader.render(I18n.t(UiKeys.gameResultsStartedCol), GamePlaySort.startedAt, sortSignal, onSort),
             th(),
           )
@@ -228,6 +229,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
       td(play.playerEmail.getOrElse(I18n.t(UiKeys.gameResultsGuestBadge))),
       td(s"${play.score} / ${play.maxScore}"),
       td(play.wordCount.toString),
+      td(s"${Labels.language(play.variant.sourceLanguage)} → ${Labels.language(play.variant.targetLanguage)} · ${Labels.wordPreference(play.variant.wordPreference)}"),
       td(Formats.dateTime(play.startedAt)),
       td(
         button(
@@ -310,6 +312,10 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
     div(
       p(cls := "text-sm opacity-70", detail.playerEmail.getOrElse(I18n.t(UiKeys.gameResultsGuestBadge))),
       p(cls := "font-bold mb-2", s"${detail.score} / ${detail.maxScore}"),
+      p(
+        cls := "text-sm opacity-70 mb-2",
+        s"${Labels.language(detail.variant.sourceLanguage)} → ${Labels.language(detail.variant.targetLanguage)} · ${Labels.wordPreference(detail.variant.wordPreference)}",
+      ),
       renderAnswersTable(detail.answers),
     )
   }
