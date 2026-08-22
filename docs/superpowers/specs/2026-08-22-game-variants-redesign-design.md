@@ -38,10 +38,10 @@ final case class StartPlayRequest(
   swapDirection: Boolean = false,
   wordLimit: Option[Int] = None,
   includeDefiniteArticles: Boolean = true,
-  wordFilter: WordFilter = WordFilter.All,
+  wordPreference: WordPreference = WordPreference.All,
 ) derives JsonCodec
 
-enum WordFilter derives JsonCodec {
+enum WordPreference derives JsonCodec {
   case All, Unplayed, MostMistakes
 }
 ```
@@ -55,10 +55,10 @@ enum WordFilter derives JsonCodec {
 - **`includeDefiniteArticles`**: same effect as today's game-level field (gates
   `Word.displayText` at every call site `GameService` already funnels through), just supplied per
   play. Meaningless/ignored when neither resolved direction is German, same as today's UI-hide rule.
-- **`wordFilter`**: only affects *which* words get sampled when `wordLimit` narrows the pool; see
+- **`wordPreference`**: only affects *which* words get sampled when `wordLimit` narrows the pool; see
   below. No effect when `wordLimit` is `None` (every eligible word plays regardless of preference).
 
-### Word filter semantics — priority sampling, not a hard filter
+### Word preference semantics — priority sampling, not a hard filter
 
 `Unplayed` and `MostMistakes` never shrink the playable pool by themselves. They only change *sampling
 order* when `wordLimit = Some(n)` and `n < pool.size`:
@@ -98,7 +98,7 @@ used, not just the base game's settings. `game_plays` gains:
   game's stored pair reversed)
 - `word_limit` (nullable `INTEGER`, mirrors the old `games.word_limit` semantics but per play)
 - `include_definite_articles` (`BOOLEAN`)
-- `word_filter` (`VARCHAR`, one of `WordFilter`'s codes)
+- `word_preference` (`VARCHAR`, one of `WordPreference`'s codes)
 
 The same variant settings played again by the same or a different player simply produces another
 `game_plays` row carrying the identical variant columns — there is no separate "variant" entity, no
@@ -111,7 +111,7 @@ final case class GameVariantDto(
   targetLanguage: WordLanguage,
   wordLimit: Option[Int],
   includeDefiniteArticles: Boolean,
-  wordFilter: WordFilter,
+  wordPreference: WordPreference,
 ) derives JsonCodec
 ```
 
@@ -124,7 +124,7 @@ The play-variant picker needs an honest "N of M eligible" count once a direction
 the same role `GET /api/games/setup/words` plays for the creation screen. New endpoint:
 
 ```
-GET /api/games/{slug}/plays/setup?swapDirection=&wordFilter=
+GET /api/games/{slug}/plays/setup?swapDirection=&wordPreference=
 ```
 
 Requires a session (like every play action) since the `Unplayed`/`MostMistakes` counts depend on the
@@ -148,7 +148,7 @@ with no options. It gains a variant picker directly above the Play button:
 - **Word count**: same select-all-vs-number control moved verbatim from the old `GameSetupPage`.
 - **Include articles**: same toggle moved verbatim, shown only when German is in either direction of
   the current pair.
-- **Word filter**: a three-way choice (`All` / `Unplayed` / `Most mistakes`), each refetching the
+- **Word preference**: a three-way choice (`All` / `Unplayed` / `Most mistakes`), each refetching the
   play-setup preview to update the "N eligible" count and preview list.
 
 `GameApiClient.create` sheds the four dropped parameters; `GameApiClient.startPlay` gains a body
@@ -161,8 +161,8 @@ New Flyway migration (both `postgresql` and `sqlite` dialects), after `V13__word
 - `games`: drop `word_limit`, `randomize_each_play`, `include_definite_articles`.
 - Drop `game_word_pool` entirely.
 - `game_plays`: add `source_language`, `target_language`, `word_limit`, `include_definite_articles`,
-  `word_filter`. Backfill the four from the owning `games` row (`source_language`/`target_language`/
-  `word_limit`/`include_definite_articles` as they stood before being dropped, `word_filter` defaulted
+  `word_preference`. Backfill the four from the owning `games` row (`source_language`/`target_language`/
+  `word_limit`/`include_definite_articles` as they stood before being dropped, `word_preference` defaulted
   to `'all'`) so existing plays report the settings they actually ran under, then make the
   non-nullable ones `NOT NULL`.
 
