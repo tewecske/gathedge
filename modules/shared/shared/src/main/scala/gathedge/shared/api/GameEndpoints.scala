@@ -14,6 +14,7 @@ import gathedge.shared.dto.{
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
+  StartPlayRequest,
   SubmitAnswerRequest,
 }
 import zio.http.{Method, Status}
@@ -36,6 +37,9 @@ object GameEndpoints {
     * so the route handler parses this by hand, the same spirit as that workaround.
     */
   private val tagIdsQuery = HttpCodec.query[String]("tagIds").optional
+
+  private val swapDirectionQuery  = HttpCodec.query[Boolean]("swapDirection").optional
+  private val wordPreferenceQuery = HttpCodec.query[String]("wordPreference").optional
 
   /** The owner-facing plays listing's paging/sort/filter params — same shape as `AdminEndpoints`'s own, not shared
     * across files since neither hoists them today. `sort` names a column out of `dto.GamePlaySort`; `q` is a
@@ -103,23 +107,29 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
-  /** Owner-only: redraws a `randomizeEachPlay = false` game's fixed word pool. `conflict` covers a game with nothing
-    * fixed to reshuffle (`randomizeEachPlay = true`, or no word limit) — see `GameService.reshuffle`.
-    */
-  val reshuffle = {
-    Endpoint(Method.POST / "api" / "games" / gameSlug / "reshuffle")
-      .outCodec(noContent)
-      .outErrors(failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
-  }
-
-  /** Starts a fresh attempt at `slug`. `NoTagsSelected`/`TagNotEligible`/`ValidationError` are unreachable here — they
-    * belong to [[create]] — but the pool can still turn out empty if a tag's pairs were removed after the game was
-    * created, hence `badRequest` alongside `notFound`.
+  /** Starts a fresh attempt at `slug` under the variant `body` describes — see [[StartPlayRequest]]. `badRequest`
+    * covers both a body that fails validation (an out-of-range `wordLimit`) and `NoEligibleWords` (the resolved
+    * direction's pool is empty right now).
     */
   val startPlay = {
     Endpoint(Method.POST / "api" / "games" / gameSlug / "plays")
+      .in[StartPlayRequest]
+      .withCodecError
       .out[PlayStarted](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
+    * from for the same `swapDirection`/`wordPreference` — see `GameService.playSetupPreview`. Requires a session
+    * (unlike [[setupWords]]) since the `Unplayed`/`MostMistakes` ordering depends on the caller's own play history in
+    * this game.
+    */
+  val playSetup = {
+    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / "setup")
+      .query(swapDirectionQuery)
+      .query(wordPreferenceQuery)
+      .out[List[GameSetupWord]]
+      .outErrors(failure.unauthorized, failure.notFound)
   }
 
   /** The next word to answer in `playId`, or `{finished: true}` once none remain. `badRequest` covers a `playId` that
@@ -197,8 +207,8 @@ object GameEndpoints {
     create,
     get,
     rename,
-    reshuffle,
     startPlay,
+    playSetup,
     nextPrompt,
     submitAnswer,
     results,
