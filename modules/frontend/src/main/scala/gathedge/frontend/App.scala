@@ -10,6 +10,7 @@ import gathedge.frontend.pages.{
   AdminUserDetailPage,
   AdminUsersPage,
   AdminWordFormsPage,
+  AboutPage,
   CheckInboxPage,
   ForbiddenPage,
   ForgotPasswordPage,
@@ -291,6 +292,8 @@ object App {
         SignUpPage.render()
       case Page.Home                                =>
         HomePage.render()
+      case Page.About                               =>
+        AboutPage.render()
       case Page.Settings                            =>
         SettingsPage.render()
       case Page.Games                               =>

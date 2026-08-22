@@ -102,6 +102,7 @@ object UiKeys {
   val navLanguage: String = key("ui.nav.language")
 
   val navWords: String          = key("ui.nav.words")
+  val navAbout: String          = key("ui.nav.about")
   val navGames: String          = key("ui.nav.games")
   val navAdmin: String          = key("ui.nav.admin")
   val navAccountMenu: String    = key("ui.nav.accountMenu")
@@ -186,6 +187,28 @@ object UiKeys {
 
   val homeTitle: String = key("ui.home.title")
   val homeBody: String  = key("ui.home.body")
+
+  // -- About ------------------------------------------------------------------------------------
+  // What the site is for, who runs it, and how it is licensed. The repository, licence and
+  // author facts live in `Branding`, not in copy, so only the surrounding words are translated.
+
+  val aboutTitle: String              = key("ui.about.title")
+  val aboutIntro: String              = key("ui.about.intro")
+  val aboutNameTitle: String          = key("ui.about.nameTitle")
+  val aboutNameBody: String           = key("ui.about.nameBody")
+  val aboutGoalTitle: String          = key("ui.about.goalTitle")
+  val aboutGoalBody: String           = key("ui.about.goalBody")
+  val aboutSourceTitle: String        = key("ui.about.sourceTitle")
+  val aboutSourceBody: String         = key("ui.about.sourceBody")
+  val aboutSourceLicenseLabel: String = key("ui.about.sourceLicenseLabel")
+  val aboutCodeTitle: String          = key("ui.about.codeTitle")
+  val aboutCodeBody: String           = key("ui.about.codeBody")
+  val aboutCodeLicenseLabel: String   = key("ui.about.codeLicenseLabel")
+  val aboutLinksTitle: String         = key("ui.about.linksTitle")
+  val aboutGitHubLabel: String        = key("ui.about.githubLabel")
+  val aboutAuthorTitle: String        = key("ui.about.authorTitle")
+  val aboutAuthorBody: String         = key("ui.about.authorBody")
+  val aboutContactLabel: String       = key("ui.about.contactLabel")
 
   // -- Account settings ------------------------------------------------------------------------
 

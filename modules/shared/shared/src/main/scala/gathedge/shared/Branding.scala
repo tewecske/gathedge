@@ -19,4 +19,19 @@ object Branding {
 
   /** Lowercase identifier, matching the package root and the artifact names. */
   val slug: String = "gathedge"
+
+  /** The project's public source repository. Reached from the About page. */
+  val githubUrl: String = "https://github.com/tewecske/gathedge"
+
+  /** The licence under which the application's own source code is released. Reached from the About page. */
+  val licenseUrl: String = "https://www.gnu.org/licenses/agpl-3.0.html"
+
+  /** The licence under which the bundled vocabulary data is shared. Reached from the About page. */
+  val sourceLicenseUrl: String = "https://creativecommons.org/licenses/by-sa/4.0/"
+
+  /** The person who created and maintains this deployment. Shown on the About page. */
+  val authorName: String = "Levente Hortobágyi"
+
+  /** The contact address of the maintainer. Shown on the About page. */
+  val authorEmail: String = "leventewe@gmail.com"
 }
