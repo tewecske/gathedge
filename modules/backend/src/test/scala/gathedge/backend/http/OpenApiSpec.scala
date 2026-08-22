@@ -282,9 +282,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // nothing eligible right now) or NotFound (an unknown slug).
               ("POST", "/api/games/{slug}/plays")                                         ->
                 Set(Created, BadRequest, Unauthorized, NotFound),
-              // The play-variant picker's preview — session-gated like every other play action, NotFound for an
+              // The play-variant picker's preview — guarded by `optionalUser` like `GET /api/games/{slug}`, so this
+              // declares no 401. `BadRequest` is `swapDirection`'s query codec failing to decode, `NotFound` an
               // unknown slug.
-              ("GET", "/api/games/{slug}/plays/setup")                                    -> Set(Ok, Unauthorized, NotFound),
+              ("GET", "/api/games/{slug}/plays/setup")                                    -> Set(Ok, BadRequest, NotFound),
               // The three play-id operations share one shape: NotFound for an unknown playId, Forbidden for one
               // that belongs to somebody else.
               ("GET", "/api/games/plays/{playId}/prompt")                                 ->
@@ -460,6 +461,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/words/{id}"),
               // A shared game link, the same reasoning as the vocabulary reads.
               ("GET", "/api/games/{slug}"),
+              // The play-variant picker's preview that link leads to — same reasoning.
+              ("GET", "/api/games/{slug}/plays/setup"),
             )
         )
       },
@@ -468,7 +471,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 14,
+          guarded.size == operations.size - 15,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

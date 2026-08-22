@@ -25,9 +25,9 @@ import EndpointClient.{executor, run}
 /** The game catalog's calls, generated from `GameEndpoints` the same way [[WordApiClient]] is from `WordEndpoints`.
   *
   * [[setup]] and [[create]] require a session — see `GameSetupPage`'s guest detour, which sits in front of each.
-  * [[get]] does not — it is the `optionalUser` read a shared game link is opened through. [[startPlay]] is the
-  * first call in the play loop that needs a session; [[playSetup]] also needs one, since its preview depends on
-  * the caller's own play history in this game.
+  * [[get]] and [[playSetup]] do not — both are `optionalUser` reads a shared game link is opened through: the variant
+  * picker's preview must be viewable before any guest is minted, same as the link itself. [[startPlay]] is the first
+  * call in the play loop that needs a session, and the only one that mints a guest.
   */
 object GameApiClient {
 
@@ -80,13 +80,16 @@ object GameApiClient {
   ): EventStream[Either[ApiError, PlayStarted]] = {
     run(
       executor(
-        GameEndpoints.startPlay(slug, StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference))
+        GameEndpoints.startPlay(
+          slug,
+          StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference),
+        )
       )
     )
   }
 
-  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would
-    * sample from for the same `swapDirection`/`wordPreference`.
+  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
+    * from for the same `swapDirection`/`wordPreference`.
     */
   def playSetup(
     slug: String,
