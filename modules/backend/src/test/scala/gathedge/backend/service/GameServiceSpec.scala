@@ -359,34 +359,52 @@ object GameServiceSpec extends ZIOSpecDefault {
           // the three never-played words are broken by shuffle.
           results.wordCount == 3,
           results.variant.wordPreference == WordPreference.Unplayed,
+          !results.answers.exists(_.wordText == warmupWord),
         )
       },
       test("MostMistakes preference ranks by this player's wrong-answer count, in this direction only") {
         for {
-          owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L)
-          mistakeWord  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "mistake-source"))
-          mistakeTgt   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "mistake-target"))
-          _            <- WordRepository.pairTranslation(mistakeWord.id, tag.id, mistakeTgt.id, 0L)
-          cleanWord    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "clean-source"))
-          cleanTgt     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "clean-target"))
-          _            <- WordRepository.pairTranslation(cleanWord.id, tag.id, cleanTgt.id, 0L)
-          created      <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
-          warmup       <- GameService.startPlay(created.slug, owner)
-          promptA      <- GameService.nextPrompt(warmup.playId, owner)
-          _            <- GameService.submitAnswer(warmup.playId, promptA.wordId.get, "totally-unrelated", owner)
-          promptB      <- GameService.nextPrompt(warmup.playId, owner)
-          _            <- GameService.submitAnswer(warmup.playId, promptB.wordId.get, "also-unrelated", owner)
-          narrowed     <- GameService.startPlay(
-                            created.slug,
-                            owner,
-                            wordLimit = Some(1),
-                            wordPreference = WordPreference.MostMistakes,
-                          )
-          // Both eligible words now carry exactly one wrong answer each (a tie), so this only asserts the
-          // preference round-trips onto the play rather than picking a specific winner out of a tie.
-          results      <- GameService.getResults(narrowed.playId, owner)
-        } yield assertTrue(results.wordCount == 1, results.variant.wordPreference == WordPreference.MostMistakes)
+          owner       <- newUser()
+          tag         <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L)
+          mistakeWord <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "mistake-source"))
+          mistakeTgt  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "mistake-target"))
+          _           <- WordRepository.pairTranslation(mistakeWord.id, tag.id, mistakeTgt.id, 0L)
+          cleanWord   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "clean-source"))
+          cleanTgt    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "clean-target"))
+          _           <- WordRepository.pairTranslation(cleanWord.id, tag.id, cleanTgt.id, 0L)
+          created     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          warmup      <- GameService.startPlay(created.slug, owner)
+          prompt1     <- GameService.nextPrompt(warmup.playId, owner)
+          firstText    = prompt1.wordText.get
+          _           <- GameService.submitAnswer(
+                           warmup.playId,
+                           prompt1.wordId.get,
+                           if (firstText.contains("mistake")) "totally-unrelated" else "clean-target",
+                           owner,
+                         )
+          prompt2     <- GameService.nextPrompt(warmup.playId, owner)
+          secondText   = prompt2.wordText.get
+          _           <- GameService.submitAnswer(
+                           warmup.playId,
+                           prompt2.wordId.get,
+                           if (secondText.contains("mistake")) "totally-unrelated" else "clean-target",
+                           owner,
+                         )
+          narrowed    <- GameService.startPlay(
+                           created.slug,
+                           owner,
+                           wordLimit = Some(1),
+                           wordPreference = WordPreference.MostMistakes,
+                         )
+          results     <- GameService.getResults(narrowed.playId, owner)
+        } yield assertTrue(
+          results.wordCount == 1,
+          results.variant.wordPreference == WordPreference.MostMistakes,
+          // mistake-source is answered wrong regardless of prompt order (the branches above always answer
+          // whichever prompt is the mistake word incorrectly and the clean word correctly), so it's the only
+          // word with a recorded mistake — a correct MostMistakes ranking must pick it deterministically.
+          results.answers.head.wordText == "mistake-source",
+        )
       },
       test("playSetupPreview answers the resolved-direction pool without starting a play") {
         for {
