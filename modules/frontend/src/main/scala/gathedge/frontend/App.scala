@@ -148,7 +148,7 @@ object App {
         GameInstancePage.render(latestGameSlug, generateQr)
       )
       // Owner-only, but the ownership check is server-side (a 403 the page itself shows, the same as
-      // `GameInstancePage`'s rename/reshuffle controls) — `Gate` has no notion of "owns this particular game", so this
+      // `GameInstancePage`'s rename control) — `Gate` has no notion of "owns this particular game", so this
       // renders for any signed-in reader once loaded, the same `gate.loaded` precondition `WordsPage` uses. Same
       // slug/query split as `GameInstance` above: the slug is stashed as a side effect, the query is what the signal
       // renderer tracks.
@@ -166,8 +166,8 @@ object App {
     */
   private def showsAdminScreen(gate: Gate): Boolean = gate.loaded && gate.isAdmin
 
-  /** The real `generateQr` every live `GameInstancePage.render` call passes — see that parameter's own doc comment
-    * for why the page itself does not call `QRCode` directly.
+  /** The real `generateQr` every live `GameInstancePage.render` call passes — see that parameter's own doc comment for
+    * why the page itself does not call `QRCode` directly.
     */
   private def generateQr(text: String): Future[String] = QRCode.toDataURL(text).toFuture
 

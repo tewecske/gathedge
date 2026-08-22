@@ -322,21 +322,21 @@ object ApiFailures {
     }
   }
 
-  /** Starting a play: an unknown slug, an out-of-range `wordLimit`, or a resolved direction whose tags currently
-    * carry nothing eligible to play.
+  /** Starting a play: an unknown slug, an out-of-range `wordLimit`, or a resolved direction whose tags currently carry
+    * nothing eligible to play.
     */
   def gameStartPlay(failure: GameFailure): ApiFailure.BadRequest | ApiFailure.NotFound = {
     failure match {
       case GameFailure.NotFound                     =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
-      case GameFailure.NoEligibleWords               =>
+      case GameFailure.NoEligibleWords              =>
         ApiFailure.BadRequest(
           MessageRef(MessageKeys.gameNoEligibleWords),
           "This game has no eligible words to play right now",
         )
       case GameFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
-      case _                                         =>
+      case _                                        =>
         // Unreachable through this mapping: startPlay never raises NoTagsSelected/TagNotEligible/NotOwner/
         // NotTracked. Mapped anyway to keep the match total.
         ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")

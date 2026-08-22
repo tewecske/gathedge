@@ -59,8 +59,7 @@ trait GameRepository {
   def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]]
 
   /** The same join shape as [[eligibleWordPairs]], through an explicit tag id list instead of `game_tags` — what the
-    * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all, and what
-    * `GameService` also uses to sample a `randomizeEachPlay = false` game's fixed pool, via its own tags.
+    * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all.
     */
   def eligibleWordPairsForTags(
     tagIds: List[Long],

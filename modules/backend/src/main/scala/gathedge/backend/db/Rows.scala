@@ -195,18 +195,17 @@ final case class GuestClaimCodeRow(
   revokedAt: Option[Long],
 )
 
-/** One quiz, scoped to a language pair and built from the tags in [[GameTagRow]]. Nothing here changes after
-  * creation — word count, direction, article display and word preference are all play-time choices now, carried
-  * per-play on [[GamePlayRow]] instead. See the "game variants redesign" design doc.
+/** One quiz, scoped to a language pair and built from the tags in [[GameTagRow]]. Nothing here changes after creation —
+  * word count, direction, article display and word preference are all play-time choices now, carried per-play on
+  * [[GamePlayRow]] instead. See the "game variants redesign" design doc.
   *
-  * `slug` is generated once at creation and never changes — the permanent key a share link is built from, sized
-  * and typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]. `name` is the opposite: cosmetic,
-  * free to edit at will, which is why the two are separate columns rather than one renameable field.
+  * `slug` is generated once at creation and never changes — the permanent key a share link is built from, sized and
+  * typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]. `name` is the opposite: cosmetic, free to
+  * edit at will, which is why the two are separate columns rather than one renameable field.
   *
   * `trackResults` gates only whether the owner-facing play listing/detail is reachable
-  * (`GameService.listPlays`/`getPlayDetail`) — `false` (the default) is the only behaviour before this field
-  * existed. [[GamePlayRow]] and [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this
-  * flag.
+  * (`GameService.listPlays`/`getPlayDetail`) — `false` (the default) is the only behaviour before this field existed.
+  * [[GamePlayRow]] and [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this flag.
   */
 final case class GameRow(
   id: Long,
@@ -227,15 +226,15 @@ final case class GameTagRow(id: Long, gameId: Long, tagId: Long)
 
 /** One attempt at a game, by one account, under one play-time variant.
   *
-  * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on
-  * every read — a play is read far more often than written to, and all three are cheap to maintain incrementally
-  * as answers come in. `wordCount` and `maxScore` are fixed at the moment the play starts; `score` is the one
-  * column that changes as it progresses. `finishedAt` is `None` for a play still in progress and set once, when
-  * it completes — there is no separate "abandoned" state.
+  * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on every
+  * read — a play is read far more often than written to, and all three are cheap to maintain incrementally as answers
+  * come in. `wordCount` and `maxScore` are fixed at the moment the play starts; `score` is the one column that changes
+  * as it progresses. `finishedAt` is `None` for a play still in progress and set once, when it completes — there is no
+  * separate "abandoned" state.
   *
   * `sourceLanguage`/`targetLanguage`/`wordLimit`/`includeDefiniteArticles`/`wordPreference` are the variant this
-  * specific play ran under — a snapshot, not a live reference to the (now immutable) base game, since a play may
-  * have swapped direction or picked a narrower/differently-preferenced sample than another play of the same game.
+  * specific play ran under — a snapshot, not a live reference to the (now immutable) base game, since a play may have
+  * swapped direction or picked a narrower/differently-preferenced sample than another play of the same game.
   * `wordLimit` keeps its old `games.word_limit` meaning: `None` for "every eligible word", `Some(n)` for "sampled
   * exactly n (or fewer, if the pool was smaller)". `wordPreference` holds a [[gathedge.shared.domain.WordPreference]]
   * code. These five default to English/English/no limit/articles on/"all" only so pre-migration test fixtures that
@@ -281,8 +280,8 @@ final case class GamePlayAnswerRow(
 
 /** One word pair sampled into one specific play, written once at `startPlay` and never touched again — the fixed set
   * [[GameRepository.wordPairsOf]] reads back for the rest of that play, instead of [[GameRepository.eligibleWordPairs]]
-  * being recomputed live on every call. For a game with no `GameRow.wordLimit`, this ends up holding the game's entire
-  * eligible pool at the moment the play started; for a limited game, the sampled subset.
+  * being recomputed live on every call. For a play with no `GamePlayRow.wordLimit`, this ends up holding the game's
+  * entire eligible pool at the moment the play started; for a limited play, the sampled subset.
   *
   * Like [[GamePlayAnswerRow]]'s `wordId`/`translationWordId`, these two deliberately do NOT cascade from `words` — see
   * the migration's comment: a play's word set is fixed history, not current dictionary state.
