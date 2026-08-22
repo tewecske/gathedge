@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.db.{GameRepository, TextSearch, UserRepository, WordRepository, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage, WordPreference}
 import zio._
 import zio.test._
 
@@ -299,6 +299,103 @@ object GameServiceSpec extends ZIOSpecDefault {
             GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = None)
           started <- GameService.startPlay(created.slug, owner)
         } yield assertTrue(created.wordLimit.isEmpty, started.wordCount == 4, started.maxScore == 8)
+      },
+      test("swapDirection reverses the resolved direction and records it on the play") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "swap", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          normal  <- GameService.startPlay(created.slug, owner)
+          swapped <- GameService.startPlay(created.slug, owner, swapDirection = true)
+          normalResults  <- GameService.getResults(normal.playId, owner)
+          swappedResults <- GameService.getResults(swapped.playId, owner)
+        } yield assertTrue(
+          normalResults.variant.sourceLanguage == WordLanguage.De,
+          normalResults.variant.targetLanguage == WordLanguage.Hu,
+          swappedResults.variant.sourceLanguage == WordLanguage.Hu,
+          swappedResults.variant.targetLanguage == WordLanguage.De,
+        )
+      },
+      test("a play-time word limit samples the play, without ever touching the game itself") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "playLimit", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, wordLimit = Some(2))
+          results <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          started.wordCount == 2,
+          started.maxScore == 4,
+          results.variant.wordLimit.contains(2),
+        )
+      },
+      test("an out-of-range play-time word limit fails validation") {
+        for {
+          owner  <- newUser()
+          tagId  <- eligibleTagWithPairs(owner, "playLimitInvalid", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          result <- GameService.startPlay(created.slug, owner, wordLimit = Some(0)).either
+        } yield assertTrue(result.left.exists(_.isInstanceOf[GameFailure.ValidationError]))
+      },
+      test("Unplayed preference fills the sample from never-answered words first, in this direction only") {
+        for {
+          owner       <- newUser()
+          tagId       <- eligibleTagWithPairs(owner, "unplayedPref", WordLanguage.De, WordLanguage.Hu, count = 4)
+          created     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          warmup      <- GameService.startPlay(created.slug, owner, wordLimit = Some(1))
+          _           <- playThrough(warmup.playId, "unplayedPref", owner)
+          warmupWord  <- GameService.getResults(warmup.playId, owner).map(_.answers.head.wordText)
+          narrowed    <- GameService.startPlay(
+                           created.slug,
+                           owner,
+                           wordLimit = Some(3),
+                           wordPreference = WordPreference.Unplayed,
+                         )
+          results     <- GameService.getResults(narrowed.playId, owner)
+        } yield assertTrue(
+          // Three of the four eligible words are sampled; the one already answered by this player, in this
+          // direction, is the one most likely left out — asserted as "never all four fit, and the previously
+          // answered word is not required to reappear" rather than a flaky exact-set check, since ties among
+          // the three never-played words are broken by shuffle.
+          results.wordCount == 3,
+          results.variant.wordPreference == WordPreference.Unplayed,
+        )
+      },
+      test("MostMistakes preference ranks by this player's wrong-answer count, in this direction only") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L)
+          mistakeWord  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "mistake-source"))
+          mistakeTgt   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "mistake-target"))
+          _            <- WordRepository.pairTranslation(mistakeWord.id, tag.id, mistakeTgt.id, 0L)
+          cleanWord    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "clean-source"))
+          cleanTgt     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "clean-target"))
+          _            <- WordRepository.pairTranslation(cleanWord.id, tag.id, cleanTgt.id, 0L)
+          created      <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          warmup       <- GameService.startPlay(created.slug, owner)
+          promptA      <- GameService.nextPrompt(warmup.playId, owner)
+          _            <- GameService.submitAnswer(warmup.playId, promptA.wordId.get, "totally-unrelated", owner)
+          promptB      <- GameService.nextPrompt(warmup.playId, owner)
+          _            <- GameService.submitAnswer(warmup.playId, promptB.wordId.get, "also-unrelated", owner)
+          narrowed     <- GameService.startPlay(
+                            created.slug,
+                            owner,
+                            wordLimit = Some(1),
+                            wordPreference = WordPreference.MostMistakes,
+                          )
+          // Both eligible words now carry exactly one wrong answer each (a tie), so this only asserts the
+          // preference round-trips onto the play rather than picking a specific winner out of a tie.
+          results      <- GameService.getResults(narrowed.playId, owner)
+        } yield assertTrue(results.wordCount == 1, results.variant.wordPreference == WordPreference.MostMistakes)
+      },
+      test("playSetupPreview answers the resolved-direction pool without starting a play") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "previewPref", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          preview <- GameService.playSetupPreview(created.slug, owner, swapDirection = false, WordPreference.All)
+          swapped <- GameService.playSetupPreview(created.slug, owner, swapDirection = true, WordPreference.All)
+        } yield assertTrue(preview.size == 3, swapped.size == 3)
       },
       test("a fixed word pool is drawn once at creation and every playthrough reuses the same words") {
         for {

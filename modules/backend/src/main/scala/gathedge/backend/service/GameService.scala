@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   GameAnswerResult,
   GameDetail,
@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
+  GameVariantDto,
   MyGameSummary,
   MyPlayPage,
   MyPlaySummary,
@@ -86,10 +87,31 @@ trait GameService {
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
 
-  /** Starts a fresh attempt at `slug`. Fails [[GameFailure.NoEligibleWords]] if the game's tags carry no eligible pair
-    * right now.
+  /** Starts a fresh attempt at `slug` under the given variant. `swapDirection` plays the game's `targetLanguage` ->
+    * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference` are
+    * this play's own settings, snapshotted onto its `game_plays` row — see the design doc. Fails
+    * [[GameFailure.ValidationError]] for an out-of-range `wordLimit`, [[GameFailure.NoEligibleWords]] if the
+    * resolved direction's pool is empty right now.
     */
-  def startPlay(slug: String, playerUserId: Long): IO[GameFailure, PlayStarted]
+  def startPlay(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean = false,
+    wordLimit: Option[Int] = None,
+    includeDefiniteArticles: Boolean = true,
+    wordPreference: WordPreference = WordPreference.All,
+  ): IO[GameFailure, PlayStarted]
+
+  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would
+    * sample from for the same `swapDirection`/`wordPreference` — lets the picker show an honest "N eligible"
+    * before any play exists.
+    */
+  def playSetupPreview(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean,
+    wordPreference: WordPreference,
+  ): IO[GameFailure, List[GameSetupWord]]
 
   /** The next unanswered word in `playId`, or `{finished: true}` once every eligible word has been answered.
     * [[GameFailure.NotOwner]] if `playId` does not belong to `requesterUserId`.
@@ -188,8 +210,27 @@ object GameService {
   def rename(slug: String, newName: String, requesterUserId: Long): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.rename(slug, newName, requesterUserId))
 
-  def startPlay(slug: String, playerUserId: Long): ZIO[GameService, GameFailure, PlayStarted] =
-    ZIO.serviceWithZIO[GameService](_.startPlay(slug, playerUserId))
+  def startPlay(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean = false,
+    wordLimit: Option[Int] = None,
+    includeDefiniteArticles: Boolean = true,
+    wordPreference: WordPreference = WordPreference.All,
+  ): ZIO[GameService, GameFailure, PlayStarted] = {
+    ZIO.serviceWithZIO[GameService](
+      _.startPlay(slug, playerUserId, swapDirection, wordLimit, includeDefiniteArticles, wordPreference)
+    )
+  }
+
+  def playSetupPreview(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean,
+    wordPreference: WordPreference,
+  ): ZIO[GameService, GameFailure, List[GameSetupWord]] = {
+    ZIO.serviceWithZIO[GameService](_.playSetupPreview(slug, playerUserId, swapDirection, wordPreference))
+  }
 
   def nextPrompt(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GamePrompt] =
     ZIO.serviceWithZIO[GameService](_.nextPrompt(playId, requesterUserId))
@@ -458,6 +499,77 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     repo.eligibleWordPairs(gameId, sourceLanguage, targetLanguage).orDie.map(dedupeToOnePerWord)
   }
 
+  /** This player's per-word answer history for `gameId` in the `sourceLanguage` -> `targetLanguage` direction —
+    * total answers and how many were not [[AnswerOutcome.Correct]] — the ordering signal for
+    * [[WordPreference.Unplayed]]/[[WordPreference.MostMistakes]]. A word absent from the map has never been
+    * answered by this player in this direction — see [[GameRepository.answerOutcomesFor]].
+    */
+  private def wordStats(
+    gameId: Long,
+    playerUserId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): UIO[Map[Long, (Int, Int)]] = {
+    repo.answerOutcomesFor(gameId, playerUserId, sourceLanguage, targetLanguage).orDie.map { rows =>
+      rows
+        .groupBy(_._1)
+        .view
+        .mapValues { outcomes =>
+          val total    = outcomes.size
+          val mistakes = outcomes.count(_._2 != AnswerOutcome.code(AnswerOutcome.Correct))
+          (total, mistakes)
+        }
+        .toMap
+    }
+  }
+
+  /** `pool` reordered so `preference`'s preferred subset comes first — see the design doc's "priority sampling,
+    * not a hard filter" rule. Shuffled first in every case, so ties (including "no history at all", which every
+    * word shares under [[WordPreference.All]]) are broken randomly rather than by pool order, and `.sortBy` is
+    * stable, so that shuffle survives within each tie group.
+    */
+  private def preferenceOrdered(
+    pool: List[(Long, Long)],
+    stats: Map[Long, (Int, Int)],
+    preference: WordPreference,
+  ): UIO[List[(Long, Long)]] = {
+    Random.shuffle(pool).map { shuffled =>
+      preference match {
+        case WordPreference.All          =>
+          shuffled
+        case WordPreference.Unplayed     =>
+          shuffled.sortBy(pair => if (stats.contains(pair._1)) 1 else 0)
+        case WordPreference.MostMistakes =>
+          shuffled.sortBy(pair => -stats.get(pair._1).map(_._2).getOrElse(0))
+      }
+    }
+  }
+
+  /** `pool` itself when `limit` is absent or no smaller than the pool. Otherwise `limit`'s first
+    * [[preferenceOrdered]] words — for [[WordPreference.Unplayed]]/[[WordPreference.MostMistakes]] this is the
+    * "fill from the preferred subset, then top up from the rest" rule the design doc describes; for
+    * [[WordPreference.All]] it is a uniform random sample, exactly as before this feature existed.
+    */
+  private def sampleWordPool(
+    gameId: Long,
+    playerUserId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+    pool: List[(Long, Long)],
+    limit: Option[Int],
+    preference: WordPreference,
+  ): UIO[List[(Long, Long)]] = {
+    limit match {
+      case Some(n) if n < pool.size =>
+        for {
+          stats   <- wordStats(gameId, playerUserId, sourceLanguage, targetLanguage)
+          ordered <- preferenceOrdered(pool, stats, preference)
+        } yield ordered.take(n)
+      case _                        =>
+        ZIO.succeed(pool)
+    }
+  }
+
   /** Same as [[eligibleWordPool]], through an explicit tag id list instead of a game's `game_tags` — what the setup
     * screen's word-list preview and a `randomizeEachPlay = false` game's fixed-pool sampling both call through, since
     * neither has a `game_tags` row set to read from yet.
@@ -480,54 +592,66 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield play
   }
 
-  /** `pool` itself when `limit` is absent or no smaller than the pool — today's only behaviour, and what a
-    * `wordLimit = None` game always gets. Otherwise a random `limit`-sized subset, shuffled once here and handed
-    * straight to `insertPlay` to persist: this is the one and only time a play's word set is decided, per this file's
-    * doc comment on why `nextPrompt`/`submitAnswer`/`getResults` must never re-derive it.
-    */
-  private def sampleWordPool(pool: List[(Long, Long)], limit: Option[Int]): UIO[List[(Long, Long)]] = {
-    limit match {
-      case Some(n) if n < pool.size =>
-        Random.shuffle(pool).map(_.take(n))
-      case _                        =>
-        ZIO.succeed(pool)
-    }
+  def startPlay(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean = false,
+    wordLimit: Option[Int] = None,
+    includeDefiniteArticles: Boolean = true,
+    wordPreference: WordPreference = WordPreference.All,
+  ): IO[GameFailure, PlayStarted] = {
+    for {
+      game       <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      validLimit <- ZIO
+                      .foreach(wordLimit)(limit => ZIO.fromEither(Validation.validateWordLimit(limit)))
+                      .mapError(error => GameFailure.ValidationError(Map("wordLimit" -> error)))
+      resolved    = if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
+      (resolvedSource, resolvedTarget) = resolved
+      pool       <- eligibleWordPoolFor(game.id, resolvedSource, resolvedTarget)
+      _          <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+      sampled    <- sampleWordPool(game.id, playerUserId, resolvedSource, resolvedTarget, pool, validLimit, wordPreference)
+      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      wordCount   = sampled.size
+      maxScore    = wordCount * GameScoring.maxPointsPerWord
+      row        <- repo
+                      .insertPlay(
+                        GamePlayRow(
+                          id = 0L,
+                          gameId = game.id,
+                          playerUserId = playerUserId,
+                          score = 0,
+                          maxScore = maxScore,
+                          wordCount = wordCount,
+                          startedAt = now,
+                          finishedAt = None,
+                          sourceLanguage = resolvedSource,
+                          targetLanguage = resolvedTarget,
+                          wordLimit = validLimit,
+                          includeDefiniteArticles = includeDefiniteArticles,
+                          wordPreference = WordPreference.code(wordPreference),
+                        ),
+                        sampled,
+                      )
+                      .orDie
+    } yield PlayStarted(row.id, wordCount, maxScore)
   }
 
-  def startPlay(slug: String, playerUserId: Long): IO[GameFailure, PlayStarted] = {
+  def playSetupPreview(
+    slug: String,
+    playerUserId: Long,
+    swapDirection: Boolean,
+    wordPreference: WordPreference,
+  ): IO[GameFailure, List[GameSetupWord]] = {
     for {
       game     <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      sampled  <- if (game.randomizeEachPlay) {
-                    for {
-                      pool <- eligibleWordPool(game)
-                      _    <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
-                      s    <- sampleWordPool(pool, game.wordLimit)
-                    } yield s
-                  } else {
-                    for {
-                      pool <- repo.wordPoolOf(game.id).orDie
-                      _    <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
-                    } yield pool
-                  }
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      wordCount = sampled.size
-      maxScore  = wordCount * GameScoring.maxPointsPerWord
-      row      <- repo
-                    .insertPlay(
-                      GamePlayRow(
-                        id = 0L,
-                        gameId = game.id,
-                        playerUserId = playerUserId,
-                        score = 0,
-                        maxScore = maxScore,
-                        wordCount = wordCount,
-                        startedAt = now,
-                        finishedAt = None,
-                      ),
-                      sampled,
-                    )
-                    .orDie
-    } yield PlayStarted(row.id, wordCount, maxScore)
+      resolved  = if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
+      (resolvedSource, resolvedTarget) = resolved
+      pool     <- eligibleWordPoolFor(game.id, resolvedSource, resolvedTarget)
+      stats    <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
+      ordered  <- preferenceOrdered(pool, stats, wordPreference)
+      words    <- repo.wordsByIds(ordered.map(_._1)).orDie
+      textById  = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+    } yield ordered.flatMap { case (wordId, _) => textById.get(wordId).map(text => GameSetupWord(wordId, text)) }
   }
 
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
