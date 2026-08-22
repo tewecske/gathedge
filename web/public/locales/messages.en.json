@@ -429,6 +429,7 @@
   "ui.gameResults.playerCol": "Player",
   "ui.gameResults.scoreCol": "Score",
   "ui.gameResults.wordCountCol": "Words",
+  "ui.gameResults.variantCol": "Variant",
   "ui.gameResults.startedCol": "Started",
   "ui.gameResults.viewButton": "View",
   "ui.gameResults.guestBadge": "Guest",

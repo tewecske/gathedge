@@ -429,6 +429,7 @@
   "ui.gameResults.playerCol": "Játékos",
   "ui.gameResults.scoreCol": "Pontszám",
   "ui.gameResults.wordCountCol": "Szavak",
+  "ui.gameResults.variantCol": "Változat",
   "ui.gameResults.startedCol": "Kezdve",
   "ui.gameResults.viewButton": "Megtekintés",
   "ui.gameResults.guestBadge": "Vendég",

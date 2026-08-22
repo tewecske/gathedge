@@ -953,6 +953,7 @@ object UiKeys {
   val gameResultsPlayerCol: String         = key("ui.gameResults.playerCol")
   val gameResultsScoreCol: String          = key("ui.gameResults.scoreCol")
   val gameResultsWordCountCol: String      = key("ui.gameResults.wordCountCol")
+  val gameResultsVariantCol: String        = key("ui.gameResults.variantCol")
   val gameResultsStartedCol: String        = key("ui.gameResults.startedCol")
   val gameResultsViewButton: String        = key("ui.gameResults.viewButton")
   val gameResultsGuestBadge: String        = key("ui.gameResults.guestBadge")

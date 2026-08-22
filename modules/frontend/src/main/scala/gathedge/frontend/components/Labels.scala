@@ -1,7 +1,7 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, TranslationFilter, WordLanguage, WordPreference}
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -123,6 +123,21 @@ object Labels {
         I18n.t(UiKeys.wordDetailFormsCategoryAlternative)
       case GrammarCategory.Other               =>
         I18n.t(UiKeys.wordDetailFormsCategoryOther)
+    }
+  }
+
+  /** The picker's own worded option text, reused here so the played variant reads identically on the results screens —
+    * `GameInstancePage`'s inline `<select>` for [[WordPreference]] is the source this mirrors. Matched exhaustively,
+    * like [[language]] — `WordPreference` is a fixed shared enum, not a stored code a newer build might widen.
+    */
+  def wordPreference(preference: WordPreference): String = {
+    preference match {
+      case WordPreference.All          =>
+        I18n.t(UiKeys.gameInstancePreferenceAll)
+      case WordPreference.Unplayed     =>
+        I18n.t(UiKeys.gameInstancePreferenceUnplayed)
+      case WordPreference.MostMistakes =>
+        I18n.t(UiKeys.gameInstancePreferenceMostMistakes)
     }
   }
 

@@ -249,13 +249,15 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         },
       startBus.events -->
         Observer[Unit] { _ =>
-          // Also clears the previous play's finish state, so this doubles as "Play again" — see `renderResults`.
+          // Also clears the previous play's finish state AND `playIdVar`, so this doubles as "Play again" that
+          // returns to the variant picker rather than silently replaying the previous variant — see `renderResults`.
           Var.set(
             startingVar -> true,
             errorVar    -> None,
             finishedVar -> false,
             resultsVar  -> None,
             promptVar   -> None,
+            playIdVar   -> None,
           )
         },
       startBus.events
@@ -829,6 +831,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
+      p(
+        cls := "text-sm opacity-70",
+        s"${Labels.language(results.variant.sourceLanguage)} → ${Labels.language(results.variant.targetLanguage)} · ${Labels.wordPreference(results.variant.wordPreference)}",
+      ),
       renderResultsTable(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",
