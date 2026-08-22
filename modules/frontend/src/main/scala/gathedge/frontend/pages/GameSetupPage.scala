@@ -7,7 +7,7 @@ import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
-import gathedge.shared.dto.{GameCreated, GameSetupWord}
+import gathedge.shared.dto.GameCreated
 import gathedge.shared.i18n.UiKeys
 
 /** Choosing a language pair and tags, and turning them into a fresh quiz.
@@ -54,71 +54,12 @@ private class GameSetupPage {
 
   private val selectedTagIdsVar = Var(Set.empty[Long])
 
-  /** Mutually exclusive with [[wordCountVar]] — see [[renderWordLimitControls]]. Defaults to `true`: "use every
-    * eligible word" is today's only behaviour, and stays the default once a count becomes an option.
-    */
-  private val selectAllVar = Var(true)
-
-  /** The number input's raw text, kept as a `String` (not `Int`) so a blank or partially-typed value never fails to
-    * render — [[wordLimitSignal]] is what turns this into the `Option[Int]` the request actually needs.
-    */
-  private val wordCountVar = Var("")
-
-  /** `None` for "select all" or an unusable count (blank, zero, not a number) — the same "guard by falling back to
-    * select-all" [[GameApiClient.create]]'s doc comment allows for. `Some(n)` only once the reader has both unchecked
-    * "select all" and typed a positive number.
-    */
-  private val wordLimitSignal: Signal[Option[Int]] = {
-    selectAllVar.signal.combineWith(wordCountVar.signal).map {
-      case (true, _)     => None
-      case (false, text) => text.trim.toIntOption.filter(_ > 0)
-    }
-  }
-
-  /** Whether a play draws a fresh sample every time (the default) or draws it once, here, and fixes it — see
-    * `GameRow.randomizeEachPlay`. Meaningless while [[selectAllVar]] is true, the same as [[wordCountVar]]; the setup
-    * form still sends whatever this holds, but `GameService.createGame` normalizes it back to `true` server-side too.
-    */
-  private val randomizeEachPlayVar = Var(true)
-
   /** Whether the owner will later be able to see who played and how they scored — see `GameRow.trackResults`. Off by
-    * default, like every prior addition to this screen; independent of the word-limit/randomize pair above, so it is
-    * not part of their mutual-exclusion wiring.
+    * default, like every prior addition to this screen.
     */
   private val trackResultsVar = Var(false)
 
-  /** Whether a German noun's article is part of the prompt/answer/results text — see `GameRow.includeDefiniteArticles`.
-    * On by default, unlike [[trackResultsVar]]: this mirrors the article being shown everywhere else in the app. Only
-    * offered when [[germanInvolvedSignal]] is true; sent as `true` regardless when hidden, which is a no-op for a
-    * language pair with no German noun to gender in the first place.
-    */
-  private val includeArticlesVar = Var(true)
-
-  /** Whether the current language pair has a German noun to put an article on at all — gates whether
-    * [[renderIncludeArticlesControl]] renders anything.
-    */
-  private val germanInvolvedSignal: Signal[Boolean] = {
-    formSignal.map { case (source, target) => source == WordLanguage.De || target == WordLanguage.De }
-  }
-
-  private val formAndTagsSignal = {
-    formSignal.combineWith(
-      selectedTagIdsVar.signal,
-      wordLimitSignal,
-      randomizeEachPlayVar.signal,
-      trackResultsVar.signal,
-      includeArticlesVar.signal,
-    )
-  }
-
-  /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
-    * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
-    * trivially empty, the same shortcut the backend itself takes.
-    */
-  private val wordsQuerySignal = formSignal.combineWith(selectedTagIdsVar.signal).distinct
-
-  private val wordsVar        = Var(List.empty[GameSetupWord])
-  private val wordsLoadingVar = Var(false)
+  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal, trackResultsVar.signal)
 
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
@@ -206,33 +147,10 @@ private class GameSetupPage {
           case Left(err)   =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
-      wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ => wordsLoadingVar.set(true)),
-      wordsQuerySignal.updates.flatMapSwitch { case (source, target, tagIds) =>
-        if (tagIds.isEmpty)
-          EventStream.fromValue(Right(Nil))
-        else
-          asReader(() => GameApiClient.setupWords(source, target, tagIds))
-      } -->
-        Observer[Either[ApiError, List[GameSetupWord]]] {
-          case Right(words) =>
-            Var.set(wordsVar -> words, wordsLoadingVar -> false)
-          case Left(err)    =>
-            Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
-        },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
       playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
-        case (source, target, tagIds, wordLimit, randomizeEachPlay, trackResults, includeArticles) =>
-          asReader(() => {
-            GameApiClient.create(
-              source,
-              target,
-              tagIds.toList,
-              wordLimit,
-              randomizeEachPlay,
-              trackResults,
-              includeArticles,
-            )
-          })
+        case (source, target, tagIds, trackResults) =>
+          asReader(() => GameApiClient.create(source, target, tagIds.toList, trackResults))
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -281,17 +199,10 @@ private class GameSetupPage {
     )
   }
 
-  /** The word-limit controls sit at the top, above the word list they narrow — a reader picks a count and watches the
-    * list underneath explain what it means, rather than the two living in unrelated corners of the form.
-    */
   private def renderWordsColumn(): HtmlElement = {
     div(
       cls := "flex-1",
-      renderWordLimitControls(),
-      renderRandomizeControls(),
       renderTrackResultsControl(),
-      renderIncludeArticlesControl(),
-      renderWordsList(),
     )
   }
 
@@ -352,89 +263,7 @@ private class GameSetupPage {
     )
   }
 
-  /** The "select all" checkbox and the exact-count number input, mutually exclusive: checking the box clears the number
-    * and switches to select-all; typing a number unchecks the box. Checking the box back on is the only way back to
-    * select-all once a count has been typed — clearing the number input by hand leaves "count mode" active with no
-    * usable count, which [[wordLimitSignal]] already treats as select-all until a positive number is typed.
-    */
-  private def renderWordLimitControls(): HtmlElement = {
-    div(
-      cls := "mb-4 flex flex-col gap-2",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordLimitLabel)),
-      label(
-        cls    := "flex items-center gap-2 cursor-pointer",
-        input(
-          typ    := "checkbox",
-          cls    := "checkbox checkbox-sm",
-          controlled(
-            checked <-- selectAllVar.signal,
-            onClick.mapToChecked --> Observer[Boolean] { on =>
-              if (on) Var.set(selectAllVar -> true, wordCountVar -> "") else selectAllVar.set(false)
-            },
-          ),
-        ),
-        span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupWordLimitSelectAll)),
-      ),
-      label(
-        cls    := "flex items-center gap-2",
-        span(cls  := "label-text text-sm", I18n.t(UiKeys.gameSetupWordLimitCount)),
-        input(
-          typ     := "number",
-          minAttr := "1",
-          cls     := "input input-sm w-24",
-          disabled <-- selectAllVar.signal,
-          controlled(
-            value <-- wordCountVar.signal,
-            onInput.mapToValue --> Observer[String] { text =>
-              Var.set(wordCountVar -> text, selectAllVar -> false)
-            },
-          ),
-        ),
-      ),
-    )
-  }
-
-  /** Two radio options, disabled while [[selectAllVar]] is true — there is nothing to fix when a play always uses every
-    * eligible word. `name := "randomize"` ties the pair together as one control the browser enforces mutual exclusion
-    * on, the same way native radio buttons always have.
-    */
-  private def renderRandomizeControls(): HtmlElement = {
-    val disabledSignal = selectAllVar.signal
-    div(
-      cls := "mb-4 flex flex-col gap-2",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupRandomizeLabel)),
-      label(
-        cls    := "flex items-center gap-2 cursor-pointer",
-        input(
-          typ      := "radio",
-          cls      := "radio radio-sm",
-          nameAttr := "randomize",
-          disabled <-- disabledSignal,
-          controlled(
-            checked <-- randomizeEachPlayVar.signal,
-            onClick.mapToChecked --> Observer[Boolean](on => if (on) randomizeEachPlayVar.set(true)),
-          ),
-        ),
-        span(cls   := "label-text text-sm", I18n.t(UiKeys.gameSetupRandomizeAlways)),
-      ),
-      label(
-        cls    := "flex items-center gap-2 cursor-pointer",
-        input(
-          typ      := "radio",
-          cls      := "radio radio-sm",
-          nameAttr := "randomize",
-          disabled <-- disabledSignal,
-          controlled(
-            checked <-- randomizeEachPlayVar.signal.map(!_),
-            onClick.mapToChecked --> Observer[Boolean](on => if (on) randomizeEachPlayVar.set(false)),
-          ),
-        ),
-        span(cls   := "label-text text-sm", I18n.t(UiKeys.gameSetupRandomizeFixed)),
-      ),
-    )
-  }
-
-  /** A single checkbox, independent of the word-limit/randomize controls above — see [[trackResultsVar]]. */
+  /** A single checkbox — see [[trackResultsVar]]. */
   private def renderTrackResultsControl(): HtmlElement = {
     div(
       cls := "mb-4",
@@ -450,54 +279,6 @@ private class GameSetupPage {
           p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
         ),
       ),
-    )
-  }
-
-  /** A single checkbox, shown only while [[germanInvolvedSignal]] is true — a language pair with no German noun has
-    * nothing to put an article on, the same reasoning the word-limit/randomize pair skip rendering when meaningless.
-    */
-  private def renderIncludeArticlesControl(): HtmlElement = {
-    div(
-      cls := "mb-4",
-      child.maybe <-- germanInvolvedSignal.map { involved =>
-        Option.when(involved)(
-          label(
-            cls := "flex items-center gap-2 cursor-pointer",
-            input(
-              typ := "checkbox",
-              cls := "checkbox checkbox-sm",
-              controlled(checked <-- includeArticlesVar.signal, onClick.mapToChecked --> includeArticlesVar.writer),
-            ),
-            div(
-              span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupIncludeArticlesLabel)),
-              p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupIncludeArticlesHint)),
-            ),
-          )
-        )
-      },
-    )
-  }
-
-  /** The eligible pool the current tag selection would draw from — see `GameApiClient.setupWords`. A plain scrollable
-    * list rather than anything fancier: its only job is to let the word-limit count above make sense.
-    */
-  private def renderWordsList(): HtmlElement = {
-    div(
-      cls := "flex flex-col gap-2",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordsHeading)),
-      span(
-        cls    := "label-text text-sm opacity-70",
-        child.text <-- wordsVar.signal.map(words => I18n.plural(UiKeys.gameSetupWordsCount, words.size.toLong)),
-      ),
-      div(
-        cls    := "flex flex-col gap-1 mt-1 max-h-96 overflow-y-auto border border-base-300 rounded p-2",
-        children <-- wordsVar.signal.map(_.map(word => div(cls := "text-sm", word.text))),
-      ),
-      child.maybe <-- wordsVar.signal.combineWith(wordsLoadingVar.signal).map { case (words, loading) =>
-        Option.when(words.isEmpty && !loading)(
-          p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameSetupWordsEmpty))
-        )
-      },
     )
   }
 
