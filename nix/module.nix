@@ -155,6 +155,43 @@ in
         description = "Postgres role owning that database.";
       };
     };
+
+    backup = {
+      enable = mkEnableOption "daily database backups to Google Drive";
+
+      rcloneConfigFile = mkOption {
+        type = types.path;
+        example = "/var/lib/secrets/rclone.conf";
+        description = ''
+          rclone config holding a `gdrive` remote pointing at the Google Drive target.
+          Generate it once with `rclone config` (an interactive OAuth flow) and keep it
+          out of the Nix store. Mode 0400, owned by root.
+        '';
+      };
+
+      remoteDir = mkOption {
+        type = types.str;
+        default = "gdrive:backups/gathedge";
+        example = "gdrive:backups/gathedge";
+        description = ''
+          rclone target directory. The service writes one gzip'd dump per run named
+          `gathedge-YYYY-MM-DD.sql.gz` and prunes files older than `retentionDays`.
+        '';
+      };
+
+      retentionDays = mkOption {
+        type = types.ints.positive;
+        default = 7;
+        description = "How many days of backups to keep on the remote.";
+      };
+
+      time = mkOption {
+        type = types.str;
+        default = "02:00";
+        example = "06:30";
+        description = "Local time (HH:MM) the daily backup runs.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -287,6 +324,61 @@ in
       '')
     ];
 
+    # Daily pg_dump of the gathedge database pushed to Google Drive via rclone, keeping
+    # `retentionDays` of history. Runs as the postgres user (so pg_dump reaches the cluster)
+    # and connects over loopback with the same password the backend uses. The dump and the
+    # rclone config are both credentials, so both come from LoadCredential — never the store.
+    systemd.services.gathedge-backup = mkIf cfg.backup.enable {
+      description = "Daily gathedge database backup to Google Drive";
+      after = [ "postgresql.service" "gathedge-db-password.service" "network-online.target" ];
+      requires = [ "postgresql.service" "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = "postgres";
+        Group = "postgres";
+        LoadCredential = [
+          "env:${toString cfg.environmentFile}"
+          "rclone:${toString cfg.backup.rcloneConfigFile}"
+        ];
+      };
+
+      script = ''
+        set -euo pipefail
+        pw=$(${pkgs.gnugrep}/bin/grep -m1 '^DB_PASSWORD=' "$CREDENTIALS_DIRECTORY/env" | cut -d= -f2-)
+
+        export PGHOST=127.0.0.1
+        export PGPORT=${toString config.services.postgresql.settings.port}
+        export PGDATABASE=${cfg.database.name}
+        export PGUSER=${cfg.database.user}
+        export PGPASSWORD="$pw"
+
+        stamp=$(date +%Y-%m-%d)
+        dump="/tmp/gathedge-$stamp.sql.gz"
+
+        ${config.services.postgresql.package}/bin/pg_dump --no-psqlrc --clean --if-exists --format=plain \
+          | ${pkgs.gzip}/bin/gzip -9 > "$dump"
+
+        ${pkgs.rclone}/bin/rclone --config "$CREDENTIALS_DIRECTORY/rclone" \
+          copy "$dump" "${cfg.backup.remoteDir}/"
+        rm -f "$dump"
+
+        ${pkgs.rclone}/bin/rclone --config "$CREDENTIALS_DIRECTORY/rclone" \
+          delete "${cfg.backup.remoteDir}/" --min-age ${toString cfg.backup.retentionDays}d
+      '';
+    };
+
+    systemd.timers.gathedge-backup = mkIf cfg.backup.enable {
+      description = "Daily gathedge database backup timer";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "*-*-* ${cfg.backup.time}:00";
+        Persistent = true;
+        RandomizedDelaySec = "15min";
+      };
+    };
+
     # Translation of docker/nginx.conf.
     services.nginx = {
       recommendedGzipSettings = lib.mkDefault true;
@@ -328,6 +420,10 @@ in
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ 80 ];
 
     assertions = [
+      {
+        assertion = !cfg.backup.enable || cfg.backup.rcloneConfigFile != null;
+        message = "services.gathedge.backup.enable needs backup.rcloneConfigFile set.";
+      }
       {
         assertion = config.services.postgresql.enable;
         message = "services.gathedge needs services.postgresql.enable = true on the host.";
