@@ -657,7 +657,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
     for {
       play       <- requireOwnedPlay(playId, requesterUserId)
-      game       <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
       pool       <- repo.wordPairsOf(playId).orDie
       answered   <- repo.answersOf(playId).orDie
       answeredIds = answered.map(_.wordId).toSet
@@ -670,7 +669,8 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
                           index      <- Random.nextIntBounded(choices.size)
                           (wordId, _) = choices(index)
                           wordRows   <- repo.wordsByIds(List(wordId)).orDie
-                          text        = wordRows.headOption.map(row => wordText(row, game.includeDefiniteArticles)).getOrElse("")
+                          text        =
+                            wordRows.headOption.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
                         } yield GamePrompt(
                           finished = false,
                           wordId = Some(wordId),
@@ -681,13 +681,14 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield prompt
   }
 
-  /** `wordId`'s translation ids eligible under `game`'s tags — every marked pair, not just the one the prompt was drawn
-    * against — so [[submitAnswer]] can credit any of a word's accepted translations, not only the one `wordPairsOf`
-    * happened to fix for this play.
+  /** `wordId`'s translation ids eligible under `play`'s own resolved direction — every marked pair, not just the
+    * one the prompt was drawn against — so [[submitAnswer]] can credit any of a word's accepted translations. Reads
+    * `play.gameId`/`play.sourceLanguage`/`play.targetLanguage` rather than the game's own (now direction-agnostic)
+    * row, since a play may have swapped direction relative to another play of the same game.
     */
-  private def candidateTranslationIds(game: GameRow, wordId: Long, fallback: Long): UIO[List[Long]] = {
+  private def candidateTranslationIds(play: GamePlayRow, wordId: Long, fallback: Long): UIO[List[Long]] = {
     repo
-      .eligibleWordPairs(game.id, game.sourceLanguage, game.targetLanguage)
+      .eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage)
       .orDie
       .map(pairs => (fallback :: pairs.collect { case (w, t) if w == wordId => t }).distinct)
   }
@@ -697,10 +698,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       play            <- requireOwnedPlay(playId, requesterUserId)
       pool            <- repo.wordPairsOf(playId).orDie
       translationId   <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
-      game            <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
-      candidateIds    <- candidateTranslationIds(game, wordId, translationId)
+      candidateIds    <- candidateTranslationIds(play, wordId, translationId)
       candidateWords  <- repo.wordsByIds(candidateIds).orDie
-      textById         = candidateWords.map(row => row.id -> wordText(row, game.includeDefiniteArticles)).toMap
+      textById         = candidateWords.map(row => row.id -> wordText(row, play.includeDefiniteArticles)).toMap
       scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> GameScoring.score(text, answerText)))
       (bestId, scored) = {
         scoredById
@@ -747,13 +747,26 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     }
   }
 
+  /** `play`'s own settings, as the wire-facing [[GameVariantDto]] — embedded in every play-facing response
+    * ([[GameResults]], [[GamePlaySummary]], [[GamePlayDetail]], [[MyPlaySummary]]) so a reader can see what
+    * variant a given play actually ran under.
+    */
+  private def variantOf(play: GamePlayRow): GameVariantDto = {
+    GameVariantDto(
+      sourceLanguage = WordLanguage.fromString(play.sourceLanguage).getOrElse(WordLanguage.En),
+      targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En),
+      wordLimit = play.wordLimit,
+      includeDefiniteArticles = play.includeDefiniteArticles,
+      wordPreference = WordPreference.fromString(play.wordPreference).getOrElse(WordPreference.All),
+    )
+  }
+
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults] = {
     for {
       play    <- requireOwnedPlay(playId, requesterUserId)
-      game    <- repo.findGame(play.gameId).orDie.someOrFail(GameFailure.NotFound)
       answers <- repo.answersOf(playId).orDie
-      results <- answerResultsOf(answers, game.includeDefiniteArticles)
-    } yield GameResults(play.score, play.maxScore, play.wordCount, results)
+      results <- answerResultsOf(answers, play.includeDefiniteArticles)
+    } yield GameResults(play.score, play.maxScore, play.wordCount, results, variantOf(play))
   }
 
   private def summaryOf(play: GamePlayRow, usersById: Map[Long, UserRow]): GamePlaySummary = {
@@ -767,6 +780,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       wordCount = play.wordCount,
       startedAt = play.startedAt,
       finishedAt = play.finishedAt,
+      variant = variantOf(play),
     )
   }
 
@@ -797,7 +811,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       play    <- repo.findPlayInGame(game.id, playId).orDie.someOrFail(GameFailure.NotFound)
       player  <- repo.usersByIds(List(play.playerUserId)).orDie.map(_.headOption)
       answers <- repo.answersOf(playId).orDie
-      results <- answerResultsOf(answers, game.includeDefiniteArticles)
+      results <- answerResultsOf(answers, play.includeDefiniteArticles)
     } yield GamePlayDetail(
       playId = play.id,
       playerEmail = player.flatMap(_.email),
@@ -808,6 +822,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       startedAt = play.startedAt,
       finishedAt = play.finishedAt,
       answers = results,
+      variant = variantOf(play),
     )
   }
 
@@ -822,6 +837,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       wordCount = play.wordCount,
       startedAt = play.startedAt,
       finishedAt = play.finishedAt,
+      variant = variantOf(play),
     )
   }
 
