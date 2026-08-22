@@ -113,12 +113,41 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   private val previewWordsVar    = Var(List.empty[GameSetupWord])
   private val previewLoadingVar  = Var(false)
 
+  /** Fires once, right after the game successfully loads — see `render`'s `loadBus` wiring. Merged into
+    * [[previewTriggerStream]] below so the preview populates on first entering the Play screen, not only after the
+    * reader touches a control: `Signal.updates` (relied on for the reactive refetch-on-change half) excludes a
+    * signal's starting value, so relying on it alone left `renderPreviewList` showing the "no eligible words"
+    * message on entry even when eligible words existed. Same `EventStream.merge(signal.updates, bus.events.sample(signal))`
+    * shape as `GameSetupPage.formRequests`/`AdminUsersPage.listRequests`, just triggered by the load succeeding
+    * instead of an explicit reload button.
+    */
+  private val gameLoadedBus = new EventBus[Unit]()
+
   /** Refetches the play-setup preview whenever direction or preference changes, once the game itself has loaded —
     * mirrors `GameSetupPage.wordsQuerySignal`'s reasoning, one screen over.
     */
   private val previewQuerySignal: Signal[(Boolean, WordPreference)] = {
     swapDirectionVar.signal.combineWith(wordPreferenceVar.signal).distinct
   }
+
+  private val previewTriggerStream: EventStream[(Boolean, WordPreference)] = {
+    EventStream.merge(previewQuerySignal.updates, gameLoadedBus.events.sample(previewQuerySignal))
+  }
+
+  /** Whether the *reverse* direction's pool is empty — the swap arrow (`renderDirectionSwap`) disables on this, per
+    * the design doc: swapping into an empty pool would make `startPlay` fail its unreachable-from-the-UI
+    * `badRequest` case. Fetched right after each current-direction preview settles ([[reversePreviewTriggerBus]]),
+    * rather than on its own independent `gameLoadedBus`-merged trigger like [[previewTriggerStream]] — sequencing
+    * it after the primary fetch means only the primary fetch's `asReader` ever has to mint a guest session on a
+    * signed-out first visit, not both fetches racing to mint one each.
+    */
+  private val reversePoolEmptyVar = Var(false)
+
+  private val reversePreviewQuerySignal: Signal[(Boolean, WordPreference)] = {
+    swapDirectionVar.signal.map(!_).combineWith(wordPreferenceVar.signal).distinct
+  }
+
+  private val reversePreviewTriggerBus = new EventBus[Unit]()
 
   private val startingVar   = Var(false)
   private val submittingVar = Var(false)
@@ -210,6 +239,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         Observer[Either[ApiError, GameDetail]] {
           case Right(detail) =>
             Var.set(gameVar -> Some(detail), nameVar -> detail.name, missingVar -> false, errorVar -> None)
+            gameLoadedBus.emit(())
           case Left(err)     =>
             // A quiz that is not there is a different thing from a request that failed, and reads differently.
             if (err.status == 404)
@@ -242,15 +272,30 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           case Left(err)      =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
-      previewQuerySignal.updates --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
-      previewQuerySignal.updates
+      previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
+      previewTriggerStream
         .filterWith(gameVar.signal.map(_.isDefined))
         .flatMapSwitch { case (swap, preference) => asReader(() => GameApiClient.playSetup(slug, swap, preference)) } -->
         Observer[Either[ApiError, List[GameSetupWord]]] {
           case Right(words) =>
             Var.set(previewWordsVar -> words, previewLoadingVar -> false)
+            reversePreviewTriggerBus.emit(())
           case Left(err)    =>
             Var.set(previewLoadingVar -> false, errorVar -> Some(err.message))
+            reversePreviewTriggerBus.emit(())
+        },
+      // The swap arrow's own `disabled` source — see [[reversePoolEmptyVar]]'s doc comment for why this is
+      // sequenced off the primary preview settling rather than given its own `gameLoadedBus`-merged trigger.
+      reversePreviewTriggerBus.events
+        .sample(reversePreviewQuerySignal)
+        .filterWith(gameVar.signal.map(_.isDefined))
+        .flatMapSwitch { case (swap, preference) => asReader(() => GameApiClient.playSetup(slug, swap, preference)) } -->
+        Observer[Either[ApiError, List[GameSetupWord]]] {
+          case Right(words) =>
+            reversePoolEmptyVar.set(words.isEmpty)
+          case Left(_)      =>
+            // A failed probe should not lock the reader out of swapping — fail open, same as the button's default.
+            reversePoolEmptyVar.set(false)
         },
       nextPromptStream --> Observer[Either[ApiError, GamePrompt]] {
         case Right(prompt) =>
@@ -628,6 +673,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
               cls   := "btn btn-ghost btn-xs",
               typ   := "button",
               title := I18n.t(UiKeys.gameInstanceDirectionSwap),
+              // Disabled/no-op if the reverse direction's pool is empty — mirrors `swapDirection`'s `badRequest`
+              // case being unreachable from the UI. See [[reversePoolEmptyVar]].
+              disabled <-- reversePoolEmptyVar.signal,
               "⇄",
               onClick.mapToUnit --> Observer[Unit](_ => swapDirectionVar.update(!_)),
             ),
