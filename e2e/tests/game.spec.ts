@@ -13,7 +13,9 @@ import { test, expect, type Page } from '@playwright/test';
 // What this covers that no other suite can: the whole quiz loop in a real browser, and the guest detour inside
 // it. `startPlay` is the first write GameInstancePage makes, so it is where a signed-out visitor is minted a
 // guest account (see GameInstancePage's doc comment on `asReader`) — that only happens through a real request
-// with a real cookie jar, which is why it belongs here rather than in a frontend spec.
+// with a real cookie jar, which is why it belongs here rather than in a frontend spec. Opening the shared link
+// and previewing the play-variant picker (GameApiClient.playSetup, an `optionalUser` read like `get`) must NOT
+// mint a guest — this suite asserts no session cookie exists until "Start" is actually clicked.
 //
 // Rewritten for the play-time variant picker (game-variants-redesign): word-count/randomize/articles controls
 // moved off GameSetupPage (creation) and onto GameInstancePage (play), chosen fresh each play rather than fixed
@@ -163,6 +165,11 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.getByText('Eligible words')).toBeVisible();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
+  // The point of this fix: merely opening the link and having the preview load must mint no guest account.
+  // `GET /api/games/{slug}` and `GET /api/games/{slug}/plays/setup` are both `optionalUser` reads.
+  const cookiesBeforeStart = await guestContext.cookies();
+  expect(cookiesBeforeStart.some((c) => c.name === 'session')).toBe(false);
+
   // Exercise the swap arrow itself: it flips the displayed pair for this play, and reverts cleanly. Not
   // disabled, since the reverse direction has an eligible pool too (both-directions pairing above).
   const swapButton = guestPage.getByTitle('Swap languages');
@@ -182,7 +189,8 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   await guestPage.getByRole('button', { name: 'Start' }).click();
 
-  // Starting a play is the first write, so it is what mints the guest account here.
+  // Starting a play is the first write, so it is what mints the guest account here — confirmed above that
+  // nothing before this click did.
   await expect(guestPage.getByRole('heading', { name: 'Your words are saved on this device' })).toBeVisible();
 
   const firstPlaySeen: string[] = [];

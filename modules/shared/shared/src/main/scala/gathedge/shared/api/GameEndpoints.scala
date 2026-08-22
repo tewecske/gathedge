@@ -120,16 +120,18 @@ object GameEndpoints {
   }
 
   /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
-    * from for the same `swapDirection`/`wordPreference` — see `GameService.playSetupPreview`. Requires a session
-    * (unlike [[setupWords]]) since the `Unplayed`/`MostMistakes` ordering depends on the caller's own play history in
-    * this game.
+    * from for the same `swapDirection`/`wordPreference` — see `GameService.playSetupPreview`. Anonymous-capable, the
+    * same reasoning [[get]] applies: a visitor opening a shared quiz link must be able to preview the picker before any
+    * guest is minted. For a signed-in caller the `Unplayed`/`MostMistakes` ordering still uses their own play history
+    * in this game; an anonymous caller has none, so both preferences degrade to the same order as `All`.
     */
   val playSetup = {
     Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / "setup")
       .query(swapDirectionQuery)
       .query(wordPreferenceQuery)
+      .withCodecError
       .out[List[GameSetupWord]]
-      .outErrors(failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.notFound)
   }
 
   /** The next word to answer in `playId`, or `{finished: true}` once none remain. `badRequest` covers a `playId` that
@@ -216,8 +218,8 @@ object GameEndpoints {
     playDetail,
   )
 
-  /** Just [[get]] — a shared game link must be viewable before any guest is minted, the same reasoning
-    * [[WordEndpoints.public]] applies to the dictionary reads.
+  /** [[get]] and [[playSetup]] — a shared game link, and the play-variant picker's preview it leads to, must both be
+    * viewable before any guest is minted, the same reasoning [[WordEndpoints.public]] applies to the dictionary reads.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get, playSetup)
 }

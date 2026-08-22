@@ -127,10 +127,14 @@ the same role `GET /api/games/setup/words` plays for the creation screen. New en
 GET /api/games/{slug}/plays/setup?swapDirection=&wordPreference=
 ```
 
-Requires a session (like every play action) since the `Unplayed`/`MostMistakes` counts depend on the
-calling player's own history. Answers the resolved-direction eligible pool, in preference order (same
-ordering `startPlay` would sample from), as `List[GameSetupWord]` — reused as-is; the picker shows
-"N eligible" and, for the two preference filters, can preview which words would be prioritized.
+Anonymous-capable, like `GET /api/games/{slug}` itself: a visitor opening a shared quiz link must be
+able to see the picker's preview before any guest account is minted (CLAUDE.md's "a guest is minted on
+the first write, never on a page view" rule — `startPlay` is the first write, not this preview). A
+signed-in caller's `Unplayed`/`MostMistakes` counts still use their own history; an anonymous caller
+has none, so both preferences degrade to the same order as `All`. Answers the resolved-direction
+eligible pool, in preference order (same ordering `startPlay` would sample from), as
+`List[GameSetupWord]` — reused as-is; the picker shows "N eligible" and, for the two preference
+filters, can preview which words would be prioritized.
 
 ## Frontend
 

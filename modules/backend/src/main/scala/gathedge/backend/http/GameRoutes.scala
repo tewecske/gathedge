@@ -18,19 +18,25 @@ import zio.http.*
 /** Creating, reading and renaming a vocabulary quiz (the setup/detail/rename endpoints), plus playing one
   * (startPlay/nextPrompt/submitAnswer/results).
   *
-  * `getRoute` is wrapped in `optionalUser` rather than `authenticated`, the same reasoning `WordRoutes` applies to the
-  * dictionary reads: a shared game link must be viewable before any guest is minted. Unlike `WordRoutes.getRoute`, the
-  * handler here does not consume `Option[User]` — `GameDetail` carries no owner-only data — but it still needs to sit
-  * under an aspect that does not require a session.
+  * `getRoute` and `playSetupRoute` are wrapped in `optionalUser` rather than `authenticated`, the same reasoning
+  * `WordRoutes` applies to the dictionary reads: a shared game link, and the play-variant picker's preview it leads to,
+  * must both be viewable before any guest is minted. `getRoute`'s handler does not consume `Option[User]` —
+  * `GameDetail` carries no owner-only data — but `playSetupRoute` does, the same as `WordRoutes.listRoute`/`.getRoute`:
+  * a signed-in caller's own play history still shapes the `Unplayed`/`MostMistakes` ordering, while an anonymous caller
+  * simply has none.
   *
-  * The aspects are on the `Routes` values, never on an individual `handler`: `getRoute`/`renameRoute` take a path
-  * parameter, and attaching a context-providing aspect to one of those compiles and then throws `ClassCastException` at
-  * request time, because the handler is handed a bare `Request` where it expects the `(param, Request)` tuple.
+  * The aspects are on the `Routes` values, never on an individual `handler`: `getRoute`/`renameRoute`/`playSetupRoute`
+  * take a path parameter, and attaching a context-providing aspect to one of those compiles and then throws
+  * `ClassCastException` at request time, because the handler is handed a bare `Request` where it expects the
+  * `(param, Request)` tuple.
   */
 object GameRoutes {
 
   /** The signed-in account. Supplied by `authenticated`. */
   private def userId: URIO[User, Long] = ZIO.service[User].map(_.id)
+
+  /** The reader, when there is one. Supplied by `optionalUser`. */
+  private def reader: URIO[Option[User], Option[Long]] = ZIO.service[Option[User]].map(_.map(_.id))
 
   /** Language codes are read leniently, the same as `WordRoutes.languageOf`: an unrecognised or missing one falls back
     * rather than failing the request.
@@ -39,8 +45,8 @@ object GameRoutes {
     requested.flatMap(WordLanguage.fromString).getOrElse(WordLanguage.En)
   }
 
-  /** A `wordPreference` query/body value, read leniently like [[languageOf]]: an unrecognised or missing one falls
-    * back to [[WordPreference.All]] rather than failing the request.
+  /** A `wordPreference` query/body value, read leniently like [[languageOf]]: an unrecognised or missing one falls back
+    * to [[WordPreference.All]] rather than failing the request.
     */
   private def preferenceOf(requested: Option[String]): WordPreference = {
     requested.flatMap(WordPreference.fromString).getOrElse(WordPreference.All)
@@ -128,11 +134,11 @@ object GameRoutes {
   private val startPlayRoute = {
     GameEndpoints.startPlay.implementHandler(
       handler { (slug: String, body: StartPlayRequest) =>
-        userId.flatMap(id =>
+        userId.flatMap(id => {
           GameService
             .startPlay(slug, id, body.swapDirection, body.wordLimit, body.includeDefiniteArticles, body.wordPreference)
             .mapError(ApiFailures.gameStartPlay)
-        )
+        })
       }
     )
   }
@@ -140,11 +146,11 @@ object GameRoutes {
   private val playSetupRoute = {
     GameEndpoints.playSetup.implementHandler(
       handler { (slug: String, swapDirection: Option[Boolean], wordPreference: Option[String]) =>
-        userId.flatMap(id =>
+        reader.flatMap(who => {
           GameService
-            .playSetupPreview(slug, id, swapDirection.getOrElse(false), preferenceOf(wordPreference))
+            .playSetupPreview(slug, who, swapDirection.getOrElse(false), preferenceOf(wordPreference))
             .mapError(ApiFailures.game)
-        )
+        })
       }
     )
   }
@@ -211,7 +217,7 @@ object GameRoutes {
     )
   }
 
-  private val publicRoutes = Routes(getRoute) @@ RouteSupport.optionalUser
+  private val publicRoutes = Routes(getRoute, playSetupRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
     Routes(
@@ -222,7 +228,6 @@ object GameRoutes {
       createRoute,
       renameRoute,
       startPlayRoute,
-      playSetupRoute,
       nextPromptRoute,
       submitAnswerRoute,
       resultsRoute,
