@@ -31,6 +31,7 @@ import gathedge.frontend.pages.{
   WordDetailPage,
   WordsPage,
 }
+import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
 import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
 import gathedge.frontend.ocr.ImageOcr
@@ -39,6 +40,8 @@ import gathedge.shared.domain.Locale
 import gathedge.shared.dto.AuthResponse
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.scalajs.js.JSConverters._
 
 /** Root component: loads the current session once, then renders + guards pages. Any page requiring a session redirects
   * an unauthenticated visitor to sign-in, and vice versa (cross-cutting behavior from summary.md) — implemented once
@@ -142,10 +145,10 @@ object App {
       // stash the slug as a side effect the moment it is extracted — which is always strictly before the `render` call
       // that follows below reads it back, since `CollectPageSignalRenderer` evaluates the two in that order.
       .collectSignalPF[Unit] { case (gate, page: Page.GameInstance) if gate.loaded => latestGameSlug = page.slug }(_ =>
-        GameInstancePage.render(latestGameSlug)
+        GameInstancePage.render(latestGameSlug, generateQr)
       )
       // Owner-only, but the ownership check is server-side (a 403 the page itself shows, the same as
-      // `GameInstancePage`'s rename/reshuffle controls) — `Gate` has no notion of "owns this particular game", so this
+      // `GameInstancePage`'s rename control) — `Gate` has no notion of "owns this particular game", so this
       // renders for any signed-in reader once loaded, the same `gate.loaded` precondition `WordsPage` uses. Same
       // slug/query split as `GameInstance` above: the slug is stashed as a side effect, the query is what the signal
       // renderer tracks.
@@ -162,6 +165,11 @@ object App {
     * it, and must be the one that answers.
     */
   private def showsAdminScreen(gate: Gate): Boolean = gate.loaded && gate.isAdmin
+
+  /** The real `generateQr` every live `GameInstancePage.render` call passes — see that parameter's own doc comment for
+    * why the page itself does not call `QRCode` directly.
+    */
+  private def generateQr(text: String): Future[String] = QRCode.toDataURL(text).toFuture
 
   /** Writing the listing state back to the URL is what makes it bookmarkable; whether the write is a `pushState` or a
     * `replaceState` is what decides where the back button goes.
@@ -306,7 +314,7 @@ object App {
       case Page.SharedPlayerHistory(sharerUserId)   =>
         SharedPlayerHistoryPage.render(sharerUserId)
       case Page.GameInstance(slug)                  =>
-        GameInstancePage.render(slug)
+        GameInstancePage.render(slug, generateQr)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words` below.
       case Page.GameResults(slug, query)            =>

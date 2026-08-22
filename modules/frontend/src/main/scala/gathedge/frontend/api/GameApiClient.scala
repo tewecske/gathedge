@@ -2,7 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.GameEndpoints
-import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.shared.domain.{Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   CreateGameRequest,
   GameCreated,
@@ -16,6 +16,7 @@ import gathedge.shared.dto.{
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
+  StartPlayRequest,
   SubmitAnswerRequest,
 }
 
@@ -24,10 +25,9 @@ import EndpointClient.{executor, run}
 /** The game catalog's calls, generated from `GameEndpoints` the same way [[WordApiClient]] is from `WordEndpoints`.
   *
   * [[setup]] and [[create]] require a session — see `GameSetupPage`'s guest detour, which sits in front of each.
-  * [[get]] does not — it is the `optionalUser` read a shared game link is opened through, the same reasoning
-  * `WordApiClient.get` applies to the dictionary. [[startPlay]] is the first call in the play loop that needs a
-  * session, so `GameInstancePage` puts the same guest detour in front of it, and it alone; [[nextPrompt]] and
-  * [[submitAnswer]] run only once a play exists, by which point the session is already there.
+  * [[get]] and [[playSetup]] do not — both are `optionalUser` reads a shared game link is opened through: the variant
+  * picker's preview must be viewable before any guest is minted, same as the link itself. [[startPlay]] is the first
+  * call in the play loop that needs a session, and the only one that mints a guest.
   */
 object GameApiClient {
 
@@ -36,10 +36,7 @@ object GameApiClient {
     run(executor(GameEndpoints.setup(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)))))
   }
 
-  /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from — see
-    * `GameService.eligibleWords`. `tagIds` is joined as a comma-separated query string, since this codebase has no
-    * list-typed query codec — see `GameEndpoints.tagIdsQuery`'s doc comment.
-    */
+  /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from. */
   def setupWords(
     source: WordLanguage,
     target: WordLanguage,
@@ -58,18 +55,9 @@ object GameApiClient {
     source: WordLanguage,
     target: WordLanguage,
     tagIds: List[Long],
-    wordLimit: Option[Int] = None,
-    randomizeEachPlay: Boolean = true,
     trackResults: Boolean = false,
-    includeDefiniteArticles: Boolean = true,
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(
-      executor(
-        GameEndpoints.create(
-          CreateGameRequest(source, target, tagIds, wordLimit, randomizeEachPlay, trackResults, includeDefiniteArticles)
-        )
-      )
-    )
+    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, trackResults))))
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */
@@ -77,23 +65,38 @@ object GameApiClient {
     run(executor(GameEndpoints.get(slug)))
   }
 
-  /** Owner-only — see `GameEndpoints.rename`'s doc comment. `GameInstancePage` only offers the control behind
-    * `GameOwnership.isOwned`, but the 403 this can still answer (a different account, or a stale local hint) is what
-    * actually enforces it.
-    */
+  /** Owner-only — see `GameEndpoints.rename`'s doc comment. */
   def rename(slug: String, name: String): EventStream[Either[ApiError, GameDetail]] = {
     run(executor(GameEndpoints.rename(slug, RenameGameRequest(name))))
   }
 
-  /** Owner-only — see `GameEndpoints.reshuffle`'s doc comment. `GameInstancePage` only offers the control for a
-    * `randomizeEachPlay = false` game the reader is shown as owning, the same gating [[rename]] applies.
-    */
-  def reshuffle(slug: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GameEndpoints.reshuffle(slug)))
+  /** Starts a fresh attempt at `slug` under the given variant — see [[StartPlayRequest]]. */
+  def startPlay(
+    slug: String,
+    swapDirection: Boolean = false,
+    wordLimit: Option[Int] = None,
+    includeDefiniteArticles: Boolean = true,
+    wordPreference: WordPreference = WordPreference.All,
+  ): EventStream[Either[ApiError, PlayStarted]] = {
+    run(
+      executor(
+        GameEndpoints.startPlay(
+          slug,
+          StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference),
+        )
+      )
+    )
   }
 
-  def startPlay(slug: String): EventStream[Either[ApiError, PlayStarted]] = {
-    run(executor(GameEndpoints.startPlay(slug)))
+  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
+    * from for the same `swapDirection`/`wordPreference`.
+    */
+  def playSetup(
+    slug: String,
+    swapDirection: Boolean,
+    wordPreference: WordPreference,
+  ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
+    run(executor(GameEndpoints.playSetup(slug, Some(swapDirection), Some(WordPreference.code(wordPreference)))))
   }
 
   def nextPrompt(playId: Long): EventStream[Either[ApiError, GamePrompt]] = {
@@ -104,14 +107,12 @@ object GameApiClient {
     run(executor(GameEndpoints.submitAnswer(playId, SubmitAnswerRequest(wordId, answerText))))
   }
 
-  /** The finished play's score and full answer history, for the results screen. */
+  /** The finished play's score, full answer history, and the variant it ran under. */
   def getResults(playId: Long): EventStream[Either[ApiError, GameResults]] = {
     run(executor(GameEndpoints.results(playId)))
   }
 
-  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays. Every paging parameter is
-    * optional, the same shape [[AdminApiClient.listUsers]] follows.
-    */
+  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays. */
   def listPlays(
     slug: String,
     page: Option[Int] = None,

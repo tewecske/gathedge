@@ -4,25 +4,27 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
-import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
-import gathedge.shared.domain.{AnswerOutcome, User}
-import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, PlayStarted}
+import gathedge.shared.domain.{AnswerOutcome, User, WordLanguage, WordPreference}
+import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, GameSetupWord, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.scalajs.js
-import scala.scalajs.js.JSConverters._
 import scala.util.{Failure, Success}
 
 /** One quiz, played from its shared link (`/g/{slug}`).
   *
   * The initial `GET /api/games/{slug}` mints nobody — see `Page.GameInstance`'s doc comment — a visitor can read the
-  * quiz's name and tags with no session at all. Starting a play is the first write the page makes, so it is where the
-  * guest detour sits ([[asReader]], copied in spirit from `GameSetupPage`'s), and it sits there once: every later call
-  * in the loop (`nextPrompt`, `submitAnswer`) runs against the session `startPlay` already established.
+  * quiz's name and tags with no session at all. Neither does the play-variant picker's preview fetch
+  * (`GameApiClient.playSetup`, wired through [[previewTriggerStream]]/[[reversePreviewTriggerBus]] below): it is an
+  * `optionalUser` read too, so merely opening a shared link and looking at the picker mints no guest. Starting a play
+  * IS the first write the page makes, so it is where the guest detour sits ([[asReader]], copied in spirit from
+  * `GameSetupPage`'s), and it sits there once: every later call in the loop (`nextPrompt`, `submitAnswer`) runs against
+  * the session `startPlay` already established.
   *
   * One prompt is shown at a time, with a "3 of 12" progress line and nothing else about how the game is going —
   * `GameEndpoints.submitAnswer`'s doc comment is why: a player is never shown correctness mid-game, and that includes
@@ -31,12 +33,22 @@ import scala.util.{Failure, Success}
   */
 object GameInstancePage {
 
-  def render(slug: String): HtmlElement = {
-    AppShell.render(Page.GameInstance(slug), new GameInstancePage(slug).render())
+  /** Generates the QR modal's data URI for a URL. Threaded through as an ordinary parameter — the real caller (`App`)
+    * passes `(text) => QRCode.toDataURL(text).toFuture`; a spec passes a stub — the same reason `WordsPage.render`
+    * takes `recognizeImage: ImageOcr.Recognize` instead of calling `ImageOcr` itself: it keeps the `qrcode` npm
+    * package's `@JSImport` out of this page's reachable graph under the test linker. `Test / scalaJSLinkerConfig` is
+    * `NoModule` (see `build.sbt`), and [[gathedge.frontend.facades.QRCode]]'s `@JSImport` is otherwise statically
+    * reachable from `render()` through `renderShareRow`/`openQr` regardless of whether the QR button is ever actually
+    * clicked — DCE removes only genuinely unreachable code, not a branch a spec merely never exercises at runtime — so
+    * any spec that renders this page at all would otherwise fail to link, exactly as
+    * [[gathedge.frontend.ocr.ImageOcr.Recognize]]'s own doc comment explains for `tesseract.js`.
+    */
+  def render(slug: String, generateQr: String => Future[String]): HtmlElement = {
+    AppShell.render(Page.GameInstance(slug), new GameInstancePage(slug, generateQr).render())
   }
 }
 
-private class GameInstancePage(slug: String) {
+private class GameInstancePage(slug: String, generateQr: String => Future[String]) {
 
   private sealed trait Phase
 
@@ -70,6 +82,76 @@ private class GameInstancePage(slug: String) {
 
   private val answerTextVar = Var("")
 
+  /** The direction-swap arrow's own state — `false` plays the game's stored direction, `true` reverses it for this play
+    * only. See the design doc's "no dropdowns, just an arrow" direction control.
+    */
+  private val swapDirectionVar = Var(false)
+
+  /** Mutually exclusive with [[wordLimitTextVar]], the same pattern `GameSetupPage` used before this control moved
+    * here. Defaults to `true`: "use every eligible word". Named `wordLimitTextVar`, not `wordCountVar` — the page
+    * already has an unrelated `wordCountVar: Var[Int]` (the play's own fixed word count, shown in the "3 of 12"
+    * progress line); see the naming note further down.
+    */
+  private val selectAllVar     = Var(true)
+  private val wordLimitTextVar = Var("")
+
+  private val wordLimitSignal: Signal[Option[Int]] = {
+    selectAllVar.signal.combineWith(wordLimitTextVar.signal).map {
+      case (true, _)     => None
+      case (false, text) => text.trim.toIntOption.filter(_ > 0)
+    }
+  }
+
+  private val includeArticlesVar = Var(true)
+
+  /** Whether *either* resolved direction of the current pair involves German — the swap arrow flips which language is
+    * source, but German-either-way is symmetric, so this does not need to depend on [[swapDirectionVar]].
+    */
+  private val germanInvolvedSignal: Signal[Boolean] = {
+    gameVar.signal.map(_.exists(g => g.sourceLanguage == WordLanguage.De || g.targetLanguage == WordLanguage.De))
+  }
+
+  private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
+
+  private val previewWordsVar   = Var(List.empty[GameSetupWord])
+  private val previewLoadingVar = Var(false)
+
+  /** Fires once, right after the game successfully loads — see `render`'s `loadBus` wiring. Merged into
+    * [[previewTriggerStream]] below so the preview populates on first entering the Play screen, not only after the
+    * reader touches a control: `Signal.updates` (relied on for the reactive refetch-on-change half) excludes a signal's
+    * starting value, so relying on it alone left `renderPreviewList` showing the "no eligible words" message on entry
+    * even when eligible words existed. Same `EventStream.merge(signal.updates, bus.events.sample(signal))` shape as
+    * `GameSetupPage.formRequests`/`AdminUsersPage.listRequests`, just triggered by the load succeeding instead of an
+    * explicit reload button.
+    */
+  private val gameLoadedBus = new EventBus[Unit]()
+
+  /** Refetches the play-setup preview whenever direction or preference changes, once the game itself has loaded —
+    * mirrors `GameSetupPage.wordsQuerySignal`'s reasoning, one screen over.
+    */
+  private val previewQuerySignal: Signal[(Boolean, WordPreference)] = {
+    swapDirectionVar.signal.combineWith(wordPreferenceVar.signal).distinct
+  }
+
+  private val previewTriggerStream: EventStream[(Boolean, WordPreference)] = {
+    EventStream.merge(previewQuerySignal.updates, gameLoadedBus.events.sample(previewQuerySignal))
+  }
+
+  /** Whether the *reverse* direction's pool is empty — the swap arrow (`renderDirectionSwap`) disables on this, per the
+    * design doc: swapping into an empty pool would make `startPlay` fail its unreachable-from-the-UI `badRequest` case.
+    * Fetched right after each current-direction preview settles ([[reversePreviewTriggerBus]]), rather than on its own
+    * independent `gameLoadedBus`-merged trigger like [[previewTriggerStream]] — sequencing it after the primary fetch
+    * is simply so both previews don't fire in the same tick; neither call mints a guest (both go through
+    * `GameApiClient.playSetup` directly, an `optionalUser` read), so there is no session race to avoid here any more.
+    */
+  private val reversePoolEmptyVar = Var(false)
+
+  private val reversePreviewQuerySignal: Signal[(Boolean, WordPreference)] = {
+    swapDirectionVar.signal.map(!_).combineWith(wordPreferenceVar.signal).distinct
+  }
+
+  private val reversePreviewTriggerBus = new EventBus[Unit]()
+
   private val startingVar   = Var(false)
   private val submittingVar = Var(false)
 
@@ -96,21 +178,16 @@ private class GameInstancePage(slug: String) {
     */
   private val readerVar = Var(Option.empty[User])
 
-  private val loadBus    = new EventBus[Unit]()
-  private val startBus   = new EventBus[Unit]()
-  private val nextBus    = new EventBus[Unit]()
-  private val submitBus  = new EventBus[Unit]()
-  private val resultsBus = new EventBus[Unit]()
+  private val loadBus      = new EventBus[Unit]()
+  private val startBus     = new EventBus[Unit]()
+  private val playAgainBus = new EventBus[Unit]()
+  private val nextBus      = new EventBus[Unit]()
+  private val submitBus    = new EventBus[Unit]()
+  private val resultsBus   = new EventBus[Unit]()
 
   private val renameEditBus   = new EventBus[Unit]()
   private val renameCancelBus = new EventBus[Unit]()
   private val renameSaveBus   = new EventBus[Unit]()
-
-  /** Owner-only, shown only for a `randomizeEachPlay = false` game — see `GameService.reshuffle`'s doc comment. No
-    * separate "editing" state the way rename has: one click, one request, nothing to confirm first.
-    */
-  private val reshufflingVar = Var(false)
-  private val reshuffleBus   = new EventBus[Unit]()
 
   private val phaseSignal: Signal[Phase] = {
     playIdVar.signal
@@ -148,6 +225,21 @@ private class GameInstancePage(slug: String) {
     }
   }
 
+  /** Clears the previous play's finish state AND `playIdVar`, which is what lets `phaseSignal` fall back to
+    * `Phase.NotStarted` (the variant picker) — shared by both the real "Start" trigger ([[startBus]], which also flips
+    * `startingVar` since a network call is about to fire) and "Play again" ([[playAgainBus]], which leaves
+    * `startingVar` alone since nothing is loading yet — see `renderResults`).
+    */
+  private def resetForPicker(): Unit = {
+    Var.set(
+      errorVar    -> None,
+      finishedVar -> false,
+      resultsVar  -> None,
+      promptVar   -> None,
+      playIdVar   -> None,
+    )
+  }
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-xl mx-auto",
@@ -166,6 +258,7 @@ private class GameInstancePage(slug: String) {
         Observer[Either[ApiError, GameDetail]] {
           case Right(detail) =>
             Var.set(gameVar -> Some(detail), nameVar -> detail.name, missingVar -> false, errorVar -> None)
+            gameLoadedBus.emit(())
           case Left(err)     =>
             // A quiz that is not there is a different thing from a request that failed, and reads differently.
             if (err.status == 404)
@@ -175,26 +268,62 @@ private class GameInstancePage(slug: String) {
         },
       startBus.events -->
         Observer[Unit] { _ =>
-          // Also clears the previous play's finish state, so this doubles as "Play again" — see `renderResults`.
-          Var.set(
-            startingVar -> true,
-            errorVar    -> None,
-            finishedVar -> false,
-            resultsVar  -> None,
-            promptVar   -> None,
-          )
+          // A network call is about to fire (the second `startBus.events` subscriber below), so flip `startingVar`
+          // immediately alongside the shared reset.
+          startingVar.set(true)
+          resetForPicker()
         },
-      startBus.events.flatMapSwitch(_ => asReader(() => GameApiClient.startPlay(slug))) -->
+      playAgainBus.events -->
+        Observer[Unit] { _ =>
+          // Only resets state — nothing is loading yet. This subscriber is deliberately NOT wired to the
+          // `startPlay`-calling subscriber below, so "Play again" lands back on the variant picker (`phaseSignal`
+          // falls to `Phase.NotStarted` once `playIdVar` is `None`) and gives the reader a real interactive stop to
+          // reconfigure before the next play starts — see `renderResults`.
+          resetForPicker()
+        },
+      startBus.events
+        .withCurrentValueOf(
+          swapDirectionVar.signal,
+          wordLimitSignal,
+          includeArticlesVar.signal,
+          wordPreferenceVar.signal,
+        )
+        .flatMapSwitch { case (swap, limit, articles, preference) =>
+          asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference))
+        } -->
         Observer[Either[ApiError, PlayStarted]] {
           case Right(started) =>
-            Var.set(
-              playIdVar    -> Some(started.playId),
-              wordCountVar -> started.wordCount,
-              startingVar  -> false,
-            )
+            // `wordCountVar` here is the pre-existing play-progress var (see the naming note above), set from the
+            // server's actual sampled count — unrelated to this task's own `wordLimitTextVar`.
+            Var.set(playIdVar -> Some(started.playId), wordCountVar -> started.wordCount, startingVar -> false)
             nextBus.emit(())
           case Left(err)      =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
+        },
+      previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
+      previewTriggerStream
+        .filterWith(gameVar.signal.map(_.isDefined))
+        .flatMapSwitch { case (swap, preference) => GameApiClient.playSetup(slug, swap, preference) } -->
+        Observer[Either[ApiError, List[GameSetupWord]]] {
+          case Right(words) =>
+            Var.set(previewWordsVar -> words, previewLoadingVar -> false)
+            reversePreviewTriggerBus.emit(())
+          case Left(err)    =>
+            Var.set(previewLoadingVar -> false, errorVar -> Some(err.message))
+            reversePreviewTriggerBus.emit(())
+        },
+      // The swap arrow's own `disabled` source — see [[reversePoolEmptyVar]]'s doc comment for why this is
+      // sequenced off the primary preview settling rather than given its own `gameLoadedBus`-merged trigger.
+      reversePreviewTriggerBus.events
+        .sample(reversePreviewQuerySignal)
+        .filterWith(gameVar.signal.map(_.isDefined))
+        .flatMapSwitch { case (swap, preference) => GameApiClient.playSetup(slug, swap, preference) } -->
+        Observer[Either[ApiError, List[GameSetupWord]]] {
+          case Right(words) =>
+            reversePoolEmptyVar.set(words.isEmpty)
+          case Left(_)      =>
+            // A failed probe should not lock the reader out of swapping — fail open, same as the button's default.
+            reversePoolEmptyVar.set(false)
         },
       nextPromptStream --> Observer[Either[ApiError, GamePrompt]] {
         case Right(prompt) =>
@@ -250,18 +379,6 @@ private class GameInstancePage(slug: String) {
             )
           }
       },
-      reshuffleStream --> Observer[Either[ApiError, Unit]] {
-        case Right(_)  =>
-          Var.set(reshufflingVar -> false, noticeVar -> Some(I18n.t(UiKeys.gameInstanceReshuffled)))
-        case Left(err) =>
-          if (err.status == 403) {
-            // Same reasoning as the rename 403 above: a stale local hint, or the same account signed in elsewhere.
-            GameOwnership.forget(slug)
-            Var.set(isOwnerVar -> false, reshufflingVar -> false, errorVar -> Some(err.message))
-          } else {
-            Var.set(reshufflingVar -> false, errorVar -> Some(err.message))
-          }
-      },
       // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
       // stream this triggers (`loadBus`, above) has to already have a subscriber when this fires, or the mount's own
       // reload is emitted to nobody and silently lost, leaving the quiz stuck loading forever.
@@ -302,15 +419,6 @@ private class GameInstancePage(slug: String) {
       .flatMapSwitch { text =>
         renameSubmittingVar.set(true)
         GameApiClient.rename(slug, text)
-      }
-  }
-
-  private def reshuffleStream: EventStream[Either[ApiError, Unit]] = {
-    reshuffleBus.events
-      .filterWith(reshufflingVar.signal.not)
-      .flatMapSwitch { _ =>
-        reshufflingVar.set(true)
-        GameApiClient.reshuffle(slug)
       }
   }
 
@@ -423,7 +531,7 @@ private class GameInstancePage(slug: String) {
   private def openQr(): Unit = {
     Var.set(qrOpenVar -> true, qrErrorVar -> None)
     if (qrDataUriVar.now().isEmpty) {
-      QRCode.toDataURL(pageUrl()).toFuture.onComplete {
+      generateQr(pageUrl()).onComplete {
         case Success(uri) =>
           qrDataUriVar.set(Some(uri))
         case Failure(_)   =>
@@ -494,20 +602,6 @@ private class GameInstancePage(slug: String) {
           )
         )
       },
-      // Only for a fixed-pool game — see `reshufflingVar`'s doc comment. `gameVar` is read reactively rather than
-      // `.now()`'d: a rename response also carries `randomizeEachPlay`, so this stays correct even though that field
-      // itself never actually changes from a rename.
-      child.maybe <-- isOwnerVar.signal.combineWith(gameVar.signal).map { case (owner, game) =>
-        Option.when(owner && game.exists(!_.randomizeEachPlay))(
-          button(
-            cls := "btn btn-ghost btn-xs",
-            typ := "button",
-            disabled <-- reshufflingVar.signal,
-            I18n.t(UiKeys.gameInstanceReshuffle),
-            onClick.mapToUnit --> reshuffleBus.writer,
-          )
-        )
-      },
       // Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
       // comment. Links to the results listing rather than opening it here, the same split `MyGamesPage`/`GameInstance`
       // already draw between "this game" and "a listing about it".
@@ -572,12 +666,150 @@ private class GameInstancePage(slug: String) {
   }
 
   private def renderStart(): HtmlElement = {
-    button(
-      cls := "btn btn-primary",
-      typ := "button",
-      disabled <-- startingVar.signal,
-      I18n.t(UiKeys.gameInstanceStart),
-      onClick.mapToUnit --> startBus.writer,
+    div(
+      cls := "flex flex-col gap-4",
+      renderDirectionSwap(),
+      renderWordLimitControls(),
+      renderIncludeArticlesControl(),
+      renderPreferenceControl(),
+      renderPreviewList(),
+      button(
+        cls := "btn btn-primary",
+        typ := "button",
+        disabled <-- startingVar.signal,
+        I18n.t(UiKeys.gameInstanceStart),
+        onClick.mapToUnit --> startBus.writer,
+      ),
+    )
+  }
+
+  /** `[source] <-> [target]` with no dropdowns — clicking the arrow flips [[swapDirectionVar]], which decides the
+    * play's actual direction independent of the game's own stored one. Labels read from [[gameVar]] directly
+    * (unaffected by the swap toggle itself — this is a display order, not a fetch), swapped in place when the toggle is
+    * on.
+    */
+  private def renderDirectionSwap(): HtmlElement = {
+    div(
+      cls := "flex items-center gap-2",
+      child <-- gameVar.signal.combineWith(swapDirectionVar.signal).map {
+        case (Some(game), swapped) =>
+          val (first, second) =
+            if (swapped) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
+          div(
+            cls := "flex items-center gap-2",
+            span(cls := "font-medium", Labels.language(first)),
+            button(
+              cls    := "btn btn-ghost btn-xs",
+              typ    := "button",
+              title  := I18n.t(UiKeys.gameInstanceDirectionSwap),
+              // Disabled/no-op if the reverse direction's pool is empty — mirrors `swapDirection`'s `badRequest`
+              // case being unreachable from the UI. See [[reversePoolEmptyVar]].
+              disabled <-- reversePoolEmptyVar.signal,
+              "⇄",
+              onClick.mapToUnit --> Observer[Unit](_ => swapDirectionVar.update(!_)),
+            ),
+            span(cls := "font-medium", Labels.language(second)),
+          )
+        case (None, _)             =>
+          emptyNode
+      },
+    )
+  }
+
+  /** Moved verbatim from the old `GameSetupPage`, just retargeted at [[selectAllVar]]/[[wordLimitTextVar]] here. */
+  private def renderWordLimitControls(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceWordLimitLabel)),
+      label(
+        cls    := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ    := "checkbox",
+          cls    := "checkbox checkbox-sm",
+          controlled(
+            checked <-- selectAllVar.signal,
+            onClick.mapToChecked --> Observer[Boolean] { on =>
+              if (on) Var.set(selectAllVar -> true, wordLimitTextVar -> "") else selectAllVar.set(false)
+            },
+          ),
+        ),
+        span(cls := "label-text text-sm", I18n.t(UiKeys.gameInstanceWordLimitSelectAll)),
+      ),
+      label(
+        cls    := "flex items-center gap-2",
+        span(cls  := "label-text text-sm", I18n.t(UiKeys.gameInstanceWordLimitCount)),
+        input(
+          typ     := "number",
+          minAttr := "1",
+          cls     := "input input-sm w-24",
+          disabled <-- selectAllVar.signal,
+          controlled(
+            value <-- wordLimitTextVar.signal,
+            onInput.mapToValue --> Observer[String] { text =>
+              Var.set(wordLimitTextVar -> text, selectAllVar -> false)
+            },
+          ),
+        ),
+      ),
+    )
+  }
+
+  private def renderIncludeArticlesControl(): HtmlElement = {
+    div(
+      child.maybe <-- germanInvolvedSignal.map { involved =>
+        Option.when(involved)(
+          label(
+            cls := "flex items-center gap-2 cursor-pointer",
+            input(
+              typ := "checkbox",
+              cls := "checkbox checkbox-sm",
+              controlled(checked <-- includeArticlesVar.signal, onClick.mapToChecked --> includeArticlesVar.writer),
+            ),
+            div(
+              span(cls := "label-text text-sm", I18n.t(UiKeys.gameInstanceIncludeArticlesLabel)),
+              p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameInstanceIncludeArticlesHint)),
+            ),
+          )
+        )
+      }
+    )
+  }
+
+  private def renderPreferenceControl(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstancePreferenceLabel)),
+      select(
+        cls    := "select select-sm w-full max-w-xs",
+        option(value := "all", I18n.t(UiKeys.gameInstancePreferenceAll)),
+        option(value := "unplayed", I18n.t(UiKeys.gameInstancePreferenceUnplayed)),
+        option(value := "mostMistakes", I18n.t(UiKeys.gameInstancePreferenceMostMistakes)),
+        controlled(
+          value <-- wordPreferenceVar.signal.map(WordPreference.code),
+          onChange.mapToValue --> wordPreferenceVar.writer.contramap[String](code =>
+            WordPreference.fromString(code).getOrElse(WordPreference.All)
+          ),
+        ),
+      ),
+    )
+  }
+
+  /** The chosen direction/preference's eligible pool preview — same shape as `GameSetupPage.renderWordsList`, one
+    * screen over.
+    */
+  private def renderPreviewList(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceWordsHeading)),
+      span(
+        cls    := "label-text text-sm opacity-70",
+        child.text <-- previewWordsVar.signal.map(words =>
+          I18n.plural(UiKeys.gameInstanceWordsCount, words.size.toLong)
+        ),
+      ),
+      child.maybe <-- previewWordsVar.signal.combineWith(previewLoadingVar.signal).map { case (words, loading) =>
+        Option.when(words.isEmpty && !loading)(p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameInstanceWordsEmpty)))
+      },
     )
   }
 
@@ -628,6 +860,7 @@ private class GameInstancePage(slug: String) {
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
+      p(cls := "text-sm opacity-70", Labels.variant(results.variant)),
       renderResultsTable(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",
@@ -636,7 +869,7 @@ private class GameInstancePage(slug: String) {
           typ := "button",
           disabled <-- startingVar.signal,
           I18n.t(UiKeys.gameInstancePlayAgain),
-          onClick.mapToUnit --> startBus.writer,
+          onClick.mapToUnit --> playAgainBus.writer,
         ),
         a(
           cls := "link link-hover text-sm",

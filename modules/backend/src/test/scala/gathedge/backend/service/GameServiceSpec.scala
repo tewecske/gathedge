@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.db.{GameRepository, TextSearch, UserRepository, WordRepository, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage, WordPreference}
 import zio._
 import zio.test._
 
@@ -161,22 +161,6 @@ object GameServiceSpec extends ZIOSpecDefault {
           result <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, Nil).either
         } yield assertTrue(result == Left(GameFailure.NoTagsSelected))
       },
-      test("creating a game with a non-positive or too-large word limit fails validation") {
-        for {
-          owner    <- newUser()
-          tagId    <- eligibleTag(owner, "lesson1", WordLanguage.De, WordLanguage.Hu)
-          zero     <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(0)).either
-          negative <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(-1)).either
-          tooHigh  <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(501)).either
-        } yield assertTrue(
-          zero.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
-          negative.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
-          tooHigh.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
-        )
-      },
       test("once every adjective-noun combination is taken, a new game still gets a slug, with a numeric suffix") {
         for {
           owner <- newUser()
@@ -267,27 +251,18 @@ object GameServiceSpec extends ZIOSpecDefault {
           results.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct, AnswerOutcome.Typo, AnswerOutcome.Wrong),
         )
       },
-      test("a word limit fixes the play's word count below the eligible pool, and the pool alone is unaffected") {
-        for {
-          owner   <- newUser()
-          tagId   <- eligibleTagWithPairs(owner, "limited", WordLanguage.De, WordLanguage.Hu, count = 5)
-          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(2))
-          started <- GameService.startPlay(created.slug, owner)
-        } yield assertTrue(created.wordLimit.contains(2), started.wordCount == 2, started.maxScore == 4)
-      },
       test("a limited play's word set is fixed at start and stays consistent across the whole playthrough") {
         for {
           owner     <- newUser()
           tagId     <- eligibleTagWithPairs(owner, "sampled", WordLanguage.De, WordLanguage.Hu, count = 5)
-          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = Some(2))
-          started   <- GameService.startPlay(created.slug, owner)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started   <- GameService.startPlay(created.slug, owner, wordLimit = Some(2))
           scenarios <- playThrough(started.playId, "sampled", owner)
           results   <- GameService.getResults(started.playId, owner)
         } yield assertTrue(
           scenarios.size == 2,
           results.wordCount == 2,
           results.answers.size == 2,
-          // Two distinct words answered — the sample never repeats a word or drifts mid-play.
           results.answers.map(_.wordText).distinct.size == 2,
         )
       },
@@ -295,101 +270,135 @@ object GameServiceSpec extends ZIOSpecDefault {
         for {
           owner   <- newUser()
           tagId   <- eligibleTagWithPairs(owner, "unlimited", WordLanguage.De, WordLanguage.Hu, count = 4)
-          created <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = None)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           started <- GameService.startPlay(created.slug, owner)
-        } yield assertTrue(created.wordLimit.isEmpty, started.wordCount == 4, started.maxScore == 8)
+        } yield assertTrue(started.wordCount == 4, started.maxScore == 8)
       },
-      test("a fixed word pool is drawn once at creation and every playthrough reuses the same words") {
+      test("swapDirection reverses the resolved direction and records it on the play") {
         for {
-          owner     <- newUser()
-          tagId     <- eligibleTagWithPairs(owner, "fixed", WordLanguage.De, WordLanguage.Hu, count = 5)
-          created   <- GameService.createGame(
-                         owner,
-                         WordLanguage.De,
-                         WordLanguage.Hu,
-                         List(tagId),
-                         wordLimit = Some(2),
-                         randomizeEachPlay = false,
-                       )
-          first     <- GameService.startPlay(created.slug, owner)
-          firstIds  <- playThrough(first.playId, "fixed", owner) *>
-                         GameService.getResults(first.playId, owner).map(_.answers.map(_.wordText).toSet)
-          second    <- GameService.startPlay(created.slug, owner)
-          secondIds <- playThrough(second.playId, "fixed", owner) *>
-                         GameService.getResults(second.playId, owner).map(_.answers.map(_.wordText).toSet)
+          owner          <- newUser()
+          tagId          <- eligibleTagWithPairs(owner, "swap", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created        <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          normal         <- GameService.startPlay(created.slug, owner)
+          swapped        <- GameService.startPlay(created.slug, owner, swapDirection = true)
+          normalResults  <- GameService.getResults(normal.playId, owner)
+          swappedResults <- GameService.getResults(swapped.playId, owner)
         } yield assertTrue(
-          created.randomizeEachPlay == false,
-          first.wordCount == 2,
-          second.wordCount == 2,
-          firstIds == secondIds,
+          normalResults.variant.sourceLanguage == WordLanguage.De,
+          normalResults.variant.targetLanguage == WordLanguage.Hu,
+          swappedResults.variant.sourceLanguage == WordLanguage.Hu,
+          swappedResults.variant.targetLanguage == WordLanguage.De,
         )
       },
-      test("randomizeEachPlay is forced true when no word limit is set, even if fixed is requested") {
+      test("a play-time word limit samples the play, without ever touching the game itself") {
         for {
           owner   <- newUser()
-          tagId   <- eligibleTagWithPairs(owner, "everything", WordLanguage.De, WordLanguage.Hu, count = 2)
-          created <- GameService.createGame(
-                       owner,
-                       WordLanguage.De,
-                       WordLanguage.Hu,
-                       List(tagId),
-                       wordLimit = None,
-                       randomizeEachPlay = false,
-                     )
-        } yield assertTrue(created.randomizeEachPlay == true)
+          tagId   <- eligibleTagWithPairs(owner, "playLimit", WordLanguage.De, WordLanguage.Hu, count = 5)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, wordLimit = Some(2))
+          results <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          started.wordCount == 2,
+          started.maxScore == 4,
+          results.variant.wordLimit.contains(2),
+        )
       },
-      test("reshuffle is refused to anyone but the game's owner") {
+      test("an out-of-range play-time word limit fails validation") {
         for {
           owner   <- newUser()
-          other   <- newUser()
-          tagId   <- eligibleTagWithPairs(owner, "reshuffleGuard", WordLanguage.De, WordLanguage.Hu, count = 5)
-          created <- GameService.createGame(
-                       owner,
-                       WordLanguage.De,
-                       WordLanguage.Hu,
-                       List(tagId),
-                       wordLimit = Some(2),
-                       randomizeEachPlay = false,
-                     )
-          result  <- GameService.reshuffle(created.slug, other).either
-        } yield assertTrue(result == Left(GameFailure.NotOwner))
+          tagId   <- eligibleTagWithPairs(owner, "playLimitInvalid", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          result  <- GameService.startPlay(created.slug, owner, wordLimit = Some(0)).either
+        } yield assertTrue(result.left.exists(_.isInstanceOf[GameFailure.ValidationError]))
       },
-      test("reshuffle is refused on a game with nothing fixed to reshuffle") {
+      test("Unplayed preference fills the sample from never-answered words first, in this direction only") {
+        for {
+          owner      <- newUser()
+          tagId      <- eligibleTagWithPairs(owner, "unplayedPref", WordLanguage.De, WordLanguage.Hu, count = 4)
+          created    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          warmup     <- GameService.startPlay(created.slug, owner, wordLimit = Some(1))
+          _          <- playThrough(warmup.playId, "unplayedPref", owner)
+          warmupWord <- GameService.getResults(warmup.playId, owner).map(_.answers.head.wordText)
+          narrowed   <- GameService.startPlay(
+                          created.slug,
+                          owner,
+                          wordLimit = Some(3),
+                          wordPreference = WordPreference.Unplayed,
+                        )
+          results    <- GameService.getResults(narrowed.playId, owner)
+        } yield assertTrue(
+          // Three of the four eligible words are sampled; the one already answered by this player, in this
+          // direction, is the one most likely left out — asserted as "never all four fit, and the previously
+          // answered word is not required to reappear" rather than a flaky exact-set check, since ties among
+          // the three never-played words are broken by shuffle.
+          results.wordCount == 3,
+          results.variant.wordPreference == WordPreference.Unplayed,
+          !results.answers.exists(_.wordText == warmupWord),
+        )
+      },
+      test("MostMistakes preference ranks by this player's wrong-answer count, in this direction only") {
         for {
           owner       <- newUser()
-          tagId       <- eligibleTagWithPairs(owner, "notFixed", WordLanguage.De, WordLanguage.Hu, count = 5)
-          alwaysFresh <- GameService.createGame(
+          tag         <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L)
+          mistakeWord <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "mistake-source"))
+          mistakeTgt  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "mistake-target"))
+          _           <- WordRepository.pairTranslation(mistakeWord.id, tag.id, mistakeTgt.id, 0L)
+          cleanWord   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "clean-source"))
+          cleanTgt    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "clean-target"))
+          _           <- WordRepository.pairTranslation(cleanWord.id, tag.id, cleanTgt.id, 0L)
+          created     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          warmup      <- GameService.startPlay(created.slug, owner)
+          prompt1     <- GameService.nextPrompt(warmup.playId, owner)
+          firstText    = prompt1.wordText.get
+          _           <- GameService.submitAnswer(
+                           warmup.playId,
+                           prompt1.wordId.get,
+                           if (firstText.contains("mistake")) "totally-unrelated" else "clean-target",
                            owner,
-                           WordLanguage.De,
-                           WordLanguage.Hu,
-                           List(tagId),
-                           wordLimit = Some(2),
-                           randomizeEachPlay = true,
                          )
-          everything  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), wordLimit = None)
-          resultFresh <- GameService.reshuffle(alwaysFresh.slug, owner).either
-          resultAll   <- GameService.reshuffle(everything.slug, owner).either
+          prompt2     <- GameService.nextPrompt(warmup.playId, owner)
+          secondText   = prompt2.wordText.get
+          _           <- GameService.submitAnswer(
+                           warmup.playId,
+                           prompt2.wordId.get,
+                           if (secondText.contains("mistake")) "totally-unrelated" else "clean-target",
+                           owner,
+                         )
+          narrowed    <- GameService.startPlay(
+                           created.slug,
+                           owner,
+                           wordLimit = Some(1),
+                           wordPreference = WordPreference.MostMistakes,
+                         )
+          prompt3     <- GameService.nextPrompt(narrowed.playId, owner)
+          _           <- GameService.submitAnswer(narrowed.playId, prompt3.wordId.get, "mistake-target", owner)
+          results     <- GameService.getResults(narrowed.playId, owner)
         } yield assertTrue(
-          resultFresh == Left(GameFailure.NotFixedPool),
-          resultAll == Left(GameFailure.NotFixedPool),
+          results.wordCount == 1,
+          results.variant.wordPreference == WordPreference.MostMistakes,
+          // mistake-source is answered wrong regardless of prompt order (the branches above always answer
+          // whichever prompt is the mistake word incorrectly and the clean word correctly), so it's the only
+          // word with a recorded mistake — a correct MostMistakes ranking must pick it deterministically.
+          results.answers.head.wordText == "mistake-source",
         )
       },
-      test("a successful reshuffle redraws the fixed pool from the current eligible words") {
+      test("playSetupPreview answers the resolved-direction pool without starting a play") {
         for {
           owner   <- newUser()
-          tagId   <- eligibleTagWithPairs(owner, "reshuffled", WordLanguage.De, WordLanguage.Hu, count = 5)
-          created <- GameService.createGame(
-                       owner,
-                       WordLanguage.De,
-                       WordLanguage.Hu,
-                       List(tagId),
-                       wordLimit = Some(2),
-                       randomizeEachPlay = false,
-                     )
-          _       <- GameService.reshuffle(created.slug, owner)
-          started <- GameService.startPlay(created.slug, owner)
-        } yield assertTrue(started.wordCount == 2, started.maxScore == 4)
+          tagId   <- eligibleTagWithPairs(owner, "previewPref", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          preview <- GameService.playSetupPreview(created.slug, Some(owner), swapDirection = false, WordPreference.All)
+          swapped <- GameService.playSetupPreview(created.slug, Some(owner), swapDirection = true, WordPreference.All)
+        } yield assertTrue(preview.size == 3, swapped.size == 3)
+      },
+      test("playSetupPreview answers the same pool for an anonymous caller, with no play history to prefer by") {
+        for {
+          owner    <- newUser()
+          tagId    <- eligibleTagWithPairs(owner, "previewAnon", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          anon     <- GameService.playSetupPreview(created.slug, None, swapDirection = false, WordPreference.All)
+          unplayed <- GameService.playSetupPreview(created.slug, None, swapDirection = false, WordPreference.Unplayed)
+        } yield assertTrue(anon.size == 3, unplayed.size == 3)
       },
       test("starting a play when the game's tags currently carry nothing eligible fails") {
         for {
@@ -495,23 +504,21 @@ object GameServiceSpec extends ZIOSpecDefault {
       },
       test("includeDefiniteArticles defaults to true and, when false, strips the article everywhere") {
         for {
-          owner       <- newUser()
-          tag         <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L)
-          source      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "szekreny"))
-          target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Der)))
-          _           <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
-          defaultGame <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
-          bareGame    <-
-            GameService
-              .createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id), includeDefiniteArticles = false)
-          started     <- GameService.startPlay(bareGame.slug, owner)
-          prompt      <- GameService.nextPrompt(started.playId, owner)
-          _           <- GameService.submitAnswer(started.playId, prompt.wordId.get, "Schrank", owner)
-          results     <- GameService.getResults(started.playId, owner)
+          owner          <- newUser()
+          tag            <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L)
+          source         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "szekreny"))
+          target         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Der)))
+          _              <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created        <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          default        <- GameService.startPlay(created.slug, owner)
+          defaultResults <- GameService.getResults(default.playId, owner)
+          bare           <- GameService.startPlay(created.slug, owner, includeDefiniteArticles = false)
+          prompt         <- GameService.nextPrompt(bare.playId, owner)
+          _              <- GameService.submitAnswer(bare.playId, prompt.wordId.get, "Schrank", owner)
+          results        <- GameService.getResults(bare.playId, owner)
         } yield assertTrue(
-          defaultGame.includeDefiniteArticles,
-          !bareGame.includeDefiniteArticles,
-          // The article-free game scores the bare noun as correct, and shows it without "der" throughout.
+          defaultResults.variant.includeDefiniteArticles,
+          !results.variant.includeDefiniteArticles,
           results.answers.head.outcome == AnswerOutcome.Correct,
           results.answers.head.expectedText == "Schrank",
         )

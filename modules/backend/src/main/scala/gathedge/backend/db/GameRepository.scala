@@ -30,12 +30,10 @@ trait GameRepository {
     */
   def eligibleTags(sourceLanguage: String, targetLanguage: String): Task[List[(TagRow, Long)]]
 
-  /** Inserts `row`, one `game_tags` row per id in `tagIds`, and (for a `randomizeEachPlay = false` game) one
-    * `game_word_pool` row per pair in `wordPool`, as one unit of work — the same "row + linked rows" shape
-    * [[insertPlay]] models for `game_play_words`: a game whose row landed but whose tags or fixed pool didn't is not a
-    * state anything downstream can make sense of. `wordPool` is empty for a `randomizeEachPlay = true` game.
+  /** Inserts `row` and one `game_tags` row per id in `tagIds`, as one unit of work — a game whose row landed but whose
+    * tags didn't is not a state anything downstream can make sense of.
     */
-  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): Task[GameRow]
+  def insertGame(row: GameRow, tagIds: List[Long]): Task[GameRow]
 
   def tagsOf(gameId: Long): Task[List[TagRow]]
 
@@ -61,8 +59,7 @@ trait GameRepository {
   def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]]
 
   /** The same join shape as [[eligibleWordPairs]], through an explicit tag id list instead of `game_tags` — what the
-    * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all, and what
-    * `GameService` also uses to sample a `randomizeEachPlay = false` game's fixed pool, via its own tags.
+    * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all.
     */
   def eligibleWordPairsForTags(
     tagIds: List[Long],
@@ -83,20 +80,21 @@ trait GameRepository {
     */
   def wordPairsOf(playId: Long): Task[List[(Long, Long)]]
 
-  /** `gameId`'s fixed word pool, for a `randomizeEachPlay = false` game — written once by [[insertGame]] (or replaced
-    * by [[replaceGameWordPool]]) rather than sampled fresh by every play. Empty for a `randomizeEachPlay = true` game,
-    * which keeps no rows here at all. Order is not meaningful, the same as [[wordPairsOf]].
-    */
-  def wordPoolOf(gameId: Long): Task[List[(Long, Long)]]
-
-  /** Replaces `gameId`'s whole fixed word pool with `pairs`, in one transaction — the reshuffle action's only write.
-    * Deleting first and inserting fresh, rather than diffing, matches how small this table is expected to stay (one
-    * game's `wordLimit`, at most) and keeps the same "delete then insert" shape simple.
-    */
-  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): Task[Unit]
-
   /** Every answer recorded for `playId` so far, in the order they were answered. */
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]]
+
+  /** This player's `(word_id, outcome)` for every answer recorded against `gameId`, restricted to plays whose own
+    * `source_language`/`target_language` match the given direction — see [[GamePlayRow]]'s doc comment on why a play's
+    * variant, not the game's, decides direction. One row per answer, not deduped or aggregated: turning this into
+    * "played at all" / "how many mistakes" per word is [[gathedge.backend.service.GameService]]'s job, the same split
+    * this file draws for [[eligibleWordPairs]]'s dedup.
+    */
+  def answerOutcomesFor(
+    gameId: Long,
+    playerUserId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[List[(Long, String)]]
 
   /** Inserts `answer` and updates `game_plays.score` (and `finished_at`, when given) in one transaction — a play whose
     * answer landed but whose running score did not update is not a state either side of this should ever observe.
@@ -162,8 +160,8 @@ object GameRepository {
   def eligibleTags(sourceLanguage: String, targetLanguage: String): RIO[GameRepository, List[(TagRow, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleTags(sourceLanguage, targetLanguage))
 
-  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): RIO[GameRepository, GameRow] =
-    ZIO.serviceWithZIO[GameRepository](_.insertGame(row, tagIds, wordPool))
+  def insertGame(row: GameRow, tagIds: List[Long]): RIO[GameRepository, GameRow] =
+    ZIO.serviceWithZIO[GameRepository](_.insertGame(row, tagIds))
 
   def tagsOf(gameId: Long): RIO[GameRepository, List[TagRow]] =
     ZIO.serviceWithZIO[GameRepository](_.tagsOf(gameId))
@@ -200,14 +198,16 @@ object GameRepository {
   def wordPairsOf(playId: Long): RIO[GameRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.wordPairsOf(playId))
 
-  def wordPoolOf(gameId: Long): RIO[GameRepository, List[(Long, Long)]] =
-    ZIO.serviceWithZIO[GameRepository](_.wordPoolOf(gameId))
-
-  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): RIO[GameRepository, Unit] =
-    ZIO.serviceWithZIO[GameRepository](_.replaceGameWordPool(gameId, pairs))
-
   def answersOf(playId: Long): RIO[GameRepository, List[GamePlayAnswerRow]] =
     ZIO.serviceWithZIO[GameRepository](_.answersOf(playId))
+
+  def answerOutcomesFor(
+    gameId: Long,
+    playerUserId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): RIO[GameRepository, List[(Long, String)]] =
+    ZIO.serviceWithZIO[GameRepository](_.answerOutcomesFor(gameId, playerUserId, sourceLanguage, targetLanguage))
 
   def recordAnswer(
     answer: GamePlayAnswerRow,
@@ -283,7 +283,6 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def gamePlays       = quote(querySchema[GamePlayRow]("game_plays"))
   private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
   private inline def gamePlayWords   = quote(querySchema[GamePlayWordRow]("game_play_words"))
-  private inline def gameWordPool    = quote(querySchema[GameWordPoolRow]("game_word_pool"))
   // Read-only view of a table `UserRepository` owns, for the one question only this repository can ask: which
   // player played a tracked game. Reading another repository's tables is fine — see `UserRepository`'s own note
   // on this for `findAbandonedGuests`. The lambda parameter is `row`, never `user` — Postgres reserved word.
@@ -315,7 +314,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def insertGame(row: GameRow, tagIds: List[Long], wordPool: List[(Long, Long)] = Nil): Task[GameRow] = {
+  def insertGame(row: GameRow, tagIds: List[Long]): Task[GameRow] = {
     val inserted = transaction(
       for {
         id <- ctx.run(quote(games.insertValue(lift(row)).returningGenerated(_.id)))
@@ -325,24 +324,10 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                   liftQuery(links).foreach(row => gameTags.insert(_.gameId -> row.gameId, _.tagId -> row.tagId))
                 })
               }
-        _  <- ZIO.unless(wordPool.isEmpty) {
-                val links = wordPool.map { case (wordId, translationWordId) =>
-                  GameWordPoolRow(0L, id, wordId, translationWordId)
-                }
-                ctx.run(quote {
-                  liftQuery(links).foreach(row => {
-                    gameWordPool.insert(
-                      _.gameId            -> row.gameId,
-                      _.wordId            -> row.wordId,
-                      _.translationWordId -> row.translationWordId,
-                    )
-                  })
-                })
-              }
       } yield id
     )
     logged(inserted.map(id => row.copy(id = id))) { game =>
-      s"games.insert id=${game.id} owner=${row.ownerUserId} tags=${tagIds.size} pool=${wordPool.size}"
+      s"games.insert id=${game.id} owner=${row.ownerUserId} tags=${tagIds.size}"
     }
   }
 
@@ -456,41 +441,31 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"games.wordPairsOf play=$playId rows=${rows.size}")
   }
 
-  def wordPoolOf(gameId: Long): Task[List[(Long, Long)]] = {
-    val q = quote {
-      gameWordPool.filter(_.gameId == lift(gameId)).map(row => (row.wordId, row.translationWordId))
-    }
-    logged(run(ctx.run(q)))(rows => s"games.wordPoolOf game=$gameId rows=${rows.size}")
-  }
-
-  def replaceGameWordPool(gameId: Long, pairs: List[(Long, Long)]): Task[Unit] = {
-    val effect = transaction(
-      for {
-        _ <- ctx.run(quote(gameWordPool.filter(_.gameId == lift(gameId)).delete))
-        _ <- ZIO.unless(pairs.isEmpty) {
-               val links = pairs.map { case (wordId, translationWordId) =>
-                 GameWordPoolRow(0L, gameId, wordId, translationWordId)
-               }
-               ctx.run(quote {
-                 liftQuery(links).foreach(row => {
-                   gameWordPool.insert(
-                     _.gameId            -> row.gameId,
-                     _.wordId            -> row.wordId,
-                     _.translationWordId -> row.translationWordId,
-                   )
-                 })
-               })
-             }
-      } yield ()
-    )
-    logged(effect) { _ => s"games.replaceGameWordPool game=$gameId rows=${pairs.size}" }
-  }
-
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]] = {
     val q = quote {
       gamePlayAnswers.filter(_.playId == lift(playId)).sortBy(_.position)
     }
     logged(run(ctx.run(q)))(rows => s"games.answersOf play=$playId rows=${rows.size}")
+  }
+
+  def answerOutcomesFor(
+    gameId: Long,
+    playerUserId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[List[(Long, String)]] = {
+    val q = quote {
+      for {
+        play   <- gamePlays.filter(p => {
+                    p.gameId == lift(gameId) && p.playerUserId == lift(playerUserId) &&
+                    p.sourceLanguage == lift(sourceLanguage) && p.targetLanguage == lift(targetLanguage)
+                  })
+        answer <- gamePlayAnswers.join(a => a.playId == play.id)
+      } yield (answer.wordId, answer.outcome)
+    }
+    logged(run(ctx.run(q))) { rows =>
+      s"games.answerOutcomesFor game=$gameId player=$playerUserId rows=${rows.size}"
+    }
   }
 
   def recordAnswer(answer: GamePlayAnswerRow, newScore: Int, finishedAt: Option[Long]): Task[Unit] = {

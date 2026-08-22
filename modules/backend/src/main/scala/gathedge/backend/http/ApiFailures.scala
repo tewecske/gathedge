@@ -271,13 +271,13 @@ object ApiFailures {
     }
   }
 
-  // GameFailure gets seven mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
+  // GameFailure gets six mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
   // ValidationError (all BadRequest), get only ever raises NotFound, rename can raise NotFound/NotOwner/
-  // ValidationError, startPlay can raise NotFound/NoEligibleWords, reshuffle can raise NotFound/NotOwner/
-  // NotFixedPool, the three play-id endpoints (nextPrompt/submitAnswer/getResults) can raise NotFound/NotOwner, and
-  // the owner-facing results listing/detail (listPlays/getPlayDetail) can raise NotFound/NotOwner/NotTracked. A
-  // single wide mapping would force every one of them to describe statuses they cannot produce — the same reason
-  // the guest mappings below are four functions instead of one.
+  // ValidationError, startPlay can raise NotFound/NoEligibleWords/ValidationError, the three play-id endpoints
+  // (nextPrompt/submitAnswer/getResults) can raise NotFound/NotOwner, and the owner-facing results listing/detail
+  // (listPlays/getPlayDetail) can raise NotFound/NotOwner/NotTracked. A single wide mapping would force every one
+  // of them to describe statuses they cannot produce — the same reason the guest mappings below are four
+  // functions instead of one.
 
   def game(failure: GameFailure): ApiFailure.NotFound = {
     failure match {
@@ -322,40 +322,24 @@ object ApiFailures {
     }
   }
 
-  /** Starting a play: either the slug is unknown, or the game's tags currently carry nothing eligible to play. */
+  /** Starting a play: an unknown slug, an out-of-range `wordLimit`, or a resolved direction whose tags currently carry
+    * nothing eligible to play.
+    */
   def gameStartPlay(failure: GameFailure): ApiFailure.BadRequest | ApiFailure.NotFound = {
     failure match {
-      case GameFailure.NotFound        =>
+      case GameFailure.NotFound                     =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
-      case GameFailure.NoEligibleWords =>
+      case GameFailure.NoEligibleWords              =>
         ApiFailure.BadRequest(
           MessageRef(MessageKeys.gameNoEligibleWords),
           "This game has no eligible words to play right now",
         )
-      case _                           =>
-        // Unreachable through this mapping: startPlay never raises NoTagsSelected/TagNotEligible/ValidationError/
-        // NotOwner. Mapped anyway to keep the match total.
+      case GameFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case _                                        =>
+        // Unreachable through this mapping: startPlay never raises NoTagsSelected/TagNotEligible/NotOwner/
+        // NotTracked. Mapped anyway to keep the match total.
         ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
-    }
-  }
-
-  /** Reshuffling: an unknown slug, one that belongs to somebody else, or a game with nothing fixed to reshuffle
-    * (`randomizeEachPlay = true`, or no word limit at all).
-    */
-  def gameReshuffle(failure: GameFailure): ApiFailure.Conflict | ApiFailure.Forbidden | ApiFailure.NotFound = {
-    failure match {
-      case GameFailure.NotOwner     =>
-        ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
-      case GameFailure.NotFound     =>
-        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
-      case GameFailure.NotFixedPool =>
-        ApiFailure.Conflict(
-          MessageRef(MessageKeys.gameNotFixedPool),
-          "This game has nothing fixed to reshuffle",
-        )
-      case _                        =>
-        // Unreachable through this mapping. Mapped anyway to keep the match total.
-        ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
     }
   }
 

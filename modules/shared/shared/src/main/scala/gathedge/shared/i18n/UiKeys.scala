@@ -884,39 +884,40 @@ object UiKeys {
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
 
-  // How many words a play draws from the eligible pool: "select all" (the default, and today's only behaviour) or an
-  // exact count, mutually exclusive — see `GameSetupPage`'s checkbox/number-input pair.
-  val gameSetupWordLimitLabel: String     = key("ui.gameSetup.wordLimitLabel")
-  val gameSetupWordLimitSelectAll: String = key("ui.gameSetup.wordLimitSelectAll")
-  val gameSetupWordLimitCount: String     = key("ui.gameSetup.wordLimitCount")
-
   // The right-hand word list: exactly the eligible pool the selected tags/languages would draw from — see
-  // `GameService.eligibleWords`. Disabled while "select all" is picked, since there is nothing to fix.
+  // `GameApiClient.setupWords`.
   val gameSetupWordsHeading: String = key("ui.gameSetup.words.heading")
   val gameSetupWordsCount: String   = pluralKey("ui.gameSetup.words.count")
   val gameSetupWordsEmpty: String   = key("ui.gameSetup.words.empty")
-
-  // Whether a play's word sample is drawn fresh every time (today's only behaviour before this choice existed) or
-  // drawn once and fixed — see `GameRow.randomizeEachPlay`.
-  val gameSetupRandomizeLabel: String  = key("ui.gameSetup.randomize.label")
-  val gameSetupRandomizeAlways: String = key("ui.gameSetup.randomize.always")
-  val gameSetupRandomizeFixed: String  = key("ui.gameSetup.randomize.fixed")
 
   // Whether the owner can later see who played and how they scored — see `GameRow.trackResults`. Off by default,
   // like every prior addition to this screen.
   val gameSetupTrackResultsLabel: String = key("ui.gameSetup.trackResults.label")
   val gameSetupTrackResultsHint: String  = key("ui.gameSetup.trackResults.hint")
 
-  // Whether a German noun's "der"/"die"/"das" appears in the prompt, the accepted answer, and the results text —
-  // see `GameRow.includeDefiniteArticles`. On by default, unlike `trackResults`: this mirrors the article being
-  // shown everywhere else in the app. Only offered on the setup form when German is one of the two languages.
-  val gameSetupIncludeArticlesLabel: String = key("ui.gameSetup.includeArticles.label")
-  val gameSetupIncludeArticlesHint: String  = key("ui.gameSetup.includeArticles.hint")
-
   // -- Game instance -----------------------------------------------------------------------------
 
-  val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")
-  val gameInstanceStart: String             = key("ui.gameInstance.start")
+  val gameInstanceNotFound: String = key("ui.gameInstance.notFound")
+  val gameInstanceStart: String    = key("ui.gameInstance.start")
+
+  val gameInstanceDirectionSwap: String = key("ui.gameInstance.direction.swap")
+
+  val gameInstanceWordLimitLabel: String     = key("ui.gameInstance.wordLimit.label")
+  val gameInstanceWordLimitSelectAll: String = key("ui.gameInstance.wordLimit.selectAll")
+  val gameInstanceWordLimitCount: String     = key("ui.gameInstance.wordLimit.count")
+
+  val gameInstanceWordsHeading: String = key("ui.gameInstance.words.heading")
+  val gameInstanceWordsCount: String   = pluralKey("ui.gameInstance.words.count")
+  val gameInstanceWordsEmpty: String   = key("ui.gameInstance.words.empty")
+
+  val gameInstanceIncludeArticlesLabel: String = key("ui.gameInstance.includeArticles.label")
+  val gameInstanceIncludeArticlesHint: String  = key("ui.gameInstance.includeArticles.hint")
+
+  val gameInstancePreferenceLabel: String        = key("ui.gameInstance.preference.label")
+  val gameInstancePreferenceAll: String          = key("ui.gameInstance.preference.all")
+  val gameInstancePreferenceUnplayed: String     = key("ui.gameInstance.preference.unplayed")
+  val gameInstancePreferenceMostMistakes: String = key("ui.gameInstance.preference.mostMistakes")
+
   val gameInstanceProgress: String          = key("ui.gameInstance.progress")
   val gameInstanceAnswerLabel: String       = key("ui.gameInstance.answerLabel")
   val gameInstanceAnswerPlaceholder: String = key("ui.gameInstance.answerPlaceholder")
@@ -939,11 +940,6 @@ object UiKeys {
   // there is no server-asserted "you own this" flag to key it off instead.
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
-
-  // Owner-only, shown only for a `randomizeEachPlay = false` game — see `GameService.reshuffle`. No confirmation
-  // dialog, the same as rename.
-  val gameInstanceReshuffle: String  = key("ui.gameInstance.reshuffle")
-  val gameInstanceReshuffled: String = key("ui.gameInstance.reshuffled")
 
   // Share + QR code. The copy-link and share buttons act on this page's own URL
   // (`window.location.href`); the QR code is a PNG rendered locally by the `qrcode` npm package (see
@@ -971,6 +967,7 @@ object UiKeys {
   val gameResultsPlayerCol: String         = key("ui.gameResults.playerCol")
   val gameResultsScoreCol: String          = key("ui.gameResults.scoreCol")
   val gameResultsWordCountCol: String      = key("ui.gameResults.wordCountCol")
+  val gameResultsVariantCol: String        = key("ui.gameResults.variantCol")
   val gameResultsStartedCol: String        = key("ui.gameResults.startedCol")
   val gameResultsViewButton: String        = key("ui.gameResults.viewButton")
   val gameResultsGuestBadge: String        = key("ui.gameResults.guestBadge")
