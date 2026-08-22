@@ -17,8 +17,18 @@ object FlywayMigrator {
     * no schemas at all, so the test databases pass `None`. It must be the same value `DataSourceFactory` puts on the
     * pool's connections as their `search_path` — migrating into one schema and querying another fails at the first
     * request, long after this call has reported success.
+    *
+    * `target` is `None` everywhere except one place: `PostgresIntegrationSpec`'s V14-backfill test, which needs to stop
+    * at a specific version (`Some("13")`) to insert pre-migration-shaped rows before letting a second `migrate` call
+    * (with `target = None`, i.e. Flyway's own default "latest") apply the migration under test against real data. Every
+    * production caller (`Main`, `DictionaryImport`) and every other test always migrates to latest.
     */
-  def migrate(dataSource: DataSource, dialect: DbDialect, schema: Option[String]): Task[Unit] = {
+  def migrate(
+    dataSource: DataSource,
+    dialect: DbDialect,
+    schema: Option[String],
+    target: Option[String] = None,
+  ): Task[Unit] = {
     ZIO.attempt {
       val location          = {
         dialect match {
@@ -50,8 +60,9 @@ object FlywayMigrator {
       // `.schemas` rather than leaving it to the connection's search_path: it is what makes Flyway
       // issue the CREATE SCHEMA on a first boot, and what puts flyway_schema_history inside the
       // schema it manages rather than next to it in public.
-      schema
-        .fold(configured)(name => configured.schemas(name))
+      val withSchema        = schema.fold(configured)(name => configured.schemas(name))
+      target
+        .fold(withSchema)(version => withSchema.target(version))
         .load()
         .migrate()
     }.unit

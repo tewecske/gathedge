@@ -553,6 +553,122 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           outRange.isEmpty,
         )
       },
+      // V14's backfill is exercised nowhere else: every other test in this spec runs against `layer`'s shared
+      // container, which `containerDataSource` migrates straight to latest before any test body runs — so the four
+      // `UPDATE ... SET` statements in `V14__game_play_variants.sql` always operate on zero pre-existing rows in
+      // every other test here. This test builds its own separate, disposable container (not `layer`'s), stops
+      // Flyway at V13 — the last version before `games` loses `word_limit`/`randomize_each_play`/
+      // `include_definite_articles` and `game_plays` gains their per-play replacements — inserts one `games` row and
+      // one `game_plays` row by hand in that pre-V14 shape (raw SQL over the pooled connection, since
+      // `GameRow`/`GamePlayRow` model only the current, post-V14 shape), then lets a second `migrate` call (default
+      // target: latest) run V14 for real, against real data, and asserts the backfilled row carries exactly what its
+      // owning `games` row had. `word_preference` is not itself backfilled from anywhere (`games` never had this
+      // column) — asserted here anyway, as part of the row's full post-migration shape, to confirm it lands on its
+      // column default (`'all'`) rather than null.
+      test("V14 backfills game_plays' new per-play columns from the games row that predates them") {
+        def rawInsert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt = conn.prepareStatement(sql)
+              try {
+                params.zipWithIndex.foreach { case (p, idx) =>
+                  p match {
+                    case s: String  => stmt.setString(idx + 1, s)
+                    case l: Long    => stmt.setLong(idx + 1, l)
+                    case b: Boolean => stmt.setBoolean(idx + 1, b)
+                    case n: Int     => stmt.setInt(idx + 1, n)
+                  }
+                }
+                val rs = stmt.executeQuery()
+                try {
+                  rs.next()
+                  rs.getLong(1)
+                } finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        def rawSelectVariant(ds: DataSource, sql: String, playId: Long) = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt = conn.prepareStatement(sql)
+              try {
+                stmt.setLong(1, playId)
+                val rs = stmt.executeQuery()
+                try {
+                  rs.next()
+                  val source     = rs.getString("source_language")
+                  val target     = rs.getString("target_language")
+                  val limitValue = rs.getInt("word_limit")
+                  val wordLimit  = if (rs.wasNull()) None else Some(limitValue)
+                  val articles   = rs.getBoolean("include_definite_articles")
+                  val preference = rs.getString("word_preference")
+                  (source, target, wordLimit, articles, preference)
+                } finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        val testSchema = "gathedge"
+
+        ZIO.scoped {
+          for {
+            container  <-
+              ZIO.acquireRelease(
+                ZIO.attempt {
+                  PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:16-alpine")).start()
+                }
+              )(c => ZIO.attempt(c.stop()).orDie)
+            ds         <-
+              ZIO.acquireRelease(
+                ZIO.attempt {
+                  val config = new HikariConfig()
+                  config.setJdbcUrl(container.jdbcUrl)
+                  config.setDriverClassName("org.postgresql.Driver")
+                  config.setUsername(container.username)
+                  config.setPassword(container.password)
+                  config.setSchema(testSchema)
+                  new HikariDataSource(config)
+                }
+              )(ds => ZIO.attempt(ds.close()).orDie)
+            _          <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema), target = Some("13"))
+            userId     <-
+              rawInsert(
+                ds,
+                s"INSERT INTO $testSchema.users (email, created_at) VALUES (?, ?) RETURNING id",
+                List("pgv14backfill@example.com", 0L),
+              )
+            gameId     <-
+              rawInsert(
+                ds,
+                s"""INSERT INTO $testSchema.games
+                   |  (owner_user_id, slug, name, source_language, target_language, created_at, updated_at,
+                   |   word_limit, include_definite_articles)
+                   |VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""".stripMargin,
+                List(userId, "pgv14-backfill-slug", "V14 backfill game", "de", "hu", 0L, 0L, 5, false),
+              )
+            playId     <-
+              rawInsert(
+                ds,
+                s"""INSERT INTO $testSchema.game_plays (game_id, player_user_id, max_score, word_count, started_at)
+                   |VALUES (?, ?, ?, ?, ?) RETURNING id""".stripMargin,
+                List(gameId, userId, 10, 5, 0L),
+              )
+            _          <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema))
+            backfilled <-
+              rawSelectVariant(
+                ds,
+                s"""SELECT source_language, target_language, word_limit, include_definite_articles, word_preference
+                   |FROM $testSchema.game_plays WHERE id = ?""".stripMargin,
+                playId,
+              )
+          } yield assertTrue(backfilled == (("de", "hu", Some(5), false, "all")))
+        }
+      },
     ).provide(layer) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
   }
 }
