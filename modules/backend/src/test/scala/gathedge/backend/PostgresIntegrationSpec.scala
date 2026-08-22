@@ -247,7 +247,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             WordRepository.ensureWord(WordRow(0L, "hu", "Pgszo", "pgszo", "noun", "", 1, "user", None, 0L, "pgszo"))
           _          <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
           game       <- GameRepository.insertGame(
-                          GameRow(0L, target.id, "pg-wordlimit-slug", "PG Word Limit", "de", "hu", 0L, 0L, Some(1)),
+                          GameRow(0L, target.id, "pg-wordlimit-slug", "PG Word Limit", "de", "hu", 0L, 0L),
                           List(tag.id),
                         )
           play       <- GameRepository.insertPlay(
