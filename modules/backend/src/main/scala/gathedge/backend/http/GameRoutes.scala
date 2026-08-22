@@ -2,13 +2,14 @@ package gathedge.backend.http
 
 import gathedge.backend.service.{AuthService, GameService}
 import gathedge.shared.api.GameEndpoints
-import gathedge.shared.domain.{User, WordLanguage}
+import gathedge.shared.domain.{User, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   CreateGameRequest,
   GameCreated,
   Paging,
   RenameGameRequest,
   SortDirection,
+  StartPlayRequest,
   SubmitAnswerRequest,
 }
 import zio.*
@@ -36,6 +37,13 @@ object GameRoutes {
     */
   private def languageOf(requested: Option[String]): WordLanguage = {
     requested.flatMap(WordLanguage.fromString).getOrElse(WordLanguage.En)
+  }
+
+  /** A `wordPreference` query/body value, read leniently like [[languageOf]]: an unrecognised or missing one falls
+    * back to [[WordPreference.All]] rather than failing the request.
+    */
+  private def preferenceOf(requested: Option[String]): WordPreference = {
+    requested.flatMap(WordPreference.fromString).getOrElse(WordPreference.All)
   }
 
   /** `"1,2,3"` -> `[1, 2, 3]`, silently dropping anything that fails to parse — the setup screen never sends a
@@ -95,15 +103,7 @@ object GameRoutes {
       handler { (body: CreateGameRequest) =>
         userId.flatMap(id => {
           GameService
-            .createGame(
-              id,
-              body.sourceLanguage,
-              body.targetLanguage,
-              body.tagIds,
-              body.wordLimit,
-              body.randomizeEachPlay,
-              body.trackResults,
-            )
+            .createGame(id, body.sourceLanguage, body.targetLanguage, body.tagIds, body.trackResults)
             .map(detail => GameCreated(detail.slug, detail.name))
             .mapError(ApiFailures.gameCreate)
         })
@@ -125,18 +125,26 @@ object GameRoutes {
     )
   }
 
-  private val reshuffleRoute = {
-    GameEndpoints.reshuffle.implementHandler(
-      handler { (slug: String) =>
-        userId.flatMap(id => GameService.reshuffle(slug, id).mapError(ApiFailures.gameReshuffle))
+  private val startPlayRoute = {
+    GameEndpoints.startPlay.implementHandler(
+      handler { (slug: String, body: StartPlayRequest) =>
+        userId.flatMap(id =>
+          GameService
+            .startPlay(slug, id, body.swapDirection, body.wordLimit, body.includeDefiniteArticles, body.wordPreference)
+            .mapError(ApiFailures.gameStartPlay)
+        )
       }
     )
   }
 
-  private val startPlayRoute = {
-    GameEndpoints.startPlay.implementHandler(
-      handler { (slug: String) =>
-        userId.flatMap(id => GameService.startPlay(slug, id).mapError(ApiFailures.gameStartPlay))
+  private val playSetupRoute = {
+    GameEndpoints.playSetup.implementHandler(
+      handler { (slug: String, swapDirection: Option[Boolean], wordPreference: Option[String]) =>
+        userId.flatMap(id =>
+          GameService
+            .playSetupPreview(slug, id, swapDirection.getOrElse(false), preferenceOf(wordPreference))
+            .mapError(ApiFailures.game)
+        )
       }
     )
   }
@@ -213,8 +221,8 @@ object GameRoutes {
       myPlaysRoute,
       createRoute,
       renameRoute,
-      reshuffleRoute,
       startPlayRoute,
+      playSetupRoute,
       nextPromptRoute,
       submitAnswerRoute,
       resultsRoute,
