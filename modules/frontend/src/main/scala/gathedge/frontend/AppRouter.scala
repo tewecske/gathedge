@@ -11,9 +11,6 @@ object Page {
   case object SignIn extends Page
   case object SignUp extends Page
 
-  /** The skeleton's landing page — a placeholder a new project replaces with its own first screen. */
-  case object Home extends Page
-
   /** Where a verification link lands. Public: the account it verifies usually cannot sign in yet. */
   final case class VerifyEmail(token: String) extends Page
 
@@ -21,7 +18,7 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
-  /** The catalog of game types. Public, like [[Home]] and [[Words]]: a shared game link should show the catalog without
+  /** The catalog of game types. Public, like [[Words]]: a shared game link should show the catalog without
     * bouncing a signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
     */
   case object Games extends Page
@@ -77,7 +74,7 @@ object Page {
     */
   final case class ResetPassword(token: String) extends Page
 
-  /** What the site is for, who runs it, and how it is licensed. Public like [[Home]]: a visitor who lands on the
+  /** What the site is for, who runs it, and how it is licensed. Public like [[Games]]: a visitor who lands on the
     * sign-in page still needs a way to reach it, without being bounced back to sign-in.
     */
   case object About extends Page
@@ -124,7 +121,7 @@ object Page {
     /** Redirects an unauthenticated visitor to sign-in. */
     case RequireAuth
 
-    /** Redirects an already-authenticated visitor to Home (sign-in/sign-up). */
+    /** Redirects an already-authenticated visitor to Games (sign-in/sign-up). */
     case RequireAnon
 
     /** Renders regardless of auth state (verify-email, check-inbox, forbidden, not-found). */
@@ -140,9 +137,9 @@ object Page {
       // The whole point of the vocabulary is that it is usable before signing up for anything.
       case Words(_) | WordDetail(_)                                              =>
         AuthGuard.Public
-      // Home is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
-      // sign-in. Games is the same: a shared link has to show the catalog, not sign-in.
-      case Home | Games | GameSetup | GameInstance(_) | About                    =>
+      // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
+      // sign-in. A shared link has to show the catalog, not sign-in.
+      case Games | GameSetup | GameInstance(_) | About                          =>
         AuthGuard.Public
       case _                                                                     =>
         AuthGuard.RequireAuth
@@ -167,10 +164,9 @@ object AppRouter {
 
   private val signInRoute              = Route.static(SignIn, root / "sign-in", basePath)
   private val signUpRoute              = Route.static(SignUp, root / "sign-up", basePath)
-  private val homeRoute                = Route.static(Home, root, basePath)
   private val aboutRoute               = Route.static(About, root / "about", basePath)
   private val settingsRoute            = Route.static(Settings, root / "settings", basePath)
-  private val gamesRoute               = Route.static(Games, root / "games", basePath)
+  private val gamesRoute               = Route.static(Games, root, basePath)
   private val gameSetupRoute           = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
   private val myGamesRoute             = Route.static(MyGames, root / "games" / "mine", basePath)
   private val myPlaysRoute             = Route.static(MyPlays, root / "games" / "history", basePath)
@@ -283,8 +279,6 @@ object AppRouter {
         "SignIn"
       case SignUp                   =>
         "SignUp"
-      case Home                     =>
-        "Home"
       case About                    =>
         "About"
       case Settings                 =>
@@ -386,8 +380,6 @@ object AppRouter {
           SignIn
         case "SignUp"         =>
           SignUp
-        case "Home"           =>
-          Home
         case "About"          =>
           About
         case "Settings"       =>
@@ -432,7 +424,6 @@ object AppRouter {
       routes = List(
         signInRoute,
         signUpRoute,
-        homeRoute,
         aboutRoute,
         settingsRoute,
         gamesRoute,

@@ -157,9 +157,9 @@ private class SignUpPage {
             AppRouter.router.pushState(Page.CheckInbox)
           case Right((user, true)) =>
             inFlightVar.set(false)
-            // As in SignInPage: the `RequireAnon` guard navigates to Home off this write (guest or not — an
+            // As in SignInPage: the `RequireAnon` guard navigates to Games off this write (guest or not — an
             // upgraded account is no longer a guest, so the same guard fires here too). Doing it here as well
-            // would emit Home twice and remount the landing page.
+            // would emit Games twice and remount the landing page.
             AppState.setUser(user)
           case Left(err)           =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))

@@ -115,7 +115,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await page.getByRole('button', { name: 'Sign up' }).click();
 
   // An upgraded guest is signed in and no longer a guest, so `RequireAnon` fires the same redirect signing up or
-  // signing in does — off the sign-up page, to Home (App.redirectTarget; SignUpPage's own doc comment on why it does
+  // signing in does — off the sign-up page, to Games (App.redirectTarget; SignUpPage's own doc comment on why it does
   // not navigate itself). Waiting for that page to land, rather than clicking straight through, is what keeps the
   // clicks below off the moment the shell is still being torn down and rebuilt underneath them.
   await expect(page).toHaveURL(/\/en\/$/);

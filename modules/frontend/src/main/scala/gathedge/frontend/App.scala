@@ -18,7 +18,6 @@ import gathedge.frontend.pages.{
   GameResultsPage,
   GameSetupPage,
   GamesPage,
-  HomePage,
   MyGamesPage,
   MyPlayHistoryPage,
   NotFoundPage,
@@ -265,9 +264,9 @@ object App {
         case Page.AuthGuard.RequireAuth if !gate.signedIn                 =>
           Some(Page.SignIn)
         // A guest has no address and no password, i.e. no identity of its own yet — `RequireAnon` exempts it so
-        // Page.SignUp can offer the in-place upgrade instead of bouncing it back to Home unseen.
+        // Page.SignUp can offer the in-place upgrade instead of bouncing it back to Games unseen.
         case Page.AuthGuard.RequireAnon if gate.signedIn && !gate.isGuest =>
-          Some(Page.Home)
+          Some(Page.Games)
         case _                                                            =>
           None
       }
@@ -290,8 +289,6 @@ object App {
         SignInPage.render()
       case Page.SignUp                              =>
         SignUpPage.render()
-      case Page.Home                                =>
-        HomePage.render()
       case Page.About                               =>
         AboutPage.render()
       case Page.Settings                            =>

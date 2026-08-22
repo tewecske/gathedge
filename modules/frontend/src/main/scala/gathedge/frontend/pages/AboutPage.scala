@@ -11,7 +11,7 @@ import gathedge.shared.i18n.UiKeys
 
 /** What the site is for, who runs it, and how it is licensed.
   *
-  * Public, like [[gathedge.frontend.AppRouter.Page.Home]] — the navbar links to it whatever the session says, so it
+  * Public, like [[gathedge.frontend.AppRouter.Page.Games]] — the navbar links to it whatever the session says, so it
   * must render for a signed-out visitor too.
   */
 object AboutPage {

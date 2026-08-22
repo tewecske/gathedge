@@ -10,7 +10,7 @@ import { test, expect, type Page } from '@playwright/test';
 // Email verification is deliberately out of reach: EmailSender is log-based in dev, so
 // the confirmation link only ever reaches the backend's stdout, not anything a browser
 // automation script can observe. REQUIRE_EMAIL_VERIFICATION also defaults to false, so
-// signup below lands on the home page rather than /check-inbox — turning it on would
+// signup below lands on the games page rather than /check-inbox — turning it on would
 // strand this suite there with no way to continue. The verify -> login round trip is in
 // AuthServiceSpec, which can read the sent mail.
 
@@ -30,28 +30,28 @@ test.afterAll(async () => {
   await page.close();
 });
 
-test('an unauthenticated visitor lands on the public home page', async () => {
+test('an unauthenticated visitor lands on the public games page', async () => {
   // Deliberately bare: this is the one place the boot script's prefix redirect is exercised.
-  // Home is public on purpose — see HomePage's doc comment: it's the navbar's own link, always shown, so a
+  // Games is public on purpose — see GamesPage's doc comment: it's the navbar's own link, always shown, so a
   // signed-out click on it must not bounce back to sign-in.
   await page.goto('/');
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
 });
 
-test('sign up creates an account and lands on the home page', async () => {
+test('sign up creates an account and lands on the games page', async () => {
   await page.goto('/en/sign-up');
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
 });
 
 test('the session survives a page refresh', async () => {
   await page.reload();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
 });
 
 test('theme toggle switches the page theme immediately', async () => {
@@ -76,6 +76,7 @@ test('log back in with the same credentials', async () => {
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
 });
 
 test('a non-admin is denied access to the admin area', async () => {
@@ -90,7 +91,7 @@ test.describe('administrator flows', () => {
     // The forbidden page the previous test lands on renders outside the app shell, so
     // there is no navbar on it to reach the account menu through: go somewhere there is
     // one first. Signing out has to happen before /en/sign-in, which is RequireAnon and
-    // would bounce a still-signed-in visitor straight back to the home page.
+    // would bounce a still-signed-in visitor straight back to the games page.
     await page.goto('/en/');
     await page.getByRole('button', { name: 'Account menu' }).click();
     await page.getByRole('button', { name: 'Log out' }).click();

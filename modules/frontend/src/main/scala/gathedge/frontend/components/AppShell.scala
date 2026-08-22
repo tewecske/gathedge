@@ -181,7 +181,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; Home is too, and is
+  /** The vocabulary is reachable by anybody, so its link is on the bar whatever the session says; Games is too, and is
     * `Public` in [[AppRouter.Page.guardFor]] for the same reason — a visitor who lands on the sign-in page still needs
     * a way back to it, without being bounced right back here. The admin link is left to the signal below, which is
     * already `false` for a visitor with no account.
@@ -191,7 +191,6 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       navLink(Page.Words(), I18n.t(UiKeys.navWords)),
       navLink(Page.Games, I18n.t(UiKeys.navGames)),
       navLink(Page.About, I18n.t(UiKeys.navAbout)),
-      navLink(Page.Home, I18n.t(UiKeys.navHome)),
     )
   }
 
@@ -204,7 +203,6 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
       navMenuItem(Page.Games, I18n.t(UiKeys.navGames)),
       navMenuItem(Page.About, I18n.t(UiKeys.navAbout)),
-      navMenuItem(Page.Home, I18n.t(UiKeys.navHome)),
     )
   }
 

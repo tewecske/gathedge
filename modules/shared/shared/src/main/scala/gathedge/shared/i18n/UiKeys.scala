@@ -93,7 +93,6 @@ object UiKeys {
   // -- Navigation ------------------------------------------------------------------------------
 
   val navMenu: String = key("ui.nav.menu")
-  val navHome: String = key("ui.nav.home")
 
   /** The language picker's accessible name. It was the one page string reaching `I18n.t` as a bare literal rather than
     * a constant, under a key outside the `ui.` namespace — which is exactly the gap this object exists to close, since
@@ -178,15 +177,7 @@ object UiKeys {
   val forbiddenTitle: String = key("ui.status.forbidden.title")
   val forbiddenBody: String  = key("ui.status.forbidden.body")
   val notFoundTitle: String  = key("ui.status.notFound.title")
-  val notFoundBody: String   = key("ui.status.notFound.body")
-  val statusBackHome: String = key("ui.status.backHome")
-
-  // -- Home ------------------------------------------------------------------------------------
-  // The placeholder landing page. A new project replaces this screen first, and these two keys with
-  // it — they are here so the skeleton renders in both languages out of the box.
-
-  val homeTitle: String = key("ui.home.title")
-  val homeBody: String  = key("ui.home.body")
+  val notFoundBody: String  = key("ui.status.notFound.body")
 
   // -- About ------------------------------------------------------------------------------------
   // What the site is for, who runs it, and how it is licensed. The repository, licence and

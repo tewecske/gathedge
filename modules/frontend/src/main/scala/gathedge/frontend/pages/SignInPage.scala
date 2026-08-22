@@ -161,9 +161,9 @@ private class SignInPage {
           case Right(res) =>
             inFlightVar.set(false)
             // No navigation here on purpose: this page is `RequireAnon`, so writing the user into
-            // AppState is what sends `App`'s guard observer to Home (via `replaceState`, which also
-            // keeps the sign-in form out of the back history). Pushing Home as well made the router
-            // emit Home twice, remounting the page and firing its load request a second time.
+            // AppState is what sends `App`'s guard observer to Games (via `replaceState`, which also
+            // keeps the sign-in form out of the back history). Pushing Games as well made the router
+            // emit Games twice, remounting the page and firing its load request a second time.
             AppState.setUser(res.user)
           case Left(err)  =>
             Var.set(
