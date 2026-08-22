@@ -55,6 +55,14 @@ object GameRepositorySpec extends ZIOSpecDefault {
               GamePlayRow(0L, game.id, other, 0, 2, 1, 0L, None, sourceLanguage = "de", targetLanguage = "hu"),
               Nil,
             )
+          // Same owner, same word, same direction as `play` above, but under `otherGame` — exercises the
+          // `gameId` filter's exclusion for real: if it were broken, this answer's "wrong" outcome would show up
+          // alongside `play`'s "correct" one in `deRows` below, for the same word id.
+          otherGamePlay    <-
+            GameRepository.insertPlay(
+              GamePlayRow(0L, otherGame.id, owner, 0, 2, 1, 0L, None, sourceLanguage = "de", targetLanguage = "hu"),
+              Nil,
+            )
           _                <- GameRepository.recordAnswer(
                                 GamePlayAnswerRow(0L, play.id, 1L, 2L, 1, "x", "correct", 2, 0L),
                                 2,
@@ -67,6 +75,11 @@ object GameRepositorySpec extends ZIOSpecDefault {
                               )
           _                <- GameRepository.recordAnswer(
                                 GamePlayAnswerRow(0L, otherPlayersPlay.id, 1L, 2L, 1, "z", "wrong", 0, 0L),
+                                0,
+                                Some(0L),
+                              )
+          _                <- GameRepository.recordAnswer(
+                                GamePlayAnswerRow(0L, otherGamePlay.id, 1L, 2L, 1, "w", "wrong", 0, 0L),
                                 0,
                                 Some(0L),
                               )
