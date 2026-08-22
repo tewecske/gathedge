@@ -49,6 +49,13 @@ import gathedge.shared.i18n.UiKeys
   */
 object WordsPage {
 
+  /** The variant types [[renderVariantTypeSelect]] offers — the single-tag `word_forms.relation` values common enough
+    * to be worth a form control of their own, rather than free text. Each is a `GrammarTag.known` key, so
+    * `Labels.grammarTag` renders it the same way the Forms section already does for imported data.
+    */
+  private val variantTypes: List[String] =
+    List("plural", "past", "comparative", "superlative", "diminutive", "alternative")
+
   /** `recognizeImage` is threaded through rather than called directly by [[BulkUploadDialog]] — see
     * [[ImageOcr.Recognize]]'s own scaladoc for why: it keeps `tesseract.js`'s import out of this page's reachable graph
     * under the test linker. `App` is the only caller that supplies the real one.
@@ -167,6 +174,16 @@ private class WordsPage(
   /** The article of a German *translation*, which is part of that word the same way the source word's is. */
   private val newWordTransGenderVar = Var(Option.empty[Gender])
 
+  /** The optional lemma the new word is a form of, and what kind of form it is — `CreateWordRequest.mainWordId`/
+    * `.variantType`. `mainWordQueryVar` is what the search box shows; it is cleared to `None` on every keystroke, since
+    * a typed character invalidates whichever result was picked, and set back only by clicking a result.
+    */
+  private val mainWordQueryVar    = Var("")
+  private val mainWordTypedBus    = new EventBus[String]()
+  private val mainWordResultsVar  = Var(List.empty[Word])
+  private val mainWordSelectedVar = Var(Option.empty[Word])
+  private val variantTypeVar      = Var(Option.empty[String])
+
   private val searchDebounceMs = 300
 
   def render(): HtmlElement = {
@@ -212,13 +229,31 @@ private class WordsPage(
           case Left(err)     =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
+      mainWordTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal).flatMapSwitch {
+        case (typed, query) =>
+          val trimmed = typed.trim
+          if (trimmed.isEmpty)
+            EventStream.fromValue(List.empty[Word])
+          else {
+            WordApiClient
+              .list(pageSize = Some(8), search = Some(trimmed), language = Some(query.language))
+              .map(_.getOrElse(WordPage(Nil, 0L)).items.map(_.word))
+          }
+      } --> mainWordResultsVar.writer,
       newWordStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // Straight to the word: it exists now, and whatever anybody else has already recorded about it is on that
           // screen — which is the answer to "somebody else added this word first", and where a translation in a third
           // language is added.
           newWordTransVars.values.foreach(_.set(""))
-          Var.set(newWordTransGenderVar -> None, errorVar -> None)
+          Var.set(
+            newWordTransGenderVar -> None,
+            errorVar              -> None,
+            mainWordQueryVar      -> "",
+            mainWordResultsVar    -> Nil,
+            mainWordSelectedVar   -> None,
+            variantTypeVar        -> None,
+          )
           AppRouter.router.pushState(Page.WordDetail(detail.word.id))
         case Left(err)     =>
           errorVar.set(Some(err.message))
@@ -493,6 +528,8 @@ private class WordsPage(
               gender = gender,
               translations = translations,
               tagIds = List(tagId),
+              mainWordId = mainWordSelectedVar.now().map(_.id),
+              variantType = variantTypeVar.now(),
             )
           )
       }
@@ -548,6 +585,7 @@ private class WordsPage(
                   .map(_.map(renderTranslationInput)),
             ),
           ),
+          renderMainWordSection(),
           button(cls := "btn btn-sm btn-primary", typ := "submit", I18n.t(UiKeys.commonAdd)),
         ),
       ),
@@ -591,6 +629,85 @@ private class WordsPage(
         controlled(
           value <-- target.signal.map(Gender.toColumn),
           onChange.mapToValue --> Observer[String](article => target.set(Gender.fromColumn(article))),
+        ),
+      ),
+    )
+  }
+
+  /** Links the new word into `word_forms` as an inflected/declined form of an existing one — both optional, and
+    * meaningful only together, exactly like the request fields they feed.
+    */
+  private def renderMainWordSection(): HtmlElement = {
+    div(
+      cls := "grow basis-full",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddMainWordSection)),
+      div(cls  := "flex flex-wrap items-end gap-2", renderMainWordInput(), renderVariantTypeSelect()),
+    )
+  }
+
+  /** A type-ahead over the dictionary, scoped to the language being added. Typing always clears whichever result was
+    * picked before — a stale id must never outlive the text that no longer names it — and the results list is offered
+    * only while there is typed text and nothing picked yet.
+    */
+  private def renderMainWordInput(): HtmlElement = {
+    div(
+      cls := "relative",
+      label(
+        cls := "flex flex-col gap-1",
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsAddMainWordLabel)),
+        input(
+          cls         := "input input-sm w-56",
+          typ         := "text",
+          placeholder := I18n.t(UiKeys.wordsAddMainWordPlaceholder),
+          controlled(
+            value <-- mainWordQueryVar.signal,
+            onInput.mapToValue --> Observer[String] { text =>
+              Var.set(mainWordQueryVar -> text, mainWordSelectedVar -> None)
+              mainWordTypedBus.emit(text)
+            },
+          ),
+        ),
+      ),
+      child.maybe <--
+        mainWordResultsVar.signal
+          .combineWith(mainWordSelectedVar.signal, mainWordQueryVar.signal)
+          .map { case (results, selected, query) =>
+            Option.when(selected.isEmpty && query.trim.nonEmpty && results.nonEmpty)(renderMainWordResults(results))
+          },
+    )
+  }
+
+  private def renderMainWordResults(results: List[Word]): HtmlElement = {
+    ul(
+      cls := "menu menu-sm bg-base-100 rounded-box shadow absolute z-10 w-56 mt-1",
+      results.map(word => {
+        li(
+          a(
+            Word.display(word),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              Var.set(
+                mainWordSelectedVar -> Some(word),
+                mainWordQueryVar    -> Word.display(word),
+                mainWordResultsVar  -> Nil,
+              )
+            },
+          )
+        )
+      }),
+    )
+  }
+
+  private def renderVariantTypeSelect(): HtmlElement = {
+    label(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddVariantTypeLabel)),
+      select(
+        cls    := "select select-sm w-40",
+        option(value := "", I18n.t(UiKeys.wordsAddVariantTypeNone)),
+        WordsPage.variantTypes.map(tag => option(value := tag, Labels.grammarTag(tag))),
+        controlled(
+          value <-- variantTypeVar.signal.map(_.getOrElse("")),
+          onChange.mapToValue --> Observer[String](raw => variantTypeVar.set(Option.when(raw.nonEmpty)(raw))),
         ),
       ),
     )

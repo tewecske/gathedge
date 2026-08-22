@@ -213,7 +213,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // segment that fails to decode.
               ("GET", "/api/words")                                                       -> Set(Ok, BadRequest),
               ("GET", "/api/words/{id}")                                                  -> Set(Ok, BadRequest, NotFound),
-              ("POST", "/api/words")                                                      -> Set(Created, BadRequest, Unauthorized),
+              // 404 covers a `mainWordId` naming no word and a `tagIds` entry naming a tag that is not the caller's
+              // alike, the same rule every tag-scoped write in this resource follows.
+              ("POST", "/api/words")                                                      -> Set(Created, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/words/{id}/translations")                                    ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/translations/{translationId}")                  ->
@@ -246,6 +248,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // threshold allows — `error.key` tells the two apart. The body may carry a warning instead when the
               // write only crossed the *soft* threshold.
               ("POST", "/api/tags")                                                       -> Set(Created, BadRequest, Unauthorized, Conflict),
+              // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
+              ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // Copying seeds a tag of the caller's own from any tag's name, including one they do not own, and copies
               // its word/pair snapshot with it: 404 for a source tag that does not exist, 409 for the ordinary
@@ -360,7 +364,7 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 195 across 49 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 200 across 50 operations. (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -377,7 +381,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 195,
+          declared == 200,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, reshuffle, the three play-id operations, and

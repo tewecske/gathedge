@@ -107,7 +107,18 @@ trait WordRepository {
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]]
   def findTagById(id: Long): Task[Option[TagRow]]
   def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): Task[TagRow]
+
+  /** Renames `id`, scoped to `userId` the same way [[deleteTag]] is — a row count of `0` means either the tag does not
+    * exist or it is not the caller's, which `WordService.renameTag` cannot tell apart and does not need to.
+    */
+  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): Task[Long]
+
   def deleteTag(id: Long, userId: Long): Task[Long]
+
+  /** How many words carry `tagId` — the count [[listTags]] computes for every tag at once, resolved here for the one
+    * tag `WordService.renameTag` just wrote, so its answer carries the same number a fresh [[listTags]] would.
+    */
+  def countWordsInTag(tagId: Long): Task[Long]
 
   /** How many tags `userId` owns — one half of `WordService.checkQuota`'s tag limit. */
   def countTagsOwnedBy(userId: Long): Task[Long]
@@ -344,8 +355,14 @@ object WordRepository {
   def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): RIO[WordRepository, TagRow] =
     ZIO.serviceWithZIO[WordRepository](_.insertTag(userId, name, nameNorm, createdAt))
 
+  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.updateTag(id, userId, name, nameNorm))
+
   def deleteTag(id: Long, userId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteTag(id, userId))
+
+  def countWordsInTag(tagId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.countWordsInTag(tagId))
 
   def countTagsOwnedBy(userId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.countTagsOwnedBy(userId))
@@ -758,9 +775,23 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(inserted.map(id => row.copy(id = id)))(tag => s"tags.insert id=${tag.id} user=$userId")
   }
 
+  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): Task[Long] = {
+    val q = quote {
+      tags
+        .filter(tag => tag.id == lift(id) && tag.userId == lift(userId))
+        .update(_.name -> lift(name), _.nameNorm -> lift(nameNorm))
+    }
+    logged(run(ctx.run(q)))(rows => s"tags.update id=$id user=$userId rows=$rows")
+  }
+
   def deleteTag(id: Long, userId: Long): Task[Long] = {
     val q = quote(tags.filter(tag => tag.id == lift(id) && tag.userId == lift(userId)).delete)
     logged(run(ctx.run(q)))(rows => s"tags.delete id=$id user=$userId rows=$rows")
+  }
+
+  def countWordsInTag(tagId: Long): Task[Long] = {
+    val q = quote(wordTags.filter(_.tagId == lift(tagId)).size)
+    logged(run(ctx.run(q)))(count => s"wordTags.countInTag tag=$tagId count=$count")
   }
 
   def countTagsOwnedBy(userId: Long): Task[Long] = {

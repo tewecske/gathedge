@@ -94,6 +94,11 @@ object MessageKeys {
   val wordTranslationExists: String = key("words.translationExists")
   val wordNotOwn: String            = key("words.notOwn")
 
+  /** The main word given for a new word's `word_forms` link is in a different language than the word being added — an
+    * inflected/declined form always shares its lemma's language.
+    */
+  val wordMainWordLanguageMismatch: String = key("words.mainWordLanguageMismatch")
+
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.
     */

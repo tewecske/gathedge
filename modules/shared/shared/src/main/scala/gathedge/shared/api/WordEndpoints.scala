@@ -10,6 +10,7 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateWordRequest,
   PairSelectionResponse,
+  RenameTagRequest,
   TagResponse,
   WordDetail,
   WordPage,
@@ -103,13 +104,17 @@ object WordEndpoints {
     * Deliberately **not** "create or 409": a word that exists is answered as it stands, with everyone's translations on
     * it, and whatever the request adds is layered on top. Answering 409 would make the common case (two learners adding
     * the same word) look like an error, when it is the case the shared dictionary exists to serve.
+    *
+    * 404 covers two things a caller cannot tell apart from the status alone: `mainWordId` naming no word, and a
+    * `tagIds` entry naming a tag that is not the caller's — the same rule every other tag-scoped write in this file
+    * follows.
     */
   val create = {
     Endpoint(Method.POST / "api" / "words")
       .in[CreateWordRequest]
       .withCodecError
       .out[WordDetail](Status.Created)
-      .outErrors(failure.badRequest, failure.unauthorized)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
   /** Adds a translation of the caller's own. 409 is their *own* duplicate — the same pair from somebody else is not a
@@ -152,6 +157,18 @@ object WordEndpoints {
       .withCodecError
       .out[TagResponse](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
+  }
+
+  /** Renames one of the caller's own tags. Follows [[createTag]]'s own rules for the name itself — 400 for blank, over
+    * width, or reserved; 409 for a name the caller already has on a *different* tag of theirs, compared case-
+    * insensitively — and 404 for a tag that is not theirs, the same as every other tag-scoped write here.
+    */
+  val renameTag = {
+    Endpoint(Method.PUT / "api" / "tags" / tagId)
+      .in[RenameTagRequest]
+      .withCodecError
+      .out[TagResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   val deleteTag = {
@@ -273,6 +290,7 @@ object WordEndpoints {
       removeTranslation,
       listTags,
       createTag,
+      renameTag,
       deleteTag,
       copyTag,
       tagWord,

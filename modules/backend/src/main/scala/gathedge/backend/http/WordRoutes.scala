@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateWordRequest,
   Paging,
+  RenameTagRequest,
   SortDirection,
 }
 import zio.*
@@ -137,6 +138,14 @@ object WordRoutes {
     )
   }
 
+  private val renameTagRoute = {
+    WordEndpoints.renameTag.implementHandler(
+      handler { (tagId: Long, body: RenameTagRequest) =>
+        userId.flatMap(id => WordService.renameTag(tagId, body.name, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   private val deleteTagRoute = {
     WordEndpoints.deleteTag.implementHandler(
       handler((tagId: Long) => userId.flatMap(id => WordService.deleteTag(tagId, id).mapError(ApiFailures.word)))
@@ -227,6 +236,7 @@ object WordRoutes {
       removeTranslationRoute,
       listTagsRoute,
       createTagRoute,
+      renameTagRoute,
       deleteTagRoute,
       copyTagRoute,
       tagWordRoute,

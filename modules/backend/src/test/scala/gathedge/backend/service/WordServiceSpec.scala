@@ -276,6 +276,25 @@ object WordServiceSpec extends ZIOSpecDefault {
           blank.isLeft,
         )
       },
+      test(
+        "renaming a tag keeps its own current name usable, refuses a different tag's, and answers TagNotFound for somebody else's"
+      ) {
+        for {
+          lesson1 <- createTag("lesson1", 1L)
+          lesson2 <- createTag("lesson2", 1L)
+          renamed <- WordService.renameTag(lesson1.id, "renamed", 1L).map(_.tag)
+          same    <- WordService.renameTag(lesson1.id, "Renamed", 1L).either
+          clash   <- WordService.renameTag(lesson1.id, "lesson2", 1L).either
+          denied  <- WordService.renameTag(lesson2.id, "nope", 2L).either
+          tags    <- WordService.listTags(1L)
+        } yield assertTrue(
+          renamed.name == "renamed",
+          same.isRight,
+          clash == Left(WordFailure.DuplicateTag),
+          denied == Left(WordFailure.TagNotFound),
+          tags.map(_.name).toSet == Set("Renamed", "lesson2"),
+        )
+      },
       test("listing tags answers every account's, own first, each marked whether the caller owns it") {
         for {
           _      <- createTag("zebra", 2L)
@@ -528,6 +547,65 @@ object WordServiceSpec extends ZIOSpecDefault {
           // form produces the same state a chip click does.
           page.items.head.pairs == List(TaggedPair(tag.id, kenyer)),
           page.items.head.tagIds == List(tag.id),
+        )
+      },
+      test(
+        "a main word and variant type link the new word into word_forms, idempotently, and a foreign language is refused"
+      ) {
+        for {
+          _        <- seed
+          haus     <- list(search = Some("haus")).map(_.items.head.word)
+          detail   <- WordService.create(
+                        CreateWordRequest(
+                          WordLanguage.De,
+                          "Häuser",
+                          PartOfSpeech.Noun,
+                          Some(Gender.Das),
+                          Nil,
+                          Nil,
+                          mainWordId = Some(haus.id),
+                          variantType = Some("plural"),
+                        ),
+                        userId = 7L,
+                      )
+          again    <- WordService.create(
+                        CreateWordRequest(
+                          WordLanguage.De,
+                          "Häuser",
+                          PartOfSpeech.Noun,
+                          Some(Gender.Das),
+                          Nil,
+                          Nil,
+                          mainWordId = Some(haus.id),
+                          variantType = Some("plural"),
+                        ),
+                        userId = 7L,
+                      )
+          mismatch <- WordService
+                        .create(
+                          CreateWordRequest(
+                            // A Hungarian word naming the German `Haus` as its main word: an inflection always shares
+                            // its lemma's language, so this is refused rather than linked.
+                            WordLanguage.Hu,
+                            "hazak",
+                            PartOfSpeech.Noun,
+                            None,
+                            Nil,
+                            Nil,
+                            mainWordId = Some(haus.id),
+                            variantType = Some("plural"),
+                          ),
+                          userId = 7L,
+                        )
+                        .either
+          forms    <- WordRepository.formsOf(haus.id)
+        } yield assertTrue(
+          detail.mainWords.map(m => (m.word.id, m.relation)) == List((haus.id, "plural")),
+          again.word.id == detail.word.id,
+          forms.size == 1,
+          mismatch == Left(
+            WordFailure.ValidationError(Map("mainWordId" -> MessageRef(MessageKeys.wordMainWordLanguageMismatch)))
+          ),
         )
       },
       test("an unknown sort column falls back to the listing's own order rather than failing") {

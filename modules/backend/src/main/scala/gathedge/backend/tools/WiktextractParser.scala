@@ -262,18 +262,18 @@ object WiktextractParser {
   private val altOfMarkerTag: String = "alt-of"
 
   /** A form stated the other way around from [[formsOf]]: instead of the lemma's own `forms[]` naming this spelling,
-    * the inflected word has its own page (`hozni`) whose sense names what it is a form of. This is the only path for
-    * a form wiktextract's own table logic could not classify -- `hozni` as a row in `hoz`'s conjugation table carries
+    * the inflected word has its own page (`hozni`) whose sense names what it is a form of. This is the only path for a
+    * form wiktextract's own table logic could not classify -- `hozni` as a row in `hoz`'s conjugation table carries
     * `error-unrecognized-form` and [[isUsableForm]] drops it, but `hozni`'s own page states the same fact cleanly.
     *
     * `includeAltOf` additionally treats `alt-of` (spelling variants, not grammatical forms) as a marker tag and reads
-    * `sense.alt_of` alongside `sense.form_of`. Off by default: a spelling variant is a different kind of relation
-    * than a grammatical form, and callers that want it opt in explicitly.
+    * `sense.alt_of` alongside `sense.form_of`. Off by default: a spelling variant is a different kind of relation than
+    * a grammatical form, and callers that want it opt in explicitly.
     *
-    * The lemma's part of speech is assumed to match this page's own `pos` (true for every real case), and its gender
-    * is never known here, so it is left `None`. That matches every real case except a German noun whose own
-    * `forms[]` also failed to capture this spelling -- rare enough, and caught only as a missed link rather than a
-    * wrong one, since [[DictionaryImport]] resolves a form's lemma by exact key and drops the edge on a mismatch.
+    * The lemma's part of speech is assumed to match this page's own `pos` (true for every real case), and its gender is
+    * never known here, so it is left `None`. That matches every real case except a German noun whose own `forms[]` also
+    * failed to capture this spelling -- rare enough, and caught only as a missed link rather than a wrong one, since
+    * [[DictionaryImport]] resolves a form's lemma by exact key and drops the edge on a mismatch.
     */
   def formOfPageOf(entry: RawEntry, includeAltOf: Boolean = false): List[ParsedForm] = {
     val markerTags = if (includeAltOf) formOfMarkerTags + altOfMarkerTag else formOfMarkerTags

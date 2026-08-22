@@ -14,6 +14,7 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
+  RenameTagRequest,
   TagResponse,
   WordDetail,
   WordPage,
@@ -84,6 +85,10 @@ object WordApiClient {
 
   def createTag(name: String): EventStream[Either[ApiError, TagResponse]] = {
     run(executor(WordEndpoints.createTag(CreateTagRequest(name))))
+  }
+
+  def renameTag(tagId: Long, name: String): EventStream[Either[ApiError, TagResponse]] = {
+    run(executor(WordEndpoints.renameTag(tagId, RenameTagRequest(name))))
   }
 
   def deleteTag(tagId: Long): EventStream[Either[ApiError, Unit]] = {

@@ -109,6 +109,11 @@ final case class WordPage(items: List[WordSummary], total: Long) derives JsonCod
   * returned as it stands, with everyone's translations on it, and the caller's own additions are layered on top. That
   * is the requirement that another user adding the same word is shown what is already known about it.
   */
+/** `mainWordId`/`variantType` link the new word into `word_forms` as an inflected/declined form of an existing word —
+  * `mainWordId` names the lemma, `variantType` its relation to it (`"plural"`, `"past"`, …). Both optional and only
+  * meaningful together: a `variantType` with no `mainWordId` names nothing to link, so [[WordService.create]] links
+  * only when both are given.
+  */
 final case class CreateWordRequest(
   language: WordLanguage,
   text: String,
@@ -116,6 +121,8 @@ final case class CreateWordRequest(
   gender: Option[Gender],
   translations: List[NewTranslation],
   tagIds: List[Long],
+  mainWordId: Option[Long] = None,
+  variantType: Option[String] = None,
 ) derives JsonCodec
 
 /** The other half of a translation the caller is adding: a word in the target language, which is looked up and created
@@ -131,6 +138,11 @@ final case class NewTranslation(
 final case class AddTranslationRequest(translation: NewTranslation) derives JsonCodec
 
 final case class CreateTagRequest(name: String) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.renameTag]]'s body: the tag's new name, validated and de-duplicated the same way
+  * [[CreateTagRequest]]'s is.
+  */
+final case class RenameTagRequest(name: String) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.createTag]]/`.copyTag`'s answer: the tag itself, plus a non-fatal warning when
   * the write pushed the caller's own usage past one of `AppConfig.quotas`' *soft* thresholds — how many tags they own,

@@ -1,7 +1,16 @@
 package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, QuotaSection}
-import gathedge.backend.db.{TagRow, TextSearch, WordRepository, WordRow, WordTagPairRow, WordTagRow, WordTranslationRow}
+import gathedge.backend.db.{
+  TagRow,
+  TextSearch,
+  WordFormRow,
+  WordRepository,
+  WordRow,
+  WordTagPairRow,
+  WordTagRow,
+  WordTranslationRow,
+}
 import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
@@ -115,6 +124,13 @@ trait WordService {
     * [[gathedge.shared.dto.TagResponse.warning]] set instead.
     */
   def createTag(name: String, userId: Long): IO[WordFailure, TagResponse]
+
+  /** `TagNotFound` covers a tag that does not exist or is not the caller's, the same as every other tag-scoped write.
+    * `DuplicateTag` is the new name colliding with a *different* tag of the caller's own, compared case-insensitively —
+    * renaming a tag to the name it already has is a no-op, not a conflict.
+    */
+  def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse]
+
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit]
 
   /** Seeds a new tag of the caller's own from another account's name, and copies the source tag's word memberships and
@@ -259,6 +275,9 @@ object WordService {
 
   def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.createTag(name, userId))
+
+  def renameTag(tagId: Long, name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
+    ZIO.serviceWithZIO[WordService](_.renameTag(tagId, name, userId))
 
   def deleteTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deleteTag(tagId, userId))
@@ -712,9 +731,41 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
 
   private def decode(code: String): PartOfSpeech = PartOfSpeech.fromString(code).getOrElse(PartOfSpeech.Other)
 
+  /** Links `row` into `word_forms` as an inflected/declined form of `request.mainWordId`, under `request.variantType` —
+    * only when both are given, since a `variantType` naming nothing to link is nothing to do. `NotFound` covers a
+    * `mainWordId` that names no word; the language mismatch check exists because an inflection always shares its
+    * lemma's language, and a caller past the frontend's own same-language search could otherwise link across two.
+    * Idempotent like every other write [[create]] makes: re-submitting the same word with the same main word and
+    * variant type links nothing new.
+    */
+  private def linkMainWord(row: WordRow, request: CreateWordRequest): IO[WordFailure, Unit] = {
+    (request.mainWordId, request.variantType) match {
+      case (Some(mainWordId), Some(variantType)) =>
+        for {
+          main     <- repo.findWordById(mainWordId).orDie.someOrFail(WordFailure.NotFound)
+          _        <- ZIO.when(main.language != row.language)(
+                        ZIO.fail(
+                          WordFailure
+                            .ValidationError(Map("mainWordId" -> MessageRef(MessageKeys.wordMainWordLanguageMismatch)))
+                        )
+                      )
+          existing <- repo.formsOf(mainWordId).orDie
+          _        <- ZIO.unless(existing.exists(form => form.formWordId == row.id && form.relation == variantType))(
+                        for {
+                          now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                          _   <- repo.insertForms(List(WordFormRow(0L, mainWordId, row.id, variantType, now))).orDie
+                        } yield ()
+                      )
+        } yield ()
+      case _                                     =>
+        ZIO.unit
+    }
+  }
+
   def create(request: CreateWordRequest, userId: Long): IO[WordFailure, WordDetail] = {
     for {
       row     <- ensure(request.language, request.text, request.partOfSpeech, request.gender, userId)
+      _       <- linkMainWord(row, request)
       // A translation the caller has already recorded is not a reason to refuse the whole request: they are adding a
       // word, and the duplicate simply already says what they meant.
       targets <- ZIO.foreach(request.translations)(translation => {
@@ -766,17 +817,22 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       .map(rows => Tag.sorted(rows.map { case (row, count, ownedByMe) => toTag(row, count, ownedByMe) }))
   }
 
-  /** The name-half of creating a tag, shared by [[createTag]] and [[copyTag]]: valid, and not already the caller's,
-    * before either goes anywhere near a quota or a write.
+  /** The name-half of creating a tag, shared by [[createTag]], [[copyTag]] and [[renameTag]]: valid, and not already
+    * the caller's, before either goes anywhere near a quota or a write. `excludeTagId` is [[renameTag]]'s own id, so a
+    * rename that keeps (or case-changes) the tag's current name is not flagged as colliding with itself.
     */
-  private def prepareTagName(name: String, userId: Long): IO[WordFailure, (String, String)] = {
+  private def prepareTagName(
+    name: String,
+    userId: Long,
+    excludeTagId: Option[Long] = None,
+  ): IO[WordFailure, (String, String)] = {
     for {
       valid    <- ZIO
                     .fromEither(Validation.validateTagName(name))
                     .mapError(error => WordFailure.ValidationError(Map("name" -> error)))
       normal    = Tag.normalize(valid)
       existing <- repo.findTag(userId, normal).orDie
-      _        <- ZIO.when(existing.isDefined)(ZIO.fail(WordFailure.DuplicateTag))
+      _        <- ZIO.when(existing.exists(tag => !excludeTagId.contains(tag.id)))(ZIO.fail(WordFailure.DuplicateTag))
     } yield (valid, normal)
   }
 
@@ -863,6 +919,17 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       val (row, wordCount, _) = copied
       TagResponse(toTag(row, wordCount, ownedByMe = true), tagWarning.orElse(pairWarning))
     }
+  }
+
+  def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse] = {
+    for {
+      _              <- requireOwnTag(tagId, userId)
+      prepared       <- prepareTagName(name, userId, excludeTagId = Some(tagId))
+      (valid, normal) = prepared
+      rows           <- repo.updateTag(tagId, userId, valid, normal).orDie
+      _              <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
+      wordCount      <- repo.countWordsInTag(tagId).orDie
+    } yield TagResponse(Tag(tagId, valid, wordCount, ownedByMe = true), None)
   }
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {

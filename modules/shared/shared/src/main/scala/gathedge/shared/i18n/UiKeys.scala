@@ -553,6 +553,21 @@ object UiKeys {
   val wordsTagNew: String            = key("ui.words.tagNew")
   val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
 
+  /** The two icon buttons beside the collect select, acting on whichever tag it currently holds — see
+    * `WordCollect.renderCollectSelect`. Both the button's accessible label and its tooltip, since neither carries
+    * visible text of its own.
+    */
+  val wordsTagRenameButton: String = key("ui.words.tagRenameButton")
+  val wordsTagDeleteButton: String = key("ui.words.tagDeleteButton")
+
+  val wordsTagRenameTitle: String = key("ui.words.tagRenameTitle")
+  val wordsTagRenameLabel: String = key("ui.words.tagRenameLabel")
+
+  val wordsTagDeleteTitle: String = key("ui.words.tagDeleteTitle")
+
+  /** `{0}` is the tag's name. Says what stays, since deleting a tag is not deleting the words in it. */
+  val wordsTagDeleteConfirm: String = key("ui.words.tagDeleteConfirm")
+
   /** The two groups both tag dropdowns split into, own tags first — see `Tag.sorted`. */
   val wordsTagsMineGroup: String   = key("ui.words.tagsMineGroup")
   val wordsTagsOthersGroup: String = key("ui.words.tagsOthersGroup")
@@ -571,6 +586,16 @@ object UiKeys {
   val wordsAddTranslation: String     = key("ui.words.addTranslation")
   val wordsAddTranslations: String    = key("ui.words.addTranslations")
   val wordsAddTranslationHint: String = key("ui.words.addTranslationHint")
+
+  /** The optional pair that links the new word into `word_forms` as an inflected/declined form of an existing one — see
+    * `CreateWordRequest.mainWordId`/`.variantType`. Both are meaningful only together: a variant type with no main word
+    * names nothing to link, and the server silently does nothing with it.
+    */
+  val wordsAddMainWordSection: String     = key("ui.words.addMainWordSection")
+  val wordsAddMainWordLabel: String       = key("ui.words.addMainWordLabel")
+  val wordsAddMainWordPlaceholder: String = key("ui.words.addMainWordPlaceholder")
+  val wordsAddVariantTypeLabel: String    = key("ui.words.addVariantTypeLabel")
+  val wordsAddVariantTypeNone: String     = key("ui.words.addVariantTypeNone")
 
   /** Required by the licence the dictionary data is under, and so not optional page furniture. */
   val wordsAttribution: String = key("ui.words.attribution")

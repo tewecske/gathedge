@@ -168,6 +168,16 @@ final class WordCollect(
   private val newTagBus = new EventBus[Unit]()
   private val tagsBus   = new EventBus[Unit]()
 
+  /** Rename/delete act on whichever tag the collect select currently holds — see [[renderCollectSelect]] — so neither
+    * carries an id of its own; both read [[collectTagVar]] at the moment they fire.
+    */
+  private val renameOpenVar = Var(false)
+  private val renameNameVar = Var("")
+  private val renameBus     = new EventBus[Unit]()
+
+  private val deleteOpenVar = Var(false)
+  private val deleteBus     = new EventBus[Unit]()
+
   /** A word the reader clicked, with what should happen to it. The stream is what the guest-minting detour hangs off.
     */
   private val toggleBus = new EventBus[(Long, Boolean)]()
@@ -211,6 +221,34 @@ final class WordCollect(
             onError.onNext(Some(err.message))
         },
       EventStream.merge(toggleStream, pairStream) --> writeResult,
+      renameBus.events
+        .sample(collectTagVar.signal)
+        .collect { case Some(tagId) => tagId }
+        .map(tagId => (tagId, renameNameVar.now().trim))
+        .filter { case (_, name) => name.nonEmpty }
+        .flatMapSwitch { case (tagId, name) => WordApiClient.renameTag(tagId, name) } -->
+        Observer[Either[ApiError, TagResponse]] {
+          case Right(response) =>
+            Var.set(renameOpenVar -> false)
+            onError.onNext(None)
+            tagsVar.update(existing => WordCollect.withTag(existing, response.tag))
+            tagsBus.emit(())
+          case Left(err)       =>
+            onError.onNext(Some(err.message))
+        },
+      deleteBus.events
+        .sample(collectTagVar.signal)
+        .collect { case Some(tagId) => tagId }
+        .flatMapSwitch(tagId => WordApiClient.deleteTag(tagId).map(result => (tagId, result))) -->
+        Observer[(Long, Either[ApiError, Unit])] {
+          case (tagId, Right(_)) =>
+            Var.set(deleteOpenVar -> false)
+            onError.onNext(None)
+            tagsVar.update(_.filterNot(_.id == tagId))
+            tagsBus.emit(())
+          case (_, Left(err))    =>
+            onError.onNext(Some(err.message))
+        },
       AppState.currentUserSignal --> readerVar.writer,
       onMountCallback(_ => tagsBus.emit(())),
     )
@@ -430,17 +468,146 @@ final class WordCollect(
     * see [[WordCollect.mineOptions]] — since a tick against anyone else's would fail with `TagNotFound`.
     */
   private def renderCollectSelect(): HtmlElement = {
-    label(
-      cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
-      select(
-        cls    := "select select-sm select-primary w-52",
-        children <-- tagsSignal.map(WordCollect.mineOptions),
-        controlled(
-          value <-- selectedTagValue(collectTagSignal),
-          onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
+    div(
+      cls := "flex items-end gap-1",
+      label(
+        cls := "flex flex-col gap-1",
+        span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
+        select(
+          cls    := "select select-sm select-primary w-52",
+          children <-- tagsSignal.map(WordCollect.mineOptions),
+          controlled(
+            value <-- selectedTagValue(collectTagSignal),
+            onChange.mapToValue --> Observer[String](raw => setCollectTag(raw.toLongOption)),
+          ),
         ),
       ),
+      renderTagIconButton(UiKeys.wordsTagRenameButton, pencilMark(), openRename),
+      renderTagIconButton(UiKeys.wordsTagDeleteButton, trashMark(), () => deleteOpenVar.set(true)),
+      renderRenameModal(),
+      renderDeleteModal(),
+    )
+  }
+
+  /** Pre-fills [[renameNameVar]] from whichever tag the select currently holds, read off [[tagsVar]]/[[collectTagVar]]
+    * directly rather than a derived signal — `Var.now()` is always safe; a computed `Signal`'s is not guaranteed to be,
+    * outside a subscription.
+    */
+  private def openRename(): Unit = {
+    val current = collectTagVar.now().flatMap(id => tagsVar.now().find(_.id == id))
+    Var.set(renameNameVar -> current.map(_.name).getOrElse(""), renameOpenVar -> true)
+  }
+
+  private def renderTagIconButton(labelKey: String, icon: SvgElement, onClick0: () => Unit): HtmlElement = {
+    span(
+      cls             := "tooltip",
+      dataAttr("tip") := I18n.t(labelKey),
+      button(
+        cls        := "btn btn-ghost btn-sm btn-square",
+        typ        := "button",
+        aria.label := I18n.t(labelKey),
+        icon,
+        onClick.mapToUnit --> Observer[Unit](_ => onClick0()),
+      ),
+    )
+  }
+
+  /** A text input pre-filled with the tag's current name, following [[WordCollect.renderBar]]'s own daisyUI modal
+    * pattern.
+    */
+  private def renderRenameModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- renameOpenVar.signal,
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls       := "font-bold text-lg", I18n.t(UiKeys.wordsTagRenameTitle)),
+        form(
+          cls        := "flex flex-col gap-3 pt-2",
+          noValidate := true,
+          onSubmit.preventDefault.mapToUnit --> renameBus.writer,
+          label(
+            cls := "flex flex-col gap-1",
+            span(cls := "label-text text-xs", I18n.t(UiKeys.wordsTagRenameLabel)),
+            input(
+              cls    := "input input-sm w-full",
+              controlled(value <-- renameNameVar.signal, onInput.mapToValue --> renameNameVar.writer),
+            ),
+          ),
+          div(
+            cls := "modal-action",
+            button(
+              cls      := "btn btn-sm",
+              typ      := "button",
+              I18n.t(UiKeys.commonCancel),
+              onClick.mapToUnit --> Observer[Unit](_ => renameOpenVar.set(false)),
+            ),
+            button(cls := "btn btn-sm btn-primary", typ := "submit", I18n.t(UiKeys.commonSave)),
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => renameOpenVar.set(false))),
+    )
+  }
+
+  private def renderDeleteModal(): HtmlElement = {
+    val nameSignal = {
+      tagsSignal.combineWithFn(collectTagSignal)((tags, id) => {
+        id.flatMap(tagId => tags.find(_.id == tagId)).map(_.name).getOrElse("")
+      })
+    }
+    div(
+      cls := "modal",
+      cls("modal-open") <-- deleteOpenVar.signal,
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.wordsTagDeleteTitle)),
+        p(cls  := "py-4", child.text <-- nameSignal.map(name => I18n.t(UiKeys.wordsTagDeleteConfirm, name))),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false)),
+          ),
+          button(
+            cls := "btn btn-sm btn-error",
+            typ := "button",
+            I18n.t(UiKeys.wordsTagDeleteButton),
+            onClick.mapToUnit --> deleteBus.writer,
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false))),
+    )
+  }
+
+  private def pencilMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"),
+    )
+  }
+
+  private def trashMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M4 7h16"),
+      svg.path(svg.d := "M9 7V4h6v3"),
+      svg.path(svg.d := "M6 7l1 13h10l1-13"),
     )
   }
 
