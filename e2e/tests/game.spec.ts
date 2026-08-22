@@ -219,13 +219,13 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // history this player just built means only `untouched` qualifies, so the preview (fetched fresh on the
   // preference change, before starting) should show exactly that one word, and the prompt itself must be it.
   //
-  // Reached via a fresh visit of the share link, not the in-page "Play again" button: `GameInstancePage`'s
-  // `startBus` handler (the reset block feeding `renderResults`'s "Play again") never clears `playIdVar` back to
-  // `None`, so `phaseSignal`'s `NotStarted` case — the only one that renders the picker — is never reached again;
-  // "Play again" actually just replays instantly with whatever variant the previous play used, picker skipped
-  // entirely. That looks like an unintended carryover from the pre-redesign single-button flow (nothing to
-  // reconfigure back then) rather than deliberate; see the task-14 report for the finding. Revisiting the link is
-  // what a real player wanting a different variant would do anyway, and it is what this test does here.
+  // Reached via a fresh visit of the share link, not the in-page "Play again" button: the "Start" picker button
+  // and "Play again" write to the same `startBus`, whose second subscriber samples the picker's current `Var`s
+  // and calls `startPlay` unconditionally on every `startBus` event — so a "Play again" click always immediately
+  // restarts with whatever variant is already selected, with no window to change it first. (The `playIdVar ->
+  // None` reset the first subscriber now does fixes the internal state — no more getting stuck on a spinner if a
+  // restart's `startPlay` call fails — but it does not turn "Play again" into an interactive stop at the picker.)
+  // A fresh visit is the only reliable way to reach the picker and configure the narrower second play used here.
   await guestPage.goto(gameUrl);
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
 
@@ -258,23 +258,26 @@ test("the owner's tracked-results listing shows both plays as distinct rows", as
   const rows = page.locator('table tbody tr');
   await expect(rows).toHaveCount(2);
 
-  // Both plays were the same anonymous guest (playerEmail absent), so every row badges "Guest" — the only thing
-  // distinguishing the two rows in this listing is score and word count (see the concern in the task report:
-  // GameVariantDto.wordPreference/sourceLanguage/targetLanguage reach the frontend but GameResultsPage's row
-  // does not render them, so direction/preference are not visible per row despite the design doc calling for it).
+  // Both plays were the same anonymous guest (playerEmail absent), so every row badges "Guest" — what actually
+  // distinguishes the two rows is the Variant column (GameResultsPage.renderRow, Labels.wordPreference): the
+  // first play used the default "All words" preference, the second explicitly narrowed to "Words I haven't
+  // played". Direction is German -> Hungarian for both (never swapped for either play).
   await expect(rows.filter({ hasText: 'Guest' })).toHaveCount(2);
 
   const wideRow = rows.filter({ hasText: '6 / 6' });
   await expect(wideRow).toHaveCount(1);
   await expect(wideRow).toContainText('3');
+  await expect(wideRow).toContainText('German → Hungarian · All words');
 
   const narrowRow = rows.filter({ hasText: '2 / 2' });
   await expect(narrowRow).toHaveCount(1);
   await expect(narrowRow).toContainText('1');
+  await expect(narrowRow).toContainText("German → Hungarian · Words I haven't played");
 
-  // Opening one row's detail modal works and shows its own answer history.
+  // Opening one row's detail modal works, shows its own answer history, and the same variant line.
   await narrowRow.getByRole('button', { name: 'View' }).click();
   await expect(page.getByRole('heading', { name: 'Play result' })).toBeVisible();
   await expect(page.locator('.modal-box table tbody tr')).toHaveCount(1);
+  await expect(page.locator('.modal-box.max-w-2xl')).toContainText("German → Hungarian · Words I haven't played");
   await page.getByRole('button', { name: 'Close' }).click();
 });
