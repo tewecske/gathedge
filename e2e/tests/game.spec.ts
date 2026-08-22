@@ -219,15 +219,21 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // history this player just built means only `untouched` qualifies, so the preview (fetched fresh on the
   // preference change, before starting) should show exactly that one word, and the prompt itself must be it.
   //
-  // Reached via a fresh visit of the share link, not the in-page "Play again" button: the "Start" picker button
-  // and "Play again" write to the same `startBus`, whose second subscriber samples the picker's current `Var`s
-  // and calls `startPlay` unconditionally on every `startBus` event — so a "Play again" click always immediately
-  // restarts with whatever variant is already selected, with no window to change it first. (The `playIdVar ->
-  // None` reset the first subscriber now does fixes the internal state — no more getting stuck on a spinner if a
-  // restart's `startPlay` call fails — but it does not turn "Play again" into an interactive stop at the picker.)
-  // A fresh visit is the only reliable way to reach the picker and configure the narrower second play used here.
-  await guestPage.goto(gameUrl);
+  // Reached through the in-page "Play again" button itself — the whole point of this fix. "Start" and "Play
+  // again" now write to two independent buses (GameInstancePage's `startBus` and `playAgainBus`): "Play again"
+  // only resets state (`playIdVar -> None` flips `phaseSignal` back to `Phase.NotStarted`) and is never wired to
+  // the `startPlay`-calling subscriber, so clicking it must land on the interactive picker — not a loading
+  // spinner, not an instant second play — giving the player a real stop to reconfigure before this narrower
+  // second play starts.
+  await guestPage.getByRole('button', { name: 'Play again' }).click();
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
+  // `.loading-spinner` alone would also match the (visibility-hidden) QR-code modal's own always-mounted
+  // placeholder spinner (renderQrModal), so scope to visible elements to check the real Phase.Loading spinner
+  // (renderPhase's `Phase.Loading` branch) is not what's showing.
+  await expect(guestPage.locator('.loading-spinner:visible')).toHaveCount(0);
+  await expect(guestPage.getByTitle('Swap languages')).toBeVisible();
+  await expect(guestPage.getByText('How many words')).toBeVisible();
+  await expect(guestPage.getByText('Which words')).toBeVisible();
 
   // `GET /api/games/{slug}/plays/setup` answers the whole eligible pool re-ordered by preference (priority
   // sampling, not a hard filter — see the design doc), so the preview's own count stays at the pool size (4)
