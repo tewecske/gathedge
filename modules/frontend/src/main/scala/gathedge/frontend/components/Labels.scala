@@ -1,7 +1,15 @@
 package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{AnswerOutcome, GrammarCategory, PartOfSpeech, TranslationFilter, WordLanguage, WordPreference}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  GrammarCategory,
+  PartOfSpeech,
+  TranslationFilter,
+  WordLanguage,
+  WordPreference,
+}
+import gathedge.shared.dto.GameVariantDto
 import gathedge.shared.i18n.UiKeys
 
 /** How the enums and stored codes that reach a screen get worded.
@@ -139,6 +147,14 @@ object Labels {
       case WordPreference.MostMistakes =>
         I18n.t(UiKeys.gameInstancePreferenceMostMistakes)
     }
+  }
+
+  /** The played variant, worded exactly as `GameResultsPage.renderRow`/`.renderModalBody` and
+    * `GameInstancePage.renderResults` need it: direction plus preference, one string — the fourth of the design doc's
+    * four variant-visibility surfaces (`PlayHistoryTable`) uses this too, so all four read identically.
+    */
+  def variant(v: GameVariantDto): String = {
+    s"${language(v.sourceLanguage)} → ${language(v.targetLanguage)} · ${wordPreference(v.wordPreference)}"
   }
 
   private def humanizeTag(tag: String): String = {

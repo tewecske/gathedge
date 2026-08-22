@@ -229,7 +229,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
       td(play.playerEmail.getOrElse(I18n.t(UiKeys.gameResultsGuestBadge))),
       td(s"${play.score} / ${play.maxScore}"),
       td(play.wordCount.toString),
-      td(s"${Labels.language(play.variant.sourceLanguage)} → ${Labels.language(play.variant.targetLanguage)} · ${Labels.wordPreference(play.variant.wordPreference)}"),
+      td(Labels.variant(play.variant)),
       td(Formats.dateTime(play.startedAt)),
       td(
         button(
@@ -312,10 +312,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
     div(
       p(cls := "text-sm opacity-70", detail.playerEmail.getOrElse(I18n.t(UiKeys.gameResultsGuestBadge))),
       p(cls := "font-bold mb-2", s"${detail.score} / ${detail.maxScore}"),
-      p(
-        cls := "text-sm opacity-70 mb-2",
-        s"${Labels.language(detail.variant.sourceLanguage)} → ${Labels.language(detail.variant.targetLanguage)} · ${Labels.wordPreference(detail.variant.wordPreference)}",
-      ),
+      p(cls := "text-sm opacity-70 mb-2", Labels.variant(detail.variant)),
       renderAnswersTable(detail.answers),
     )
   }
