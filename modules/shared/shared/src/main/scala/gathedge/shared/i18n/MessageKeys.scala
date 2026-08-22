@@ -130,11 +130,6 @@ object MessageKeys {
     */
   val gameWordLimitInvalid: String = key("games.wordLimitInvalid")
 
-  /** `GameFailure.NotFixedPool` — reshuffle on a game that draws a fresh sample every play already, or has no word
-    * limit at all.
-    */
-  val gameNotFixedPool: String = key("games.notFixedPool")
-
   /** `GameFailure.NotTracked` — the owner-facing results listing/detail on a game that never turned on `trackResults`.
     */
   val gameNotTracked: String = key("games.notTracked")
