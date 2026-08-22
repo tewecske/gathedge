@@ -175,11 +175,12 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val readerVar = Var(Option.empty[User])
 
-  private val loadBus    = new EventBus[Unit]()
-  private val startBus   = new EventBus[Unit]()
-  private val nextBus    = new EventBus[Unit]()
-  private val submitBus  = new EventBus[Unit]()
-  private val resultsBus = new EventBus[Unit]()
+  private val loadBus      = new EventBus[Unit]()
+  private val startBus     = new EventBus[Unit]()
+  private val playAgainBus = new EventBus[Unit]()
+  private val nextBus      = new EventBus[Unit]()
+  private val submitBus    = new EventBus[Unit]()
+  private val resultsBus   = new EventBus[Unit]()
 
   private val renameEditBus   = new EventBus[Unit]()
   private val renameCancelBus = new EventBus[Unit]()
@@ -221,6 +222,21 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     }
   }
 
+  /** Clears the previous play's finish state AND `playIdVar`, which is what lets `phaseSignal` fall back to
+    * `Phase.NotStarted` (the variant picker) — shared by both the real "Start" trigger ([[startBus]], which also
+    * flips `startingVar` since a network call is about to fire) and "Play again" ([[playAgainBus]], which leaves
+    * `startingVar` alone since nothing is loading yet — see `renderResults`).
+    */
+  private def resetForPicker(): Unit = {
+    Var.set(
+      errorVar    -> None,
+      finishedVar -> false,
+      resultsVar  -> None,
+      promptVar   -> None,
+      playIdVar   -> None,
+    )
+  }
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-xl mx-auto",
@@ -249,16 +265,18 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         },
       startBus.events -->
         Observer[Unit] { _ =>
-          // Also clears the previous play's finish state AND `playIdVar`, so this doubles as "Play again" that
-          // returns to the variant picker rather than silently replaying the previous variant — see `renderResults`.
-          Var.set(
-            startingVar -> true,
-            errorVar    -> None,
-            finishedVar -> false,
-            resultsVar  -> None,
-            promptVar   -> None,
-            playIdVar   -> None,
-          )
+          // A network call is about to fire (the second `startBus.events` subscriber below), so flip `startingVar`
+          // immediately alongside the shared reset.
+          startingVar.set(true)
+          resetForPicker()
+        },
+      playAgainBus.events -->
+        Observer[Unit] { _ =>
+          // Only resets state — nothing is loading yet. This subscriber is deliberately NOT wired to the
+          // `startPlay`-calling subscriber below, so "Play again" lands back on the variant picker (`phaseSignal`
+          // falls to `Phase.NotStarted` once `playIdVar` is `None`) and gives the reader a real interactive stop to
+          // reconfigure before the next play starts — see `renderResults`.
+          resetForPicker()
         },
       startBus.events
         .withCurrentValueOf(swapDirectionVar.signal, wordLimitSignal, includeArticlesVar.signal, wordPreferenceVar.signal)
@@ -843,7 +861,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           typ := "button",
           disabled <-- startingVar.signal,
           I18n.t(UiKeys.gameInstancePlayAgain),
-          onClick.mapToUnit --> startBus.writer,
+          onClick.mapToUnit --> playAgainBus.writer,
         ),
         a(
           cls := "link link-hover text-sm",
