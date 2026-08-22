@@ -7,7 +7,7 @@ import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
-import gathedge.shared.dto.GameCreated
+import gathedge.shared.dto.{GameCreated, GameSetupWord}
 import gathedge.shared.i18n.UiKeys
 
 /** Choosing a language pair and tags, and turning them into a fresh quiz.
@@ -60,6 +60,15 @@ private class GameSetupPage {
   private val trackResultsVar = Var(false)
 
   private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal, trackResultsVar.signal)
+
+  /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
+    * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
+    * trivially empty, the same shortcut the backend itself takes.
+    */
+  private val wordsQuerySignal = formSignal.combineWith(selectedTagIdsVar.signal).distinct
+
+  private val wordsVar        = Var(List.empty[GameSetupWord])
+  private val wordsLoadingVar = Var(false)
 
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
@@ -147,6 +156,19 @@ private class GameSetupPage {
           case Left(err)   =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
+      wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ => wordsLoadingVar.set(true)),
+      wordsQuerySignal.updates.flatMapSwitch { case (source, target, tagIds) =>
+        if (tagIds.isEmpty)
+          EventStream.fromValue(Right(Nil))
+        else
+          asReader(() => GameApiClient.setupWords(source, target, tagIds))
+      } -->
+        Observer[Either[ApiError, List[GameSetupWord]]] {
+          case Right(words) =>
+            Var.set(wordsVar -> words, wordsLoadingVar -> false)
+          case Left(err)    =>
+            Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
+        },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
       playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
         case (source, target, tagIds, trackResults) =>
@@ -203,6 +225,7 @@ private class GameSetupPage {
     div(
       cls := "flex-1",
       renderTrackResultsControl(),
+      renderWordsList(),
     )
   }
 
@@ -279,6 +302,29 @@ private class GameSetupPage {
           p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
         ),
       ),
+    )
+  }
+
+  /** The eligible pool the current tag selection would draw from — see `GameApiClient.setupWords`. A plain scrollable
+    * list rather than anything fancier.
+    */
+  private def renderWordsList(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordsHeading)),
+      span(
+        cls    := "label-text text-sm opacity-70",
+        child.text <-- wordsVar.signal.map(words => I18n.plural(UiKeys.gameSetupWordsCount, words.size.toLong)),
+      ),
+      div(
+        cls    := "flex flex-col gap-1 mt-1 max-h-96 overflow-y-auto border border-base-300 rounded p-2",
+        children <-- wordsVar.signal.map(_.map(word => div(cls := "text-sm", word.text))),
+      ),
+      child.maybe <-- wordsVar.signal.combineWith(wordsLoadingVar.signal).map { case (words, loading) =>
+        Option.when(words.isEmpty && !loading)(
+          p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameSetupWordsEmpty))
+        )
+      },
     )
   }
 

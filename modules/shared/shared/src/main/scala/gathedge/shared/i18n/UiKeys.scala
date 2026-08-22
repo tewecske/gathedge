@@ -870,6 +870,12 @@ object UiKeys {
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
 
+  // The right-hand word list: exactly the eligible pool the selected tags/languages would draw from — see
+  // `GameApiClient.setupWords`.
+  val gameSetupWordsHeading: String = key("ui.gameSetup.words.heading")
+  val gameSetupWordsCount: String   = pluralKey("ui.gameSetup.words.count")
+  val gameSetupWordsEmpty: String   = key("ui.gameSetup.words.empty")
+
   // Whether the owner can later see who played and how they scored — see `GameRow.trackResults`. Off by default,
   // like every prior addition to this screen.
   val gameSetupTrackResultsLabel: String = key("ui.gameSetup.trackResults.label")
@@ -877,8 +883,8 @@ object UiKeys {
 
   // -- Game instance -----------------------------------------------------------------------------
 
-  val gameInstanceNotFound: String          = key("ui.gameInstance.notFound")
-  val gameInstanceStart: String             = key("ui.gameInstance.start")
+  val gameInstanceNotFound: String = key("ui.gameInstance.notFound")
+  val gameInstanceStart: String    = key("ui.gameInstance.start")
 
   val gameInstanceDirectionSwap: String = key("ui.gameInstance.direction.swap")
 
