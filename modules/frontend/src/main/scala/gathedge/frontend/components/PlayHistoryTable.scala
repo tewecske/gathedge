@@ -23,6 +23,7 @@ object PlayHistoryTable {
             th(I18n.t(UiKeys.myPlaysGameCol)),
             th(I18n.t(UiKeys.myPlaysScoreCol)),
             th(I18n.t(UiKeys.myPlaysWordsCol)),
+            th(I18n.t(UiKeys.gameResultsVariantCol)),
             th(I18n.t(UiKeys.myPlaysStartedCol)),
           )
         ),
@@ -41,6 +42,7 @@ object PlayHistoryTable {
       td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(play.gameSlug)), play.gameName)),
       td(s"${play.score} / ${play.maxScore}"),
       td(play.wordCount.toString),
+      td(Labels.variant(play.variant)),
       td(Formats.dateTime(play.startedAt)),
     )
   }
