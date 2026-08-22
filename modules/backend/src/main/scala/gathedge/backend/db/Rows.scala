@@ -195,23 +195,18 @@ final case class GuestClaimCodeRow(
   revokedAt: Option[Long],
 )
 
-/** One quiz, scoped to a language pair and built from the tags in [[GameTagRow]].
+/** One quiz, scoped to a language pair and built from the tags in [[GameTagRow]]. Nothing here changes after
+  * creation — word count, direction, article display and word preference are all play-time choices now, carried
+  * per-play on [[GamePlayRow]] instead. See the "game variants redesign" design doc.
   *
-  * `slug` is generated once at creation and never changes — the permanent key a share link is built from, sized and
-  * typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]: an app-generated random identifier that
-  * must never collide. `name` is the opposite: cosmetic, free to edit at will, which is why the two are separate
-  * columns rather than one renameable field.
+  * `slug` is generated once at creation and never changes — the permanent key a share link is built from, sized
+  * and typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]. `name` is the opposite: cosmetic,
+  * free to edit at will, which is why the two are separate columns rather than one renameable field.
   *
-  * `wordLimit` is `None` for "use every eligible word" (the only behaviour before this field existed) or `Some(n)` for
-  * "sample exactly n of them at play time" — see [[GamePlayWordRow]] for where that sample actually gets stored.
-  *
-  * `randomizeEachPlay` is `true` for "draw a fresh sample every play" (the only behaviour before this field existed,
-  * and what a `wordLimit = None` game always keeps — a fixed sample of "everything" is meaningless) or `false` for
-  * "draw the sample once and reuse it" — see [[GameWordPoolRow]] for where that fixed sample gets stored.
-  *
-  * `trackResults` gates only whether the owner-facing play listing/detail is reachable (`GameService.listPlays`/
-  * `getPlayDetail`) — `false` (the default) is the only behaviour before this field existed. [[GamePlayRow]] and
-  * [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this flag.
+  * `trackResults` gates only whether the owner-facing play listing/detail is reachable
+  * (`GameService.listPlays`/`getPlayDetail`) — `false` (the default) is the only behaviour before this field
+  * existed. [[GamePlayRow]] and [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this
+  * flag.
   */
 final case class GameRow(
   id: Long,
@@ -222,10 +217,7 @@ final case class GameRow(
   targetLanguage: String,
   createdAt: Long,
   updatedAt: Long,
-  wordLimit: Option[Int] = None,
-  randomizeEachPlay: Boolean = true,
   trackResults: Boolean = false,
-  includeDefiniteArticles: Boolean = true,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like
@@ -233,13 +225,21 @@ final case class GameRow(
   */
 final case class GameTagRow(id: Long, gameId: Long, tagId: Long)
 
-/** One attempt at a game, by one account.
+/** One attempt at a game, by one account, under one play-time variant.
   *
-  * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on every
-  * read — a play is read far more often than written to, and all three are cheap to maintain incrementally as answers
-  * come in. `wordCount` and `maxScore` are fixed at the moment the play starts; `score` is the one column that changes
-  * as it progresses. `finishedAt` is `None` for a play still in progress and set once, when it completes — there is no
-  * separate "abandoned" state.
+  * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on
+  * every read — a play is read far more often than written to, and all three are cheap to maintain incrementally
+  * as answers come in. `wordCount` and `maxScore` are fixed at the moment the play starts; `score` is the one
+  * column that changes as it progresses. `finishedAt` is `None` for a play still in progress and set once, when
+  * it completes — there is no separate "abandoned" state.
+  *
+  * `sourceLanguage`/`targetLanguage`/`wordLimit`/`includeDefiniteArticles`/`wordPreference` are the variant this
+  * specific play ran under — a snapshot, not a live reference to the (now immutable) base game, since a play may
+  * have swapped direction or picked a narrower/differently-preferenced sample than another play of the same game.
+  * `wordLimit` keeps its old `games.word_limit` meaning: `None` for "every eligible word", `Some(n)` for "sampled
+  * exactly n (or fewer, if the pool was smaller)". `wordPreference` holds a [[gathedge.shared.domain.WordPreference]]
+  * code. These five default to English/English/no limit/articles on/"all" only so pre-migration test fixtures that
+  * construct a `GamePlayRow` positionally keep compiling — `GameService.startPlay` always supplies real values.
   */
 final case class GamePlayRow(
   id: Long,
@@ -250,6 +250,11 @@ final case class GamePlayRow(
   wordCount: Int,
   startedAt: Long,
   finishedAt: Option[Long],
+  sourceLanguage: String = "en",
+  targetLanguage: String = "en",
+  wordLimit: Option[Int] = None,
+  includeDefiniteArticles: Boolean = true,
+  wordPreference: String = "all",
 )
 
 /** One word pair asked and answered inside one play — the per-word-pair progression record the whole feature is built
@@ -283,13 +288,6 @@ final case class GamePlayAnswerRow(
   * the migration's comment: a play's word set is fixed history, not current dictionary state.
   */
 final case class GamePlayWordRow(id: Long, playId: Long, wordId: Long, translationWordId: Long)
-
-/** A game's own fixed word draw, for a `randomizeEachPlay = false` game — written once at `createGame` (when the
-  * creator picked "randomize now") and replaced wholesale by [[GameRepository.replaceGameWordPool]] on a reshuffle.
-  * Every play of such a game reads this same set via [[GameRepository.wordPoolOf]], instead of each play drawing its
-  * own sample the way [[GamePlayWordRow]] does for a `randomizeEachPlay = true` game.
-  */
-final case class GameWordPoolRow(id: Long, gameId: Long, wordId: Long, translationWordId: Long)
 
 /** A progress-sharing code: the bearer credential a sharer mints and hands to whoever they want reading their game
   * history. The `code` column *is* the credential, exactly like [[GuestClaimCodeRow.code]] — never logged — and the
