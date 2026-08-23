@@ -1,10 +1,11 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import gathedge.frontend.Page
-import gathedge.frontend.api.{ApiError, GameApiClient}
+import gathedge.frontend.{AppRouter, Page}
+import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, Labels, PlayHistoryTable}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.state.{PendingPlay, PlayHandoff}
 import gathedge.shared.domain.AnswerOutcome
 import gathedge.shared.dto.{GameAnswerResult, GameResults, MyPlayPage, MyPlaySummary}
 import gathedge.shared.i18n.UiKeys
@@ -40,8 +41,9 @@ private class MyPlayHistoryPage {
   private val modalOpenVar                         = Var(false)
   private val modalErrorVar: Var[Option[String]]   = Var(None)
 
-  private val viewBus = new EventBus[Long]()
-  private val stepBus = new EventBus[Int]()
+  private val viewBus      = new EventBus[Long]()
+  private val stepBus      = new EventBus[Int]()
+  private val playAgainBus = new EventBus[MyPlaySummary]()
 
   def render(): HtmlElement = {
     div(
@@ -81,6 +83,14 @@ private class MyPlayHistoryPage {
           case Left(err)      =>
             Var.set(resultsVar -> None, modalErrorVar -> Some(err.message))
         },
+      playAgainBus.events.flatMapSwitch(play => GameReplay.start(play.gameSlug, play.variant)) -->
+        Observer[Either[ApiError, GameReplay.Started]] {
+          case Right(result) =>
+            PendingPlay.set(result.playId, PlayHandoff(result.wordCount, result.showGenderPicker))
+            AppRouter.router.pushState(Page.GamePlay(result.slug, result.playId))
+          case Left(err)     =>
+            errorVar.set(Some(err.message))
+        },
       onMountCallback(_ => reloadBus.emit(())),
     )
   }
@@ -92,7 +102,7 @@ private class MyPlayHistoryPage {
       case Some(rows) if rows.isEmpty =>
         div(cls := "text-base-content/70", I18n.t(UiKeys.myPlaysEmpty))
       case Some(rows)                 =>
-        PlayHistoryTable.render(Val(rows), onView = Some(viewBus.writer))
+        PlayHistoryTable.render(Val(rows), onView = Some(viewBus.writer), onPlayAgain = Some(playAgainBus.writer))
     }
   }
 

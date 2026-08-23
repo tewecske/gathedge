@@ -190,7 +190,8 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await guestPage.getByRole('button', { name: 'Start' }).click();
 
   // Starting a play is the first write, so it is what mints the guest account here — confirmed above that
-  // nothing before this click did.
+  // nothing before this click did. It is also what moves the play loop onto its own route.
+  await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
   await expect(guestPage.getByRole('heading', { name: 'Your words are saved on this device' })).toBeVisible();
 
   const firstPlaySeen: string[] = [];
@@ -227,18 +228,13 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // history this player just built means only `untouched` qualifies, so the preview (fetched fresh on the
   // preference change, before starting) should show exactly that one word, and the prompt itself must be it.
   //
-  // Reached through the in-page "Play again" button itself — the whole point of this fix. "Start" and "Play
-  // again" now write to two independent buses (GameInstancePage's `startBus` and `playAgainBus`): "Play again"
-  // only resets state (`playIdVar -> None` flips `phaseSignal` back to `Phase.NotStarted`) and is never wired to
-  // the `startPlay`-calling subscriber, so clicking it must land on the interactive picker — not a loading
-  // spinner, not an instant second play — giving the player a real stop to reconfigure before this narrower
-  // second play starts.
-  await guestPage.getByRole('button', { name: 'Play again' }).click();
+  // Reached by revisiting the shared link itself, not the finished screen's own "Play again" — since the play
+  // loop split onto its own route (`Page.GamePlay`), "Play again" now skips the picker entirely and starts a new
+  // play under the exact same variant just played (see the third play, below), so it is no longer how a player
+  // reconfigures before a play. Only a fresh visit to the picker (`Page.GameInstance`) offers that stop.
+  await guestPage.goto(gameUrl);
+  await expect(guestPage).toHaveURL(new RegExp(`/en/g/${gameSlug}$`));
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
-  // `.loading-spinner` alone would also match the (visibility-hidden) QR-code modal's own always-mounted
-  // placeholder spinner (renderQrModal), so scope to visible elements to check the real Phase.Loading spinner
-  // (renderPhase's `Phase.Loading` branch) is not what's showing.
-  await expect(guestPage.locator('.loading-spinner:visible')).toHaveCount(0);
   await expect(guestPage.getByTitle('Swap languages')).toBeVisible();
   await expect(guestPage.getByText('How many words')).toBeVisible();
   await expect(guestPage.getByText('Which words')).toBeVisible();
@@ -254,6 +250,10 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await wordLimitInput.fill('1');
   await guestPage.getByRole('button', { name: 'Start' }).click();
 
+  // Starting moved the play loop onto its own route — the picker is gone from the URL, replaced by the play id.
+  await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
+  const secondPlayUrl = guestPage.url();
+
   const heading = guestPage.locator('h2.text-xl');
   await expect(heading).toHaveText(untouched!.term);
   await guestPage.getByPlaceholder('Type the translation').fill(untouched!.hu);
@@ -262,34 +262,57 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.getByText('Score: 2 / 2')).toBeVisible();
   await expect(guestPage.locator('table tbody tr')).toHaveCount(1);
 
+  // Third play: "Play again" itself, now that the play loop is its own page. It skips the picker entirely and
+  // reuses the just-finished play's exact variant (unswapped, limit 1, "Words I haven't played") via
+  // `GameReplay.start` — landing straight on a new prompt at a new play id, never showing "Start" or the swap
+  // arrow. By now every word has been answered at least once (the first and second plays together cover all
+  // four), so "unplayed" priority has nothing left to prefer and the sampled word is not asserted — only that
+  // the loop actually started.
+  await guestPage.getByRole('button', { name: 'Play again' }).click();
+  // The regex alone would also match `secondPlayUrl` (same shape, different id), and resolve trivially without
+  // waiting for the actual navigation — assert against the exact prior URL first so this genuinely waits for it.
+  await expect(guestPage).not.toHaveURL(secondPlayUrl);
+  await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
+  await expect(guestPage.getByRole('button', { name: 'Start' })).toHaveCount(0);
+  await expect(guestPage.getByTitle('Swap languages')).toHaveCount(0);
+
+  const thirdPromptText = (await heading.textContent())?.trim() ?? '';
+  const thirdMatch = words.find((w) => w.term === thirdPromptText);
+  expect(thirdMatch, `unexpected quiz prompt: "${thirdPromptText}"`).toBeTruthy();
+  await guestPage.getByPlaceholder('Type the translation').fill(thirdMatch!.hu);
+  await guestPage.getByRole('button', { name: 'Submit' }).click();
+  await expect(guestPage.getByText('Quiz complete')).toBeVisible();
+  await expect(guestPage.getByText('Score: 2 / 2')).toBeVisible();
+
   await guestContext.close();
 });
 
-test("the owner's tracked-results listing shows both plays as distinct rows", async () => {
+test("the owner's tracked-results listing shows all three plays as distinct rows", async () => {
   await page.goto(`/en/games/${gameSlug}/results`);
 
   await expect(page.getByRole('heading', { name: 'Results' })).toBeVisible();
   const rows = page.locator('table tbody tr');
-  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveCount(3);
 
-  // Both plays were the same anonymous guest (playerEmail absent), so every row badges "Guest" — what actually
-  // distinguishes the two rows is the Variant column (GameResultsPage.renderRow, Labels.wordPreference): the
-  // first play used the default "All words" preference, the second explicitly narrowed to "Words I haven't
-  // played". Direction is German -> Hungarian for both (never swapped for either play).
-  await expect(rows.filter({ hasText: 'Guest' })).toHaveCount(2);
+  // Every play was the same anonymous guest (playerEmail absent), so every row badges "Guest" — what actually
+  // distinguishes the rows is the Variant column (GameResultsPage.renderRow, Labels.wordPreference): the first
+  // play used the default "All words" preference; the second and third ("Play again" reusing it) both narrowed
+  // to "Words I haven't played". Direction is German -> Hungarian for all three (never swapped for any play).
+  await expect(rows.filter({ hasText: 'Guest' })).toHaveCount(3);
 
   const wideRow = rows.filter({ hasText: '6 / 6' });
   await expect(wideRow).toHaveCount(1);
   await expect(wideRow).toContainText('3');
   await expect(wideRow).toContainText('German → Hungarian · All words');
 
-  const narrowRow = rows.filter({ hasText: '2 / 2' });
-  await expect(narrowRow).toHaveCount(1);
-  await expect(narrowRow).toContainText('1');
-  await expect(narrowRow).toContainText("German → Hungarian · Words I haven't played");
+  // Two rows share this shape: the "unplayed"-narrowed play and its own "Play again" replay.
+  const narrowRows = rows.filter({ hasText: '2 / 2' });
+  await expect(narrowRows).toHaveCount(2);
+  await expect(narrowRows.first()).toContainText('1');
+  await expect(narrowRows.first()).toContainText("German → Hungarian · Words I haven't played");
 
   // Opening one row's detail modal works, shows its own answer history, and the same variant line.
-  await narrowRow.getByRole('button', { name: 'View' }).click();
+  await narrowRows.first().getByRole('button', { name: 'View' }).click();
   await expect(page.getByRole('heading', { name: 'Play result' })).toBeVisible();
   await expect(page.locator('.modal-box table tbody tr')).toHaveCount(1);
   await expect(page.locator('.modal-box.max-w-2xl')).toContainText("German → Hungarian · Words I haven't played");

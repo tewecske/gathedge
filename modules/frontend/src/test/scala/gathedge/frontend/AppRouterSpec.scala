@@ -39,6 +39,16 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.router.relativeUrlForPage(Page.ResetPassword("tok")) == s"$prefix/reset-password/tok",
         )
       },
+      // Two dynamic segments chained (`/g/{slug}/play/{playId}`), unlike `GameInstance`'s single one — the play loop's
+      // own route, reached only right after `startPlay` succeeds. See `Page.GamePlay`'s doc comment.
+      test("a play's own route carries both its slug and its play id") {
+        val page = Page.GamePlay("brave-otter", 42L)
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(page) == s"$prefix/g/brave-otter/play/42",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/g/brave-otter/play/42").contains(page),
+          AppRouter.deserialize(AppRouter.serialize(page)) == page,
+        )
+      },
       test("the forgot-password route builds under the language prefix too") {
         assertTrue(AppRouter.router.relativeUrlForPage(Page.ForgotPassword) == s"$prefix/forgot-password")
       },

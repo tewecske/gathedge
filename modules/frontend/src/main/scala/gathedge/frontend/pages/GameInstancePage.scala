@@ -1,14 +1,13 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.state.{AppState, GameOwnership}
-import gathedge.shared.domain.{AnswerOutcome, Gender, User, WordLanguage, WordPreference}
-import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, GameSetupWord, PlayStarted}
+import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
+import gathedge.shared.domain.{User, WordLanguage, WordPreference}
+import gathedge.shared.dto.{GameDetail, GameSetupWord, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -17,20 +16,15 @@ import scala.concurrent.Future
 import scala.scalajs.js
 import scala.util.{Failure, Success}
 
-/** One quiz, played from its shared link (`/g/{slug}`).
+/** The variant picker for one quiz, from its shared link (`/g/{slug}`) — the play loop itself lives at `Page.GamePlay`,
+  * reached only right after `startPlay` succeeds (see [[Page.GamePlay]]'s doc comment).
   *
   * The initial `GET /api/games/{slug}` mints nobody — see `Page.GameInstance`'s doc comment — a visitor can read the
   * quiz's name and tags with no session at all. Neither does the play-variant picker's preview fetch
   * (`GameApiClient.playSetup`, wired through [[previewTriggerStream]]/[[reversePreviewTriggerBus]] below): it is an
   * `optionalUser` read too, so merely opening a shared link and looking at the picker mints no guest. Starting a play
   * IS the first write the page makes, so it is where the guest detour sits ([[asReader]], copied in spirit from
-  * `GameSetupPage`'s), and it sits there once: every later call in the loop (`nextPrompt`, `submitAnswer`) runs against
-  * the session `startPlay` already established.
-  *
-  * One prompt is shown at a time, with a "3 of 12" progress line and nothing else about how the game is going —
-  * `GameEndpoints.submitAnswer`'s doc comment is why: a player is never shown correctness mid-game, and that includes
-  * the running score. Once the play is finished, the score and the full answer history become the point of the screen —
-  * that is what `getResults` and the phase's `Finished` state are for.
+  * `GameSetupPage`'s) — the only call this page ever makes to `startPlay`.
   */
 object GameInstancePage {
 
@@ -51,17 +45,6 @@ object GameInstancePage {
 
 private class GameInstancePage(slug: String, generateQr: String => Future[String]) {
 
-  private sealed trait Phase
-
-  private object Phase {
-    case object NotStarted extends Phase
-    case object Loading    extends Phase
-
-    final case class Playing(prompt: GamePrompt, wordCount: Int) extends Phase
-
-    case object Finished extends Phase
-  }
-
   private val gameVar    = Var(Option.empty[GameDetail])
   private val missingVar = Var(false)
 
@@ -73,25 +56,13 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   private val errorVar: Var[Option[String]]  = Var(None)
   private val noticeVar: Var[Option[String]] = Var(None)
 
-  private val playIdVar    = Var(Option.empty[Long])
-  private val wordCountVar = Var(0)
-
-  private val promptVar   = Var(Option.empty[GamePrompt])
-  private val finishedVar = Var(false)
-
-  private val resultsVar = Var(Option.empty[GameResults])
-
-  private val answerTextVar = Var("")
-
   /** The direction-swap arrow's own state — `false` plays the game's stored direction, `true` reverses it for this play
     * only. See the design doc's "no dropdowns, just an arrow" direction control.
     */
   private val swapDirectionVar = Var(false)
 
   /** Mutually exclusive with [[wordLimitTextVar]], the same pattern `GameSetupPage` used before this control moved
-    * here. Defaults to `true`: "use every eligible word". Named `wordLimitTextVar`, not `wordCountVar` — the page
-    * already has an unrelated `wordCountVar: Var[Int]` (the play's own fixed word count, shown in the "3 of 12"
-    * progress line); see the naming note further down.
+    * here. Defaults to `true`: "use every eligible word".
     */
   private val selectAllVar     = Var(true)
   private val wordLimitTextVar = Var("")
@@ -110,20 +81,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val germanInvolvedSignal: Signal[Boolean] = {
     gameVar.signal.map(_.exists(g => g.sourceLanguage == WordLanguage.De || g.targetLanguage == WordLanguage.De))
-  }
-
-  /** Whether the answer the player is about to type is German with an article expected — the gender join-radio (see
-    * [[renderGenderPicker]]) only makes sense then. `swapDirectionVar` is fixed once a play starts (set only at the
-    * variant picker), so this is stable for the whole `Playing` phase.
-    */
-  private val showGenderPickerSignal: Signal[Boolean] = {
-    gameVar.signal.combineWith(swapDirectionVar.signal, includeArticlesVar.signal).map {
-      case (Some(game), swap, articles) =>
-        val answerLanguage = if (swap) game.sourceLanguage else game.targetLanguage
-        articles && answerLanguage == WordLanguage.De
-      case _                            =>
-        false
-    }
   }
 
   private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
@@ -167,8 +124,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val reversePreviewTriggerBus = new EventBus[Unit]()
 
-  private val startingVar   = Var(false)
-  private val submittingVar = Var(false)
+  private val startingVar = Var(false)
 
   /** Whether this browser is the one that created the game — see `GameOwnership`'s doc comment on why that is a local
     * hint rather than something `GameDetail` states. A `Var` rather than a `val` so a 403 on rename (a stale hint, or
@@ -193,32 +149,12 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val readerVar = Var(Option.empty[User])
 
-  private val loadBus      = new EventBus[Unit]()
-  private val startBus     = new EventBus[Unit]()
-  private val playAgainBus = new EventBus[Unit]()
-  private val nextBus      = new EventBus[Unit]()
-  private val submitBus    = new EventBus[Unit]()
-  private val resultsBus   = new EventBus[Unit]()
+  private val loadBus  = new EventBus[Unit]()
+  private val startBus = new EventBus[Unit]()
 
   private val renameEditBus   = new EventBus[Unit]()
   private val renameCancelBus = new EventBus[Unit]()
   private val renameSaveBus   = new EventBus[Unit]()
-
-  private val phaseSignal: Signal[Phase] = {
-    playIdVar.signal
-      .combineWith(finishedVar.signal, promptVar.signal, wordCountVar.signal)
-      .map {
-        case (None, _, _, _)              =>
-          Phase.NotStarted
-        case (Some(_), true, _, _)        =>
-          Phase.Finished
-        case (Some(_), false, Some(p), n) =>
-          Phase.Playing(p, n)
-        case (Some(_), false, None, _)    =>
-          Phase.Loading
-      }
-      .distinct
-  }
 
   /** A per-account write, with the guest detour in front of it — copied from `GameSetupPage.asReader`. With no session
     * `startPlay` cannot succeed, so a guest is minted first and the call retried against the session that creates.
@@ -240,21 +176,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     }
   }
 
-  /** Clears the previous play's finish state AND `playIdVar`, which is what lets `phaseSignal` fall back to
-    * `Phase.NotStarted` (the variant picker) — shared by both the real "Start" trigger ([[startBus]], which also flips
-    * `startingVar` since a network call is about to fire) and "Play again" ([[playAgainBus]], which leaves
-    * `startingVar` alone since nothing is loading yet — see `renderResults`).
-    */
-  private def resetForPicker(): Unit = {
-    Var.set(
-      errorVar    -> None,
-      finishedVar -> false,
-      resultsVar  -> None,
-      promptVar   -> None,
-      playIdVar   -> None,
-    )
-  }
-
   def render(): HtmlElement = {
     div(
       cls := "max-w-xl mx-auto",
@@ -262,7 +183,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       Alert.maybeInfo(noticeVar.signal),
       child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.gameInstanceNotFound)))),
       // Built once, the moment the game finishes loading, and never again — see `renderGameCard`'s doc comment. A
-      // rename only ever writes through `nameVar`, so it cannot remount the phase in progress underneath it.
+      // rename only ever writes through `nameVar`, so it does not need to rebuild anything else under it.
       child.maybe <-- gameVar.signal
         .map(_.isDefined)
         .distinct
@@ -281,21 +202,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             else
               errorVar.set(Some(err.message))
         },
-      startBus.events -->
-        Observer[Unit] { _ =>
-          // A network call is about to fire (the second `startBus.events` subscriber below), so flip `startingVar`
-          // immediately alongside the shared reset.
-          startingVar.set(true)
-          resetForPicker()
-        },
-      playAgainBus.events -->
-        Observer[Unit] { _ =>
-          // Only resets state — nothing is loading yet. This subscriber is deliberately NOT wired to the
-          // `startPlay`-calling subscriber below, so "Play again" lands back on the variant picker (`phaseSignal`
-          // falls to `Phase.NotStarted` once `playIdVar` is `None`) and gives the reader a real interactive stop to
-          // reconfigure before the next play starts — see `renderResults`.
-          resetForPicker()
-        },
+      startBus.events --> Observer[Unit](_ => Var.set(startingVar -> true, errorVar -> None)),
       startBus.events
         .withCurrentValueOf(
           swapDirectionVar.signal,
@@ -305,14 +212,15 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         )
         .flatMapSwitch { case (swap, limit, articles, preference) =>
           asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference))
+            .map(_.map(started => (started, swap, articles)))
         } -->
-        Observer[Either[ApiError, PlayStarted]] {
-          case Right(started) =>
-            // `wordCountVar` here is the pre-existing play-progress var (see the naming note above), set from the
-            // server's actual sampled count — unrelated to this task's own `wordLimitTextVar`.
-            Var.set(playIdVar -> Some(started.playId), wordCountVar -> started.wordCount, startingVar -> false)
-            nextBus.emit(())
-          case Left(err)      =>
+        Observer[Either[ApiError, (PlayStarted, Boolean, Boolean)]] {
+          case Right((started, swap, articles)) =>
+            val answerLanguage = gameVar.now().map(g => if (swap) g.sourceLanguage else g.targetLanguage)
+            val showGender     = articles && answerLanguage.contains(WordLanguage.De)
+            PendingPlay.set(started.playId, PlayHandoff(started.wordCount, showGender))
+            AppRouter.router.pushState(Page.GamePlay(slug, started.playId))
+          case Left(err)                        =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
       previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
@@ -340,29 +248,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             // A failed probe should not lock the reader out of swapping — fail open, same as the button's default.
             reversePoolEmptyVar.set(false)
         },
-      nextPromptStream --> Observer[Either[ApiError, GamePrompt]] {
-        case Right(prompt) =>
-          if (prompt.finished) {
-            Var.set(finishedVar -> true, promptVar -> None, submittingVar -> false)
-            resultsBus.emit(())
-          } else {
-            Var.set(promptVar -> Some(prompt), answerTextVar -> "", submittingVar -> false)
-          }
-        case Left(err)     =>
-          Var.set(submittingVar -> false, errorVar -> Some(err.message))
-      },
-      submitStream --> Observer[Either[ApiError, Unit]] {
-        case Right(_)  =>
-          nextBus.emit(())
-        case Left(err) =>
-          Var.set(submittingVar -> false, errorVar -> Some(err.message))
-      },
-      resultsStream --> Observer[Either[ApiError, GameResults]] {
-        case Right(results) =>
-          resultsVar.set(Some(results))
-        case Left(err)      =>
-          errorVar.set(Some(err.message))
-      },
       renameEditBus.events -->
         Observer[Unit](_ => Var.set(renameTextVar -> nameVar.now(), renameEditingVar -> true, renameErrorVar -> None)),
       renameCancelBus.events -->
@@ -401,31 +286,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  private def nextPromptStream: EventStream[Either[ApiError, GamePrompt]] = {
-    nextBus.events
-      .map(_ => playIdVar.now())
-      .collect { case Some(playId) => playId }
-      .flatMapSwitch(playId => GameApiClient.nextPrompt(playId))
-  }
-
-  private def submitStream: EventStream[Either[ApiError, Unit]] = {
-    submitBus.events
-      .filterWith(submittingVar.signal.not)
-      .map(_ => (playIdVar.now(), promptVar.now().flatMap(_.wordId), answerTextVar.now().trim))
-      .collect { case (Some(playId), Some(wordId), text) if text.nonEmpty => (playId, wordId, text) }
-      .flatMapSwitch { case (playId, wordId, text) =>
-        submittingVar.set(true)
-        GameApiClient.submitAnswer(playId, wordId, text)
-      }
-  }
-
-  private def resultsStream: EventStream[Either[ApiError, GameResults]] = {
-    resultsBus.events
-      .map(_ => playIdVar.now())
-      .collect { case Some(playId) => playId }
-      .flatMapSwitch(playId => GameApiClient.getResults(playId))
-  }
-
   private def renameStream: EventStream[Either[ApiError, GameDetail]] = {
     renameSaveBus.events
       .filterWith(renameSubmittingVar.signal.not)
@@ -437,10 +297,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       }
   }
 
-  /** The card's chrome — name, language pair, tags — built exactly once, the first time [[render]] sees the game
-    * loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never change after load (a rename
-    * only ever touches [[nameVar]]), and rebuilding this on every signal tick would remount whatever `phaseSignal` is
-    * showing underneath it — losing an in-progress answer to a rename made mid-play.
+  /** The card's chrome — name, language pair, tags, share row, and the picker — built exactly once, the first time
+    * [[render]] sees the game loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never
+    * change after load (a rename only ever touches [[nameVar]]).
     */
   private def renderGameCard(): HtmlElement = {
     val detail = gameVar
@@ -462,7 +321,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         else
           emptyNode,
         renderShareRow(),
-        div(cls := "mt-4", child <-- phaseSignal.map(renderPhase)),
+        div(cls := "mt-4", renderStart()),
       ),
     )
   }
@@ -667,19 +526,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  private def renderPhase(phase: Phase): HtmlElement = {
-    phase match {
-      case Phase.NotStarted          =>
-        renderStart()
-      case Phase.Loading             =>
-        span(cls := "loading loading-spinner")
-      case Phase.Playing(prompt, wc) =>
-        renderPrompt(prompt, wc)
-      case Phase.Finished            =>
-        renderFinished()
-    }
-  }
-
   private def renderStart(): HtmlElement = {
     div(
       cls := "flex flex-col gap-4",
@@ -826,154 +672,5 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         Option.when(words.isEmpty && !loading)(p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameInstanceWordsEmpty)))
       },
     )
-  }
-
-  private def renderPrompt(prompt: GamePrompt, wordCount: Int): HtmlElement = {
-    val answerInput = input(
-      cls         := "input input-sm w-full",
-      placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
-      controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
-      // `renderPrompt` is freshly mounted for every new `GamePrompt` (see `phaseSignal`'s `.distinct`), so
-      // focusing on mount both auto-focuses on first load and re-focuses on every new word.
-      onMountFocus,
-    )
-    div(
-      p(
-        cls        := "text-sm opacity-70",
-        I18n.t(UiKeys.gameInstanceProgress, prompt.position.getOrElse(0), wordCount),
-      ),
-      h2(cls       := "text-xl font-semibold my-2", prompt.wordText.getOrElse("")),
-      form(
-        cls        := "flex flex-wrap items-end gap-2",
-        noValidate := true,
-        onSubmit.preventDefault.mapToUnit --> submitBus.writer,
-        label(
-          cls := "form-control grow",
-          span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-          child.maybe <-- showGenderPickerSignal.map(show => Option.when(show)(renderGenderPicker(answerInput))),
-          answerInput,
-        ),
-        button(
-          cls := "btn btn-sm btn-primary",
-          typ := "submit",
-          disabled <-- submittingVar.signal,
-          I18n.t(UiKeys.gameInstanceSubmit),
-        ),
-      ),
-    )
-  }
-
-  /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `BulkUploadDialog`'s
-    * `renderLanguageRadio` pattern — one click sets the article prefix instead of typing it. Picking one replaces any
-    * article already at the front of [[answerTextVar]] and refocuses `answerInput` so the player can keep typing the
-    * word straight after it.
-    */
-  private def renderGenderPicker(answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
-    div(
-      cls := "join mb-1",
-      Gender.all.map(gender => renderGenderRadio(gender, answerInput)),
-    )
-  }
-
-  private def renderGenderRadio(gender: Gender, answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
-    val article        = Gender.article(gender)
-    input(
-      typ        := "radio",
-      cls        := "join-item btn btn-xs",
-      nameAttr   := "answer-gender",
-      aria.label := article,
-      controlled(
-        checked <-- answerTextVar.signal.map(_.toLowerCase.startsWith(article + " ")),
-        onClick.mapToUnit --> Observer[Unit] { _ =>
-          answerTextVar.set(s"$article ${stripArticle(answerTextVar.now())}")
-          answerInput.ref.focus()
-        },
-      ),
-    )
-  }
-
-  /** Drops a leading `der `/`die `/`das ` from a typed or picked answer, so picking a different article replaces the
-    * old one instead of stacking in front of it.
-    */
-  private def stripArticle(text: String): String = {
-    val lower = text.toLowerCase
-    Gender.all.map(Gender.article).find(a => lower.startsWith(a + " ")).fold(text)(a => text.drop(a.length + 1))
-  }
-
-  private def renderFinished(): HtmlElement = {
-    div(child <-- resultsVar.signal.map {
-      case None          =>
-        span(cls := "loading loading-spinner")
-      case Some(results) =>
-        renderResults(results)
-    })
-  }
-
-  private def renderResults(results: GameResults): HtmlElement = {
-    div(
-      cls := "flex flex-col gap-3",
-      p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
-      p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
-      p(cls := "text-sm opacity-70", Labels.variant(results.variant)),
-      renderResultsTable(results.answers),
-      div(
-        cls := "flex flex-wrap items-center gap-3 mt-1",
-        button(
-          cls := "btn btn-primary btn-sm",
-          typ := "button",
-          disabled <-- startingVar.signal,
-          I18n.t(UiKeys.gameInstancePlayAgain),
-          onClick.mapToUnit --> playAgainBus.writer,
-        ),
-        a(
-          cls := "link link-hover text-sm",
-          AppRouter.router.navigateTo(Page.Games),
-          I18n.t(UiKeys.gameInstanceBackToGames),
-        ),
-      ),
-    )
-  }
-
-  private def renderResultsTable(answers: List[GameAnswerResult]): HtmlElement = {
-    div(
-      cls := "overflow-x-auto",
-      table(
-        cls := "table table-sm",
-        thead(
-          tr(
-            th(I18n.t(UiKeys.gameInstanceResultsWordCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsExpectedCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsAnswerCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsOutcomeCol)),
-          )
-        ),
-        tbody(answers.map(renderResultRow)),
-      ),
-    )
-  }
-
-  private def renderResultRow(answer: GameAnswerResult): HtmlElement = {
-    tr(
-      cls := "hover",
-      td(answer.wordText),
-      td(answer.expectedText),
-      td(answer.givenText),
-      td(renderOutcomeBadge(answer.outcome)),
-    )
-  }
-
-  /** Mistakes (typo/wrong) get a warning/error badge, matching `AdminUserDiagnostics.renderOutcome`'s style for
-    * `login_attempts.outcome` — the same "outcome of one attempt, in a table" shape.
-    */
-  private def renderOutcomeBadge(outcome: AnswerOutcome): HtmlElement = {
-    val style = outcome match {
-      case AnswerOutcome.Correct =>
-        "badge-success badge-soft"
-      case AnswerOutcome.Typo    =>
-        "badge-warning"
-      case AnswerOutcome.Wrong   =>
-        "badge-error"
-    }
-    span(cls := s"badge $style", Labels.gameOutcome(outcome))
   }
 }

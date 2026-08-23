@@ -15,6 +15,7 @@ import gathedge.frontend.pages.{
   ForbiddenPage,
   ForgotPasswordPage,
   GameInstancePage,
+  GamePlayPage,
   GameResultsPage,
   GameSetupPage,
   GamesPage,
@@ -315,6 +316,14 @@ object App {
         SharedPlayerHistoryPage.render(sharerUserId)
       case Page.GameInstance(slug)                  =>
         GameInstancePage.render(slug, generateQr)
+      // No signal renderer needed here, unlike `GameInstance`/`GameResults` above: this page is reached only after
+      // `startPlay` has already succeeded, i.e. after any guest-mint already ran — so there is no in-flight request to
+      // keep alive across a `Gate` change, and a fresh `playId` should always get a fresh element (it owns one play's
+      // state, not reusable across plays). Falling straight through to this plain match arm gives that for free: the
+      // catch-all rebuilds on every distinct `(Gate, Page)` change, and two different `playId`s are different `Page`
+      // values.
+      case Page.GamePlay(slug, playId)              =>
+        GamePlayPage.render(slug, playId)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words` below.
       case Page.GameResults(slug, query)            =>

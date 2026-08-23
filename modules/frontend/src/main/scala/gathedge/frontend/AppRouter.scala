@@ -42,6 +42,15 @@ object Page {
     */
   final case class GameInstance(slug: String) extends Page
 
+  /** The play loop for one attempt at a game: prompt, answer, next, until `playId` finishes. Reached only by navigating
+    * here right after `startPlay` succeeds (the picker on [[GameInstance]], or a "Play again" shortcut via
+    * `GameReplay.start`) — never rendered from a bare URL with nothing else known about it, since there is no way to
+    * recover a play's word count from just its id (`GamePlayPage`'s doc comment). Public for the same reason
+    * [[GameInstance]] is: a bookmarked/shared/refreshed link must still render, even with no matching in-memory
+    * hand-off — it just bounces straight back to the picker in that case, rather than to sign-in.
+    */
+  final case class GamePlay(slug: String, playId: Long) extends Page
+
   /** A tracked game's owner-facing results listing: who played `slug` and how they scored. Owner-only (the default
     * `AuthGuard.RequireAuth` covers it — see `guardFor`), unlike [[GameInstance]]: a shared link must stay public, but
     * a game's play history is not something a shared link should leak. It carries its whole listing state, the same
@@ -139,7 +148,7 @@ object Page {
         AuthGuard.Public
       // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in. A shared link has to show the catalog, not sign-in.
-      case Games | GameSetup | GameInstance(_) | About                           =>
+      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | About          =>
         AuthGuard.Public
       case _                                                                     =>
         AuthGuard.RequireAuth
@@ -181,6 +190,12 @@ object AppRouter {
     encode = (p: GameInstance) => p.slug,
     decode = (slug: String) => GameInstance(slug),
     pattern = root / "g" / segment[String],
+    basePath = basePath,
+  )
+  private val gamePlayRoute            = Route(
+    encode = (p: GamePlay) => (p.slug, p.playId),
+    decode = (args: (String, Long)) => GamePlay(args._1, args._2),
+    pattern = root / "g" / segment[String] / "play" / segment[Long],
     basePath = basePath,
   )
 
@@ -297,6 +312,8 @@ object AppRouter {
         s"SharedPlayerHistory:$id"
       case GameInstance(slug)       =>
         s"GameInstance:$slug"
+      case GamePlay(slug, playId)   =>
+        s"GamePlay:$slug:$playId"
       case GameResults(slug, query) =>
         s"GameResults:$slug:" + GamePlayQuery.params.createParamsString(query)
       case VerifyEmail(token)       =>
@@ -341,6 +358,16 @@ object AppRouter {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
     } else if (tag.startsWith("GameInstance:")) {
       GameInstance(tag.stripPrefix("GameInstance:"))
+    } else if (tag.startsWith("GamePlay:")) {
+      // A corrupt/truncated tag means there is no play id to resume with — fall back to `NotFound`, same convention
+      // `withId` uses for every other id-keyed tag.
+      val rest = tag.stripPrefix("GamePlay:")
+      val sep  = rest.lastIndexOf(':')
+      if (sep < 0) {
+        NotFound
+      } else {
+        rest.substring(sep + 1).toLongOption.map(playId => GamePlay(rest.substring(0, sep), playId)).getOrElse(NotFound)
+      }
     } else if (tag.startsWith("GameResults:")) {
       // A tag we cannot read is a history entry from an older build; the game's own page is still the right
       // fallback, the same reasoning `AdminAudit`'s fallback below applies to its own listing.
@@ -433,6 +460,7 @@ object AppRouter {
         sharedProgressRoute,
         sharedPlayerHistoryRoute,
         gameInstanceRoute,
+        gamePlayRoute,
         gameResultsRoute,
         verifyEmailRoute,
         checkInboxRoute,
