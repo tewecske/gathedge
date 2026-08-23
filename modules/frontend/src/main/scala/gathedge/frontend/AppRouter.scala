@@ -18,8 +18,8 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
-  /** The catalog of game types. Public, like [[Words]]: a shared game link should show the catalog without
-    * bouncing a signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
+  /** The catalog of game types. Public, like [[Words]]: a shared game link should show the catalog without bouncing a
+    * signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
     */
   case object Games extends Page
 
@@ -139,7 +139,7 @@ object Page {
         AuthGuard.Public
       // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in. A shared link has to show the catalog, not sign-in.
-      case Games | GameSetup | GameInstance(_) | About                          =>
+      case Games | GameSetup | GameInstance(_) | About                           =>
         AuthGuard.Public
       case _                                                                     =>
         AuthGuard.RequireAuth

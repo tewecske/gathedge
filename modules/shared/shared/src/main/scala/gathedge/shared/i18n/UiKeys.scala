@@ -177,7 +177,7 @@ object UiKeys {
   val forbiddenTitle: String = key("ui.status.forbidden.title")
   val forbiddenBody: String  = key("ui.status.forbidden.body")
   val notFoundTitle: String  = key("ui.status.notFound.title")
-  val notFoundBody: String  = key("ui.status.notFound.body")
+  val notFoundBody: String   = key("ui.status.notFound.body")
 
   // -- About ------------------------------------------------------------------------------------
   // What the site is for, who runs it, and how it is licensed. The repository, licence and
