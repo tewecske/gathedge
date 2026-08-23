@@ -4,18 +4,19 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
+import gathedge.frontend.components.{Alert, AppShell, GameHeader, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{AnswerOutcome, Gender}
-import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults}
+import gathedge.shared.domain.{AnswerOutcome, Gender, WordLanguage}
+import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
 /** One attempt at a game: prompt, answer, next, until the play finishes — see `Page.GamePlay`'s doc comment for why
-  * this is a separate route from `GameInstancePage`'s picker rather than a phase within it. Carries no chrome of its
-  * own (name/rename/share/QR/tags) by design — that stays on the picker page, which is always reachable via the
-  * finished screen's "Back to games" or a fresh "Play again".
+  * this is a separate route from `GameInstancePage`'s picker rather than a phase within it. Shows a read-only
+  * [[GameHeader]] (name + played variant) above the phase content, but carries none of the picker's owner chrome
+  * (rename/share/QR/tags) — that stays on the picker page, which is always reachable via the finished screen's "Back to
+  * games" or a fresh "Play again".
   *
   * One prompt is shown at a time, with a "3 of 12" progress line and nothing else about how the game is going —
   * `GameEndpoints.submitAnswer`'s doc comment is why: a player is never shown correctness mid-game, and that includes
@@ -92,7 +93,11 @@ private class GamePlayPage(slug: String, playId: Long) {
       child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       div(
         cls := "card bg-base-100 shadow mt-4",
-        div(cls := "card-body", child <-- phaseSignal.map(renderPhase(_, playState))),
+        div(
+          cls := "card-body",
+          GameHeader.render(playState.gameName, playState.variant),
+          child <-- phaseSignal.map(renderPhase(_, playState)),
+        ),
       ),
       nextPromptStream --> Observer[Either[ApiError, GamePrompt]] {
         case Right(prompt) =>
@@ -126,7 +131,7 @@ private class GamePlayPage(slug: String, playId: Long) {
         } -->
         Observer[Either[ApiError, GameReplay.Started]] {
           case Right(result) =>
-            PendingPlay.set(result.playId, PlayHandoff(result.wordCount, result.showGenderPicker))
+            PendingPlay.set(result.playId, PlayHandoff(result.gameName, result.wordCount, result.variant))
             AppRouter.router.pushState(Page.GamePlay(result.slug, result.playId))
           case Left(err)     =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
@@ -189,7 +194,7 @@ private class GamePlayPage(slug: String, playId: Long) {
         label(
           cls := "form-control grow",
           span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-          if (playState.showGenderPicker) renderGenderPicker(answerInput) else emptyNode,
+          if (showGenderPicker(playState.variant)) renderGenderPicker(answerInput) else emptyNode,
           answerInput,
         ),
         button(
@@ -200,6 +205,13 @@ private class GamePlayPage(slug: String, playId: Long) {
         ),
       ),
     )
+  }
+
+  /** `variant.targetLanguage` is already the resolved (post-swap) answer language for this play, so no separate
+    * direction lookup is needed here the way `GameInstancePage.startBus`'s handler needs one at `startPlay` time.
+    */
+  private def showGenderPicker(variant: GameVariantDto): Boolean = {
+    variant.includeDefiniteArticles && variant.targetLanguage == WordLanguage.De
   }
 
   /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `BulkUploadDialog`'s
@@ -253,7 +265,6 @@ private class GamePlayPage(slug: String, playId: Long) {
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
-      p(cls := "text-sm opacity-70", Labels.variant(results.variant)),
       renderResultsTable(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",

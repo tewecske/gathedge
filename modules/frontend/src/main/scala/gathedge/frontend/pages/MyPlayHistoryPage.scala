@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, Labels, PlayHistoryTable}
+import gathedge.frontend.components.{Alert, AppShell, GameHeader, Labels, PlayHistoryTable}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{PendingPlay, PlayHandoff}
 import gathedge.shared.domain.AnswerOutcome
@@ -86,7 +86,7 @@ private class MyPlayHistoryPage {
       playAgainBus.events.flatMapSwitch(play => GameReplay.start(play.gameSlug, play.variant)) -->
         Observer[Either[ApiError, GameReplay.Started]] {
           case Right(result) =>
-            PendingPlay.set(result.playId, PlayHandoff(result.wordCount, result.showGenderPicker))
+            PendingPlay.set(result.playId, PlayHandoff(result.gameName, result.wordCount, result.variant))
             AppRouter.router.pushState(Page.GamePlay(result.slug, result.playId))
           case Left(err)     =>
             errorVar.set(Some(err.message))
@@ -115,6 +115,20 @@ private class MyPlayHistoryPage {
       next    <- ids.lift(index + delta)
     } yield next
     target.foreach(id => Var.set(selectedPlayIdVar -> Some(id), resultsVar -> None, modalErrorVar -> None))
+  }
+
+  /** The selected row's `gameName`, looked up from the already-loaded [[playsVar]] — a history row spans every game, so
+    * unlike `GameResultsPage`'s single-game modal, [[GameHeader]] needs a name resolved per selected play, and
+    * `GameResults` itself (the modal's own fetch) never carries one.
+    */
+  private val selectedGameNameSignal: Signal[Option[String]] = {
+    playsVar.signal.combineWith(selectedPlayIdVar.signal).map { case (plays, selected) =>
+      for {
+        id   <- selected
+        rows <- plays
+        row  <- rows.find(_.playId == id)
+      } yield row.gameName
+    }
   }
 
   /** Same `div.modal` + `Var[Boolean]` pattern `GameResultsPage.renderModal` uses, for the same jsdom reason. */
@@ -159,13 +173,13 @@ private class MyPlayHistoryPage {
           ),
         ),
         child <--
-          resultsVar.signal.combineWith(modalErrorVar.signal).map {
-            case (_, Some(err))     =>
+          resultsVar.signal.combineWith(modalErrorVar.signal, selectedGameNameSignal).map {
+            case (_, Some(err), _)           =>
               p(cls := "text-error text-sm", err)
-            case (None, None)       =>
+            case (None, None, _)             =>
               span(cls := "loading loading-spinner")
-            case (Some(results), _) =>
-              renderModalBody(results)
+            case (Some(results), _, nameOpt) =>
+              renderModalBody(nameOpt.getOrElse(""), results)
           },
         div(
           cls := "modal-action",
@@ -181,10 +195,10 @@ private class MyPlayHistoryPage {
     )
   }
 
-  private def renderModalBody(results: GameResults): HtmlElement = {
+  private def renderModalBody(gameName: String, results: GameResults): HtmlElement = {
     div(
-      p(cls := "font-bold mb-2", s"${results.score} / ${results.maxScore}"),
-      p(cls := "text-sm opacity-70 mb-2", Labels.variant(results.variant)),
+      GameHeader.render(gameName, results.variant),
+      p(cls := "font-bold mb-2 mt-2", s"${results.score} / ${results.maxScore}"),
       renderAnswersTable(results.answers),
     )
   }

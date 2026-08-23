@@ -7,7 +7,7 @@ import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{User, WordLanguage, WordPreference}
-import gathedge.shared.dto.{GameDetail, GameSetupWord, PlayStarted}
+import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -212,15 +212,21 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         )
         .flatMapSwitch { case (swap, limit, articles, preference) =>
           asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference))
-            .map(_.map(started => (started, swap, articles)))
+            .map(_.map(started => (started, swap, limit, articles, preference)))
         } -->
-        Observer[Either[ApiError, (PlayStarted, Boolean, Boolean)]] {
-          case Right((started, swap, articles)) =>
-            val answerLanguage = gameVar.now().map(g => if (swap) g.sourceLanguage else g.targetLanguage)
-            val showGender     = articles && answerLanguage.contains(WordLanguage.De)
-            PendingPlay.set(started.playId, PlayHandoff(started.wordCount, showGender))
+        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], Boolean, WordPreference)]] {
+          case Right((started, swap, limit, articles, preference)) =>
+            // Only reachable once `renderStart`'s button exists, which itself only renders inside `renderGameCard` —
+            // `gameVar` is always loaded by the time `startBus` can fire, same assumption `renderGameCard` makes.
+            val game       = gameVar
+              .now()
+              .getOrElse(throw new IllegalStateException("startBus fired before the game finished loading"))
+            val (src, tgt) =
+              if (swap) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
+            val variant    = GameVariantDto(src, tgt, limit, articles, preference)
+            PendingPlay.set(started.playId, PlayHandoff(game.name, started.wordCount, variant))
             AppRouter.router.pushState(Page.GamePlay(slug, started.playId))
-          case Left(err)                        =>
+          case Left(err)                                           =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
       previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),

@@ -2,12 +2,12 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
+import gathedge.frontend.components.{Alert, AppShell, Formats, GameHeader, Labels, Pagination, SortHeader}
 import gathedge.frontend.listing.GamePlayQuery
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.AnswerOutcome
-import gathedge.shared.dto.{GameAnswerResult, GamePlayDetail, GamePlayPage, GamePlaySort, GamePlaySummary}
+import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePlayDetail, GamePlayPage, GamePlaySort, GamePlaySummary}
 import gathedge.shared.i18n.UiKeys
 
 /** A tracked game's owner-facing plays listing: who played `slug` and how they scored, paged/sorted/filtered the same
@@ -27,6 +27,12 @@ object GameResultsPage {
 private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], onQuery: Observer[GamePlayQuery]) {
 
   private val querySignal = pageQuery.distinct
+
+  /** The base game's own name and stored language pair, for [[GameHeader]] — fetched once on mount alongside the plays
+    * listing, independent of paging/sorting/search. `None` while loading; a load failure surfaces through [[errorVar]]
+    * same as the listing's own.
+    */
+  private val gameVar = Var(Option.empty[GameDetail])
 
   private val playsVar    = Var(List.empty[GamePlaySummary])
   private val playsSignal = playsVar.signal
@@ -79,7 +85,13 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.gameResultsTitle)),
+      div(
+        cls := "mb-4",
+        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.gameResultsTitle)),
+        child.maybe <-- gameVar.signal.map(
+          _.map(game => GameHeader.render(game.name, game.sourceLanguage, game.targetLanguage))
+        ),
+      ),
       Alert.maybeError(errorVar.signal),
       child.maybe <-- notTrackedVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.gameResultsNotTracked)))),
       renderSearch(),
@@ -102,6 +114,15 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
           if (wanted != current.search) {
             change(_.reset(_.copy(search = wanted)))
           }
+        },
+      // The game's own name/language pair for `GameHeader` — independent of paging/sorting, so fetched once off
+      // `reloadBus` directly rather than `listRequests` (which re-fires on every query change).
+      reloadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
+        Observer[Either[ApiError, GameDetail]] {
+          case Right(detail) =>
+            gameVar.set(Some(detail))
+          case Left(err)     =>
+            errorVar.set(Some(err.message))
         },
       listRequests -->
         Observer[GamePlayQuery](_ => Var.set(loadingVar -> true, errorVar -> None, notTrackedVar -> false)),
