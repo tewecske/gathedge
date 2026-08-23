@@ -86,6 +86,28 @@ object GameServiceSpec extends ZIOSpecDefault {
     } yield tag.id
   }
 
+  /** A tag owned by `ownerId` carrying two marked pairs whose source words differ but whose target word is the same
+    * (`$name-target`) — the ambiguous collision [[GameServiceLive.dedupeSameTarget]] guards a limited play against.
+    * Sources are `$name-source-0`/`$name-source-1`.
+    */
+  private def eligibleTagWithCollidingTarget(
+    ownerId: Long,
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): RIO[WordRepository, Long] = {
+    for {
+      tag    <- WordRepository.insertTag(ownerId, name, name, 0L)
+      target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target"))
+      _      <- ZIO.foreachDiscard(0 until 2) { i =>
+                  for {
+                    source <- WordRepository.ensureWord(dictionaryWord(sourceLanguage, s"$name-source-$i"))
+                    _      <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+                  } yield ()
+                }
+    } yield tag.id
+  }
+
   /** Plays `playId` to completion, answering each prompt per the scenario its index (the trailing digit of its source
     * text, per [[eligibleTagWithPairs]]) selects: index 0 answers exactly, index 1 with a one-letter typo, index 2 (and
     * any beyond) wrong. Returns the scenario picked for each prompt answered, in the order they came back — the random
@@ -273,6 +295,22 @@ object GameServiceSpec extends ZIOSpecDefault {
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           started <- GameService.startPlay(created.slug, owner)
         } yield assertTrue(started.wordCount == 4, started.maxScore == 8)
+      },
+      test("a limited play never draws two source words that share the same target translation") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithCollidingTarget(owner, "collision", WordLanguage.De, WordLanguage.Hu)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, wordLimit = Some(1))
+        } yield assertTrue(started.wordCount == 1)
+      },
+      test("a game with no word limit still asks source words that share a target translation") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithCollidingTarget(owner, "collisionAll", WordLanguage.De, WordLanguage.Hu)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner)
+        } yield assertTrue(started.wordCount == 2)
       },
       test("swapDirection reverses the resolved direction and records it on the play") {
         for {

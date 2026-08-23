@@ -500,6 +500,18 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     pairs.groupBy(_._1).view.mapValues(_.map(_._2).min).toList
   }
 
+  /** Dedupes `(word_id, translation_word_id)` pairs so no two source words share a `translation_word_id` — the lowest
+    * `word_id` on a tie. Two different source words that translate to the same target word are ambiguous to grade
+    * against each other, so [[sampleWordPool]] applies this only when it is about to draw a *limited* subset — an
+    * unrestricted ("all words") play keeps every source word, collisions included, per TODO.txt's "unless all words is
+    * selected" rule.
+    */
+  private def dedupeSameTarget(pairs: List[(Long, Long)]): List[(Long, Long)] = {
+    pairs.groupBy(_._2).view.mapValues(_.map(_._1).min).toList.map { case (translationId, wordId) =>
+      (wordId, translationId)
+    }
+  }
+
   /** `(word_id, translation_word_id)` pairs eligible for `gameId` in the `sourceLanguage` -> `targetLanguage`
     * direction, deduped to one row per source word. Takes explicit codes rather than a `GameRow` because a play may
     * resolve to the reverse of the game's own stored direction — see [[GameServiceLive.startPlay]].
@@ -567,10 +579,11 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     }
   }
 
-  /** `pool` itself when `limit` is absent or no smaller than the pool. Otherwise `limit`'s first [[preferenceOrdered]]
-    * words — for [[WordPreference.Unplayed]]/[[WordPreference.MostMistakes]] this is the "fill from the preferred
-    * subset, then top up from the rest" rule the design doc describes; for [[WordPreference.All]] it is a uniform
-    * random sample, exactly as before this feature existed.
+  /** `pool` itself when `limit` is absent or no smaller than the pool. Otherwise [[dedupeSameTarget]]'s collision-free
+    * subset, `limit`'s first [[preferenceOrdered]] words of it — for [[WordPreference.Unplayed]]/
+    * [[WordPreference.MostMistakes]] this is the "fill from the preferred subset, then top up from the rest" rule the
+    * design doc describes; for [[WordPreference.All]] it is a uniform random sample, exactly as before this feature
+    * existed. `pool` itself may still be smaller than `n` after deduping — `.take` just yields fewer words then.
     */
   private def sampleWordPool(
     gameId: Long,
@@ -585,7 +598,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       case Some(n) if n < pool.size =>
         for {
           stats   <- wordStats(gameId, Some(playerUserId), sourceLanguage, targetLanguage)
-          ordered <- preferenceOrdered(pool, stats, preference)
+          ordered <- preferenceOrdered(dedupeSameTarget(pool), stats, preference)
         } yield ordered.take(n)
       case _                        =>
         ZIO.succeed(pool)

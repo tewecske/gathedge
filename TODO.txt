@@ -7,7 +7,7 @@
 selectable der die das in game
 in game plural words should be shown specially or marked somehow
 go back to previous word in game?
-if in the source language multiple words are translated to the same word in the target language then don't ask those source words in the same game, unless all worlds is selected
+[+] if in the source language multiple words are translated to the same word in the target language then don't ask those source words in the same game, unless all worlds is selected
 flags?
 when clicking on a word, the new translation should have the same target language selected as the selected tags target language by default
 save game progress, so it can be continued later from game history
