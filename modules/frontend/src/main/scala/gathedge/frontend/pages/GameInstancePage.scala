@@ -1,12 +1,13 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
+import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
-import gathedge.shared.domain.{AnswerOutcome, User, WordLanguage, WordPreference}
+import gathedge.shared.domain.{AnswerOutcome, Gender, User, WordLanguage, WordPreference}
 import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePrompt, GameResults, GameSetupWord, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -109,6 +110,20 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val germanInvolvedSignal: Signal[Boolean] = {
     gameVar.signal.map(_.exists(g => g.sourceLanguage == WordLanguage.De || g.targetLanguage == WordLanguage.De))
+  }
+
+  /** Whether the answer the player is about to type is German with an article expected — the gender join-radio (see
+    * [[renderGenderPicker]]) only makes sense then. `swapDirectionVar` is fixed once a play starts (set only at the
+    * variant picker), so this is stable for the whole `Playing` phase.
+    */
+  private val showGenderPickerSignal: Signal[Boolean] = {
+    gameVar.signal.combineWith(swapDirectionVar.signal, includeArticlesVar.signal).map {
+      case (Some(game), swap, articles) =>
+        val answerLanguage = if (swap) game.sourceLanguage else game.targetLanguage
+        articles && answerLanguage == WordLanguage.De
+      case _                            =>
+        false
+    }
   }
 
   private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
@@ -814,6 +829,14 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   }
 
   private def renderPrompt(prompt: GamePrompt, wordCount: Int): HtmlElement = {
+    val answerInput = input(
+      cls         := "input input-sm w-full",
+      placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
+      controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
+      // `renderPrompt` is freshly mounted for every new `GamePrompt` (see `phaseSignal`'s `.distinct`), so
+      // focusing on mount both auto-focuses on first load and re-focuses on every new word.
+      onMountFocus,
+    )
     div(
       p(
         cls        := "text-sm opacity-70",
@@ -826,15 +849,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         onSubmit.preventDefault.mapToUnit --> submitBus.writer,
         label(
           cls := "form-control grow",
-          span(cls      := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-          input(
-            cls         := "input input-sm w-full",
-            placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
-            controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
-            // `renderPrompt` is freshly mounted for every new `GamePrompt` (see `phaseSignal`'s `.distinct`), so
-            // focusing on mount both auto-focuses on first load and re-focuses on every new word.
-            onMountFocus,
-          ),
+          span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
+          child.maybe <-- showGenderPickerSignal.map(show => Option.when(show)(renderGenderPicker(answerInput))),
+          answerInput,
         ),
         button(
           cls := "btn btn-sm btn-primary",
@@ -844,6 +861,43 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         ),
       ),
     )
+  }
+
+  /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `BulkUploadDialog`'s
+    * `renderLanguageRadio` pattern — one click sets the article prefix instead of typing it. Picking one replaces any
+    * article already at the front of [[answerTextVar]] and refocuses `answerInput` so the player can keep typing the
+    * word straight after it.
+    */
+  private def renderGenderPicker(answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
+    div(
+      cls := "join mb-1",
+      Gender.all.map(gender => renderGenderRadio(gender, answerInput)),
+    )
+  }
+
+  private def renderGenderRadio(gender: Gender, answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
+    val article        = Gender.article(gender)
+    input(
+      typ        := "radio",
+      cls        := "join-item btn btn-xs",
+      nameAttr   := "answer-gender",
+      aria.label := article,
+      controlled(
+        checked <-- answerTextVar.signal.map(_.toLowerCase.startsWith(article + " ")),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          answerTextVar.set(s"$article ${stripArticle(answerTextVar.now())}")
+          answerInput.ref.focus()
+        },
+      ),
+    )
+  }
+
+  /** Drops a leading `der `/`die `/`das ` from a typed or picked answer, so picking a different article replaces the
+    * old one instead of stacking in front of it.
+    */
+  private def stripArticle(text: String): String = {
+    val lower = text.toLowerCase
+    Gender.all.map(Gender.article).find(a => lower.startsWith(a + " ")).fold(text)(a => text.drop(a.length + 1))
   }
 
   private def renderFinished(): HtmlElement = {
