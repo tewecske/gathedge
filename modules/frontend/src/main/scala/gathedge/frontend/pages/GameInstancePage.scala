@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
+import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{User, WordLanguage, WordPreference}
@@ -661,22 +661,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  /** The chosen direction/preference's eligible pool preview — same shape as `GameSetupPage.renderWordsList`, one
-    * screen over.
+  /** The chosen direction/preference's eligible pool preview — same `TagWordsList` the setup screen uses, one screen
+    * over.
     */
   private def renderPreviewList(): HtmlElement = {
-    div(
-      cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceWordsHeading)),
-      span(
-        cls    := "label-text text-sm opacity-70",
-        child.text <-- previewWordsVar.signal.map(words =>
-          I18n.plural(UiKeys.gameInstanceWordsCount, words.size.toLong)
-        ),
-      ),
-      child.maybe <-- previewWordsVar.signal.combineWith(previewLoadingVar.signal).map { case (words, loading) =>
-        Option.when(words.isEmpty && !loading)(p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameInstanceWordsEmpty)))
-      },
-    )
+    TagWordsList.render(previewWordsVar.signal, previewLoadingVar.signal)
   }
 }

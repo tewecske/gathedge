@@ -871,6 +871,15 @@ object UiKeys {
   val myGamesTargetCol: String = key("ui.myGames.targetCol")
   val myGamesPlaysCol: String  = key("ui.myGames.playsCol")
 
+  // -- Tag words list ---------------------------------------------------------------------------
+
+  /** The source-word/translation preview shared by `components.TagWordsList` — used both when creating a quiz
+    * (`GameSetupPage`) and when starting a new play of an existing one (`GameInstancePage`).
+    */
+  val tagWordsListHeading: String = key("ui.tagWordsList.heading")
+  val tagWordsListCount: String   = pluralKey("ui.tagWordsList.count")
+  val tagWordsListEmpty: String   = key("ui.tagWordsList.empty")
+
   // -- Game setup ----------------------------------------------------------------------------------
 
   val gameSetupTitle: String                = key("ui.gameSetup.title")
@@ -883,12 +892,6 @@ object UiKeys {
   val gameSetupNoMatchingTags: String       = key("ui.gameSetup.noMatchingTags")
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
-
-  // The right-hand word list: exactly the eligible pool the selected tags/languages would draw from — see
-  // `GameApiClient.setupWords`.
-  val gameSetupWordsHeading: String = key("ui.gameSetup.words.heading")
-  val gameSetupWordsCount: String   = pluralKey("ui.gameSetup.words.count")
-  val gameSetupWordsEmpty: String   = key("ui.gameSetup.words.empty")
 
   // Whether the owner can later see who played and how they scored — see `GameRow.trackResults`. Off by default,
   // like every prior addition to this screen.
@@ -905,10 +908,6 @@ object UiKeys {
   val gameInstanceWordLimitLabel: String     = key("ui.gameInstance.wordLimit.label")
   val gameInstanceWordLimitSelectAll: String = key("ui.gameInstance.wordLimit.selectAll")
   val gameInstanceWordLimitCount: String     = key("ui.gameInstance.wordLimit.count")
-
-  val gameInstanceWordsHeading: String = key("ui.gameInstance.words.heading")
-  val gameInstanceWordsCount: String   = pluralKey("ui.gameInstance.words.count")
-  val gameInstanceWordsEmpty: String   = key("ui.gameInstance.words.empty")
 
   val gameInstanceIncludeArticlesLabel: String = key("ui.gameInstance.includeArticles.label")
   val gameInstanceIncludeArticlesHint: String  = key("ui.gameInstance.includeArticles.hint")

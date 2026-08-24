@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels}
+import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
@@ -226,7 +226,7 @@ private class GameSetupPage {
     div(
       cls := "flex-1",
       renderTrackResultsControl(),
-      renderWordsList(),
+      TagWordsList.render(wordsVar.signal, wordsLoadingVar.signal),
     )
   }
 
@@ -338,41 +338,6 @@ private class GameSetupPage {
           p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
         ),
       ),
-    )
-  }
-
-  /** The eligible pool the current tag selection would draw from — see `GameApiClient.setupWords`. A plain scrollable
-    * list rather than anything fancier.
-    */
-  private def renderWordsList(): HtmlElement = {
-    div(
-      cls := "flex flex-col gap-2",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameSetupWordsHeading)),
-      span(
-        cls    := "label-text text-sm opacity-70",
-        child.text <-- wordsVar.signal.map(words => I18n.plural(UiKeys.gameSetupWordsCount, words.size.toLong)),
-      ),
-      div(
-        cls    := "flex flex-col gap-1 mt-1 max-h-96 overflow-y-auto border border-base-300 rounded p-2",
-        children <-- wordsVar.signal.map(_.map(renderWordRow)),
-      ),
-      child.maybe <-- wordsVar.signal.combineWith(wordsLoadingVar.signal).map { case (words, loading) =>
-        Option.when(words.isEmpty && !loading)(
-          p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameSetupWordsEmpty))
-        )
-      },
-    )
-  }
-
-  /** One study-list row: the source word, plus its marked accepted translation(s) so the player can study the pool
-    * before playing — see `GameSetupWord.translations`. Plain comma-joined text, not `WordCollect.renderChip`: that
-    * chip toggles a mark against the *collect* tag, which has no place on this read-only preview.
-    */
-  private def renderWordRow(word: GameSetupWord): HtmlElement = {
-    div(
-      cls := "text-sm",
-      div(word.text),
-      span(cls := "text-xs opacity-60", word.translations.mkString(", ")),
     )
   }
 

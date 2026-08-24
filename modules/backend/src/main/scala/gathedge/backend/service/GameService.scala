@@ -668,6 +668,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield PlayStarted(row.id, wordCount, maxScore)
   }
 
+  /** Unlike [[eligibleWordPoolFor]]'s draw pool (deduped to one translation per source word, for unambiguous
+    * grading), the preview shown here carries every one of a word's marked accepted translations — the same
+    * "study list" treatment [[eligibleWords]] gives the setup screen, one screen over. `ordered` still drives the
+    * word selection and its [[WordPreference]] order; only the displayed translations are widened back out to the
+    * raw pairs.
+    */
   def playSetupPreview(
     slug: String,
     playerUserId: Option[Long],
@@ -679,12 +685,17 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       resolved                         =
         if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
       (resolvedSource, resolvedTarget) = resolved
-      pool                            <- eligibleWordPoolFor(game.id, resolvedSource, resolvedTarget)
+      rawPairs                        <- repo.eligibleWordPairs(game.id, resolvedSource, resolvedTarget).orDie
+      pool                              = dedupeToOnePerWord(rawPairs)
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
       ordered                         <- preferenceOrdered(pool, stats, wordPreference)
-      words                           <- repo.wordsByIds(ordered.map(_._1)).orDie
+      words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
       textById                         = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
-    } yield ordered.flatMap { case (wordId, _) => textById.get(wordId).map(text => GameSetupWord(wordId, text)) }
+      translationsById                 =
+        rawPairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
+    } yield ordered.flatMap { case (wordId, _) =>
+      textById.get(wordId).map(text => GameSetupWord(wordId, text, translationsById.getOrElse(wordId, Nil)))
+    }
   }
 
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
