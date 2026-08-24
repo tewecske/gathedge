@@ -12,8 +12,12 @@ import gathedge.shared.i18n.UiKeys
   */
 object TagWordsList {
 
-  def render(words: Signal[List[GameSetupWord]], loading: Signal[Boolean]): HtmlElement = {
-    div(
+  /** `collapsed` hides the list behind a "Show words" daisyUI collapse (`GameInstancePage`'s play screen, where the
+    * list would otherwise spoil the pool before play starts) instead of showing it inline (`GameSetupPage`, where the
+    * player is still picking which words to include).
+    */
+  def render(words: Signal[List[GameSetupWord]], loading: Signal[Boolean], collapsed: Boolean = false): HtmlElement = {
+    val content = div(
       cls := "flex flex-col gap-2",
       span(cls := "label-text text-xs", I18n.t(UiKeys.tagWordsListHeading)),
       span(
@@ -33,6 +37,15 @@ object TagWordsList {
         )
       },
     )
+    if (collapsed) {
+      detailsTag(
+        cls := "collapse collapse-arrow border border-base-300 rounded-box",
+        summaryTag(cls := "collapse-title text-sm font-medium", I18n.t(UiKeys.tagWordsListToggle)),
+        div(cls := "collapse-content", content),
+      )
+    } else {
+      content
+    }
   }
 
   /** One row: the source word, plus its marked accepted translation(s) so the player can study the pool before playing

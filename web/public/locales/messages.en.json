@@ -380,6 +380,7 @@
   "ui.tagWordsList.count.one": "{0} word",
   "ui.tagWordsList.count.other": "{0} words",
   "ui.tagWordsList.empty": "No eligible words for this selection yet",
+  "ui.tagWordsList.toggle": "Show words",
   "ui.gameSetup.title": "Vocabulary Quiz Setup",
   "ui.gameSetup.sourceLabel": "Language",
   "ui.gameSetup.targetLabel": "Translate to",

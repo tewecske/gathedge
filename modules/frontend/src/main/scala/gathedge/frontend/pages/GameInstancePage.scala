@@ -662,9 +662,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   }
 
   /** The chosen direction/preference's eligible pool preview — same `TagWordsList` the setup screen uses, one screen
-    * over.
+    * over. Collapsed by default here (unlike the setup screen): the player is about to be quizzed on these words, so
+    * showing the list open by default would hand them the answers.
     */
   private def renderPreviewList(): HtmlElement = {
-    TagWordsList.render(previewWordsVar.signal, previewLoadingVar.signal)
+    TagWordsList.render(previewWordsVar.signal, previewLoadingVar.signal, collapsed = true)
   }
 }

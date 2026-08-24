@@ -380,6 +380,7 @@
   "ui.tagWordsList.count.one": "{0} szó",
   "ui.tagWordsList.count.other": "{0} szó",
   "ui.tagWordsList.empty": "Ehhez a kiválasztáshoz még nincs megfelelő szó",
+  "ui.tagWordsList.toggle": "Szavak megjelenítése",
   "ui.gameSetup.title": "Szókincs kvíz beállítása",
   "ui.gameSetup.sourceLabel": "Nyelv",
   "ui.gameSetup.targetLabel": "Fordítás erre",

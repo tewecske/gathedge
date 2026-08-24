@@ -568,7 +568,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
   /** `pool` reordered so `preference`'s preferred subset comes first — see the design doc's "priority sampling, not a
     * hard filter" rule. Shuffled first in every case, so ties (including "no history at all", which every word shares
     * under [[WordPreference.All]]) are broken randomly rather than by pool order, and `.sortBy` is stable, so that
-    * shuffle survives within each tie group.
+    * shuffle survives within each tie group. Feeds [[sampleWordPool]]'s actual draw for play — [[playSetupPreview]]
+    * uses [[preferenceOrderedStable]] instead, since its list is a study aid the player rereads across renders and
+    * should not reshuffle underneath them.
     */
   private def preferenceOrdered(
     pool: List[(Long, Long)],
@@ -584,6 +586,26 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         case WordPreference.MostMistakes =>
           shuffled.sortBy(pair => -stats.get(pair._1).map(_._2).getOrElse(0))
       }
+    }
+  }
+
+  /** [[preferenceOrdered]] without the shuffle: `pool` reordered so `preference`'s preferred subset comes first, ties
+    * kept in `pool`'s own order. [[playSetupPreview]] passes a pool already sorted by display text (matching
+    * [[eligibleWords]]'s setup-screen preview), so a tie falls back to alphabetical order rather than randomizing the
+    * study list on every request.
+    */
+  private def preferenceOrderedStable(
+    pool: List[(Long, Long)],
+    stats: Map[Long, (Int, Int)],
+    preference: WordPreference,
+  ): List[(Long, Long)] = {
+    preference match {
+      case WordPreference.All          =>
+        pool
+      case WordPreference.Unplayed     =>
+        pool.sortBy(pair => if (stats.contains(pair._1)) 1 else 0)
+      case WordPreference.MostMistakes =>
+        pool.sortBy(pair => -stats.get(pair._1).map(_._2).getOrElse(0))
     }
   }
 
@@ -688,9 +710,10 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       rawPairs                        <- repo.eligibleWordPairs(game.id, resolvedSource, resolvedTarget).orDie
       pool                              = dedupeToOnePerWord(rawPairs)
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
-      ordered                         <- preferenceOrdered(pool, stats, wordPreference)
       words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
       textById                         = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+      sortedPool                       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
+      ordered                          = preferenceOrderedStable(sortedPool, stats, wordPreference)
       translationsById                 =
         rawPairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield ordered.flatMap { case (wordId, _) =>

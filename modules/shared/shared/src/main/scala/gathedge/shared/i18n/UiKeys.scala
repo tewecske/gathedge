@@ -879,6 +879,7 @@ object UiKeys {
   val tagWordsListHeading: String = key("ui.tagWordsList.heading")
   val tagWordsListCount: String   = pluralKey("ui.tagWordsList.count")
   val tagWordsListEmpty: String   = key("ui.tagWordsList.empty")
+  val tagWordsListToggle: String  = key("ui.tagWordsList.toggle")
 
   // -- Game setup ----------------------------------------------------------------------------------
 
