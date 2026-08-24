@@ -13,6 +13,7 @@ on the words page when clicking on a word, it shows the word details and the new
 save game progress, so it can be continued later from game history
 [+] always see my own game history and results
 
+[+] on the game start page show all the words and their accepted translations in a list so the user can study them before playing, when swapping the source and target language then also swap the words and their translations
 share with icons
 
 words sent one by one on import, triggers rate limiter, add bulk import option for words

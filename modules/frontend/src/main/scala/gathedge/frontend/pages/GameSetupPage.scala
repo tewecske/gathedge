@@ -128,6 +128,7 @@ private class GameSetupPage {
       div(
         cls  := "flex flex-wrap items-end gap-3 mb-4",
         languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
+        renderSwap(),
         languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
       ),
       div(
@@ -229,6 +230,41 @@ private class GameSetupPage {
     )
   }
 
+  /** Copied from `WordsPage.renderSwap`/`swapMark`: reuse the pattern, not the (page-private) function. Swaps both vars
+    * in one `Var.set` call so `formSignal` (which combines them) fires once, not twice — the language-pair change alone
+    * is what refetches the tag list and, through `wordsQuerySignal`, the word+translation study list below.
+    */
+  private def renderSwap(): HtmlElement = {
+    span(
+      cls             := "tooltip",
+      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
+      button(
+        typ        := "button",
+        cls        := "btn btn-ghost btn-sm btn-square",
+        aria.label := I18n.t(UiKeys.wordsSwapLanguages),
+        swapMark(),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          Var.set(sourceVar -> targetVar.now(), targetVar -> sourceVar.now())
+        },
+      ),
+    )
+  }
+
+  /** The two arrows on the swap button — copied from `WordsPage.swapMark`. */
+  private def swapMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M4 9h15m0 0l-4-4m4 4l-4 4"),
+      svg.path(svg.d := "M20 15H5m0 0l4-4m-4 4l4 4"),
+    )
+  }
+
   /** Copied from `WordsPage.languageSelect`: reuse the pattern, not the (page-private) function. */
   private def languageSelect(
     labelKey: String,
@@ -318,13 +354,25 @@ private class GameSetupPage {
       ),
       div(
         cls    := "flex flex-col gap-1 mt-1 max-h-96 overflow-y-auto border border-base-300 rounded p-2",
-        children <-- wordsVar.signal.map(_.map(word => div(cls := "text-sm", word.text))),
+        children <-- wordsVar.signal.map(_.map(renderWordRow)),
       ),
       child.maybe <-- wordsVar.signal.combineWith(wordsLoadingVar.signal).map { case (words, loading) =>
         Option.when(words.isEmpty && !loading)(
           p(cls := "text-sm opacity-60", I18n.t(UiKeys.gameSetupWordsEmpty))
         )
       },
+    )
+  }
+
+  /** One study-list row: the source word, plus its marked accepted translation(s) so the player can study the pool
+    * before playing — see `GameSetupWord.translations`. Plain comma-joined text, not `WordCollect.renderChip`: that
+    * chip toggles a mark against the *collect* tag, which has no place on this read-only preview.
+    */
+  private def renderWordRow(word: GameSetupWord): HtmlElement = {
+    div(
+      cls := "text-sm",
+      div(word.text),
+      span(cls := "text-xs opacity-60", word.translations.mkString(", ")),
     )
   }
 

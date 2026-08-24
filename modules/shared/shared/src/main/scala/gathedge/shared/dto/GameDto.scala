@@ -22,9 +22,10 @@ final case class RenameGameRequest(name: String) derives JsonCodec
 /** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
   * the requested tags and language pair would draw from — `text` already carries a gendered source word's article, the
   * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row
-  * per source word. Also reused, unmodified, by `GET /api/games/{slug}/plays/setup`'s play-time preview.
+  * per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated it
+  * (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
   */
-final case class GameSetupWord(wordId: Long, text: String) derives JsonCodec
+final case class GameSetupWord(wordId: Long, text: String, translations: List[String] = Nil) derives JsonCodec
 
 /** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. */
 final case class GameDetail(

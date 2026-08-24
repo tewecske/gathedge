@@ -71,9 +71,9 @@ trait GameService {
     trackResults: Boolean = false,
   ): IO[GameFailure, GameDetail]
 
-  /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from — deduped to one
-    * row per source word, same as [[startPlay]]'s own pool. What the setup screen's word list previews before the game
-    * exists.
+  /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from, one row per source
+    * word with every one of its marked accepted translations attached — a study list, so unlike [[startPlay]]'s own
+    * pool this is not deduped to a single translation. What the setup screen previews before the game exists.
     */
   def eligibleWords(
     sourceLanguage: WordLanguage,
@@ -433,9 +433,10 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted, row.trackResults)
   }
 
-  /** The setup screen's preview of the pool a game built from `tagIds` would draw from — same dedup rule as
-    * [[eligibleWordPool]], through [[GameRepository.eligibleWordPairsForTags]] instead of a game's own `game_tags`,
-    * since no game exists yet.
+  /** The setup screen's preview of the pool a game built from `tagIds` would draw from, one row per source word with
+    * every one of its marked accepted translations attached — unlike [[eligibleWordPool]]/[[dedupeToOnePerWord]], not
+    * deduped to a single translation, since this is a study list rather than a draw pool. Reads raw pairs straight from
+    * [[GameRepository.eligibleWordPairsForTags]] instead of a game's own `game_tags`, since no game exists yet.
     */
   def eligibleWords(
     sourceLanguage: WordLanguage,
@@ -443,9 +444,16 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     tagIds: List[Long],
   ): UIO[List[GameSetupWord]] = {
     for {
-      pool  <- eligibleWordPoolForTags(tagIds, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
-      words <- repo.wordsByIds(pool.map(_._1)).orDie
-    } yield words.map(w => GameSetupWord(w.id, Word.displayText(w.text, w.gender))).sortBy(_.text)
+      pairs       <- repo
+                       .eligibleWordPairsForTags(tagIds, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+                       .orDie
+      wordIds      = (pairs.map(_._1) ++ pairs.map(_._2)).distinct
+      words       <- repo.wordsByIds(wordIds).orDie
+      textById     = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+      translations = pairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
+    } yield translations.toList
+      .flatMap { case (wordId, texts) => textById.get(wordId).map(text => GameSetupWord(wordId, text, texts)) }
+      .sortBy(_.text)
   }
 
   private def detailOf(row: GameRow): UIO[GameDetail] = {
@@ -603,18 +611,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
       case _                        =>
         ZIO.succeed(pool)
     }
-  }
-
-  /** Same as [[eligibleWordPool]], through an explicit tag id list instead of a game's `game_tags` — what the setup
-    * screen's word-list preview calls through, since there is no game (and so no `game_tags` row set) yet at creation
-    * time.
-    */
-  private def eligibleWordPoolForTags(
-    tagIds: List[Long],
-    sourceLanguage: String,
-    targetLanguage: String,
-  ): UIO[List[(Long, Long)]] = {
-    repo.eligibleWordPairsForTags(tagIds, sourceLanguage, targetLanguage).orDie.map(dedupeToOnePerWord)
   }
 
   /** Loads `playId` and checks it belongs to `requesterUserId` — the ownership check every play-id endpoint needs,
