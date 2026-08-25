@@ -14,10 +14,26 @@ import zio.json.*
   * @param wordCount
   *   how many words currently carry it, which is what the tag picker shows next to each name.
   * @param ownedByMe
-  *   whether the caller is the account that made it — the only thing that decides whether they may attach or detach
-  *   words with it, and what the two tag dropdowns mark and sort on.
+  *   whether the caller is the account that made it. Still the only thing that decides whether they may rename or
+  *   delete it, and what the two tag dropdowns mark and sort on; editing its *content* is now also open to any member
+  *   of `group`, see `WordService.requireEditableTag`.
+  * @param group
+  *   the [[GroupRef]] this tag has been attached to, if any. `None` for an ordinary tag, unaffected by any of this.
+  * @param editableByMe
+  *   whether the caller may edit this tag's *content* — `ownedByMe`, or a member of `group`. Every real construction
+  *   states it explicitly (see `WordService.toTag`); the default is the conservative `false` rather than mirroring
+  *   `ownedByMe`, purely because a case class default cannot read a sibling parameter. This is what the collect
+  *   picker in `WordCollect` offers a tick or a chip against; it is never itself the authority — every write is
+  *   re-checked server-side by `WordService.requireEditableTag`.
   */
-final case class Tag(id: Long, name: String, wordCount: Long, ownedByMe: Boolean) derives JsonCodec
+final case class Tag(
+  id: Long,
+  name: String,
+  wordCount: Long,
+  ownedByMe: Boolean,
+  group: Option[GroupRef] = None,
+  editableByMe: Boolean = false,
+) derives JsonCodec
 
 object Tag {
 

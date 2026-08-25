@@ -2,6 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, QuotaSection}
 import gathedge.backend.db.{
+  GroupRepository,
   TagRow,
   TextSearch,
   WordFormRow,
@@ -12,7 +13,7 @@ import gathedge.backend.db.{
   WordTranslationRow,
 }
 import gathedge.backend.security.SecurityLog
-import gathedge.shared.domain.{Gender, GrammarTag, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, GrammarTag, GroupRef, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
@@ -90,8 +91,11 @@ enum BulkUploadFailure {
   *     session, who sees the same words and no tags.
   *
   * A tag itself is visible to every account once created — [[listTags]] answers the whole table, marking which rows the
-  * caller owns — but writing through one is not: [[tagWord]], [[untagWord]], [[selectPair]] and [[deselectPair]] all go
-  * through [[requireOwnTag]], so a reader may filter or [[copyTag]] somebody else's tag but never attach a word to it.
+  * caller owns — but writing through one is not, unless the caller has another way in: [[tagWord]], [[untagWord]],
+  * [[selectPair]], [[deselectPair]] and bulk upload all go through `requireEditableTag`, open to the tag's owner or any
+  * member of the group it belongs to (see `gathedge.backend.db.GroupRepository`). [[renameTag]] and [[deleteTag]] stay
+  * narrower — `requireOwnTag`, the owner alone, group or no group — so a reader may filter, [[copyTag]], or (if a
+  * member) add to somebody else's tag, but never rename or delete one that isn't theirs.
   */
 trait WordService {
 
@@ -340,9 +344,9 @@ object WordService {
     )
   }
 
-  val live: URLayer[WordRepository & AppConfig & RateLimiter, WordService] = {
-    ZLayer.fromFunction((repo: WordRepository, config: AppConfig, limiter: RateLimiter) =>
-      WordServiceLive(repo, config.quotas, limiter)
+  val live: URLayer[WordRepository & GroupRepository & AppConfig & RateLimiter, WordService] = {
+    ZLayer.fromFunction((repo: WordRepository, groupRepo: GroupRepository, config: AppConfig, limiter: RateLimiter) =>
+      WordServiceLive(repo, groupRepo, config.quotas, limiter)
     )
   }
 
@@ -396,7 +400,12 @@ object WordService {
   val maxSuggestionTokens = 300
 }
 
-final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, limiter: RateLimiter) extends WordService {
+final case class WordServiceLive(
+  repo: WordRepository,
+  groupRepo: GroupRepository,
+  quotas: QuotaSection,
+  limiter: RateLimiter,
+) extends WordService {
 
   private def toDomain(row: WordRow): Word = {
     Word(
@@ -408,8 +417,39 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     )
   }
 
-  private def toTag(row: TagRow, wordCount: Long, ownedByMe: Boolean): Tag = {
-    Tag(row.id, row.name, wordCount, ownedByMe)
+  // `editableByMe` has no default mirroring `ownedByMe` — Scala cannot read a sibling parameter's value from within
+  // the same parameter list's default expression — so every call site below states it explicitly.
+  private def toTag(
+    row: TagRow,
+    wordCount: Long,
+    ownedByMe: Boolean,
+    group: Option[GroupRef] = None,
+    editableByMe: Boolean = false,
+  ): Tag = {
+    Tag(row.id, row.name, wordCount, ownedByMe, group, editableByMe)
+  }
+
+  /** [[toTag]]'s group resolution for a single tag, for the call sites that only ever have one row in hand
+    * (`createTag`/`copyTag`/`renameTag`). `None` short-circuits with no query, since a brand-new tag never has one.
+    */
+  private def resolveGroupRef(groupId: Option[Long]): UIO[Option[GroupRef]] = {
+    groupId match {
+      case None      =>
+        ZIO.succeed(None)
+      case Some(gid) =>
+        groupRepo.findGroupById(gid).orDie.map(_.map(g => GroupRef(g.id, g.name)))
+    }
+  }
+
+  /** Batched form of [[resolveGroupRef]], for a whole page of tags at once — one query rather than one per row, the
+    * same reason [[gathedge.backend.db.WordRepository.listTags]] batches its own word counts.
+    */
+  private def resolveGroupRefs(rows: List[TagRow]): UIO[Map[Long, GroupRef]] = {
+    val ids = rows.flatMap(_.groupId).distinct
+    if (ids.isEmpty)
+      ZIO.succeed(Map.empty)
+    else
+      groupRepo.findGroupsByIds(ids).orDie.map(_.map(g => g.id -> GroupRef(g.id, g.name)).toMap)
   }
 
   /** Dictionary entries first, then what somebody typed, and pivoted pairs last — the order of how much each is worth
@@ -604,8 +644,18 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                         .orDie
       // Carried with a count of zero: the detail screen renders these as chips on one word, where "lesson1 (37)"
       // would be answering a question nobody asked. The tag bar gets the real counts from `listTags`. `tagsOfWord`
-      // only ever answers the reader's own tags, so every one of them is owned.
-      counted       = tags.map(tag => toTag(tag, 0L, ownedByMe = true))
+      // answers the reader's own tags and any group tag they may edit, so every row here is editable but not
+      // necessarily owned — `ownedByMe` is read off the row itself rather than assumed.
+      groupRefs    <- resolveGroupRefs(tags)
+      counted       = tags.map(tag => {
+                        toTag(
+                          tag,
+                          0L,
+                          ownedByMe = reader.contains(tag.userId),
+                          tag.groupId.flatMap(groupRefs.get),
+                          editableByMe = true,
+                        )
+                      })
       tagsByForm    = formTags.groupBy(_.wordId)
     } yield WordDetail(
       word = toDomain(row),
@@ -782,10 +832,23 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       pending <- ZIO.filter(request.tagIds.flatMap(tagId => targets.map(target => (tagId, target))))({
                    case (tagId, target) => pairAlreadyMarked(userId, row.id, tagId, target.id).map(marked => !marked)
                  })
-      _       <- ZIO.when(pending.nonEmpty)(
-                   // `pairTranslation` writes one row per direction, so each genuinely new mark adds two.
-                   repo.countPairsOwnedBy(userId).orDie.flatMap(pairQuota(_, pending.size.toLong * 2L)).unit
-                 )
+      _       <- ZIO.when(pending.nonEmpty) {
+                   for {
+                     // `tagWord` above has already confirmed the caller may write to each tag, but not who owns it —
+                     // a group tag may belong to somebody else, and quotas are charged to that owner, not the caller.
+                     owners    <- ZIO.foreach(pending.map { case (tagId, _) => tagId }.distinct) { tagId =>
+                                    repo.findTagById(tagId).orDie.someOrFail(WordFailure.NotFound).map(tagId -> _.userId)
+                                  }
+                     ownerByTag = owners.toMap
+                     // `pairTranslation` writes one row per direction, so each genuinely new mark adds two, checked
+                     // once per owner rather than once for the whole batch, so one group tag's owner being near their
+                     // limit cannot block a mark in an unrelated tag of the caller's own.
+                     _         <- ZIO.foreachDiscard(pending.groupBy { case (tagId, _) => ownerByTag(tagId) }) {
+                                    case (ownerId, owed) =>
+                                      repo.countPairsOwnedBy(ownerId).orDie.flatMap(pairQuota(_, owed.size.toLong * 2L))
+                                  }
+                   } yield ()
+                 }
       _       <- ZIO.foreachDiscard(pending) { case (tagId, target) => pairInTag(row.id, tagId, target.id) }
       detail  <- detailOf(row, Some(userId))
     } yield detail
@@ -811,10 +874,18 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
   }
 
   def listTags(userId: Long): UIO[List[Tag]] = {
-    repo
-      .listTags(userId)
-      .orDie
-      .map(rows => Tag.sorted(rows.map { case (row, count, ownedByMe) => toTag(row, count, ownedByMe) }))
+    for {
+      rows           <- repo.listTags(userId).orDie
+      groupRefs      <- resolveGroupRefs(rows.map { case (row, _, _) => row })
+      memberships    <- groupRepo.listMembershipsFor(userId).orDie
+      // A tag not owned by the caller is still theirs to edit if it sits in a group they belong to — the same test
+      // `WordService.requireEditableTag` makes a write against, restated here so the tag bar/collect picker can offer
+      // it without the reader having to click first and find out.
+      memberGroupIds  = memberships.map(_.groupId).toSet
+    } yield Tag.sorted(rows.map { case (row, count, ownedByMe) =>
+      val editableByMe = ownedByMe || row.groupId.exists(memberGroupIds.contains)
+      toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
+    })
   }
 
   /** The name-half of creating a tag, shared by [[createTag]], [[copyTag]] and [[renameTag]]: valid, and not already
@@ -891,7 +962,7 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       warning        <- tagQuota(owned, 1)
       now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row            <- repo.insertTag(userId, valid, normal, now).orDie
-    } yield TagResponse(toTag(row, 0L, ownedByMe = true), warning)
+    } yield TagResponse(toTag(row, 0L, ownedByMe = true, editableByMe = true), warning)
   }
 
   /** A snapshot copy: every word the source tag carries and every practice pair marked inside it travel into the new
@@ -917,19 +988,20 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       copied          <- repo.copyTag(tagId, userId, valid, normal, now).orDie
     } yield {
       val (row, wordCount, _) = copied
-      TagResponse(toTag(row, wordCount, ownedByMe = true), tagWarning.orElse(pairWarning))
+      TagResponse(toTag(row, wordCount, ownedByMe = true, editableByMe = true), tagWarning.orElse(pairWarning))
     }
   }
 
   def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse] = {
     for {
-      _              <- requireOwnTag(tagId, userId)
+      existing       <- requireOwnTag(tagId, userId)
       prepared       <- prepareTagName(name, userId, excludeTagId = Some(tagId))
       (valid, normal) = prepared
       rows           <- repo.updateTag(tagId, userId, valid, normal).orDie
       _              <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
       wordCount      <- repo.countWordsInTag(tagId).orDie
-    } yield TagResponse(Tag(tagId, valid, wordCount, ownedByMe = true), None)
+      group          <- resolveGroupRef(existing.groupId)
+    } yield TagResponse(Tag(tagId, valid, wordCount, ownedByMe = true, group, editableByMe = true), None)
   }
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {
@@ -940,8 +1012,10 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       .unit
   }
 
-  /** Every tag operation checks the tag belongs to the caller, and answers `TagNotFound` when it does not: whose tag a
-    * given id is is not something an account may learn by trying.
+  /** Renaming/deleting a tag: checks the tag belongs to the caller, and answers `TagNotFound` when it does not — whose
+    * tag a given id is is not something an account may learn by trying. Deliberately narrower than
+    * [[requireEditableTag]]: structural changes to a tag (its name, its existence) stay the owner's alone even when the
+    * tag belongs to a group, unlike editing its content.
     */
   private def requireOwnTag(tagId: Long, userId: Long): IO[WordFailure, TagRow] = {
     repo
@@ -951,9 +1025,31 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
       .filterOrFail(_.userId == userId)(WordFailure.TagNotFound)
   }
 
+  /** Editing a tag's *content* — putting a word on it, marking a practice pair, bulk-uploading into it: the owner, or
+    * any member (admin or plain member alike) of the group it belongs to, per the write-access rule agreed for
+    * classroom collaboration. `TagNotFound` covers both "no such tag" and "not the owner and not in its group" — same
+    * 404-hides-existence rule [[requireOwnTag]] follows, just with one more way in.
+    */
+  private def requireEditableTag(tagId: Long, userId: Long): IO[WordFailure, TagRow] = {
+    for {
+      tag     <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      allowed <- if (tag.userId == userId)
+                   ZIO.succeed(true)
+                 else {
+                   tag.groupId match {
+                     case Some(groupId) =>
+                       groupRepo.findMembership(groupId, userId).orDie.map(_.isDefined)
+                     case None          =>
+                       ZIO.succeed(false)
+                   }
+                 }
+      _       <- ZIO.unless(allowed)(ZIO.fail(WordFailure.TagNotFound))
+    } yield tag
+  }
+
   def tagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit] = {
     for {
-      _   <- requireOwnTag(tagId, userId)
+      _   <- requireEditableTag(tagId, userId)
       _   <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
       now <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _   <- repo.tagWord(wordId, tagId, now).orDie
@@ -962,7 +1058,7 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
 
   def untagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit] = {
     for {
-      _ <- requireOwnTag(tagId, userId)
+      _ <- requireEditableTag(tagId, userId)
       // Removing a tag that is not on the word is nothing to do, not a failure — the same rule as putting one on.
       _ <- repo.untagWord(wordId, tagId).orDie
     } yield ()
@@ -1013,19 +1109,21 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
     userId: Long,
   ): IO[WordFailure, PairSelectionResponse] = {
     for {
-      _       <- requireOwnTag(tagId, userId)
+      tag     <- requireEditableTag(tagId, userId)
       _       <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
       _       <- requireTranslationOf(wordId, translationWordId)
       already <- pairAlreadyMarked(userId, wordId, tagId, translationWordId)
-      // `pairTranslation` writes one row per direction, so a genuinely new mark adds two.
-      warning <- if (already) ZIO.succeed(None) else repo.countPairsOwnedBy(userId).orDie.flatMap(pairQuota(_, 2))
+      // `pairTranslation` writes one row per direction, so a genuinely new mark adds two. Charged against the tag's
+      // *owner* (`tag.userId`), not the caller — quotas stay per-account regardless of who in the group is doing the
+      // marking, per the classroom write-access rule.
+      warning <- if (already) ZIO.succeed(None) else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
       _       <- pairInTag(wordId, tagId, translationWordId)
     } yield PairSelectionResponse(warning)
   }
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit] = {
     for {
-      _ <- requireOwnTag(tagId, userId)
+      _ <- requireEditableTag(tagId, userId)
       // Unmarking something that is not marked is nothing to do, not a failure — the rule `untagWord` follows, and what
       // lets the chip be safe to double-click.
       _ <- repo.unpairTranslation(wordId, tagId, translationWordId).orDie
@@ -1116,7 +1214,8 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
 
   /** Checked at the top of both [[bulkUploadPreview]] and [[bulkUploadConfirm]]: one shared rate-limit budget (a full
     * upload is a preview call and a confirm call, so a five-attempt window covers two or three whole uploads) and the
-    * same `TagNotFound` a caller of any other tag-scoped write here gets.
+    * same `TagNotFound` a caller of [[tagWord]]/[[selectPair]] gets — bulk-uploading is content editing like they are,
+    * so it goes through [[requireEditableTag]] too: the owner, or any member of the tag's group.
     */
   private def bulkUploadGuard(tagId: Long, userId: Long): IO[BulkUploadFailure, Unit] = {
     val rateLimitKey = RateLimitKey.wordUpload(userId)
@@ -1127,7 +1226,7 @@ final case class WordServiceLive(repo: WordRepository, quotas: QuotaSection, lim
                      ZIO.fail(BulkUploadFailure.RateLimited)
                  }
       _       <- limiter.recordFailure(rateLimitKey)
-      _       <- requireOwnTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
+      _       <- requireEditableTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
     } yield ()
   }
 

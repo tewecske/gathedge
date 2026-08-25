@@ -118,11 +118,26 @@ object WordCollect {
     ).flatten
   }
 
-  /** What the collect select offers: the reader's own tags, and nothing else. A tick has to write somewhere the reader
-    * owns, so a stranger's tag is not merely mis-grouped here — it is absent, and there is no ownership heading to show
-    * because every row already is the reader's own.
+  /** What the collect select offers: every tag the reader may edit — their own, plus any tag a group they belong to
+    * has open — and nothing else, since a tick has to write somewhere the reader can actually write. Their own tags
+    * come first, ungrouped; a fellow member's tag then falls under an `<optgroup>` named for the group that opened it,
+    * one section per group, so two classrooms sharing a reader read as two separate lists rather than one merged pile.
+    * A stranger's tag outside any shared group is not merely mis-grouped here — it is absent, same as before groups
+    * existed.
     */
-  def mineOptions(tags: List[Tag]): List[HtmlElement] = Tag.sorted(tags).filter(_.ownedByMe).map(tagOption)
+  def mineOptions(tags: List[Tag]): List[HtmlElement] = {
+    val editable         = tags.filter(_.editableByMe)
+    val (mine, byOthers) = editable.partition(_.ownedByMe)
+    val mineOpts          = mine.sortBy(_.name.toLowerCase).map(tagOption)
+    val groupOpts         = byOthers
+      .groupBy(_.group.map(_.name).getOrElse(""))
+      .toList
+      .sortBy { case (name, _) => name.toLowerCase }
+      .map { case (name, groupTags) =>
+        optGroup(labelAttr := name, groupTags.sortBy(_.name.toLowerCase).map(tagOption))
+      }
+    mineOpts ++ groupOpts
+  }
 
   private def tagOption(tag: Tag): HtmlElement = option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})")
 }
@@ -267,17 +282,20 @@ final class WordCollect(
     */
   private def setTags(tags: List[Tag]): Unit = tagsVar.set(Tag.sorted(tags))
 
-  /** Keeps the collect tag on one of the reader's own, and chooses one for a reader who has never picked — including a
-    * guest, whose first tag is minted by their first tick. A tag deleted on another device, or one that turns out not
-    * to be theirs (a foreign id left over in `localStorage` from before the select stopped offering them), would
-    * otherwise leave every tick failing against an id they cannot write to.
+  /** Keeps the collect tag on one the reader may still edit, and chooses one for a reader who has never picked —
+    * including a guest, whose first tag is minted by their first tick. A tag deleted on another device, one that
+    * turns out not to be editable (a foreign id left over in `localStorage` from before the select stopped offering
+    * it), or one whose group the reader has since left, would otherwise leave every tick failing against an id they
+    * cannot write to. Prefers one of the reader's own over a group tag, so an owner is never silently defaulted into
+    * filing under somebody else's classroom.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
     val kept = {
       collectTagVar
         .now()
-        .filter(id => tags.exists(t => t.id == id && t.ownedByMe))
+        .filter(id => tags.exists(t => t.id == id && t.editableByMe))
         .orElse(tags.find(_.ownedByMe).map(_.id))
+        .orElse(tags.find(_.editableByMe).map(_.id))
     }
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
@@ -385,19 +403,21 @@ final class WordCollect(
     }
   }
 
-  /** The tag a click files under: the collect tag, else the reader's own first tag, else a fresh one.
+  /** The tag a click files under: the collect tag, else the reader's own first tag, else the first group tag they may
+    * edit, else a fresh one.
     *
     * Clicking without having chosen a tag has to mean something — it is the first thing a new reader does — so the page
-    * creates one on their behalf rather than refusing the click. The fallback is the first tag `ownedByMe`, not merely
-    * the list's first: the list is global, and picking a stranger's tag here would write against an id the caller
-    * cannot use and fail with `TagNotFound`. Public because adding a word is filed the same way.
+    * creates one on their behalf rather than refusing the click. The fallback prefers `ownedByMe` over a shared group
+    * tag before falling back to either, not merely the list's first: the list is global, and picking a tag the caller
+    * may not edit here would write against an id that fails with `TagNotFound`. Public because adding a word is filed
+    * the same way.
     */
   def collectTagOrDefault: EventStream[Either[ApiError, Long]] = {
     collectTagVar.now() match {
       case Some(id) =>
         EventStream.fromValue(Right(id))
       case None     =>
-        tagsVar.now().find(_.ownedByMe) match {
+        tagsVar.now().find(_.ownedByMe).orElse(tagsVar.now().find(_.editableByMe)) match {
           case Some(tag) =>
             EventStream.fromValue(Right(tag.id))
           case None      =>
@@ -438,9 +458,10 @@ final class WordCollect(
         cls := "card-body py-3 gap-2",
         div(
           cls := "flex flex-wrap items-end gap-3",
-          // Absent until the reader owns a tag to name: the select offers only their own, so with none of those it
-          // would otherwise render with nothing to choose between, even while the global list is non-empty.
-          child.maybe <-- tagsSignal.map(tags => Option.when(tags.exists(_.ownedByMe))(renderCollectSelect())),
+          // Absent until the reader has a tag to file under — their own, or one a group has opened to them — so with
+          // none of those it would otherwise render with nothing to choose between, even while the global list is
+          // non-empty.
+          child.maybe <-- tagsSignal.map(tags => Option.when(tags.exists(_.editableByMe))(renderCollectSelect())),
           form(
             cls        := "flex items-end gap-2",
             noValidate := true,
@@ -464,10 +485,17 @@ final class WordCollect(
   }
 
   /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
-    * the reader to discover that the empty entry silently meant "the first one". Offers only the reader's own tags —
-    * see [[WordCollect.mineOptions]] — since a tick against anyone else's would fail with `TagNotFound`.
+    * the reader to discover that the empty entry silently meant "the first one". Offers every tag the reader may edit
+    * — see [[WordCollect.mineOptions]] — since a tick against any other would fail with `TagNotFound`. Rename/delete
+    * stay owner-only regardless — see `WordService.requireOwnTag` — so their icons are hidden rather than left to fail
+    * whenever the select currently holds a tag a group merely opened to the reader.
     */
   private def renderCollectSelect(): HtmlElement = {
+    val selectedOwnedSignal = {
+      collectTagSignal.combineWithFn(tagsSignal)((id, tags) => {
+        id.flatMap(chosen => tags.find(_.id == chosen)).exists(_.ownedByMe)
+      })
+    }
     div(
       cls := "flex items-end gap-1",
       label(
@@ -482,8 +510,12 @@ final class WordCollect(
           ),
         ),
       ),
-      renderTagIconButton(UiKeys.wordsTagRenameButton, pencilMark(), openRename),
-      renderTagIconButton(UiKeys.wordsTagDeleteButton, trashMark(), () => deleteOpenVar.set(true)),
+      child.maybe <-- selectedOwnedSignal.map(
+        Option.when(_)(renderTagIconButton(UiKeys.wordsTagRenameButton, pencilMark(), openRename))
+      ),
+      child.maybe <-- selectedOwnedSignal.map(
+        Option.when(_)(renderTagIconButton(UiKeys.wordsTagDeleteButton, trashMark(), () => deleteOpenVar.set(true)))
+      ),
       renderRenameModal(),
       renderDeleteModal(),
     )

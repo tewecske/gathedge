@@ -135,6 +135,14 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/progress-shares/shared-with-me",
               "/api/progress-shares/{sharerUserId}/plays",
               "/api/progress-shares/viewers/{viewerUserId}",
+              "/api/groups",
+              "/api/groups/{groupId}",
+              "/api/groups/join",
+              "/api/groups/{groupId}/leave",
+              "/api/groups/{groupId}/invite-code/regenerate",
+              "/api/groups/{groupId}/members/{userId}/role",
+              "/api/groups/{groupId}/members/{userId}",
+              "/api/groups/{groupId}/tags/{tagId}",
             )
         )
       },
@@ -359,12 +367,41 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Idempotent: revoking a viewer with no share answers the same 204 as one that had one, so its only
               // failure is the aspect's 401.
               ("DELETE", "/api/progress-shares/viewers/{viewerUserId}")                   -> Set(NoContent, Unauthorized),
+              // Groups: authenticated like `GET /api/tags`, not public — a group is visible to every account, not the
+              // open internet. `list` takes no input, so its only failure is the aspect's 401.
+              ("GET", "/api/groups")                                                      -> Set(Ok, Unauthorized),
+              ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
+              ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
+              // 404 covers an unknown or rotated invite code alike, so the code space cannot be probed.
+              ("POST", "/api/groups/join")                                                -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // 409 is `GroupFailure.LastAdmin`: the caller is the group's sole admin.
+              ("POST", "/api/groups/{groupId}/leave")                                     ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              // Admin-only, hence the 403; no 409 here, unlike setMemberRole/removeMember below — regenerating the
+              // code never touches who is or isn't the group's last admin.
+              ("POST", "/api/groups/{groupId}/invite-code/regenerate")                    ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+              // Admin-only; 409 is demoting the group's last admin.
+              ("PUT", "/api/groups/{groupId}/members/{userId}/role")                      ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // Admin-only; 409 is removing the group's last admin.
+              ("DELETE", "/api/groups/{groupId}/members/{userId}")                        ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // Attaching: 403 covers not being a member of the group or not owning the tag; 409 covers the tag
+              // already belonging to a group.
+              ("PUT", "/api/groups/{groupId}/tags/{tagId}")                               ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // Detaching: 403 covers being neither the tag's owner nor an admin of its group; no 409, unlike
+              // attaching — detaching a tag that isn't (currently) in this group answers 404, not a conflict.
+              ("DELETE", "/api/groups/{groupId}/tags/{tagId}")                            ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
             )
         )
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 198 across 50 operations. (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 234 across 60 operations (198 across 50 before shareable tag groups added its ten). (It was
+      // 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -381,7 +418,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 198,
+          declared == 234,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -401,6 +438,14 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `ProgressShareService.requireShareAccess`'s own refusal: the caller holds no grant from the
               // requested sharer.
               ("GET", "/api/progress-shares/{sharerUserId}/plays"),
+              // `GroupService`'s own admin/membership/ownership refusals — not being an admin of the group
+              // (regenerate/setMemberRole/removeMember), not a member of it or not owning the tag (attachTag), or
+              // being neither the tag's owner nor an admin of its group (detachTag).
+              ("POST", "/api/groups/{groupId}/invite-code/regenerate"),
+              ("PUT", "/api/groups/{groupId}/members/{userId}/role"),
+              ("DELETE", "/api/groups/{groupId}/members/{userId}"),
+              ("PUT", "/api/groups/{groupId}/tags/{tagId}"),
+              ("DELETE", "/api/groups/{groupId}/tags/{tagId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,

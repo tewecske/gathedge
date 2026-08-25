@@ -13,6 +13,7 @@ import gathedge.backend.db.{
   GamePlayRow,
   GameRepository,
   GameRow,
+  GroupRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   OAuthIdentityRepository,
@@ -98,7 +99,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
-        WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live
+        WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live ++ GroupRepository.live
     )
   }
 
@@ -229,6 +230,36 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           links.map(_._2.text) == List("kanál"),
           links.forall(_._1.createdBy.isEmpty),
         )
+      },
+      // `tags.group_id` is declared `ON DELETE SET NULL`, the same choice `words.created_by` makes above: a tag
+      // belongs to one account regardless of its group, so deleting the group detaches the tag rather than taking it
+      // (and everything it holds) down with it.
+      test("deleting a group detaches its tags rather than deleting them") {
+        for {
+          owner <- AuthService.signup("pggroupowner@example.com", "password123").map(_._1)
+          tag   <- WordRepository.insertTag(owner.id, "pggrouptag", "pggrouptag", 0L)
+          group <- GroupRepository.insertGroup("PG Group", "pg group", "PGGR-OUP0-CODE-0001", owner.id, 0L)
+          _     <- GroupRepository.insertMembership(group.id, owner.id, "admin", 0L)
+          _     <- WordRepository.setTagGroup(tag.id, Some(group.id))
+          _     <- GroupRepository.delete(group.id)
+          after <- WordRepository.findTagById(tag.id)
+        } yield assertTrue(after.isDefined, after.flatMap(_.groupId).isEmpty)
+      },
+      // `group_members.user_id` cascades, unlike `tags.group_id` above: a deleted account cannot remain on a roster.
+      // This is the accepted gap the migration's own comment documents — deleting a group's *last* admin this way
+      // leaves the group with none, since `AdminService.deleteUser` has no notion of `GroupService`'s own last-admin
+      // guard and nothing here closes that gap.
+      test("deleting a group's last admin removes their membership, even though it leaves the group with no admin") {
+        for {
+          admin      <- AdminService.createUser(AdminActor.system, "pggroupadmin@example.com", "password123", isAdmin = true)
+          signup     <- AuthService.signup("pggrouptarget@example.com", "password123")
+          (target, _) = signup
+          group      <- GroupRepository.insertGroup("PG Group2", "pg group2", "PGGR-OUP0-CODE-0002", target.id, 0L)
+          _          <- GroupRepository.insertMembership(group.id, target.id, "admin", 0L)
+          _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          admins     <- GroupRepository.countAdmins(group.id)
+          member     <- GroupRepository.findMembership(group.id, target.id)
+        } yield assertTrue(admins == 0L, member.isEmpty)
       },
       // `game_play_words.play_id` is the one FK this new table declares (`word_id`/`translation_word_id`
       // deliberately are not, per the migration's comment, mirroring `game_play_answers`): deleting the account

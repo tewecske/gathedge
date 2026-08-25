@@ -122,8 +122,25 @@ object Page {
     * view of.
     */
   case object AdminWordForms extends Page
-  case object Forbidden      extends Page
-  case object NotFound       extends Page
+
+  /** Browsing/creating/joining classroom-style tag groups. Auth-only, like [[SharedProgress]]: collaborating on a group
+    * is between signed-in accounts, and `GroupEndpoints.list`/`.get` themselves need a session, unlike
+    * [[Words]]/[[WordDetail]]'s public pair.
+    */
+  case object Groups extends Page
+
+  /** One group's roster (visible only to its own members), invite code (admins only), and attached tags. */
+  final case class GroupDetail(id: Long) extends Page
+
+  /** A standalone read-only view of one tag's words and marked translations — the "tag view" `TagWordsList` was built
+    * for game setup, reused here without the game-creation flow around it. Backed by the same session-only
+    * `GameEndpoints.setupWords` a game's own setup screen uses, so this is auth-only too, not public like
+    * [[WordDetail]].
+    */
+  final case class TagDetail(id: Long) extends Page
+
+  case object Forbidden extends Page
+  case object NotFound  extends Page
 
   enum AuthGuard {
 
@@ -237,6 +254,20 @@ object AppRouter {
   private val adminWordFormsRoute  = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
+  private val groupsRoute      = Route.static(Groups, root / "groups", basePath)
+  private val groupDetailRoute = Route(
+    encode = (p: GroupDetail) => p.id,
+    decode = (id: Long) => GroupDetail(id),
+    pattern = root / "groups" / segment[Long],
+    basePath = basePath,
+  )
+  private val tagDetailRoute   = Route(
+    encode = (p: TagDetail) => p.id,
+    decode = (id: Long) => TagDetail(id),
+    pattern = root / "tags" / segment[Long],
+    basePath = basePath,
+  )
+
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
     *
     * A single `Route.onlyQuery` would address the unfiltered list as `/admin/users?` — url-dsl's `createUrlString`
@@ -340,6 +371,12 @@ object AppRouter {
         "AdminUsage"
       case AdminWordForms           =>
         "AdminWordForms"
+      case Groups                   =>
+        "Groups"
+      case GroupDetail(id)          =>
+        s"GroupDetail:$id"
+      case TagDetail(id)            =>
+        s"TagDetail:$id"
       case Forbidden                =>
         "Forbidden"
       case NotFound                 =>
@@ -392,6 +429,10 @@ object AppRouter {
       WordQuery.params.matchQueryString(tag.stripPrefix("Words:")).map(query => Words(query)).getOrElse(Words())
     } else if (tag.startsWith("AdminUserDetail:")) {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
+    } else if (tag.startsWith("GroupDetail:")) {
+      withId(tag, "GroupDetail:")(GroupDetail.apply)
+    } else if (tag.startsWith("TagDetail:")) {
+      withId(tag, "TagDetail:")(TagDetail.apply)
     } else if (tag.startsWith("AdminAudit:")) {
       // A tag we cannot read is a history entry from an older build; the listing itself is still the right screen, so
       // fall back to its default view rather than to Not Found.
@@ -438,6 +479,8 @@ object AppRouter {
           AdminUsage
         case "AdminWordForms" =>
           AdminWordForms
+        case "Groups"         =>
+          Groups
         case "Forbidden"      =>
           Forbidden
         case _                =>
@@ -478,6 +521,9 @@ object AppRouter {
         adminSystemRoute,
         adminUsageRoute,
         adminWordFormsRoute,
+        groupsRoute,
+        groupDetailRoute,
+        tagDetailRoute,
         forbiddenRoute,
       ),
       serializePage = serialize,

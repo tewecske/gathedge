@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{TextSearch, WordFormRow, WordRepository, WordRow}
+import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordRepository, WordRow}
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
@@ -18,6 +18,8 @@ import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import zio._
 import zio.test._
 
+import java.util.concurrent.TimeUnit
+
 /** The vocabulary against SQLite, which is where everything but referential integrity is exercised.
   *
   * The service takes an `Option[Long]` reader throughout, and half of what is worth asserting here is what happens when
@@ -25,8 +27,10 @@ import zio.test._
   */
 object WordServiceSpec extends ZIOSpecDefault {
 
-  private val layer =
-    (TestDataSource.sqlite >>> WordRepository.test) ++ AppConfig.live ++ RateLimiter.live >+> WordService.live
+  private val layer = {
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+      AppConfig.live ++ RateLimiter.live >+> WordService.live
+  }
 
   /** `AppConfig.live` with `quotas` overridden — the tests below need thresholds small enough to reach in a handful of
     * calls, and this is `TestAuthLayers.configWith`'s pattern for the same reason.
@@ -42,7 +46,8 @@ object WordServiceSpec extends ZIOSpecDefault {
         )
       })
     })
-    (TestDataSource.sqlite >>> WordRepository.test) ++ config ++ RateLimiter.live >+> WordService.live
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+      config ++ RateLimiter.live >+> WordService.live
   }
 
   /** Unwraps [[WordService.createTag]]'s [[gathedge.shared.dto.TagResponse]] down to the [[Tag]] most tests only need —
@@ -51,6 +56,26 @@ object WordServiceSpec extends ZIOSpecDefault {
     */
   private def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, Tag] = {
     WordService.createTag(name, userId).map(_.tag)
+  }
+
+  /** Puts `tagId` (owned by `ownerId`) into a fresh group and adds `memberId` to that group's roster as a plain member
+    * — the fixture the group-editing-rights tests below build on. Goes straight through `GroupRepository`/
+    * `WordRepository.setTagGroup` rather than `GroupService` (not part of this spec's layer): what is under test here
+    * is `WordService.requireEditableTag`'s own read of group membership, not `GroupService` itself, which
+    * `GroupServiceSpec` covers.
+    */
+  private def putInGroupWith(
+    tagId: Long,
+    ownerId: Long,
+    memberId: Long,
+  ): ZIO[GroupRepository & WordRepository, Nothing, Unit] = {
+    for {
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      group <- GroupRepository.insertGroup("group", "group", s"code-$tagId-$ownerId-$memberId", ownerId, now).orDie
+      _     <- GroupRepository.insertMembership(group.id, ownerId, "admin", now).orDie
+      _     <- GroupRepository.insertMembership(group.id, memberId, "member", now).orDie
+      _     <- WordRepository.setTagGroup(tagId, Some(group.id)).orDie
+    } yield ()
   }
 
   private def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Tag] = {
@@ -261,6 +286,67 @@ object WordServiceSpec extends ZIOSpecDefault {
           denied <- WordService.tagWord(word.id, tag.id, 2L).either
           absent <- WordService.tagWord(word.id, 9999L, 2L).either
         } yield assertTrue(denied == Left(WordFailure.TagNotFound), absent == Left(WordFailure.TagNotFound))
+      },
+      test("a group member may now edit the group's tag content, but a non-member stranger still cannot") {
+        for {
+          _         <- seed
+          tag       <- createTag("shared", 1L)
+          _         <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          word      <- list(search = Some("haus")).map(_.items.head.word)
+          member    <- WordService.tagWord(word.id, tag.id, 2L).either
+          // `tagsFor`/`pairsFor` are widened to a group tag's members, not just its owner, so both the owner's and
+          // the editing member's own listing view now reflect the write.
+          byOwner   <- list(search = Some("haus"), reader = Some(1L))
+          byMember  <- list(search = Some("haus"), reader = Some(2L))
+          stranger  <- WordService.tagWord(word.id, tag.id, 3L).either
+        } yield assertTrue(
+          member.isRight,
+          byOwner.items.head.tagIds == List(tag.id),
+          byMember.items.head.tagIds == List(tag.id),
+          stranger == Left(WordFailure.TagNotFound),
+        )
+      },
+      test("a group member may mark a practice pair on the group's tag, charged against the tag owner's own quota") {
+        for {
+          _        <- seed
+          tag      <- createTag("shared2", 1L)
+          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          page     <- list(search = Some("haus"))
+          word      = page.items.head.word
+          haz       = page.items.head.translations.head.wordId
+          marked   <- WordService.selectPair(word.id, tag.id, haz, 2L).either
+          byOwner  <- list(search = Some("haus"), reader = Some(1L))
+          byMember <- list(search = Some("haus"), reader = Some(2L))
+        } yield assertTrue(
+          marked.isRight,
+          byOwner.items.head.pairs == List(TaggedPair(tag.id, haz)),
+          byMember.items.head.pairs == List(TaggedPair(tag.id, haz)),
+        )
+      },
+      test("listTags marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
+        for {
+          _        <- seed
+          tag      <- createTag("shared4", 1L)
+          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          byOwner  <- WordService.listTags(1L)
+          byMember <- WordService.listTags(2L)
+          byOther  <- WordService.listTags(3L)
+        } yield assertTrue(
+          byOwner.find(_.id == tag.id).exists(t => t.ownedByMe && t.editableByMe),
+          byMember.find(_.id == tag.id).exists(t => !t.ownedByMe && t.editableByMe),
+          // `listTags` still answers every tag globally, marked `ownedByMe` — a stranger sees the row, just not as
+          // editable, same as they see anyone else's ordinary tag.
+          byOther.find(_.id == tag.id).exists(t => !t.ownedByMe && !t.editableByMe),
+        )
+      },
+      test("renaming or deleting a group's tag stays refused for a non-owner member — only content editing widened") {
+        for {
+          _       <- seed
+          tag     <- createTag("shared3", 1L)
+          _       <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          renamed <- WordService.renameTag(tag.id, "nope", 2L).either
+          deleted <- WordService.deleteTag(tag.id, 2L).either
+        } yield assertTrue(renamed == Left(WordFailure.TagNotFound), deleted == Left(WordFailure.TagNotFound))
       },
       test("a tag name is unique per account, case-insensitively, and may not be one the practice screen reserves") {
         for {

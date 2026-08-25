@@ -115,6 +115,12 @@ trait WordRepository {
 
   def deleteTag(id: Long, userId: Long): Task[Long]
 
+  /** Attaches or detaches a tag's group — the only write to `tags.group_id`, called by `GroupService.attachTag`/
+    * `.detachTag`. Not scoped to a caller's `userId` here; that check belongs to the service, which already knows
+    * whether the caller may act on this particular tag and group.
+    */
+  def setTagGroup(tagId: Long, groupId: Option[Long]): Task[Long]
+
   /** How many words carry `tagId` — the count [[listTags]] computes for every tag at once, resolved here for the one
     * tag `WordService.renameTag` just wrote, so its answer carries the same number a fresh [[listTags]] would.
     */
@@ -155,10 +161,15 @@ trait WordRepository {
     */
   def untagWord(wordId: Long, tagId: Long): Task[Long]
 
-  /** Which of those words the account has tagged, and with which of its tags. One query per page. */
+  /** Which of those words the account has tagged, and with which of its tags — its own, plus any tag attached to a
+    * group the account belongs to, since [[gathedge.backend.service.WordService.requireEditableTag]] lets a fellow
+    * member write to those too. One query per page.
+    */
   def tagsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagRow]]
 
-  /** The account's tags on one word, for the detail screen. */
+  /** The account's tags on one word, for the detail screen — its own, plus any group tag it may edit, the same
+    * widening [[tagsFor]] applies.
+    */
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]]
 
   // -- Practice pairs ---------------------------------------------------------------------------
@@ -177,8 +188,8 @@ trait WordRepository {
     */
   def unpairTranslation(wordId: Long, tagId: Long, translationWordId: Long): Task[Long]
 
-  /** Which translations the account has marked, across a whole page of words. One query per page, the same shape as
-    * [[tagsFor]].
+  /** Which translations the account has marked, across a whole page of words — under its own tags and under any group
+    * tag it may edit, the same widening [[tagsFor]] applies. One query per page, the same shape as [[tagsFor]].
     */
   def pairsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagPairRow]]
 
@@ -361,6 +372,9 @@ object WordRepository {
   def deleteTag(id: Long, userId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteTag(id, userId))
 
+  def setTagGroup(tagId: Long, groupId: Option[Long]): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setTagGroup(tagId, groupId))
+
   def countWordsInTag(tagId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.countWordsInTag(tagId))
 
@@ -470,6 +484,10 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def tags         = quote(querySchema[TagRow]("tags"))
   private inline def wordTags     = quote(querySchema[WordTagRow]("word_tags"))
   private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
+  // Read-only view of a table GroupRepository owns — see that trait's own note on reading across repositories. Needed
+  // here so a reader's tick/mark enrichment (`tagsFor`/`pairsFor`) can widen from "tags I own" to "tags I may edit",
+  // which now includes any tag attached to a group I belong to.
+  private inline def groupMembers = quote(querySchema[GroupMemberRow]("group_members"))
 
   // -- Words ------------------------------------------------------------------------------------
 
@@ -789,6 +807,11 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"tags.delete id=$id user=$userId rows=$rows")
   }
 
+  def setTagGroup(tagId: Long, groupId: Option[Long]): Task[Long] = {
+    val q = quote(tags.filter(_.id == lift(tagId)).update(_.groupId -> lift(groupId)))
+    logged(run(ctx.run(q)))(rows => s"tags.setGroup id=$tagId group=$groupId rows=$rows")
+  }
+
   def countWordsInTag(tagId: Long): Task[Long] = {
     val q = quote(wordTags.filter(_.tagId == lift(tagId)).size)
     logged(run(ctx.run(q)))(count => s"wordTags.countInTag tag=$tagId count=$count")
@@ -897,7 +920,15 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val q = quote {
         wordTags.filter(link => {
           liftQuery(wordIds).contains(link.wordId) &&
-          tags.filter(tag => tag.id == link.tagId && tag.userId == lift(userId)).nonEmpty
+          tags
+            .filter(tag => {
+              tag.id == link.tagId &&
+              (tag.userId == lift(userId) ||
+                tag.groupId.exists(gid =>
+                  groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty
+                ))
+            })
+            .nonEmpty
         })
       }
       logged(run(ctx.run(q)))(rows => s"wordTags.forWords user=$userId words=${wordIds.size} rows=${rows.size}")
@@ -907,7 +938,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]] = {
     val q = quote {
       tags.filter(tag => {
-        tag.userId == lift(userId) &&
+        (tag.userId == lift(userId) ||
+          tag.groupId.exists(gid => groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty)) &&
         wordTags.filter(link => link.tagId == tag.id && link.wordId == lift(wordId)).nonEmpty
       })
     }
@@ -982,7 +1014,15 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val q = quote {
         wordTagPairs.filter(pair => {
           liftQuery(wordIds).contains(pair.wordId) &&
-          tags.filter(tag => tag.id == pair.tagId && tag.userId == lift(userId)).nonEmpty
+          tags
+            .filter(tag => {
+              tag.id == pair.tagId &&
+              (tag.userId == lift(userId) ||
+                tag.groupId.exists(gid =>
+                  groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty
+                ))
+            })
+            .nonEmpty
         })
       }
       logged(run(ctx.run(q)))(rows => s"wordTagPairs.forWords user=$userId words=${wordIds.size} rows=${rows.size}")

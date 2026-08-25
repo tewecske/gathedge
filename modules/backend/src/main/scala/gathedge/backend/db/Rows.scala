@@ -163,8 +163,36 @@ final case class WordFormRow(
   createdAt: Long,
 )
 
-/** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on. */
-final case class TagRow(id: Long, userId: Long, name: String, nameNorm: String, createdAt: Long)
+/** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on.
+  *
+  * `groupId` defaults to `None` so every existing positional construction of this row (test fixtures included) keeps
+  * compiling without naming it. Set, it means every member of that group — not only `userId` — may edit this tag's
+  * content; see `WordService.requireEditableTag`. `userId` is unaffected either way: the tag still has exactly one
+  * owner, who alone may rename or delete it.
+  */
+final case class TagRow(
+  id: Long,
+  userId: Long,
+  name: String,
+  nameNorm: String,
+  createdAt: Long,
+  groupId: Option[Long] = None,
+)
+
+/** A classroom-style group of accounts collaborating on shared tags. `inviteCode` is a bearer credential — like
+  * [[GuestClaimCodeRow]]'s — and must never reach a log line.
+  */
+final case class GroupRow(
+  id: Long,
+  name: String,
+  nameNorm: String,
+  inviteCode: String,
+  createdBy: Option[Long],
+  createdAt: Long,
+)
+
+/** One account's standing (`role`: `"admin"` or `"member"`, see `GroupRole.code`) on one group's roster. */
+final case class GroupMemberRow(id: Long, groupId: Long, userId: Long, role: String, createdAt: Long)
 
 /** One word carrying one tag — and, since a tag belongs to exactly one account, the whole of what "this word is in my
   * vocabulary" means.

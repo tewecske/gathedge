@@ -190,6 +190,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     List(
       navLink(Page.Words(), I18n.t(UiKeys.navWords)),
       navLink(Page.Games, I18n.t(UiKeys.navGames)),
+      navLink(Page.Groups, I18n.t(UiKeys.navGroups)),
       navLink(Page.About, I18n.t(UiKeys.navAbout)),
     )
   }
@@ -202,6 +203,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     List(
       navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
       navMenuItem(Page.Games, I18n.t(UiKeys.navGames)),
+      navMenuItem(Page.Groups, I18n.t(UiKeys.navGroups)),
       navMenuItem(Page.About, I18n.t(UiKeys.navAbout)),
     )
   }

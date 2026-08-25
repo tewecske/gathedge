@@ -690,11 +690,10 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     } yield PlayStarted(row.id, wordCount, maxScore)
   }
 
-  /** Unlike [[eligibleWordPoolFor]]'s draw pool (deduped to one translation per source word, for unambiguous
-    * grading), the preview shown here carries every one of a word's marked accepted translations — the same
-    * "study list" treatment [[eligibleWords]] gives the setup screen, one screen over. `ordered` still drives the
-    * word selection and its [[WordPreference]] order; only the displayed translations are widened back out to the
-    * raw pairs.
+  /** Unlike [[eligibleWordPoolFor]]'s draw pool (deduped to one translation per source word, for unambiguous grading),
+    * the preview shown here carries every one of a word's marked accepted translations — the same "study list"
+    * treatment [[eligibleWords]] gives the setup screen, one screen over. `ordered` still drives the word selection and
+    * its [[WordPreference]] order; only the displayed translations are widened back out to the raw pairs.
     */
   def playSetupPreview(
     slug: String,
@@ -708,7 +707,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
         if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
       (resolvedSource, resolvedTarget) = resolved
       rawPairs                        <- repo.eligibleWordPairs(game.id, resolvedSource, resolvedTarget).orDie
-      pool                              = dedupeToOnePerWord(rawPairs)
+      pool                             = dedupeToOnePerWord(rawPairs)
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
       words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
       textById                         = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap

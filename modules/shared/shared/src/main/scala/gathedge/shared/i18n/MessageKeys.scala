@@ -49,11 +49,12 @@ object MessageKeys {
   // frontend and backend cannot disagree about what a field is called: a form input whose label
   // already exists here renders this key rather than minting a second one in `UiKeys`.
 
-  val fieldEmail: String    = key("field.email")
-  val fieldPassword: String = key("field.password")
-  val fieldWord: String     = key("field.word")
-  val fieldTag: String      = key("field.tag")
-  val fieldGameName: String = key("field.gameName")
+  val fieldEmail: String     = key("field.email")
+  val fieldPassword: String  = key("field.password")
+  val fieldWord: String      = key("field.word")
+  val fieldTag: String       = key("field.tag")
+  val fieldGameName: String  = key("field.gameName")
+  val fieldGroupName: String = key("field.groupName")
 
   // -- Authentication --------------------------------------------------------------------------
 
@@ -149,6 +150,21 @@ object MessageKeys {
   val progressShareCannotShareWithSelf: String = key("progressShares.cannotShareWithSelf")
   val progressShareAlreadyShared: String       = key("progressShares.alreadyShared")
   val progressShareNotShared: String           = key("progressShares.notShared")
+
+  // -- Groups ----------------------------------------------------------------------------------
+  // Classroom-style tag collaboration. `inviteCodeInvalid` answers an unknown or rotated code
+  // alike, the same reasoning `guestCodeInvalid` follows. `notFound` covers both "no such tag" and
+  // "not the owner and not in its group" for GroupFailure.TagNotFound, reusing `wordTagNotFound`
+  // rather than minting a second key for the same meaning.
+
+  val groupNotFound: String          = key("groups.notFound")
+  val groupInviteCodeInvalid: String = key("groups.inviteCodeInvalid")
+  val groupNotMember: String         = key("groups.notMember")
+  val groupNotAdmin: String          = key("groups.notAdmin")
+  val groupLastAdmin: String         = key("groups.lastAdmin")
+  val groupTagNotOwned: String       = key("groups.tagNotOwned")
+  val groupTagAlreadyInGroup: String = key("groups.tagAlreadyInGroup")
+  val groupTagNotInGroup: String     = key("groups.tagNotInGroup")
 
   // -- Responses built outside the endpoint codecs ----------------------------------------------
   // RouteSupport's aspects and the OAuth routes assemble `dto.ErrorResponse` by hand, and

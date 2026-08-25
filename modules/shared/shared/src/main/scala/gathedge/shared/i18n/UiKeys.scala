@@ -103,6 +103,7 @@ object UiKeys {
   val navWords: String          = key("ui.nav.words")
   val navAbout: String          = key("ui.nav.about")
   val navGames: String          = key("ui.nav.games")
+  val navGroups: String         = key("ui.nav.groups")
   val navAdmin: String          = key("ui.nav.admin")
   val navAccountMenu: String    = key("ui.nav.accountMenu")
   val navLogOut: String         = key("ui.nav.logOut")
@@ -881,6 +882,15 @@ object UiKeys {
   val tagWordsListEmpty: String   = key("ui.tagWordsList.empty")
   val tagWordsListToggle: String  = key("ui.tagWordsList.toggle")
 
+  // -- Tag detail ---------------------------------------------------------------------------------
+  // A standalone read-only view of one tag's words and marked translations (`TagDetailPage`), reusing
+  // `TagWordsList` and `gameSetupSourceLabel`/`gameSetupTargetLabel` for the language picker rather than
+  // minting a second pair of labels with the same meaning.
+
+  val tagDetailTitle: String      = key("ui.tagDetail.title")
+  val tagDetailOwnerLabel: String = key("ui.tagDetail.ownerLabel")
+  val tagDetailGroupLabel: String = key("ui.tagDetail.groupLabel")
+
   // -- Game setup ----------------------------------------------------------------------------------
 
   val gameSetupTitle: String                = key("ui.gameSetup.title")
@@ -1020,6 +1030,48 @@ object UiKeys {
   val sharedProgressViewButton: String        = key("ui.sharedProgress.viewButton")
   val sharedProgressGuestBadge: String        = key("ui.sharedProgress.guestBadge")
   val sharedProgressHistoryTitle: String      = key("ui.sharedProgress.historyTitle")
+
+  // -- Groups ------------------------------------------------------------------------------------
+  // Classroom-style tag groups: browsing/creating/joining (`GroupsPage`) and one group's roster,
+  // invite code, and attached tags (`GroupDetailPage`). Guest-account rows reuse
+  // `sharedProgressGuestBadge` rather than minting a second "guest" label.
+
+  val groupsTitle: String             = key("ui.groups.title")
+  val groupsEmpty: String             = key("ui.groups.empty")
+  val groupsColName: String           = key("ui.groups.colName")
+  val groupsColMembers: String        = key("ui.groups.colMembers")
+  val groupsColTags: String           = key("ui.groups.colTags")
+  val groupsMemberCount: String       = pluralKey("ui.groups.memberCount")
+  val groupsTagCount: String          = pluralKey("ui.groups.tagCount")
+  val groupsRoleAdmin: String         = key("ui.groups.roleAdmin")
+  val groupsRoleMember: String        = key("ui.groups.roleMember")
+  val groupsViewButton: String        = key("ui.groups.viewButton")
+  val groupsCreateLabel: String       = key("ui.groups.createLabel")
+  val groupsCreatePlaceholder: String = key("ui.groups.createPlaceholder")
+  val groupsCreateButton: String      = key("ui.groups.createButton")
+  val groupsJoinLabel: String         = key("ui.groups.joinLabel")
+  val groupsJoinPlaceholder: String   = key("ui.groups.joinPlaceholder")
+  val groupsJoinButton: String        = key("ui.groups.joinButton")
+  val groupsJoinSuccess: String       = key("ui.groups.joinSuccess")
+
+  val groupDetailRosterTitle: String                 = key("ui.groupDetail.rosterTitle")
+  val groupDetailRosterHidden: String                = key("ui.groupDetail.rosterHidden")
+  val groupDetailPromoteButton: String               = key("ui.groupDetail.promoteButton")
+  val groupDetailDemoteButton: String                = key("ui.groupDetail.demoteButton")
+  val groupDetailRemoveButton: String                = key("ui.groupDetail.removeButton")
+  val groupDetailRemoveConfirm: String               = key("ui.groupDetail.removeConfirm")
+  val groupDetailLeaveButton: String                 = key("ui.groupDetail.leaveButton")
+  val groupDetailLeaveConfirm: String                = key("ui.groupDetail.leaveConfirm")
+  val groupDetailInviteCodeTitle: String             = key("ui.groupDetail.inviteCodeTitle")
+  val groupDetailInviteCodeRegenerate: String        = key("ui.groupDetail.inviteCodeRegenerate")
+  val groupDetailInviteCodeRegenerateConfirm: String = key("ui.groupDetail.inviteCodeRegenerateConfirm")
+  val groupDetailTagsTitle: String                   = key("ui.groupDetail.tagsTitle")
+  val groupDetailTagsEmpty: String                   = key("ui.groupDetail.tagsEmpty")
+  val groupDetailAttachLabel: String                 = key("ui.groupDetail.attachLabel")
+  val groupDetailAttachButton: String                = key("ui.groupDetail.attachButton")
+  val groupDetailAttachNoneAvailable: String         = key("ui.groupDetail.attachNoneAvailable")
+  val groupDetailDetachButton: String                = key("ui.groupDetail.detachButton")
+  val groupDetailDetachConfirm: String               = key("ui.groupDetail.detachConfirm")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

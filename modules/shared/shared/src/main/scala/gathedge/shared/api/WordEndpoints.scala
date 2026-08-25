@@ -266,9 +266,9 @@ object WordEndpoints {
 
   /** Commits what the reader chose out of a [[bulkUploadPreview]]: tags every accepted matched word (marking its known
     * translations as practice pairs), and for every manually linked pair, creates whichever side the dictionary does
-    * not have yet, links them as a translation, and tags and marks both — into one of the caller's own tags. One batch
-    * write rather than "ensure and attach" per word, since a caller confirming a review expects one outcome for the
-    * whole of it.
+    * not have yet, links them as a translation, and tags and marks both — into `tagId`, which the caller must own or
+    * belong to the group of. One batch write rather than "ensure and attach" per word, since a caller confirming a
+    * review expects one outcome for the whole of it.
     *
     * 404 and 429 follow [[bulkUploadPreview]]'s own rules exactly, sharing its rate-limit budget.
     */

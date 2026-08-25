@@ -3,6 +3,9 @@ package gathedge.shared.api
 import gathedge.shared.domain.{
   AnswerOutcome,
   Gender,
+  Group,
+  GroupRef,
+  GroupRole,
   Locale,
   OAuthProvider,
   PartOfSpeech,
@@ -36,6 +39,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   ConfigSummary,
   CreateGameRequest,
+  CreateGroupRequest,
   CreateTagRequest,
   CreateUserRequest,
   CreateWordRequest,
@@ -52,8 +56,13 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   GameVariantDto,
+  GroupDetail,
+  GroupMemberSummary,
+  GroupTagSummary,
   IdentitiesResponse,
+  InviteCodeResponse,
   JobStatus,
+  JoinGroupRequest,
   LinkedIdentity,
   LockoutStatus,
   LoginAttemptEntry,
@@ -75,6 +84,7 @@ import gathedge.shared.dto.{
   ResetPasswordRequest,
   RouteUsage,
   RuntimeInfo,
+  SetMemberRoleRequest,
   SetPasswordRequest,
   SharedViewer,
   SharedWithMe,
@@ -128,10 +138,13 @@ object ApiSchemas {
   given Schema[Gender]         = DeriveSchema.gen[Gender]
   given Schema[AnswerOutcome]  = DeriveSchema.gen[AnswerOutcome]
   given Schema[WordPreference] = DeriveSchema.gen[WordPreference]
+  given Schema[GroupRole]      = DeriveSchema.gen[GroupRole]
 
-  given Schema[User] = DeriveSchema.gen[User]
-  given Schema[Word] = DeriveSchema.gen[Word]
-  given Schema[Tag]  = DeriveSchema.gen[Tag]
+  given Schema[User]     = DeriveSchema.gen[User]
+  given Schema[Word]     = DeriveSchema.gen[Word]
+  given Schema[GroupRef] = DeriveSchema.gen[GroupRef]
+  given Schema[Tag]      = DeriveSchema.gen[Tag]
+  given Schema[Group]    = DeriveSchema.gen[Group]
 
   given Schema[AuthResponse]              = DeriveSchema.gen[AuthResponse]
   given Schema[SignupResponse]            = DeriveSchema.gen[SignupResponse]
@@ -230,4 +243,12 @@ object ApiSchemas {
   given Schema[RedeemShareRequest] = DeriveSchema.gen[RedeemShareRequest]
   given Schema[SharedViewer]       = DeriveSchema.gen[SharedViewer]
   given Schema[SharedWithMe]       = DeriveSchema.gen[SharedWithMe]
+
+  given Schema[CreateGroupRequest]   = DeriveSchema.gen[CreateGroupRequest]
+  given Schema[GroupMemberSummary]   = DeriveSchema.gen[GroupMemberSummary]
+  given Schema[GroupTagSummary]      = DeriveSchema.gen[GroupTagSummary]
+  given Schema[GroupDetail]          = DeriveSchema.gen[GroupDetail]
+  given Schema[JoinGroupRequest]     = DeriveSchema.gen[JoinGroupRequest]
+  given Schema[InviteCodeResponse]   = DeriveSchema.gen[InviteCodeResponse]
+  given Schema[SetMemberRoleRequest] = DeriveSchema.gen[SetMemberRoleRequest]
 }

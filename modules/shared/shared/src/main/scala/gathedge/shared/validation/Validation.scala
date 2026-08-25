@@ -1,6 +1,6 @@
 package gathedge.shared.validation
 
-import gathedge.shared.domain.Tag
+import gathedge.shared.domain.{Group, Tag}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 
 /** Validation shared between the signup form (frontend) and the signup/create-user endpoints (backend), so the same
@@ -113,6 +113,14 @@ object Validation {
       else
         Right(trimmed)
     }
+  }
+
+  /** A group's display name. Unlike [[validateTagName]], no reserved-name check and no per-account uniqueness — several
+    * groups may legitimately share a name (two classes working from the same book), so [[Group.normalize]] is for
+    * sorted/case-insensitive listing only.
+    */
+  def validateGroupName(name: String): Either[MessageRef, String] = {
+    validateNonBlank(name, MessageKeys.fieldGroupName, Group.maxNameLength)
   }
 
   /** @param fieldKey

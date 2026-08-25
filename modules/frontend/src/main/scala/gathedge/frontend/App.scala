@@ -19,6 +19,8 @@ import gathedge.frontend.pages.{
   GameResultsPage,
   GameSetupPage,
   GamesPage,
+  GroupDetailPage,
+  GroupsPage,
   MyGamesPage,
   MyPlayHistoryPage,
   NotFoundPage,
@@ -28,6 +30,7 @@ import gathedge.frontend.pages.{
   SharedProgressPage,
   SignInPage,
   SignUpPage,
+  TagDetailPage,
   VerifyEmailPage,
   WordDetailPage,
   WordsPage,
@@ -361,6 +364,12 @@ object App {
         AdminWordFormsPage.render()
       case Page.AdminWordForms                      =>
         ForbiddenPage.render()
+      case Page.Groups                              =>
+        GroupsPage.render()
+      case Page.GroupDetail(id)                     =>
+        GroupDetailPage.render(id)
+      case Page.TagDetail(id)                       =>
+        TagDetailPage.render(id)
       case Page.Forbidden                           =>
         ForbiddenPage.render()
       case Page.NotFound                            =>

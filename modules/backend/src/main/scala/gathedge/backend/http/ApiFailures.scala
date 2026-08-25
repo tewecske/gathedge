@@ -5,6 +5,7 @@ import gathedge.backend.service.{
   AuthFailure,
   BulkUploadFailure,
   GameFailure,
+  GroupFailure,
   GuestAccountFailure,
   GuestClaimFailure,
   GuestCodeFailure,
@@ -463,6 +464,108 @@ object ApiFailures {
           MessageRef(MessageKeys.captchaFailed),
           "Captcha verification failed. Please try again.",
         )
+    }
+  }
+
+  /** `get`: the only failure `GroupService.detail` ever raises is an unknown group id. */
+  def group(failure: GroupFailure): ApiFailure.NotFound = {
+    failure match {
+      case GroupFailure.NotFound =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+      case _                     =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+    }
+  }
+
+  def groupCreate(failure: GroupFailure): ApiFailure.BadRequest = {
+    failure match {
+      case GroupFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case _                                         =>
+        // Unreachable through this mapping: create never raises anything but ValidationError. Mapped anyway to keep
+        // the match total.
+        ApiFailure.BadRequest(MessageRef(MessageKeys.validationFailed), "Validation failed")
+    }
+  }
+
+  /** `join`: an unknown or rotated invite code, answered the same either way so the code space cannot be probed. */
+  def groupJoin(failure: GroupFailure): ApiFailure.NotFound = {
+    failure match {
+      case GroupFailure.InviteCodeInvalid =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupInviteCodeInvalid), "That invite code is not valid")
+      case _                              =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupInviteCodeInvalid), "That invite code is not valid")
+    }
+  }
+
+  /** `leave`: no membership to leave, or the caller is the group's only admin. */
+  def groupLeave(failure: GroupFailure): ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case GroupFailure.NotFound  =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+      case GroupFailure.LastAdmin =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.groupLastAdmin), "A group must always have at least one admin")
+      case _                      =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+    }
+  }
+
+  /** `regenerateInviteCode`/`setMemberRole`/`removeMember`: admin-only, and the latter two can also demote or remove
+    * the group's last admin.
+    */
+  def groupAdmin(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case GroupFailure.NotFound  =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+      case GroupFailure.NotAdmin  =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotAdmin), "You must be an admin of this group")
+      case GroupFailure.LastAdmin =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.groupLastAdmin), "A group must always have at least one admin")
+      case _                      =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+    }
+  }
+
+  /** `attachTag`: not a member of the target group, not the tag's owner, or the tag already belongs to a group. */
+  def groupAttachTag(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case GroupFailure.NotFound          =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+      case GroupFailure.TagNotFound       =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
+      case GroupFailure.NotMember         =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotMember), "You must be a member of this group")
+      case GroupFailure.TagNotOwned       =>
+        ApiFailure.Forbidden(MessageRef(MessageKeys.groupTagNotOwned), "You do not own this tag")
+      case GroupFailure.TagAlreadyInGroup =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.groupTagAlreadyInGroup), "This tag already belongs to a group")
+      case _                              =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
+    }
+  }
+
+  /** `detachTag`: no such tag, the tag is not (currently) in this group, or the caller is neither the tag's owner nor
+    * an admin of the group it belongs to.
+    */
+  def groupDetachTag(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound = {
+    failure match {
+      case GroupFailure.TagNotFound   =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
+      case GroupFailure.TagNotInGroup =>
+        ApiFailure.NotFound(MessageRef(MessageKeys.groupTagNotInGroup), "This tag does not belong to this group")
+      case GroupFailure.NotAdmin      =>
+        ApiFailure.Forbidden(
+          MessageRef(MessageKeys.groupNotAdmin),
+          "You must own this tag or be an admin of this group",
+        )
+      case _                          =>
+        // Unreachable through this mapping. Mapped anyway to keep the match total.
+        ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
     }
   }
 }

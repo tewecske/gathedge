@@ -6,6 +6,7 @@ import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
   GameRepository,
+  GroupRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
@@ -53,7 +54,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++
         OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
         LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
-        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test ++ GameRepository.test
+        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test ++ GameRepository.test ++
+        GroupRepository.test
     )
   }
 

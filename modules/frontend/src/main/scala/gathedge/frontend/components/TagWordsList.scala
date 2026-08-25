@@ -25,7 +25,7 @@ object TagWordsList {
         child.text <-- words.map(list => I18n.plural(UiKeys.tagWordsListCount, list.size.toLong)),
       ),
       div(
-        cls   := "mt-1 max-h-96 overflow-y-auto border border-base-300 rounded",
+        cls    := "mt-1 max-h-96 overflow-y-auto border border-base-300 rounded",
         table(
           cls := "table table-sm",
           tbody(children <-- words.map(_.map(renderRow))),
@@ -41,7 +41,7 @@ object TagWordsList {
       detailsTag(
         cls := "collapse collapse-arrow border border-base-300 rounded-box",
         summaryTag(cls := "collapse-title text-sm font-medium", I18n.t(UiKeys.tagWordsListToggle)),
-        div(cls := "collapse-content", content),
+        div(cls        := "collapse-content", content),
       )
     } else {
       content
