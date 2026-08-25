@@ -524,15 +524,22 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
+  private val leadingGermanArticle = "^(?:der|die|das)\\s+".r
+
   /** The prefix pattern behind the search box, or `None` when it is empty.
     *
     * A prefix rather than a substring: it is what an autocomplete means, and it is the shape `idx_words_search`
     * answers. Text is stored lowercased and accent-folded in `textSearch`, so lowercasing and folding the needle the
     * same way is the whole of the case- and accent-insensitivity, with no `lower()` for the two dialects to disagree
-    * about — the rule `UserRepository.emailPattern` follows. This means "hau" finds "häuser" and "o" finds "ő".
+    * about — the rule `UserRepository.emailPattern` follows. This means "hau" finds "häuser" and "o" finds "ő". A
+    * leading "der"/"die"/"das" is stripped first, since `textSearch` holds only the noun, not its gender article.
     */
   private def searchPattern(search: Option[String]): Option[String] = {
-    search.map(needle => TextSearch.fold(needle.trim.toLowerCase)).filter(_.nonEmpty).map(needle => s"$needle%")
+    search
+      .map(needle => leadingGermanArticle.replaceFirstIn(needle.trim.toLowerCase, ""))
+      .map(needle => TextSearch.fold(needle))
+      .filter(_.nonEmpty)
+      .map(needle => s"$needle%")
   }
 
   /** True when the account has this word under any of its own tags. */
