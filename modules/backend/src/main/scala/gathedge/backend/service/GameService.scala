@@ -1,7 +1,8 @@
 package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, GameScoring, Tag, Word, WordLanguage, WordPreference}
+import gathedge.backend.db.GroupRepository
+import gathedge.shared.domain.{AnswerOutcome, GameScoring, GroupRef, Tag, Word, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   GameAnswerResult,
   GameDetail,
@@ -283,8 +284,10 @@ object GameService {
   ): URIO[GameService, MyPlayPage] =
     ZIO.serviceWithZIO[GameService](_.trackedPlaysOf(targetUserId, gameId, page, pageSize, sort, descending))
 
-  val live: URLayer[GameRepository & GameWordList, GameService] = {
-    ZLayer.fromFunction((repo: GameRepository, words: GameWordList) => GameServiceLive(repo, words))
+  val live: URLayer[GameRepository & GameWordList & GroupRepository, GameService] = {
+    ZLayer.fromFunction((repo: GameRepository, words: GameWordList, groupRepo: GroupRepository) =>
+      GameServiceLive(repo, words, groupRepo)
+    )
   }
 
   /** Fresh random `(adjective, noun)` pairs are tried this many times before falling back to a numeric suffix on the
@@ -298,10 +301,22 @@ object GameService {
   val maxAttempts = 30
 }
 
-final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) extends GameService {
+final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, groupRepo: GroupRepository)
+    extends GameService {
 
-  private def toTag(row: TagRow, wordCount: Long, viewerId: Long): Tag = {
-    Tag(row.id, row.name, wordCount, row.userId == viewerId)
+  private def toTag(row: TagRow, wordCount: Long, viewerId: Long, group: Option[GroupRef] = None): Tag = {
+    Tag(row.id, row.name, wordCount, row.userId == viewerId, group)
+  }
+
+  /** Batched form of `WordServiceLive.resolveGroupRefs`, copied in shape: one query for every tag row's `groupId`
+    * rather than one per row.
+    */
+  private def resolveGroupRefs(rows: List[TagRow]): UIO[Map[Long, GroupRef]] = {
+    val ids = rows.flatMap(_.groupId).distinct
+    if (ids.isEmpty)
+      ZIO.succeed(Map.empty)
+    else
+      groupRepo.findGroupsByIds(ids).orDie.map(_.map(g => g.id -> GroupRef(g.id, g.name)).toMap)
   }
 
   /** `Word.displayText`, gated by a game's own `includeDefiniteArticles` — the choke point [[nextPrompt]],
@@ -316,12 +331,16 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList) e
     repo
       .eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
       .orDie
-      .map { rows =>
+      .flatMap { rows =>
         // One row per (tag, eligible source word) — see the repo method's doc comment on why dedup is left to the
         // caller. Counting distinct word ids per tag is what turns that into "how many words this tag would draw
         // prompts from", the number the setup screen's checkbox shows next to each tag's name.
         val byTag = rows.groupBy(_._1).view.mapValues(_.map(_._2).distinct.size.toLong).toMap
-        Tag.sorted(byTag.map { case (row, wordCount) => toTag(row, wordCount, viewerId) }.toList)
+        resolveGroupRefs(byTag.keys.toList).map { groupRefs =>
+          Tag.sorted(byTag.map { case (row, wordCount) =>
+            toTag(row, wordCount, viewerId, row.groupId.flatMap(groupRefs.get))
+          }.toList)
+        }
       }
   }
 

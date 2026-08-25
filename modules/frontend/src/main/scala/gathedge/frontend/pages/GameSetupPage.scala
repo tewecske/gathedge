@@ -288,19 +288,26 @@ private class GameSetupPage {
   }
 
   /** Checkboxes, not `<select multiple>` — a clearer control for an unbounded tag count. Grouped like
-    * `WordCollect.tagOptionGroups`, reusing its group-label keys rather than minting new ones.
+    * `WordCollect.mineOptions`: own tags first (ungrouped), then one section per shared `GroupRef` — named with the
+    * group's own name, not an i18n key, same reasoning as there — so a classroom's tags read together instead of
+    * scattered through "Other tags". Anything left over (no group, not mine) still falls into "Other tags".
     */
   private def tagCheckboxGroups(tags: List[Tag]): List[HtmlElement] = {
-    val (mine, others) = Tag.sorted(tags).partition(_.ownedByMe)
-    List(
-      Option.when(mine.nonEmpty)(tagGroup(UiKeys.wordsTagsMineGroup, mine)),
-      Option.when(others.nonEmpty)(tagGroup(UiKeys.wordsTagsOthersGroup, others)),
-    ).flatten
+    val (mine, others)       = Tag.sorted(tags).partition(_.ownedByMe)
+    val (grouped, ungrouped) = others.partition(_.group.isDefined)
+    val groupSections        = grouped
+      .groupBy(_.group.get.name)
+      .toList
+      .sortBy { case (name, _) => name.toLowerCase }
+      .map { case (name, groupTags) => tagGroup(name, groupTags.sortBy(_.name.toLowerCase)) }
+    List(Option.when(mine.nonEmpty)(tagGroup(I18n.t(UiKeys.wordsTagsMineGroup), mine))).flatten ++
+      groupSections ++
+      List(Option.when(ungrouped.nonEmpty)(tagGroup(I18n.t(UiKeys.wordsTagsOthersGroup), ungrouped))).flatten
   }
 
-  private def tagGroup(labelKey: String, tags: List[Tag]): HtmlElement = {
+  private def tagGroup(label: String, tags: List[Tag]): HtmlElement = {
     div(
-      span(cls := "label-text text-xs font-semibold", I18n.t(labelKey)),
+      span(cls := "label-text text-xs font-semibold", label),
       div(cls  := "flex flex-col gap-1", tags.map(tagCheckbox)),
     )
   }

@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
-import gathedge.backend.db.{GameRepository, TextSearch, UserRepository, WordRepository, WordRow}
+import gathedge.backend.db.{GameRepository, GroupRepository, TextSearch, UserRepository, WordRepository, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage, WordPreference}
 import zio._
 import zio.test._
@@ -19,7 +19,8 @@ object GameServiceSpec extends ZIOSpecDefault {
   private val fixedWordList = GameWordListLive(List("brave", "calm"), List("otter", "fox"))
 
   private val layer = {
-    (TestDataSource.sqlite >>> (WordRepository.test ++ UserRepository.test ++ GameRepository.test)) ++
+    (TestDataSource.sqlite >>> (WordRepository.test ++ UserRepository.test ++ GameRepository.test ++
+      GroupRepository.test)) ++
       ZLayer.succeed(fixedWordList: GameWordList) >+> GameService.live
   }
 

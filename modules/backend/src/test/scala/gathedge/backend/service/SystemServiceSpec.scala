@@ -7,6 +7,7 @@ import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
   GameRepository,
+  GroupRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
   MetricsRepository,
@@ -33,7 +34,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
       UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
         EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
         GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
-        MetricsRepository.test ++ GameRepository.test ++ WordRepository.test
+        MetricsRepository.test ++ GameRepository.test ++ WordRepository.test ++ GroupRepository.test
     )
   }
 
