@@ -33,6 +33,7 @@ import gathedge.frontend.pages.{
   SignInPage,
   SignUpPage,
   TagDetailPage,
+  TagsPage,
   VerifyEmailPage,
   WordDetailPage,
   WordsPage,
@@ -378,6 +379,8 @@ object App {
         GroupJoinPage.render(code)
       case Page.TagDetail(id)                       =>
         TagDetailPage.render(id)
+      case Page.Tags                                =>
+        TagsPage.render()
       case Page.Forbidden                           =>
         ForbiddenPage.render()
       case Page.NotFound                            =>

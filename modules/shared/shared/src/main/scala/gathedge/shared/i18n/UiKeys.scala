@@ -640,6 +640,9 @@ object UiKeys {
   val wordsTagsMineGroup: String   = key("ui.words.tagsMineGroup")
   val wordsTagsOthersGroup: String = key("ui.words.tagsOthersGroup")
 
+  /** Opens `TagsPage` — every tag the reader may edit, laid out as a table rather than a dropdown. */
+  val wordsTagsListButton: String = key("ui.words.tagsListButton")
+
   /** Offered on the collect select when the chosen tag is not the reader's own: seeds an empty tag of theirs with the
     * same name, since only an owner may file words under it. `{0}` is the tag's name.
     */
@@ -944,6 +947,16 @@ object UiKeys {
   val tagDetailOwnerLabel: String = key("ui.tagDetail.ownerLabel")
   val tagDetailGroupLabel: String = key("ui.tagDetail.groupLabel")
 
+  // -- Tags list ------------------------------------------------------------------------------------
+  // Every tag the reader may edit (`TagsPage`), reached from `WordCollect.renderBar`'s "All tags" button — the same
+  // set `WordCollect.mineOptions` offers, as a table instead of a dropdown.
+
+  val tagsListTitle: String    = key("ui.tagsList.title")
+  val tagsListYours: String    = key("ui.tagsList.yours")
+  val tagsListColName: String  = key("ui.tagsList.colName")
+  val tagsListColWords: String = key("ui.tagsList.colWords")
+  val tagsListEmpty: String    = key("ui.tagsList.empty")
+
   // -- Game setup ----------------------------------------------------------------------------------
 
   val gameSetupTitle: String                = key("ui.gameSetup.title")
@@ -1086,7 +1099,6 @@ object UiKeys {
   val groupsTagCount: String          = pluralKey("ui.groups.tagCount")
   val groupsRoleAdmin: String         = key("ui.groups.roleAdmin")
   val groupsRoleMember: String        = key("ui.groups.roleMember")
-  val groupsViewButton: String        = key("ui.groups.viewButton")
   val groupsCreateLabel: String       = key("ui.groups.createLabel")
   val groupsCreatePlaceholder: String = key("ui.groups.createPlaceholder")
   val groupsCreateButton: String      = key("ui.groups.createButton")

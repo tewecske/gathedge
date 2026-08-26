@@ -148,7 +148,6 @@ private class GroupsPage {
               th(I18n.t(UiKeys.groupsColMembers)),
               th(I18n.t(UiKeys.groupsColTags)),
               th(),
-              th(),
             )
           ),
           tbody(children <-- groupsVar.signal.map(_.map(renderRow))),
@@ -159,7 +158,13 @@ private class GroupsPage {
 
   private def renderRow(group: Group): HtmlElement = {
     tr(
-      td(group.name),
+      td(
+        a(
+          cls := "link link-hover",
+          AppRouter.router.navigateTo(Page.GroupDetail(group.id)),
+          group.name,
+        )
+      ),
       td(I18n.plural(UiKeys.groupsMemberCount, group.memberCount)),
       td(I18n.plural(UiKeys.groupsTagCount, group.tagCount)),
       td(
@@ -167,13 +172,6 @@ private class GroupsPage {
           case GroupRole.Admin  => span(cls := "badge badge-primary", I18n.t(UiKeys.groupsRoleAdmin))
           case GroupRole.Member => span(cls := "badge", I18n.t(UiKeys.groupsRoleMember))
         }
-      ),
-      td(
-        a(
-          cls := "btn btn-sm",
-          AppRouter.router.navigateTo(Page.GroupDetail(group.id)),
-          I18n.t(UiKeys.groupsViewButton),
-        )
       ),
     )
   }

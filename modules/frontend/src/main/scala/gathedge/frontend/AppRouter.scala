@@ -153,6 +153,12 @@ object Page {
     */
   final case class TagDetail(id: Long) extends Page
 
+  /** Every tag the caller may see: their own, plus every tag opened by a group they belong to — the same set
+    * [[WordCollect]]'s collect select offers, shown as a table instead of a dropdown. Reached from the collection bar's
+    * "All tags" button. Auth-only, like [[TagDetail]]: there is no reader-agnostic version of "your tags".
+    */
+  case object Tags extends Page
+
   case object Forbidden extends Page
   case object NotFound  extends Page
 
@@ -288,6 +294,7 @@ object AppRouter {
     pattern = root / "tags" / segment[Long],
     basePath = basePath,
   )
+  private val tagsRoute        = Route.static(Tags, root / "tags", basePath)
 
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
     *
@@ -402,6 +409,8 @@ object AppRouter {
         s"GroupJoin:$code"
       case TagDetail(id)            =>
         s"TagDetail:$id"
+      case Tags                     =>
+        "Tags"
       case Forbidden                =>
         "Forbidden"
       case NotFound                 =>
@@ -510,6 +519,8 @@ object AppRouter {
           AdminRateLimits
         case "Groups"          =>
           Groups
+        case "Tags"            =>
+          Tags
         case "Forbidden"       =>
           Forbidden
         case _                 =>
@@ -554,6 +565,7 @@ object AppRouter {
         groupsRoute,
         groupJoinRoute,
         groupDetailRoute,
+        tagsRoute,
         tagDetailRoute,
         forbiddenRoute,
       ),

@@ -2,6 +2,7 @@ package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
@@ -476,6 +477,11 @@ final class WordCollect(
               ),
             ),
             button(cls := "btn btn-sm", typ := "submit", I18n.t(UiKeys.commonAdd)),
+          ),
+          a(
+            cls := "btn btn-sm btn-ghost",
+            AppRouter.router.navigateTo(Page.Tags),
+            I18n.t(UiKeys.wordsTagsListButton),
           ),
         ),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
