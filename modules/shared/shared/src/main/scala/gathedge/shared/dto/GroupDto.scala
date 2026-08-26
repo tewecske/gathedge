@@ -47,6 +47,11 @@ final case class GroupDetail(
   tags: List[GroupTagSummary],
 ) derives JsonCodec
 
+/** `PUT /api/groups/{groupId}`'s body: the group's new display name. Follows [[CreateGroupRequest]]'s own validation —
+  * no per-account uniqueness, unlike a tag's own rename — see `Validation.validateGroupName`.
+  */
+final case class RenameGroupRequest(name: String) derives JsonCodec
+
 /** `POST /api/groups/join`'s body. Not nested under a group id — the caller doesn't know it until the code resolves
   * one. Redeeming always joins as [[GroupRole.Member]], and redeeming a code for a group the caller already belongs to
   * is a no-op, not a conflict.

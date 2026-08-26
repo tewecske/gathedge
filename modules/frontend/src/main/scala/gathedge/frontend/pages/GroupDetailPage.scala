@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GroupApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ShareRow}
+import gathedge.frontend.components.{Alert, AppShell, InlineRename, ShareRow}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{GroupRole, Tag}
@@ -55,6 +55,12 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     msg => noticeVar.set(Some(msg)),
   )
 
+  private val inlineRename = new InlineRename[GroupDetail](name => GroupApiClient.renameGroup(groupId, name))
+
+  private val nameSignal: Signal[String] = detailVar.signal.map(_.map(_.name).getOrElse("")).distinct
+
+  private val isAdminSignal: Signal[Boolean] = detailVar.signal.map(_.exists(_.viewerRole.contains(GroupRole.Admin))).distinct
+
   private val reloadBus       = new EventBus[Unit]()
   private val leaveBus        = new EventBus[Unit]()
   private val regenerateBus   = new EventBus[Unit]()
@@ -80,9 +86,15 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
         div(
           cls := "card-body",
           div(
-            cls := "flex items-center justify-between",
-            h1(cls := "card-title text-2xl", child.text <-- detailVar.signal.map(_.map(_.name).getOrElse(""))),
-            a(cls  := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups), "←"),
+            cls := "flex items-center justify-between gap-2",
+            inlineRename.renderTitle(
+              nameSignal,
+              isAdminSignal,
+              I18n.t(UiKeys.groupDetailRenameEdit),
+              I18n.t(UiKeys.groupDetailRenameLabel),
+              "input input-sm",
+            ),
+            a(cls := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups), "←"),
           ),
           child.maybe <-- detailVar.signal.map(_.map(renderBody)),
         ),
@@ -110,6 +122,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
       // option, which is impossible when there's only one eligible tag.
       myTagsVar.signal.map(_.filter(tag => tag.ownedByMe && tag.group.isEmpty).headOption.map(_.id)) -->
         attachSelectionVar.writer,
+      inlineRename.bindings(onSaved = Observer[GroupDetail](detail => detailVar.set(Some(detail)))),
       leaveBus.events --> Observer[Unit](_ => Var.set(busyVar -> true, errorVar -> None)),
       leaveBus.events.flatMapSwitch(_ => GroupApiClient.leave(groupId)) -->
         Observer[Either[ApiError, Unit]] {

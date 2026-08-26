@@ -34,6 +34,11 @@ trait GroupRepository {
   /** Rotates the group's invite code; the old one stops resolving the moment this returns. */
   def updateInviteCode(id: Long, code: String): Task[Unit]
 
+  /** Renames the group. `nameNorm` is [[gathedge.shared.domain.Group.normalize]]'d for sorted/case-insensitive
+    * listing, the same split `insertGroup` keeps between `name` and `nameNorm`.
+    */
+  def updateGroupName(id: Long, name: String, nameNorm: String): Task[Unit]
+
   /** Every group, with how many members and how many attached tags each has — what the browse page is built from. */
   def listGroups: Task[List[(GroupRow, Long, Long)]]
 
@@ -93,6 +98,9 @@ object GroupRepository {
 
   def updateInviteCode(id: Long, code: String): RIO[GroupRepository, Unit] =
     ZIO.serviceWithZIO[GroupRepository](_.updateInviteCode(id, code))
+
+  def updateGroupName(id: Long, name: String, nameNorm: String): RIO[GroupRepository, Unit] =
+    ZIO.serviceWithZIO[GroupRepository](_.updateGroupName(id, name, nameNorm))
 
   def listGroups: RIO[GroupRepository, List[(GroupRow, Long, Long)]] =
     ZIO.serviceWithZIO[GroupRepository](_.listGroups)
@@ -184,6 +192,11 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def updateInviteCode(id: Long, code: String): Task[Unit] = {
     val q = quote(groups.filter(_.id == lift(id)).update(_.inviteCode -> lift(code)))
     logged(run(ctx.run(q)).unit)(_ => s"groups.updateInviteCode id=$id")
+  }
+
+  def updateGroupName(id: Long, name: String, nameNorm: String): Task[Unit] = {
+    val q = quote(groups.filter(_.id == lift(id)).update(_.name -> lift(name), _.nameNorm -> lift(nameNorm)))
+    logged(run(ctx.run(q)).unit)(_ => s"groups.updateName id=$id")
   }
 
   def listGroups: Task[List[(GroupRow, Long, Long)]] = {

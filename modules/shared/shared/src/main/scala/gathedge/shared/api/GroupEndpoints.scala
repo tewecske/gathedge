@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   GroupMemberSummary,
   InviteCodeResponse,
   JoinGroupRequest,
+  RenameGroupRequest,
   SetMemberRoleRequest,
 }
 import zio.http.{Method, Status}
@@ -81,6 +82,18 @@ object GroupEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
+  /** Admin-only. Renames the group. Follows [[create]]'s own rules for the name itself — 400 for blank or over
+    * `Group.maxNameLength`; unlike a tag's own rename, no per-account uniqueness check, since several groups may
+    * legitimately share a name.
+    */
+  val renameGroup = {
+    Endpoint(Method.PUT / "api" / "groups" / groupId)
+      .in[RenameGroupRequest]
+      .withCodecError
+      .out[GroupDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+  }
+
   /** Admin-only. Mints a fresh invite code and immediately invalidates the old one. */
   val regenerateInviteCode = {
     Endpoint(Method.POST / "api" / "groups" / groupId / "invite-code" / "regenerate").withCodecError
@@ -125,6 +138,18 @@ object GroupEndpoints {
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection. */
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {
-    List(list, get, create, join, leave, regenerateInviteCode, setMemberRole, removeMember, attachTag, detachTag)
+    List(
+      list,
+      get,
+      create,
+      join,
+      leave,
+      renameGroup,
+      regenerateInviteCode,
+      setMemberRole,
+      removeMember,
+      attachTag,
+      detachTag,
+    )
   }
 }

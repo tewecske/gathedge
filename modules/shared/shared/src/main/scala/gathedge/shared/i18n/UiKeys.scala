@@ -1107,6 +1107,8 @@ object UiKeys {
   val groupsJoinButton: String        = key("ui.groups.joinButton")
   val groupsJoinSuccess: String       = key("ui.groups.joinSuccess")
 
+  val groupDetailRenameEdit: String                  = key("ui.groupDetail.renameEdit")
+  val groupDetailRenameLabel: String                 = key("ui.groupDetail.renameLabel")
   val groupDetailRosterTitle: String                 = key("ui.groupDetail.rosterTitle")
   val groupDetailRosterHidden: String                = key("ui.groupDetail.rosterHidden")
   val groupDetailPromoteButton: String               = key("ui.groupDetail.promoteButton")

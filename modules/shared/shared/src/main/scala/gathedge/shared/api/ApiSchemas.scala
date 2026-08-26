@@ -79,6 +79,7 @@ import gathedge.shared.dto.{
   RateLimitEntry,
   RedeemShareRequest,
   RenameGameRequest,
+  RenameGroupRequest,
   RenameTagRequest,
   ResendVerificationRequest,
   ResetPasswordRequest,
@@ -249,6 +250,7 @@ object ApiSchemas {
   given Schema[GroupTagSummary]      = DeriveSchema.gen[GroupTagSummary]
   given Schema[GroupDetail]          = DeriveSchema.gen[GroupDetail]
   given Schema[JoinGroupRequest]     = DeriveSchema.gen[JoinGroupRequest]
+  given Schema[RenameGroupRequest]   = DeriveSchema.gen[RenameGroupRequest]
   given Schema[InviteCodeResponse]   = DeriveSchema.gen[InviteCodeResponse]
   given Schema[SetMemberRoleRequest] = DeriveSchema.gen[SetMemberRoleRequest]
 }

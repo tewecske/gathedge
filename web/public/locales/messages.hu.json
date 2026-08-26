@@ -774,6 +774,8 @@
   "ui.groups.joinPlaceholder": "XXXX-XXXX-XXXX-XXXX",
   "ui.groups.joinButton": "Csatlakozás",
   "ui.groups.joinSuccess": "Csatlakoztál a csoporthoz.",
+  "ui.groupDetail.renameEdit": "Csoport átnevezése",
+  "ui.groupDetail.renameLabel": "Új név",
   "ui.groupDetail.rosterTitle": "Tagok",
   "ui.groupDetail.rosterHidden": "Csatlakozz a csoporthoz, hogy lásd a tagjait.",
   "ui.groupDetail.promoteButton": "Adminná tétel",

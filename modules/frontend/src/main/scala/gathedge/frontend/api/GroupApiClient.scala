@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   GroupMemberSummary,
   InviteCodeResponse,
   JoinGroupRequest,
+  RenameGroupRequest,
   SetMemberRoleRequest,
 }
 
@@ -40,6 +41,11 @@ object GroupApiClient {
 
   def leave(groupId: Long): EventStream[Either[ApiError, Unit]] = {
     run(executor(GroupEndpoints.leave(groupId)))
+  }
+
+  /** Admin-only. */
+  def renameGroup(groupId: Long, name: String): EventStream[Either[ApiError, GroupDetail]] = {
+    run(executor(GroupEndpoints.renameGroup(groupId, RenameGroupRequest(name))))
   }
 
   def regenerateInviteCode(groupId: Long): EventStream[Either[ApiError, InviteCodeResponse]] = {

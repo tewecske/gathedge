@@ -50,6 +50,9 @@ trait GroupService {
   /** Removes the caller from the roster. Fails [[GroupFailure.LastAdmin]] if they are its only admin. */
   def leave(groupId: Long, userId: Long): IO[GroupFailure, Unit]
 
+  /** Admin-only. Renames the group; no per-account uniqueness, unlike a tag's own rename. */
+  def renameGroup(groupId: Long, name: String, userId: Long): IO[GroupFailure, GroupDetail]
+
   /** Admin-only. Mints a fresh code and immediately invalidates the old one. */
   def regenerateInviteCode(groupId: Long, userId: Long): IO[GroupFailure, String]
 
@@ -92,6 +95,9 @@ object GroupService {
 
   def leave(groupId: Long, userId: Long): ZIO[GroupService, GroupFailure, Unit] =
     ZIO.serviceWithZIO[GroupService](_.leave(groupId, userId))
+
+  def renameGroup(groupId: Long, name: String, userId: Long): ZIO[GroupService, GroupFailure, GroupDetail] =
+    ZIO.serviceWithZIO[GroupService](_.renameGroup(groupId, name, userId))
 
   def regenerateInviteCode(groupId: Long, userId: Long): ZIO[GroupService, GroupFailure, String] =
     ZIO.serviceWithZIO[GroupService](_.regenerateInviteCode(groupId, userId))
@@ -224,6 +230,18 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       _          <- guardNotLastAdmin(groupId, membership)
       _          <- repo.deleteMembership(groupId, userId).orDie
     } yield ()
+  }
+
+  def renameGroup(groupId: Long, name: String, userId: Long): IO[GroupFailure, GroupDetail] = {
+    for {
+      _              <- requireAdmin(groupId, userId)
+      valid          <- ZIO
+                          .fromEither(Validation.validateGroupName(name))
+                          .mapError(error => GroupFailure.ValidationError(Map("name" -> error)))
+      normal          = Group.normalize(valid)
+      _              <- repo.updateGroupName(groupId, valid, normal).orDie
+      result         <- detail(groupId, userId)
+    } yield result
   }
 
   def regenerateInviteCode(groupId: Long, userId: Long): IO[GroupFailure, String] = {

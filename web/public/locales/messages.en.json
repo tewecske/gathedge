@@ -774,6 +774,8 @@
   "ui.groups.joinPlaceholder": "XXXX-XXXX-XXXX-XXXX",
   "ui.groups.joinButton": "Join",
   "ui.groups.joinSuccess": "Joined the group.",
+  "ui.groupDetail.renameEdit": "Rename group",
+  "ui.groupDetail.renameLabel": "New name",
   "ui.groupDetail.rosterTitle": "Members",
   "ui.groupDetail.rosterHidden": "Join this group to see its members.",
   "ui.groupDetail.promoteButton": "Make admin",

@@ -3,7 +3,13 @@ package gathedge.backend.http
 import gathedge.backend.service.{AuthService, GroupService}
 import gathedge.shared.api.GroupEndpoints
 import gathedge.shared.domain.User
-import gathedge.shared.dto.{CreateGroupRequest, InviteCodeResponse, JoinGroupRequest, SetMemberRoleRequest}
+import gathedge.shared.dto.{
+  CreateGroupRequest,
+  InviteCodeResponse,
+  JoinGroupRequest,
+  RenameGroupRequest,
+  SetMemberRoleRequest,
+}
 import zio.*
 import zio.http.*
 
@@ -46,6 +52,14 @@ object GroupRoutes {
   private val leaveRoute = {
     GroupEndpoints.leave.implementHandler(
       handler((groupId: Long) => userId.flatMap(id => GroupService.leave(groupId, id).mapError(ApiFailures.groupLeave)))
+    )
+  }
+
+  private val renameGroupRoute = {
+    GroupEndpoints.renameGroup.implementHandler(
+      handler { (groupId: Long, body: RenameGroupRequest) =>
+        userId.flatMap(id => GroupService.renameGroup(groupId, body.name, id).mapError(ApiFailures.groupRename))
+      }
     )
   }
 
@@ -102,6 +116,7 @@ object GroupRoutes {
       createRoute,
       joinRoute,
       leaveRoute,
+      renameGroupRoute,
       regenerateInviteCodeRoute,
       setMemberRoleRoute,
       removeMemberRoute,
