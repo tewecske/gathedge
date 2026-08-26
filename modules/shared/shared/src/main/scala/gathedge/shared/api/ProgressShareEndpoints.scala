@@ -38,14 +38,15 @@ object ProgressShareEndpoints {
 
   /** Redeems a code, granting the caller read access to its owner's game history. 404 covers an unknown or revoked
     * code, the same "one answer either way" rule `AuthEndpoints.claimGuest` follows so the code space cannot be probed;
-    * 400 covers redeeming one's own code; 409 covers a share that already exists.
+    * 400 covers redeeming one's own code; 409 covers a share that already exists; 429 covers the caller's own
+    * `RateLimitKey.shareRedeem` budget, the same reason `claimGuest` has one for guessing.
     */
   val redeem = {
     Endpoint(Method.POST / "api" / "progress-shares" / "redeem")
       .in[RedeemShareRequest]
       .withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict, failure.tooManyRequests)
   }
 
   /** Every account that may currently read the caller's game history. */

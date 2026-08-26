@@ -153,6 +153,18 @@ object RateLimitKey {
     * `AppConfig.quotas` is.
     */
   def wordUpload(userId: Long): String = s"wordUpload:$userId"
+
+  /** Redeeming a group invite code is a post-auth action, same shape as [[claim]]: 80 bits is out of guessing range,
+    * but a caller who is already an account (an ordinary user or a guest — `GroupRoutes` sits behind `authenticated`,
+    * not a public endpoint) gets a budget of their own rather than none. Keyed on the account, not the address: the
+    * caller is known here, and one account cycling addresses gains nothing.
+    */
+  def groupJoin(userId: Long): String = s"groupJoin:$userId"
+
+  /** Redeeming a progress-share code, for the same reason [[groupJoin]] has a budget: `ProgressShareRoutes.redeem` sits
+    * behind `authenticated` too, so the caller is a known account (guest or not) rather than an anonymous one.
+    */
+  def shareRedeem(userId: Long): String = s"shareRedeem:$userId"
 }
 
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single

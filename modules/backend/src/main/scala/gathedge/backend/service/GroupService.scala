@@ -26,6 +26,7 @@ enum GroupFailure {
   case TagNotOwned
   case TagAlreadyInGroup
   case TagNotInGroup
+  case RateLimited
 }
 
 /** Classroom-style tag groups. A group has two roles (`admin`/`member`); attaching one of the caller's own tags to a
@@ -112,12 +113,15 @@ object GroupService {
   def detachTag(groupId: Long, tagId: Long, userId: Long): ZIO[GroupService, GroupFailure, Unit] =
     ZIO.serviceWithZIO[GroupService](_.detachTag(groupId, tagId, userId))
 
-  val live: URLayer[GroupRepository & WordRepository, GroupService] = {
-    ZLayer.fromFunction((repo: GroupRepository, wordRepo: WordRepository) => GroupServiceLive(repo, wordRepo))
+  val live: URLayer[GroupRepository & WordRepository & RateLimiter, GroupService] = {
+    ZLayer.fromFunction((repo: GroupRepository, wordRepo: WordRepository, rateLimiter: RateLimiter) =>
+      GroupServiceLive(repo, wordRepo, rateLimiter)
+    )
   }
 }
 
-final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepository) extends GroupService {
+final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepository, rateLimiter: RateLimiter)
+    extends GroupService {
 
   private def adminCode  = GroupRole.code(GroupRole.Admin)
   private def memberCode = GroupRole.code(GroupRole.Member)
@@ -201,11 +205,16 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
   }
 
   def join(code: String, userId: Long): IO[GroupFailure, Unit] = {
+    val key = RateLimitKey.groupJoin(userId)
     for {
-      group <-
+      blocked <- rateLimiter.isBlocked(key)
+      _       <- ZIO.when(blocked)(ZIO.fail(GroupFailure.RateLimited))
+      _       <- rateLimiter.recordFailure(key)
+      group   <-
         repo.findGroupByInviteCode(Tokens.normalizeClaimCode(code)).orDie.someOrFail(GroupFailure.InviteCodeInvalid)
-      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _     <- repo.insertMembership(group.id, userId, memberCode, now).orDie
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _       <- repo.insertMembership(group.id, userId, memberCode, now).orDie
+      _       <- rateLimiter.clear(key)
     } yield ()
   }
 

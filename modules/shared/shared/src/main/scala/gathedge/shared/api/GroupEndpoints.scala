@@ -61,14 +61,15 @@ object GroupEndpoints {
 
   /** Redeems an invite code, joining the caller as a plain member. Idempotent for a code whose group the caller already
     * belongs to — redeeming twice is not a conflict. 404 covers an unknown or rotated code; a caller cannot tell the
-    * two apart, the same rule `AuthEndpoints.claimGuest` follows for its own code space.
+    * two apart, the same rule `AuthEndpoints.claimGuest` follows for its own code space. 429 covers the caller's own
+    * `RateLimitKey.groupJoin` budget, the same reason `claimGuest` has one for guessing.
     */
   val join = {
     Endpoint(Method.POST / "api" / "groups" / "join")
       .in[JoinGroupRequest]
       .withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
   }
 
   /** Removes the caller from the group's roster. 409 covers the caller being its last admin — a group may never be left

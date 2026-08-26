@@ -25,6 +25,9 @@ enum ProgressShareFailure {
 
   /** [[ProgressShareService.requireShareAccess]]: the caller holds no grant from the account it asked to read. */
   case NotShared
+
+  /** [[RateLimitKey.shareRedeem]] tripped for this caller. */
+  case RateLimited
 }
 
 /** Progress sharing: letting one account's game history be read by another, on either side's own say-so — a "sharer"
@@ -82,13 +85,16 @@ object ProgressShareService {
   def revoke(sharerUserId: Long, viewerUserId: Long): URIO[ProgressShareService, Unit] =
     ZIO.serviceWithZIO[ProgressShareService](_.revoke(sharerUserId, viewerUserId))
 
-  val live: URLayer[ProgressShareRepository & UserRepository, ProgressShareService] = {
+  val live: URLayer[ProgressShareRepository & UserRepository & RateLimiter, ProgressShareService] = {
     ZLayer.fromFunction(ProgressShareServiceLive.apply)
   }
 }
 
-final case class ProgressShareServiceLive(repo: ProgressShareRepository, userRepo: UserRepository)
-    extends ProgressShareService {
+final case class ProgressShareServiceLive(
+  repo: ProgressShareRepository,
+  userRepo: UserRepository,
+  rateLimiter: RateLimiter,
+) extends ProgressShareService {
 
   def issueCode(userId: Long): UIO[String] = {
     for {
@@ -110,7 +116,11 @@ final case class ProgressShareServiceLive(repo: ProgressShareRepository, userRep
 
   def redeem(viewerUserId: Long, code: String): IO[ProgressShareFailure, Unit] = {
     val normalized = Tokens.normalizeClaimCode(code)
+    val key        = RateLimitKey.shareRedeem(viewerUserId)
     for {
+      blocked  <- rateLimiter.isBlocked(key)
+      _        <- ZIO.when(blocked)(ZIO.fail(ProgressShareFailure.RateLimited))
+      _        <- rateLimiter.recordFailure(key)
       found    <- repo.findActiveCode(normalized).orDie
       claimed  <- ZIO.fromOption(found).orElseFail(ProgressShareFailure.CodeInvalid)
       // A code whose account has since been deleted answers the same "no such code" as one that never existed.
@@ -121,6 +131,7 @@ final case class ProgressShareServiceLive(repo: ProgressShareRepository, userRep
       now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _        <- repo.insertShare(sharer.id, viewerUserId, now).orDie
       _        <- repo.markCodeUsed(claimed.id, now).orDie
+      _        <- rateLimiter.clear(key)
       _        <- SecurityLog.info(s"Progress share redeemed: sharer=${sharer.id} viewer=$viewerUserId")
     } yield ()
   }

@@ -355,10 +355,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/admin/usage/suspicious")                                      -> Set(Ok, BadRequest, Unauthorized),
               // Progress sharing: minting a code takes no input, so its only failure is the aspect's 401.
               ("POST", "/api/progress-shares/code")                                       -> Set(Ok, Unauthorized),
-              // Redeeming can raise every ProgressShareFailure case: an unknown/revoked code, one's own code, or a
-              // grant that already exists.
+              // Redeeming can raise every ProgressShareFailure case: an unknown/revoked code, one's own code, a
+              // grant that already exists, or the caller's own shareRedeem rate-limit budget.
               ("POST", "/api/progress-shares/redeem")                                     ->
-                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict, TooManyRequests),
               ("GET", "/api/progress-shares/viewers")                                     -> Set(Ok, Unauthorized),
               ("GET", "/api/progress-shares/shared-with-me")                              -> Set(Ok, Unauthorized),
               // Forbidden covers a caller with no share from the requested sharer.
@@ -372,8 +372,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/groups")                                                      -> Set(Ok, Unauthorized),
               ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
-              // 404 covers an unknown or rotated invite code alike, so the code space cannot be probed.
-              ("POST", "/api/groups/join")                                                -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // 404 covers an unknown or rotated invite code alike, so the code space cannot be probed; 429 is the
+              // caller's own groupJoin rate-limit budget.
+              ("POST", "/api/groups/join")                                                -> Set(NoContent, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // 409 is `GroupFailure.LastAdmin`: the caller is the group's sole admin.
               ("POST", "/api/groups/{groupId}/leave")                                     ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
@@ -400,8 +401,8 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 234 across 60 operations (198 across 50 before shareable tag groups added its ten). (It was
-      // 136 across 44 while the Todo and Group example features were
+      // the count below: 236 across 60 operations (234 before groupJoin/shareRedeem got their own rate-limit budgets;
+      // 198 across 50 before shareable tag groups added its ten). (It was 136 across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -418,7 +419,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 234,
+          declared == 236,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -449,7 +450,9 @@ object OpenApiSpec extends ZIOSpecDefault {
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,
-          // since a single confirm call can create and tag thousands of rows and preview shares its budget.
+          // since a single confirm call can create and tag thousands of rows and preview shares its budget — plus
+          // redeeming a group invite code or a progress-share code, each keyed on the caller's own account so a
+          // signed-in guest or user cannot grind the 80-bit code space for free.
           describes(TooManyRequests) ==
             Set(
               ("POST", "/api/auth/signup"),
@@ -461,6 +464,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/guest/claim"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/preview"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm"),
+              ("POST", "/api/groups/join"),
+              ("POST", "/api/progress-shares/redeem"),
             ),
           describes(InternalServerError).isEmpty,
         )

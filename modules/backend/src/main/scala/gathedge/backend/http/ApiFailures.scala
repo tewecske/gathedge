@@ -412,7 +412,7 @@ object ApiFailures {
   /** Redeeming a share code: an unknown/revoked code, one's own code, or a grant that already exists. */
   def progressShareRedeem(
     failure: ProgressShareFailure
-  ): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
+  ): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
     failure match {
       case ProgressShareFailure.CodeInvalid         =>
         // Unknown and revoked answer alike, so the code space cannot be probed.
@@ -430,6 +430,8 @@ object ApiFailures {
       case ProgressShareFailure.NotShared           =>
         // Unreachable through this mapping: redeem never raises NotShared. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.progressShareCodeInvalid), "That share code is not valid")
+      case ProgressShareFailure.RateLimited         =>
+        rateLimited
     }
   }
 
@@ -490,10 +492,12 @@ object ApiFailures {
   }
 
   /** `join`: an unknown or rotated invite code, answered the same either way so the code space cannot be probed. */
-  def groupJoin(failure: GroupFailure): ApiFailure.NotFound = {
+  def groupJoin(failure: GroupFailure): ApiFailure.NotFound | ApiFailure.TooManyRequests = {
     failure match {
       case GroupFailure.InviteCodeInvalid =>
         ApiFailure.NotFound(MessageRef(MessageKeys.groupInviteCodeInvalid), "That invite code is not valid")
+      case GroupFailure.RateLimited       =>
+        rateLimited
       case _                              =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupInviteCodeInvalid), "That invite code is not valid")
