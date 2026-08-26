@@ -566,6 +566,11 @@ object UiKeys {
   val wordsFilterTagLabel: String = key("ui.words.filterTagLabel")
   val wordsFilterTagAny: String   = key("ui.words.filterTagAny")
 
+  /** Clears every filter above back to its default, remembered per browser — shown only once a filter differs from it.
+    * See `listing.WordQuery.filterOnly`/`.storedFilter`.
+    */
+  val wordsResetFilters: String = key("ui.words.resetFilters")
+
   val wordsTagNew: String            = key("ui.words.tagNew")
   val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
 

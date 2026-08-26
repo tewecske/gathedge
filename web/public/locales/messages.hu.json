@@ -488,6 +488,7 @@
   "ui.words.pairHint": "Kattints egy fordításra, hogy megjelöld vele a szót.",
   "ui.words.filterTagLabel": "Szűrés címkére",
   "ui.words.filterTagAny": "Minden címke",
+  "ui.words.resetFilters": "Szűrők törlése",
   "ui.words.tagNew": "Új címke",
   "ui.words.tagNewPlaceholder": "lecke1",
   "ui.words.tagRenameButton": "Címke átnevezése",

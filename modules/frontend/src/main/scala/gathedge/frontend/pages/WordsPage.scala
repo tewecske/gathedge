@@ -137,6 +137,12 @@ private class WordsPage(
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
+  /** Fired once on mount, to restore a remembered filter — see [[WordQuery.storedFilter]] — before the first request
+    * goes out. Only a bare arrival (every field still default) is eligible: a bookmarked or hand-edited `?tag=…` is the
+    * reader's explicit choice and must never be overridden by an older one this browser remembers.
+    */
+  private val restoreBus = new EventBus[Unit]()
+
   /** Uploaded words land in the dictionary and the collect tag without changing what this listing is filtered to, so a
     * re-fetch is the only way a newly tagged word already on screen shows its tick.
     */
@@ -212,7 +218,8 @@ private class WordsPage(
       ),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       p(cls   := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
-      changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
+      queryChanges --> onQuery,
+      queryChanges --> Observer[WordQuery](WordQuery.storeFilter),
       querySignal.map(_.search).distinct --> searchInputVar.writer,
       searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->
         Observer[(String, WordQuery)] { case (typed, current) =>
@@ -258,10 +265,24 @@ private class WordsPage(
         case Left(err)     =>
           errorVar.set(Some(err.message))
       },
-      onMountCallback(_ => reloadBus.emit(())),
+      restoreBus.events.sample(querySignal) --> Observer[WordQuery] { current =>
+        if (current == WordQuery.default) {
+          WordQuery.storedFilter.filter(_ != WordQuery.default).foreach { stored =>
+            AppRouter.router.replaceState(Page.Words(stored))
+          }
+        }
+      },
+      onMountCallback(_ => { reloadBus.emit(()); restoreBus.emit(()) }),
       collect.bindings,
     )
   }
+
+  /** Every way this page's own query can change, resolved against whatever the address bar currently says — the same
+    * value both [[render]]'s `onQuery` wiring and the filter-remembering write below need, so it is one stream rather
+    * than two copies of the same `withCurrentValueOf`.
+    */
+  private val queryChanges: EventStream[WordQuery] =
+    changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) }
 
   private def load(query: WordQuery): EventStream[Either[ApiError, WordPage]] = {
     WordApiClient.list(
@@ -352,6 +373,25 @@ private class WordsPage(
       renderMainOnlyToggle(),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
+      child.maybe <-- querySignal
+        .map(_.filterOnly != WordQuery.default)
+        .distinct
+        .map(Option.when(_)(renderResetFilters())),
+    )
+  }
+
+  /** Shown only once a filter differs from [[WordQuery.default]] — a listing already unfiltered has nothing to reset.
+    * Keeps the search term (not itself one of the controls above) and, like every other filter change, starts back at
+    * the first page.
+    */
+  private def renderResetFilters(): HtmlElement = {
+    button(
+      typ := "button",
+      cls := "btn btn-soft btn-sm",
+      I18n.t(UiKeys.wordsResetFilters),
+      onClick.mapToUnit --> Observer[Unit] { _ =>
+        change(_.reset(current => WordQuery.default.copy(search = current.search)))
+      },
     )
   }
 

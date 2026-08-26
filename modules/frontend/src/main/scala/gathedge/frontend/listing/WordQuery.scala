@@ -1,6 +1,7 @@
 package gathedge.frontend.listing
 
 import com.raquo.waypoint._
+import org.scalajs.dom
 import urldsl.vocabulary.Codec
 import gathedge.frontend.components.SortHeader
 import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, WordLanguage}
@@ -48,6 +49,14 @@ final case class WordQuery(
     search.nonEmpty && previous.search.nonEmpty && search != previous.search &&
     copy(search = "") == previous.copy(search = "")
   }
+
+  /** This query's filters alone — direction, part of speech, tag, ownership, translation completeness, main-word-only —
+    * with paging, sorting and the search term reset to their defaults. What [[WordQuery.storeFilter]] persists: a stale
+    * page number or a stale search term is worse than none, but the direction and filters a reader left the listing in
+    * are worth remembering the next time they open it cold.
+    */
+  def filterOnly: WordQuery =
+    copy(page = Paging.firstPage, pageSize = Paging.defaultPageSize, sort = SortHeader.Sort.unsorted, search = "")
 }
 
 object WordQuery {
@@ -57,6 +66,33 @@ object WordQuery {
     * is a default rather than a preference — a reader who wants another pair links to it.
     */
   val default: WordQuery = WordQuery()
+
+  /** Where the reader's filters are remembered across visits — see [[storedFilter]]/[[storeFilter]]. Distinct from
+    * [[gathedge.frontend.components.WordCollect.collectStorageKey]]: that one is the tag a tick files into, this one is
+    * the listing's own filters, and the two must not collide.
+    */
+  private val filterStorageKey = "words.filter"
+
+  /** The filters remembered from the last visit, or `None` on a fresh browser, disabled storage, or a value that no
+    * longer decodes. Wrapped like `WordCollect.storedCollectTag`: the storage API throws rather than returns `null`
+    * when disabled, and a remembered filter is not worth failing a page load over.
+    */
+  def storedFilter: Option[WordQuery] = {
+    try {
+      Option(dom.window.localStorage.getItem(filterStorageKey))
+        .flatMap(params.matchQueryString(_).toOption)
+        .map(_.filterOnly)
+    } catch { case _: Throwable => None }
+  }
+
+  /** Remembers this query's filters (see [[WordQuery.filterOnly]]) for the next cold visit. Called on every listing
+    * change, not only a filter one — paging and searching produce the same [[filterOnly]] as before, so this simply
+    * rewrites the same value until a filter actually changes.
+    */
+  def storeFilter(query: WordQuery): Unit = {
+    try dom.window.localStorage.setItem(filterStorageKey, params.createParamsString(query.filterOnly))
+    catch { case _: Throwable => () }
+  }
 
   private type Args = (
     Option[Int],
