@@ -72,15 +72,21 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4 max-w-3xl flex flex-col gap-6",
-      div(
-        cls := "flex items-center justify-between",
-        h1(cls := "text-2xl font-bold", child.text <-- detailVar.signal.map(_.map(_.name).getOrElse(""))),
-        a(cls  := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups), "←"),
-      ),
+      cls := "max-w-3xl mx-auto",
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(noticeVar.signal),
-      child.maybe <-- detailVar.signal.map(_.map(renderBody)),
+      div(
+        cls := "card bg-base-100 shadow mt-4",
+        div(
+          cls := "card-body",
+          div(
+            cls := "flex items-center justify-between",
+            h1(cls := "card-title text-2xl", child.text <-- detailVar.signal.map(_.map(_.name).getOrElse(""))),
+            a(cls  := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups), "←"),
+          ),
+          child.maybe <-- detailVar.signal.map(_.map(renderBody)),
+        ),
+      ),
       reloadBus.events.flatMapSwitch(_ => GroupApiClient.get(groupId)) -->
         Observer[Either[ApiError, GroupDetail]] {
           case Right(detail) =>
@@ -165,9 +171,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private def renderBody(detail: GroupDetail): HtmlElement = {
     div(
-      cls := "flex flex-col gap-6",
+      cls := "flex flex-col gap-6 mt-2",
       renderRoster(detail),
+      div(cls := "divider"),
       Option.when(detail.inviteCode.isDefined)(renderInviteCode(detail)),
+      Option.when(detail.inviteCode.isDefined)(div(cls := "divider")),
       renderTags(detail),
     )
   }
@@ -175,36 +183,32 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   private def renderRoster(detail: GroupDetail): HtmlElement = {
     val isAdmin = detail.viewerRole.contains(GroupRole.Admin)
     div(
-      cls := "card bg-base-100 shadow",
-      div(
-        cls := "card-body",
-        h2(cls := "card-title text-lg", I18n.t(UiKeys.groupDetailRosterTitle)),
-        if (detail.viewerRole.isEmpty) {
-          p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailRosterHidden))
-        } else {
+      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailRosterTitle)),
+      if (detail.viewerRole.isEmpty) {
+        p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailRosterHidden))
+      } else {
+        div(
+          cls := "flex flex-col gap-3",
           div(
-            cls := "flex flex-col gap-3",
-            div(
-              cls := "overflow-x-auto",
-              table(
-                cls := "table",
-                tbody(detail.members.map(member => renderMemberRow(member, isAdmin))),
-              ),
+            cls := "overflow-x-auto",
+            table(
+              cls := "table",
+              tbody(detail.members.map(member => renderMemberRow(member, isAdmin))),
             ),
-            div(
-              button(
-                cls := "btn btn-sm btn-outline",
-                typ := "button",
-                disabled <-- busyVar.signal,
-                I18n.t(UiKeys.groupDetailLeaveButton),
-                onClick.mapToUnit --> Observer[Unit] { _ =>
-                  if (dom.window.confirm(I18n.t(UiKeys.groupDetailLeaveConfirm))) leaveBus.emit(())
-                },
-              )
-            ),
-          )
-        },
-      ),
+          ),
+          div(
+            button(
+              cls := "btn btn-sm btn-outline",
+              typ := "button",
+              disabled <-- busyVar.signal,
+              I18n.t(UiKeys.groupDetailLeaveButton),
+              onClick.mapToUnit --> Observer[Unit] { _ =>
+                if (dom.window.confirm(I18n.t(UiKeys.groupDetailLeaveConfirm))) leaveBus.emit(())
+              },
+            )
+          ),
+        )
+      },
     )
   }
 
@@ -256,25 +260,21 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   private def renderInviteCode(detail: GroupDetail): HtmlElement = {
     val inviteCode = detail.inviteCode.getOrElse("")
     div(
-      cls := "card bg-base-100 shadow",
+      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailInviteCodeTitle)),
       div(
-        cls := "card-body",
-        h2(cls := "card-title text-lg", I18n.t(UiKeys.groupDetailInviteCodeTitle)),
-        div(
-          cls  := "flex items-center gap-3",
-          code(cls := "text-lg select-all", inviteCode),
-          button(
-            cls    := "btn btn-sm btn-outline",
-            typ    := "button",
-            disabled <-- busyVar.signal,
-            I18n.t(UiKeys.groupDetailInviteCodeRegenerate),
-            onClick.mapToUnit --> Observer[Unit] { _ =>
-              if (dom.window.confirm(I18n.t(UiKeys.groupDetailInviteCodeRegenerateConfirm))) regenerateBus.emit(())
-            },
-          ),
+        cls  := "flex items-center gap-3",
+        code(cls := "text-lg select-all", inviteCode),
+        button(
+          cls    := "btn btn-sm btn-outline",
+          typ    := "button",
+          disabled <-- busyVar.signal,
+          I18n.t(UiKeys.groupDetailInviteCodeRegenerate),
+          onClick.mapToUnit --> Observer[Unit] { _ =>
+            if (dom.window.confirm(I18n.t(UiKeys.groupDetailInviteCodeRegenerateConfirm))) regenerateBus.emit(())
+          },
         ),
-        shareRow.render(),
       ),
+      shareRow.render(),
     )
   }
 
@@ -284,17 +284,13 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private def renderTags(detail: GroupDetail): HtmlElement = {
     div(
-      cls := "card bg-base-100 shadow",
-      div(
-        cls := "card-body",
-        h2(cls := "card-title text-lg", I18n.t(UiKeys.groupDetailTagsTitle)),
-        Option.when(detail.tags.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailTagsEmpty))),
-        ul(
-          cls  := "flex flex-col divide-y divide-base-300",
-          detail.tags.map(tag => renderTagRow(tag, detail)),
-        ),
-        Option.when(detail.viewerRole.isDefined)(renderAttachControl()),
+      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailTagsTitle)),
+      Option.when(detail.tags.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailTagsEmpty))),
+      ul(
+        cls  := "flex flex-col divide-y divide-base-300",
+        detail.tags.map(tag => renderTagRow(tag, detail)),
       ),
+      Option.when(detail.viewerRole.isDefined)(renderAttachControl()),
     )
   }
 

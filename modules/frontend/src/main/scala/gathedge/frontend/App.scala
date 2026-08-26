@@ -5,6 +5,7 @@ import com.raquo.waypoint.SplitRender
 import gathedge.frontend.api.ApiClient
 import gathedge.frontend.pages.{
   AdminAuditPage,
+  AdminRateLimitsPage,
   AdminSystemPage,
   AdminUsagePage,
   AdminUserDetailPage,
@@ -364,6 +365,10 @@ object App {
       case Page.AdminWordForms if gate.isAdmin      =>
         AdminWordFormsPage.render()
       case Page.AdminWordForms                      =>
+        ForbiddenPage.render()
+      case Page.AdminRateLimits if gate.isAdmin     =>
+        AdminRateLimitsPage.render()
+      case Page.AdminRateLimits                     =>
         ForbiddenPage.render()
       case Page.Groups                              =>
         GroupsPage.render()

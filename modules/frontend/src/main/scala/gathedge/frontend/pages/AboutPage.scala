@@ -49,9 +49,9 @@ object AboutPage {
     AppShell.render(
       Page.About,
       div(
-        cls := "p-4",
+        cls := "max-w-2xl mx-auto",
         div(
-          cls := "card bg-base-100 shadow-xl max-w-2xl",
+          cls := "card bg-base-100 shadow-xl",
           div(
             cls := "card-body",
             h1(cls   := "card-title", I18n.t(UiKeys.aboutTitle)),

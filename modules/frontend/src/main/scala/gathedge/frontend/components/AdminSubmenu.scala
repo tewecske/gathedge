@@ -23,6 +23,7 @@ object AdminSubmenu {
       tabLink(Page.AdminUsage, I18n.t(UiKeys.navAdminUsage), active == Page.AdminUsage),
       tabLink(Page.AdminSystem, I18n.t(UiKeys.navAdminSystem), active == Page.AdminSystem),
       tabLink(Page.AdminWordForms, I18n.t(UiKeys.navAdminWordForms), active == Page.AdminWordForms),
+      tabLink(Page.AdminRateLimits, I18n.t(UiKeys.navAdminRateLimits), active == Page.AdminRateLimits),
     )
   }
 

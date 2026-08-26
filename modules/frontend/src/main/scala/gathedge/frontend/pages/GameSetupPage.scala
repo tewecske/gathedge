@@ -118,25 +118,31 @@ private class GameSetupPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4 max-w-4xl",
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.gameSetupTitle)),
+      cls := "max-w-4xl mx-auto",
       Alert.maybeError(errorSignal),
       Alert.maybeInfo(noticeSignal),
       child.maybe <-- createdVar.signal.map(
         _.map(created => Alert.success(I18n.t(UiKeys.gameSetupCreated, created.name)))
       ),
       div(
-        cls  := "flex flex-wrap items-end gap-3 mb-4",
-        languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
-        renderSwap(),
-        languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
+        cls := "card bg-base-100 shadow mt-4",
+        div(
+          cls := "card-body",
+          h1(cls := "card-title text-2xl", I18n.t(UiKeys.gameSetupTitle)),
+          div(
+            cls  := "flex flex-wrap items-end gap-3 mb-4",
+            languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
+            renderSwap(),
+            languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
+          ),
+          div(
+            cls  := "flex flex-col md:flex-row gap-6",
+            renderTagsColumn(),
+            renderWordsColumn(),
+          ),
+          renderPlayButton(),
+        ),
       ),
-      div(
-        cls  := "flex flex-col md:flex-row gap-6",
-        renderTagsColumn(),
-        renderWordsColumn(),
-      ),
-      renderPlayButton(),
       child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
       // A language-pair change fetches a different tag list, so a filter typed against the old one is cleared with

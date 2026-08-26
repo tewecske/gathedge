@@ -40,12 +40,19 @@ private class GroupsPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4 max-w-2xl flex flex-col gap-6",
-      h1(cls := "text-2xl font-bold", I18n.t(UiKeys.groupsTitle)),
+      cls := "max-w-2xl mx-auto",
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(noticeVar.signal),
-      renderForms(),
-      renderList(),
+      div(
+        cls := "card bg-base-100 shadow mt-4",
+        div(
+          cls := "card-body",
+          h1(cls  := "card-title text-2xl", I18n.t(UiKeys.groupsTitle)),
+          renderForms(),
+          div(cls := "divider"),
+          renderList(),
+        ),
+      ),
       reloadBus.events.flatMapSwitch(_ => GroupApiClient.list()) -->
         Observer[Either[ApiError, List[Group]]] {
           case Right(groups) =>
@@ -79,51 +86,45 @@ private class GroupsPage {
     div(
       cls := "flex flex-col sm:flex-row gap-4",
       form(
-        cls := "card bg-base-100 shadow flex-1",
+        cls := "flex-1",
         onSubmit.preventDefault.mapToUnit --> createBus.writer,
-        div(
-          cls := "card-body",
-          fieldSet(
-            cls := "fieldset",
-            label(cls := "fieldset-legend", I18n.t(UiKeys.groupsCreateLabel)),
-            div(
-              cls     := "flex gap-2",
-              input(
-                cls         := "input flex-1",
-                placeholder := I18n.t(UiKeys.groupsCreatePlaceholder),
-                controlled(value <-- nameInputVar.signal, onInput.mapToValue --> nameInputVar.writer),
-              ),
-              button(
-                cls         := "btn btn-primary",
-                typ         := "submit",
-                disabled <-- creatingVar.signal,
-                I18n.t(UiKeys.groupsCreateButton),
-              ),
+        fieldSet(
+          cls := "fieldset",
+          label(cls := "fieldset-legend", I18n.t(UiKeys.groupsCreateLabel)),
+          div(
+            cls     := "flex gap-2",
+            input(
+              cls         := "input flex-1",
+              placeholder := I18n.t(UiKeys.groupsCreatePlaceholder),
+              controlled(value <-- nameInputVar.signal, onInput.mapToValue --> nameInputVar.writer),
+            ),
+            button(
+              cls         := "btn btn-primary",
+              typ         := "submit",
+              disabled <-- creatingVar.signal,
+              I18n.t(UiKeys.groupsCreateButton),
             ),
           ),
         ),
       ),
       form(
-        cls := "card bg-base-100 shadow flex-1",
+        cls := "flex-1",
         onSubmit.preventDefault.mapToUnit --> joinBus.writer,
-        div(
-          cls := "card-body",
-          fieldSet(
-            cls := "fieldset",
-            label(cls := "fieldset-legend", I18n.t(UiKeys.groupsJoinLabel)),
-            div(
-              cls     := "flex gap-2",
-              input(
-                cls         := "input flex-1",
-                placeholder := I18n.t(UiKeys.groupsJoinPlaceholder),
-                controlled(value <-- codeInputVar.signal, onInput.mapToValue --> codeInputVar.writer),
-              ),
-              button(
-                cls         := "btn btn-primary",
-                typ         := "submit",
-                disabled <-- joiningVar.signal,
-                I18n.t(UiKeys.groupsJoinButton),
-              ),
+        fieldSet(
+          cls := "fieldset",
+          label(cls := "fieldset-legend", I18n.t(UiKeys.groupsJoinLabel)),
+          div(
+            cls     := "flex gap-2",
+            input(
+              cls         := "input flex-1",
+              placeholder := I18n.t(UiKeys.groupsJoinPlaceholder),
+              controlled(value <-- codeInputVar.signal, onInput.mapToValue --> codeInputVar.writer),
+            ),
+            button(
+              cls         := "btn btn-primary",
+              typ         := "submit",
+              disabled <-- joiningVar.signal,
+              I18n.t(UiKeys.groupsJoinButton),
             ),
           ),
         ),
@@ -133,28 +134,24 @@ private class GroupsPage {
 
   private def renderList(): HtmlElement = {
     div(
-      cls := "card bg-base-100 shadow",
+      child.maybe <--
+        groupsVar.signal.map(list =>
+          Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupsEmpty)))
+        ),
       div(
-        cls := "card-body",
-        child.maybe <--
-          groupsVar.signal.map(list =>
-            Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupsEmpty)))
+        cls := "overflow-x-auto",
+        table(
+          cls := "table",
+          thead(
+            tr(
+              th(I18n.t(UiKeys.groupsColName)),
+              th(I18n.t(UiKeys.groupsColMembers)),
+              th(I18n.t(UiKeys.groupsColTags)),
+              th(),
+              th(),
+            )
           ),
-        div(
-          cls := "overflow-x-auto",
-          table(
-            cls := "table",
-            thead(
-              tr(
-                th(I18n.t(UiKeys.groupsColName)),
-                th(I18n.t(UiKeys.groupsColMembers)),
-                th(I18n.t(UiKeys.groupsColTags)),
-                th(),
-                th(),
-              )
-            ),
-            tbody(children <-- groupsVar.signal.map(_.map(renderRow))),
-          ),
+          tbody(children <-- groupsVar.signal.map(_.map(renderRow))),
         ),
       ),
     )

@@ -48,19 +48,25 @@ private class TagDetailPage(tagId: Long) {
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4 max-w-3xl flex flex-col gap-4",
-      h1(
-        cls := "text-2xl font-bold",
-        child.text <-- tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))),
-      ),
+      cls := "max-w-3xl mx-auto",
       Alert.maybeError(errorVar.signal),
-      child.maybe <-- tagVar.signal.map(_.map(renderMeta)),
       div(
-        cls := "flex flex-wrap items-end gap-3",
-        languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
-        languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
+        cls := "card bg-base-100 shadow mt-4",
+        div(
+          cls := "card-body",
+          h1(
+            cls   := "card-title text-2xl",
+            child.text <-- tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))),
+          ),
+          child.maybe <-- tagVar.signal.map(_.map(renderMeta)),
+          div(
+            cls   := "flex flex-wrap items-end gap-3 mt-2",
+            languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
+            languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
+          ),
+          div(cls := "mt-4", TagWordsList.render(wordsVar.signal, wordsLoadingVar.signal, collapsed = false)),
+        ),
       ),
-      TagWordsList.render(wordsVar.signal, wordsLoadingVar.signal, collapsed = false),
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) -->
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>

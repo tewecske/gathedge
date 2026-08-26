@@ -113,19 +113,20 @@ object UiKeys {
     */
   val navLanguage: String = key("ui.nav.language")
 
-  val navWords: String          = key("ui.nav.words")
-  val navAbout: String          = key("ui.nav.about")
-  val navGames: String          = key("ui.nav.games")
-  val navGroups: String         = key("ui.nav.groups")
-  val navAdmin: String          = key("ui.nav.admin")
-  val navAccountMenu: String    = key("ui.nav.accountMenu")
-  val navLogOut: String         = key("ui.nav.logOut")
-  val navThemeDark: String      = key("ui.nav.themeDark")
-  val navThemeLight: String     = key("ui.nav.themeLight")
-  val navAdminUsers: String     = key("ui.nav.adminUsers")
-  val navAdminSystem: String    = key("ui.nav.adminSystem")
-  val navAdminUsage: String     = key("ui.nav.adminUsage")
-  val navAdminWordForms: String = key("ui.nav.adminWordForms")
+  val navWords: String           = key("ui.nav.words")
+  val navAbout: String           = key("ui.nav.about")
+  val navGames: String           = key("ui.nav.games")
+  val navGroups: String          = key("ui.nav.groups")
+  val navAdmin: String           = key("ui.nav.admin")
+  val navAccountMenu: String     = key("ui.nav.accountMenu")
+  val navLogOut: String          = key("ui.nav.logOut")
+  val navThemeDark: String       = key("ui.nav.themeDark")
+  val navThemeLight: String      = key("ui.nav.themeLight")
+  val navAdminUsers: String      = key("ui.nav.adminUsers")
+  val navAdminSystem: String     = key("ui.nav.adminSystem")
+  val navAdminUsage: String      = key("ui.nav.adminUsage")
+  val navAdminWordForms: String  = key("ui.nav.adminWordForms")
+  val navAdminRateLimits: String = key("ui.nav.adminRateLimits")
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
@@ -503,6 +504,39 @@ object UiKeys {
   val adminWordFormsDelete: String        = key("ui.admin.wordForms.delete")
   val adminWordFormsDeleteConfirm: String = key("ui.admin.wordForms.deleteConfirm")
   val adminWordFormsDeleted: String       = key("ui.admin.wordForms.deleted")
+
+  // -- Administration: rate limits --------------------------------------------------------------
+  // Every `RateLimiter` key currently holding a failure — who is blocked or approaching it, and for which action. See
+  // `gathedge.backend.service.RateLimitKey` for the namespaces this reads.
+
+  val adminRateLimitsTitle: String           = key("ui.admin.rateLimits.title")
+  val adminRateLimitsHint: String            = key("ui.admin.rateLimits.hint")
+  val adminRateLimitsEmpty: String           = key("ui.admin.rateLimits.empty")
+  val adminRateLimitsColScope: String        = key("ui.admin.rateLimits.colScope")
+  val adminRateLimitsColWho: String          = key("ui.admin.rateLimits.colWho")
+  val adminRateLimitsColAttempts: String     = key("ui.admin.rateLimits.colAttempts")
+  val adminRateLimitsColStatus: String       = key("ui.admin.rateLimits.colStatus")
+  val adminRateLimitsColRetry: String        = key("ui.admin.rateLimits.colRetry")
+  val adminRateLimitsColOldest: String       = key("ui.admin.rateLimits.colOldest")
+  val adminRateLimitsStatusBlocked: String   = key("ui.admin.rateLimits.statusBlocked")
+  val adminRateLimitsStatusWarn: String      = key("ui.admin.rateLimits.statusWarn")
+  val adminRateLimitsClear: String           = key("ui.admin.rateLimits.clear")
+  val adminRateLimitsClearConfirm: String    = key("ui.admin.rateLimits.clearConfirm")
+  val adminRateLimitsCleared: String         = key("ui.admin.rateLimits.cleared")
+  val adminRateLimitsClearAll: String        = key("ui.admin.rateLimits.clearAll")
+  val adminRateLimitsClearAllConfirm: String = key("ui.admin.rateLimits.clearAllConfirm")
+
+  val adminRateLimitsScopeEmail: String       = key("ui.admin.rateLimits.scope.email")
+  val adminRateLimitsScopeIp: String          = key("ui.admin.rateLimits.scope.ip")
+  val adminRateLimitsScopeVerify: String      = key("ui.admin.rateLimits.scope.verify")
+  val adminRateLimitsScopeSignup: String      = key("ui.admin.rateLimits.scope.signup")
+  val adminRateLimitsScopePwReset: String     = key("ui.admin.rateLimits.scope.pwReset")
+  val adminRateLimitsScopeGuest: String       = key("ui.admin.rateLimits.scope.guest")
+  val adminRateLimitsScopeClaim: String       = key("ui.admin.rateLimits.scope.claim")
+  val adminRateLimitsScopeGroupJoin: String   = key("ui.admin.rateLimits.scope.groupJoin")
+  val adminRateLimitsScopeShareRedeem: String = key("ui.admin.rateLimits.scope.shareRedeem")
+  val adminRateLimitsScopeWordUpload: String  = key("ui.admin.rateLimits.scope.wordUpload")
+  val adminRateLimitsScopeOther: String       = key("ui.admin.rateLimits.scope.misc")
 
   // -- Vocabulary ------------------------------------------------------------------------------
   // The browse-and-tag screen. Note what is *not* here: a German noun's article is never

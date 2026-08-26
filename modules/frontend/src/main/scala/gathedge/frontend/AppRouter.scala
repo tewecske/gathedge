@@ -123,6 +123,12 @@ object Page {
     */
   case object AdminWordForms extends Page
 
+  /** Every rate-limiter key currently holding failures — who is blocked or approaching it, and for which action. No
+    * listing state, same as [[AdminSystem]]/[[AdminUsage]]/[[AdminWordForms]]: it is a live snapshot, not a filtered
+    * view worth bookmarking.
+    */
+  case object AdminRateLimits extends Page
+
   /** Browsing/creating/joining classroom-style tag groups. Auth-only, like [[SharedProgress]]: collaborating on a group
     * is between signed-in accounts, and `GroupEndpoints.list`/`.get` themselves need a session, unlike
     * [[Words]]/[[WordDetail]]'s public pair.
@@ -260,6 +266,7 @@ object AppRouter {
   private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
   private val adminUsageRoute      = Route.static(AdminUsage, root / "admin" / "usage", basePath)
   private val adminWordFormsRoute  = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
+  private val adminRateLimitsRoute = Route.static(AdminRateLimits, root / "admin" / "rate-limits", basePath)
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
   private val groupsRoute      = Route.static(Groups, root / "groups", basePath)
@@ -385,6 +392,8 @@ object AppRouter {
         "AdminUsage"
       case AdminWordForms           =>
         "AdminWordForms"
+      case AdminRateLimits          =>
+        "AdminRateLimits"
       case Groups                   =>
         "Groups"
       case GroupDetail(id)          =>
@@ -462,46 +471,48 @@ object AppRouter {
       UserQuery.params.matchQueryString(tag.stripPrefix("Admin:")).map(query => Admin(query)).getOrElse(Admin())
     } else {
       tag match {
-        case "SignIn"         =>
+        case "SignIn"          =>
           SignIn
-        case "SignUp"         =>
+        case "SignUp"          =>
           SignUp
-        case "About"          =>
+        case "About"           =>
           About
-        case "Settings"       =>
+        case "Settings"        =>
           Settings
-        case "Games"          =>
+        case "Games"           =>
           Games
-        case "GameSetup"      =>
+        case "GameSetup"       =>
           GameSetup
-        case "MyGames"        =>
+        case "MyGames"         =>
           MyGames
-        case "MyPlays"        =>
+        case "MyPlays"         =>
           MyPlays
-        case "SharedProgress" =>
+        case "SharedProgress"  =>
           SharedProgress
-        case "CheckInbox"     =>
+        case "CheckInbox"      =>
           CheckInbox
-        case "ForgotPassword" =>
+        case "ForgotPassword"  =>
           ForgotPassword
         // The colon-less forms are what a history entry written by an older build holds.
-        case "Admin"          =>
+        case "Admin"           =>
           Admin()
-        case "Words"          =>
+        case "Words"           =>
           Words()
-        case "AdminAudit"     =>
+        case "AdminAudit"      =>
           AdminAudit()
-        case "AdminSystem"    =>
+        case "AdminSystem"     =>
           AdminSystem
-        case "AdminUsage"     =>
+        case "AdminUsage"      =>
           AdminUsage
-        case "AdminWordForms" =>
+        case "AdminWordForms"  =>
           AdminWordForms
-        case "Groups"         =>
+        case "AdminRateLimits" =>
+          AdminRateLimits
+        case "Groups"          =>
           Groups
-        case "Forbidden"      =>
+        case "Forbidden"       =>
           Forbidden
-        case _                =>
+        case _                 =>
           NotFound
       }
     }
@@ -539,6 +550,7 @@ object AppRouter {
         adminSystemRoute,
         adminUsageRoute,
         adminWordFormsRoute,
+        adminRateLimitsRoute,
         groupsRoute,
         groupJoinRoute,
         groupDetailRoute,
