@@ -765,12 +765,12 @@ private class WordsPage(
             th(cls := "w-12", span(cls := "sr-only", I18n.t(UiKeys.wordsColTagged))),
             SortHeader.render(I18n.t(UiKeys.wordsColWord), WordSort.text, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.wordsColPos), WordSort.pos, sortSignal, onSort),
+            th(I18n.t(UiKeys.wordsColTranslations)),
             // Main word/Variant type/Variants are all a list or a single link rendered into one cell, so there is no
             // `ORDER BY` that produces them — the same reason Translations carries no sort either.
             th(I18n.t(UiKeys.wordsColMainWord)),
             th(I18n.t(UiKeys.wordsColVariantType)),
             th(I18n.t(UiKeys.wordsColVariants)),
-            th(I18n.t(UiKeys.wordsColTranslations)),
           )
         ),
         tbody(children <-- wordsSignal.splitSeq(_.word.id)(row => renderRow(row.key, row))),
@@ -816,9 +816,6 @@ private class WordsPage(
         cls := "text-sm opacity-70",
         child.text <-- row.map(summary => Labels.partOfSpeech(summary.word.partOfSpeech)),
       ),
-      renderMainWordCell(row),
-      renderVariantTypeCell(row),
-      renderVariantsCell(row),
       td(
         // The chips sit in a div rather than on the cell: `display:flex` on a `<td>` takes it out of the table's own
         // layout and the column stops lining up with its heading.
@@ -830,6 +827,9 @@ private class WordsPage(
             .splitSeq(_.wordId)(option => collect.renderChip(id, option.key, option.map(_.text), pairsSignal)),
         )
       ),
+      renderMainWordCell(row),
+      renderVariantTypeCell(row),
+      renderVariantsCell(row),
     )
   }
 
