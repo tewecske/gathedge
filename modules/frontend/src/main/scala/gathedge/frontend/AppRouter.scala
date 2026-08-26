@@ -132,6 +132,14 @@ object Page {
   /** One group's roster (visible only to its own members), invite code (admins only), and attached tags. */
   final case class GroupDetail(id: Long) extends Page
 
+  /** Where a group's invite link lands — `/groups/join/{code}`, the URL [[GroupDetailPage]]'s share row builds and
+    * encodes as a QR code, the same shape `GameInstance`'s shared link is. Unlike that one, this page is not itself
+    * public: every `GroupEndpoints` call needs a session (see `GroupEndpoints`'s doc comment), so a signed-out visitor
+    * following the link bounces to sign-in first, same as every other `Groups` screen — there is no guest detour to
+    * copy from `GameInstancePage`, since a group has no meaning for an account with no identity of its own.
+    */
+  final case class GroupJoin(code: String) extends Page
+
   /** A standalone read-only view of one tag's words and marked translations — the "tag view" `TagWordsList` was built
     * for game setup, reused here without the game-creation flow around it. Backed by the same session-only
     * `GameEndpoints.setupWords` a game's own setup screen uses, so this is auth-only too, not public like
@@ -261,6 +269,12 @@ object AppRouter {
     pattern = root / "groups" / segment[Long],
     basePath = basePath,
   )
+  private val groupJoinRoute   = Route(
+    encode = (p: GroupJoin) => p.code,
+    decode = (code: String) => GroupJoin(code),
+    pattern = root / "groups" / "join" / segment[String],
+    basePath = basePath,
+  )
   private val tagDetailRoute   = Route(
     encode = (p: TagDetail) => p.id,
     decode = (id: Long) => TagDetail(id),
@@ -375,6 +389,8 @@ object AppRouter {
         "Groups"
       case GroupDetail(id)          =>
         s"GroupDetail:$id"
+      case GroupJoin(code)          =>
+        s"GroupJoin:$code"
       case TagDetail(id)            =>
         s"TagDetail:$id"
       case Forbidden                =>
@@ -431,6 +447,8 @@ object AppRouter {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else if (tag.startsWith("GroupDetail:")) {
       withId(tag, "GroupDetail:")(GroupDetail.apply)
+    } else if (tag.startsWith("GroupJoin:")) {
+      GroupJoin(tag.stripPrefix("GroupJoin:"))
     } else if (tag.startsWith("TagDetail:")) {
       withId(tag, "TagDetail:")(TagDetail.apply)
     } else if (tag.startsWith("AdminAudit:")) {
@@ -522,6 +540,7 @@ object AppRouter {
         adminUsageRoute,
         adminWordFormsRoute,
         groupsRoute,
+        groupJoinRoute,
         groupDetailRoute,
         tagDetailRoute,
         forbiddenRoute,

@@ -90,6 +90,19 @@ object UiKeys {
   /** `{0}` is `Validation.minPasswordLength`. */
   val commonPasswordHint: String = key("ui.common.passwordHint")
 
+  // -- Share row -------------------------------------------------------------------------------
+  // `components.ShareRow`: copy-link, Web Share and QR code for one URL. Shared by `GameInstancePage` (its own page
+  // URL) and `GroupDetailPage` (an invite link built from the group's code) — see that component's doc comment.
+
+  val shareCopyLink: String   = key("ui.share.copyLink")
+  val shareCopied: String     = key("ui.share.copied")
+  val shareButton: String     = key("ui.share.button")
+  val shareQrGenerate: String = key("ui.share.qrGenerate")
+  val shareQrTitle: String    = key("ui.share.qrTitle")
+  val shareQrAlt: String      = key("ui.share.qrAlt")
+  val shareQrClose: String    = key("ui.share.qrClose")
+  val shareQrError: String    = key("ui.share.qrError")
+
   // -- Navigation ------------------------------------------------------------------------------
 
   val navMenu: String = key("ui.nav.menu")
@@ -957,18 +970,6 @@ object UiKeys {
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 
-  // Share + QR code. The copy-link and share buttons act on this page's own URL
-  // (`window.location.href`); the QR code is a PNG rendered locally by the `qrcode` npm package (see
-  // `facades.QRCode`) — no network round trip, so it works for a still-signed-out player too.
-  val gameInstanceShareCopyLink: String   = key("ui.gameInstance.share.copyLink")
-  val gameInstanceShareCopied: String     = key("ui.gameInstance.share.copied")
-  val gameInstanceShareButton: String     = key("ui.gameInstance.share.button")
-  val gameInstanceShareQrGenerate: String = key("ui.gameInstance.share.qrGenerate")
-  val gameInstanceShareQrTitle: String    = key("ui.gameInstance.share.qrTitle")
-  val gameInstanceShareQrAlt: String      = key("ui.gameInstance.share.qrAlt")
-  val gameInstanceShareQrClose: String    = key("ui.gameInstance.share.qrClose")
-  val gameInstanceShareQrError: String    = key("ui.gameInstance.share.qrError")
-
   // Owner-only, shown only when `GameDetail.trackResults` is true — links to the results listing below.
   val gameInstanceViewResults: String = key("ui.gameInstance.viewResults")
 
@@ -1078,6 +1079,11 @@ object UiKeys {
   val groupDetailAttachNoneAvailable: String         = key("ui.groupDetail.attachNoneAvailable")
   val groupDetailDetachButton: String                = key("ui.groupDetail.detachButton")
   val groupDetailDetachConfirm: String               = key("ui.groupDetail.detachConfirm")
+
+  // Where an invite link lands (`/groups/join/{code}`, see `Page.GroupJoin`) — join in progress, success, and failure.
+  val groupJoinJoining: String    = key("ui.groupJoin.joining")
+  val groupJoinSuccess: String    = key("ui.groupJoin.success")
+  val groupJoinViewGroups: String = key("ui.groupJoin.viewGroups")
 
   // -- Formatting ------------------------------------------------------------------------------
   // All `.one`/`.other`. The old `"$n day(s)"` idiom has no Hungarian equivalent — a numeral there

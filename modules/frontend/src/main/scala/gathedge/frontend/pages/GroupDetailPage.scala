@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GroupApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell}
+import gathedge.frontend.components.{Alert, AppShell, ShareRow}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{GroupRole, Tag}
@@ -11,17 +11,23 @@ import gathedge.shared.dto.{GroupDetail, GroupMemberSummary, GroupTagSummary, In
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
+import scala.concurrent.Future
+
 /** One group's roster (members only), invite code (admins only), and attached tags — see `GroupsPage` for the
   * browse/create/join screen this is reached from.
   */
 object GroupDetailPage {
 
-  def render(groupId: Long): HtmlElement = {
-    AppShell.render(Page.GroupDetail(groupId), new GroupDetailPage(groupId).render())
+  /** See [[GameInstancePage.render]]'s doc comment on why `generateQr` is threaded in rather than called directly: the
+    * reason (keeping the `qrcode` npm package's `@JSImport` out of the test linker's reachable graph) applies verbatim
+    * here.
+    */
+  def render(groupId: Long, generateQr: String => Future[String]): HtmlElement = {
+    AppShell.render(Page.GroupDetail(groupId), new GroupDetailPage(groupId, generateQr).render())
   }
 }
 
-private class GroupDetailPage(groupId: Long) {
+private class GroupDetailPage(groupId: Long, generateQr: String => Future[String]) {
 
   private val detailVar: Var[Option[GroupDetail]] = Var(None)
   private val myTagsVar                           = Var(List.empty[Tag])
@@ -31,6 +37,23 @@ private class GroupDetailPage(groupId: Long) {
   private val busyVar                        = Var(false)
 
   private val attachSelectionVar = Var(Option.empty[Long])
+
+  /** The invite code [[shareRow]]'s `link` closure reads — kept in its own `Var` rather than re-derived from
+    * `detailVar` each time, since a regenerate has to reach [[ShareRow.resetQr]] with the *new* code already in place
+    * (see the regenerate handler below), and reading `detailVar.now()` there would still see the old one.
+    */
+  private val inviteCodeVar = Var("")
+
+  /** Copy-link, Web Share and QR code for `/groups/join/{code}` — see [[components.ShareRow]]. Unlike
+    * `GameInstancePage`'s own, this page's URL is not the shareable one, so `link` builds `inviteLink` from
+    * [[inviteCodeVar]] instead of reading `dom.window.location.href`.
+    */
+  private val shareRow = new ShareRow(
+    () => inviteLink(inviteCodeVar.now()),
+    () => detailVar.now().map(_.name).getOrElse(""),
+    generateQr,
+    msg => noticeVar.set(Some(msg)),
+  )
 
   private val reloadBus       = new EventBus[Unit]()
   private val leaveBus        = new EventBus[Unit]()
@@ -61,7 +84,11 @@ private class GroupDetailPage(groupId: Long) {
       reloadBus.events.flatMapSwitch(_ => GroupApiClient.get(groupId)) -->
         Observer[Either[ApiError, GroupDetail]] {
           case Right(detail) =>
-            Var.set(detailVar -> Some(detail), attachSelectionVar -> None)
+            Var.set(
+              detailVar          -> Some(detail),
+              attachSelectionVar -> None,
+              inviteCodeVar      -> detail.inviteCode.getOrElse(""),
+            )
           case Left(err)     =>
             errorVar.set(Some(err.message))
         },
@@ -88,10 +115,12 @@ private class GroupDetailPage(groupId: Long) {
       regenerateBus.events --> Observer[Unit](_ => Var.set(busyVar -> true, errorVar -> None)),
       regenerateBus.events.flatMapSwitch(_ => GroupApiClient.regenerateInviteCode(groupId)) -->
         Observer[Either[ApiError, InviteCodeResponse]] {
-          case Right(_)  =>
-            busyVar.set(false)
+          case Right(response) =>
+            // The old code's QR (if any was ever generated) now encodes a dead link.
+            Var.set(busyVar -> false, inviteCodeVar -> response.code)
+            shareRow.resetQr()
             reloadBus.emit(())
-          case Left(err) =>
+          case Left(err)       =>
             Var.set(busyVar -> false, errorVar -> Some(err.message))
         },
       setRoleBus.events --> Observer[(Long, GroupRole)](_ => Var.set(busyVar -> true, errorVar -> None)),
@@ -225,6 +254,7 @@ private class GroupDetailPage(groupId: Long) {
   }
 
   private def renderInviteCode(detail: GroupDetail): HtmlElement = {
+    val inviteCode = detail.inviteCode.getOrElse("")
     div(
       cls := "card bg-base-100 shadow",
       div(
@@ -232,7 +262,7 @@ private class GroupDetailPage(groupId: Long) {
         h2(cls := "card-title text-lg", I18n.t(UiKeys.groupDetailInviteCodeTitle)),
         div(
           cls  := "flex items-center gap-3",
-          code(cls := "text-lg select-all", detail.inviteCode.getOrElse("")),
+          code(cls := "text-lg select-all", inviteCode),
           button(
             cls    := "btn btn-sm btn-outline",
             typ    := "button",
@@ -243,8 +273,13 @@ private class GroupDetailPage(groupId: Long) {
             },
           ),
         ),
+        shareRow.render(),
       ),
     )
+  }
+
+  private def inviteLink(code: String): String = {
+    dom.window.location.origin + AppRouter.router.relativeUrlForPage(Page.GroupJoin(code))
   }
 
   private def renderTags(detail: GroupDetail): HtmlElement = {

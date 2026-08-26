@@ -20,6 +20,7 @@ import gathedge.frontend.pages.{
   GameSetupPage,
   GamesPage,
   GroupDetailPage,
+  GroupJoinPage,
   GroupsPage,
   MyGamesPage,
   MyPlayHistoryPage,
@@ -367,7 +368,9 @@ object App {
       case Page.Groups                              =>
         GroupsPage.render()
       case Page.GroupDetail(id)                     =>
-        GroupDetailPage.render(id)
+        GroupDetailPage.render(id, generateQr)
+      case Page.GroupJoin(code)                     =>
+        GroupJoinPage.render(code)
       case Page.TagDetail(id)                       =>
         TagDetailPage.render(id)
       case Page.Forbidden                           =>
