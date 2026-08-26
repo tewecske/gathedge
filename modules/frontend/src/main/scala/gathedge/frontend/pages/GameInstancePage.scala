@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, ShareRow, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, GuestBanner, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{User, WordLanguage, WordPreference}
@@ -129,10 +129,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val isOwnerVar = Var(GameOwnership.isOwned(slug))
 
-  private val renameEditingVar                    = Var(false)
-  private val renameTextVar                       = Var("")
-  private val renameSubmittingVar                 = Var(false)
-  private val renameErrorVar: Var[Option[String]] = Var(None)
+  private val inlineRename = new InlineRename[GameDetail](text => GameApiClient.rename(slug, text))
 
   /** Copy-link, Web Share and QR code — all three act on this page's own URL, which is the shared link itself. See
     * [[components.ShareRow]] for why `generateQr` is threaded in rather than called directly.
@@ -146,10 +143,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val loadBus  = new EventBus[Unit]()
   private val startBus = new EventBus[Unit]()
-
-  private val renameEditBus   = new EventBus[Unit]()
-  private val renameCancelBus = new EventBus[Unit]()
-  private val renameSaveBus   = new EventBus[Unit]()
 
   /** A per-account write, with the guest detour in front of it — copied from `GameSetupPage.asReader`. With no session
     * `startPlay` cannot succeed, so a guest is minted first and the call retried against the session that creates.
@@ -249,53 +242,23 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             // A failed probe should not lock the reader out of swapping — fail open, same as the button's default.
             reversePoolEmptyVar.set(false)
         },
-      renameEditBus.events -->
-        Observer[Unit](_ => Var.set(renameTextVar -> nameVar.now(), renameEditingVar -> true, renameErrorVar -> None)),
-      renameCancelBus.events -->
-        Observer[Unit](_ => Var.set(renameEditingVar -> false, renameErrorVar -> None)),
-      renameStream --> Observer[Either[ApiError, GameDetail]] {
-        case Right(detail) =>
-          Var.set(
-            nameVar             -> detail.name,
-            gameVar             -> Some(detail),
-            renameEditingVar    -> false,
-            renameSubmittingVar -> false,
-            renameErrorVar      -> None,
-          )
-        case Left(err)     =>
+      inlineRename.bindings(
+        onSaved = Observer[GameDetail](detail => Var.set(nameVar -> detail.name, gameVar -> Some(detail))),
+        onError = { err =>
           if (err.status == 403) {
             // A stale local hint, or the same account signed in elsewhere and the game changed owner-relevant state
             // since: either way, this browser does not get to keep offering a control that will not work.
             GameOwnership.forget(slug)
-            Var.set(
-              isOwnerVar          -> false,
-              renameEditingVar    -> false,
-              renameSubmittingVar -> false,
-              errorVar            -> Some(err.message),
-            )
-          } else {
-            Var.set(
-              renameSubmittingVar -> false,
-              renameErrorVar      -> Some(err.fieldErrors.getOrElse("name", err.message)),
-            )
+            inlineRename.cancel()
+            Var.set(isOwnerVar -> false, errorVar -> Some(err.message))
           }
-      },
+        },
+      ),
       // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
       // stream this triggers (`loadBus`, above) has to already have a subscriber when this fires, or the mount's own
       // reload is emitted to nobody and silently lost, leaving the quiz stuck loading forever.
       onMountCallback(_ => loadBus.emit(())),
     )
-  }
-
-  private def renameStream: EventStream[Either[ApiError, GameDetail]] = {
-    renameSaveBus.events
-      .filterWith(renameSubmittingVar.signal.not)
-      .map(_ => renameTextVar.now().trim)
-      .collect { case text if text.nonEmpty => text }
-      .flatMapSwitch { text =>
-        renameSubmittingVar.set(true)
-        GameApiClient.rename(slug, text)
-      }
   }
 
   /** The card's chrome — name, language pair, tags, share row, and the picker — built exactly once, the first time
@@ -312,7 +275,14 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       cls := "card bg-base-100 shadow mt-4",
       div(
         cls := "card-body",
-        renderNameHeader(),
+        inlineRename.renderTitle(
+          nameVar.signal,
+          isOwnerVar.signal,
+          I18n.t(UiKeys.gameInstanceRenameEdit),
+          I18n.t(UiKeys.gameInstanceRenameLabel),
+          "input text-xl",
+          resultsLink(),
+        ),
         p(
           cls   := "text-sm opacity-70",
           s"${Labels.language(detail.sourceLanguage)} → ${Labels.language(detail.targetLanguage)}",
@@ -329,80 +299,21 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private def pageUrl(): String = dom.window.location.href
 
-  private def renderNameHeader(): HtmlElement = {
-    div(
-      child <-- renameEditingVar.signal.map {
-        case true  =>
-          renderRenameForm()
-        case false =>
-          renderNameDisplay()
-      }
-    )
-  }
-
-  private def renderNameDisplay(): HtmlElement = {
-    div(
-      cls := "flex items-center gap-2 flex-wrap",
-      h1(cls := "card-title text-2xl", child.text <-- nameVar.signal),
-      child.maybe <-- isOwnerVar.signal.map { owner =>
-        Option.when(owner)(
-          button(
-            cls   := "btn btn-ghost btn-xs",
-            typ   := "button",
-            title := I18n.t(UiKeys.gameInstanceRenameEdit),
-            "✎",
-            onClick.mapToUnit --> renameEditBus.writer,
-          )
+  /** Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
+    * comment. Links to the results listing rather than opening it here, the same split `MyGamesPage`/`GameInstance`
+    * already draw between "this game" and "a listing about it". Passed to `InlineRename.renderTitle` as `extra`, so it
+    * is absent from the title only in edit mode, same as the pencil beside it.
+    */
+  private def resultsLink(): Modifier[HtmlElement] = {
+    child.maybe <-- isOwnerVar.signal.combineWith(gameVar.signal).map { case (owner, game) =>
+      Option.when(owner && game.exists(_.trackResults))(
+        a(
+          cls := "btn btn-ghost btn-xs",
+          AppRouter.router.navigateTo(Page.GameResults(slug)),
+          I18n.t(UiKeys.gameInstanceViewResults),
         )
-      },
-      // Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
-      // comment. Links to the results listing rather than opening it here, the same split `MyGamesPage`/`GameInstance`
-      // already draw between "this game" and "a listing about it".
-      child.maybe <-- isOwnerVar.signal.combineWith(gameVar.signal).map { case (owner, game) =>
-        Option.when(owner && game.exists(_.trackResults))(
-          a(
-            cls := "btn btn-ghost btn-xs",
-            AppRouter.router.navigateTo(Page.GameResults(slug)),
-            I18n.t(UiKeys.gameInstanceViewResults),
-          )
-        )
-      },
-    )
-  }
-
-  private def renderRenameForm(): HtmlElement = {
-    div(
-      form(
-        cls        := "flex items-center gap-2 flex-wrap",
-        noValidate := true,
-        onSubmit.preventDefault.mapToUnit --> renameSaveBus.writer,
-        label(
-          cls         := "sr-only",
-          forId       := "gameInstanceRenameInput",
-          I18n.t(UiKeys.gameInstanceRenameLabel),
-        ),
-        input(
-          idAttr      := "gameInstanceRenameInput",
-          cls         := "input input-sm",
-          placeholder := I18n.t(UiKeys.gameInstanceRenameLabel),
-          controlled(value <-- renameTextVar.signal, onInput.mapToValue --> renameTextVar.writer),
-        ),
-        button(
-          cls         := "btn btn-sm btn-primary",
-          typ         := "submit",
-          disabled <-- renameSubmittingVar.signal,
-          I18n.t(UiKeys.commonSave),
-        ),
-        button(
-          cls         := "btn btn-sm btn-ghost",
-          typ         := "button",
-          disabled <-- renameSubmittingVar.signal,
-          I18n.t(UiKeys.commonCancel),
-          onClick.mapToUnit --> renameCancelBus.writer,
-        ),
-      ),
-      child.maybe <-- renameErrorVar.signal.map(_.map(msg => p(cls := "text-error text-xs mt-1", msg))),
-    )
+      )
+    }
   }
 
   private def renderStart(): HtmlElement = {

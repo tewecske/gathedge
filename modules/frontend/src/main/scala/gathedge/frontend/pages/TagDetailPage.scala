@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{Tag, WordLanguage}
 import gathedge.shared.dto.{GameSetupWord, TagResponse}
@@ -40,12 +40,22 @@ private class TagDetailPage(tagId: Long) {
 
   private val reloadBus = new EventBus[Unit]()
 
-  /** Whether the title is showing the name or an inline input in its place — no modal, unlike `WordCollect`'s rename,
-    * since there is exactly one tag on this page for it to apply to.
+  private val inlineRename = new InlineRename[TagResponse](name => WordApiClient.renameTag(tagId, name))
+
+  /** Gates both the pencil (`InlineRename.renderTitle`'s `canEdit`) and the delete icon below — the same condition, so
+    * the two controls appear and disappear together rather than each re-deriving it. `Tag.editableByMe` is deliberately
+    * not used here: rename/delete stay owner-only even for a tag a group has opened to this reader — see
+    * `WordService.requireOwnTag`.
     */
-  private val renameOpenVar = Var(false)
-  private val renameNameVar = Var("")
-  private val renameBus     = new EventBus[Unit]()
+  private val canEditSignal: Signal[Boolean] = tagVar.signal.map(_.exists(_.ownedByMe)).distinct
+
+  /** The title text: the tag's name once it has loaded, else the generic placeholder — briefly, before the first
+    * `WordApiClient.listTags` answers. Fed straight into `InlineRename.renderTitle`, which does not itself branch on
+    * whether the tag exists: this page is only ever reached for one that does.
+    */
+  private val tagNameSignal: Signal[String] = {
+    tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))).distinct
+  }
 
   private val deleteOpenVar = Var(false)
   private val deleteBus     = new EventBus[Unit]()
@@ -64,8 +74,16 @@ private class TagDetailPage(tagId: Long) {
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          renderTitleRow(),
+          inlineRename.renderTitle(
+            tagNameSignal,
+            canEditSignal,
+            I18n.t(UiKeys.wordsTagRenameButton),
+            I18n.t(UiKeys.wordsTagRenameLabel),
+            "input text-xl",
+            deleteIcon(),
+          ),
           child.maybe <-- tagVar.signal.map(_.map(renderMeta)),
+          child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
           div(
             cls   := "flex flex-wrap items-end gap-3 mt-2",
             languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
@@ -82,17 +100,7 @@ private class TagDetailPage(tagId: Long) {
           case Left(err)   =>
             errorVar.set(Some(err.message))
         },
-      renameBus.events
-        .sample(renameNameVar.signal)
-        .map(_.trim)
-        .filter(_.nonEmpty)
-        .flatMapSwitch(name => WordApiClient.renameTag(tagId, name)) -->
-        Observer[Either[ApiError, TagResponse]] {
-          case Right(response) =>
-            Var.set(tagVar -> Some(response.tag), renameOpenVar -> false, errorVar -> None)
-          case Left(err)       =>
-            errorVar.set(Some(err.message))
-        },
+      inlineRename.bindings(onSaved = Observer[TagResponse](response => tagVar.set(Some(response.tag)))),
       deleteBus.events.flatMapSwitch(_ => WordApiClient.deleteTag(tagId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
@@ -112,67 +120,18 @@ private class TagDetailPage(tagId: Long) {
     )
   }
 
-  /** The tag's name, or an inline edit form in its place, with rename/delete icons beside it — the same two icons
-    * `WordCollect.renderCollectSelect` offers, next to the tag they act on rather than next to a `<select>`. Owner-only,
-    * same as there: `WordService.requireOwnTag` refuses either write for anyone else, so the icons are hidden rather
-    * than left to fail.
+  /** The delete icon beside the title — `extra` in the `InlineRename.renderTitle` call above — gated on
+    * [[canEditSignal]], the same condition the pencil itself uses.
     */
-  private def renderTitleRow(): HtmlElement = {
-    h1(
-      cls   := "card-title text-2xl",
-      child <-- tagVar.signal.combineWithFn(renameOpenVar.signal) {
-        case (Some(tag), true)  => renderRenameForm(tag)
-        case (Some(tag), false) => renderTitleDisplay(tag)
-        case (None, _)          => span(I18n.t(UiKeys.tagDetailTitle))
-      },
-    )
-  }
-
-  private def renderTitleDisplay(tag: Tag): HtmlElement = {
-    div(
-      cls := "flex items-center gap-1 flex-wrap",
-      span(tag.name),
-      Option.when(tag.ownedByMe)(
-        renderTagIconButton(UiKeys.wordsTagRenameButton, pencilMark(), () => openRename(tag))
-      ),
-      Option.when(tag.ownedByMe)(
-        renderTagIconButton(UiKeys.wordsTagDeleteButton, trashMark(), () => deleteOpenVar.set(true))
-      ),
-      renderDeleteModal(tag),
-    )
-  }
-
-  private def renderRenameForm(tag: Tag): HtmlElement = {
-    form(
-      cls        := "flex items-center gap-1",
-      noValidate := true,
-      onSubmit.preventDefault.mapToUnit --> renameBus.writer,
-      input(
-        cls    := "input input-bordered text-2xl font-bold h-auto py-1 w-full max-w-sm",
-        controlled(value <-- renameNameVar.signal, onInput.mapToValue --> renameNameVar.writer),
-        onMountFocus,
-        onKeyDown.filter(_.key == "Escape").mapToUnit --> Observer[Unit](_ => renameOpenVar.set(false)),
-      ),
-      renderTagIconButton(UiKeys.commonSave, checkMark(), () => renameBus.emit(())),
-      renderTagIconButton(UiKeys.commonCancel, closeMark(), () => renameOpenVar.set(false)),
-    )
-  }
-
-  private def openRename(tag: Tag): Unit = {
-    Var.set(renameNameVar -> tag.name, renameOpenVar -> true)
-  }
-
-  private def renderTagIconButton(labelKey: String, icon: SvgElement, onClick0: () => Unit): HtmlElement = {
-    span(
-      cls             := "tooltip",
-      dataAttr("tip") := I18n.t(labelKey),
-      button(
-        cls        := "btn btn-ghost btn-sm btn-square",
-        typ        := "button",
-        aria.label := I18n.t(labelKey),
-        icon,
-        onClick.mapToUnit --> Observer[Unit](_ => onClick0()),
-      ),
+  private def deleteIcon(): Modifier[HtmlElement] = {
+    child.maybe <-- canEditSignal.map(
+      Option.when(_)(
+        InlineRename.iconButton(
+          I18n.t(UiKeys.wordsTagDeleteButton),
+          trashMark(),
+          onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(true)),
+        )
+      )
     )
   }
 
@@ -207,20 +166,6 @@ private class TagDetailPage(tagId: Long) {
     )
   }
 
-  /** Copied from `WordCollect.pencilMark`: reuse the pattern, not the (page-private) function. */
-  private def pencilMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-4 w-4",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"),
-    )
-  }
-
   /** Copied from `WordCollect.trashMark`: reuse the pattern, not the (page-private) function. */
   private def trashMark(): SvgElement = {
     svg.svg(
@@ -234,35 +179,6 @@ private class TagDetailPage(tagId: Long) {
       svg.path(svg.d := "M4 7h16"),
       svg.path(svg.d := "M9 7V4h6v3"),
       svg.path(svg.d := "M6 7l1 13h10l1-13"),
-    )
-  }
-
-  /** The inline rename form's own two icons — a plain checkmark and cross, drawn rather than typed for the reason
-    * `WordCollect.chipMark` gives: an SVG's box is its ink, centred on a button of any size.
-    */
-  private def checkMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-4 w-4",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M5 12.5l4.5 4.5L19 7"),
-    )
-  }
-
-  private def closeMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-4 w-4",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M6 6l12 12M18 6L6 18"),
     )
   }
 
