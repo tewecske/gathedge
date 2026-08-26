@@ -64,6 +64,7 @@ object GuestAccountSpec extends ZIOSpecDefault {
       mine = true,
       target = WordLanguage.Hu,
       translationFilter = TranslationFilter.All,
+      mainOnly = false,
       sort = None,
       descending = false,
       reader = Some(userId),

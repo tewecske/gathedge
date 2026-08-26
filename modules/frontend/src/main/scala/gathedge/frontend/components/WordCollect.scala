@@ -118,18 +118,18 @@ object WordCollect {
     ).flatten
   }
 
-  /** What the collect select offers: every tag the reader may edit — their own, plus any tag a group they belong to
-    * has open — and nothing else, since a tick has to write somewhere the reader can actually write. Their own tags
-    * come first, ungrouped; a fellow member's tag then falls under an `<optgroup>` named for the group that opened it,
-    * one section per group, so two classrooms sharing a reader read as two separate lists rather than one merged pile.
-    * A stranger's tag outside any shared group is not merely mis-grouped here — it is absent, same as before groups
+  /** What the collect select offers: every tag the reader may edit — their own, plus any tag a group they belong to has
+    * open — and nothing else, since a tick has to write somewhere the reader can actually write. Their own tags come
+    * first, ungrouped; a fellow member's tag then falls under an `<optgroup>` named for the group that opened it, one
+    * section per group, so two classrooms sharing a reader read as two separate lists rather than one merged pile. A
+    * stranger's tag outside any shared group is not merely mis-grouped here — it is absent, same as before groups
     * existed.
     */
   def mineOptions(tags: List[Tag]): List[HtmlElement] = {
     val editable         = tags.filter(_.editableByMe)
     val (mine, byOthers) = editable.partition(_.ownedByMe)
-    val mineOpts          = mine.sortBy(_.name.toLowerCase).map(tagOption)
-    val groupOpts         = byOthers
+    val mineOpts         = mine.sortBy(_.name.toLowerCase).map(tagOption)
+    val groupOpts        = byOthers
       .groupBy(_.group.map(_.name).getOrElse(""))
       .toList
       .sortBy { case (name, _) => name.toLowerCase }
@@ -283,11 +283,11 @@ final class WordCollect(
   private def setTags(tags: List[Tag]): Unit = tagsVar.set(Tag.sorted(tags))
 
   /** Keeps the collect tag on one the reader may still edit, and chooses one for a reader who has never picked —
-    * including a guest, whose first tag is minted by their first tick. A tag deleted on another device, one that
-    * turns out not to be editable (a foreign id left over in `localStorage` from before the select stopped offering
-    * it), or one whose group the reader has since left, would otherwise leave every tick failing against an id they
-    * cannot write to. Prefers one of the reader's own over a group tag, so an owner is never silently defaulted into
-    * filing under somebody else's classroom.
+    * including a guest, whose first tag is minted by their first tick. A tag deleted on another device, one that turns
+    * out not to be editable (a foreign id left over in `localStorage` from before the select stopped offering it), or
+    * one whose group the reader has since left, would otherwise leave every tick failing against an id they cannot
+    * write to. Prefers one of the reader's own over a group tag, so an owner is never silently defaulted into filing
+    * under somebody else's classroom.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
     val kept = {
@@ -485,9 +485,9 @@ final class WordCollect(
   }
 
   /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
-    * the reader to discover that the empty entry silently meant "the first one". Offers every tag the reader may edit
-    * — see [[WordCollect.mineOptions]] — since a tick against any other would fail with `TagNotFound`. Rename/delete
-    * stay owner-only regardless — see `WordService.requireOwnTag` — so their icons are hidden rather than left to fail
+    * the reader to discover that the empty entry silently meant "the first one". Offers every tag the reader may edit —
+    * see [[WordCollect.mineOptions]] — since a tick against any other would fail with `TagNotFound`. Rename/delete stay
+    * owner-only regardless — see `WordService.requireOwnTag` — so their icons are hidden rather than left to fail
     * whenever the select currently holds a tag a group merely opened to the reader.
     */
   private def renderCollectSelect(): HtmlElement = {

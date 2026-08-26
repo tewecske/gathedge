@@ -276,6 +276,7 @@ private class WordsPage(
       tagId = query.tagId,
       mine = Option.when(query.mine)(true),
       translationFilter = Some(query.translationFilter),
+      mainOnly = Option.when(query.mainOnly)(true),
     )
   }
 
@@ -348,6 +349,7 @@ private class WordsPage(
         ),
       ),
       renderTranslationFilter(),
+      renderMainOnlyToggle(),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
     )
@@ -433,6 +435,25 @@ private class WordsPage(
           },
         ),
       ),
+    )
+  }
+
+  /** Narrows to rows that are not themselves a form of another word — dropping inflected/declined variants
+    * (`WordSummary.mainWord`) from the listing, leaving only lemmas. A plain listing filter like
+    * [[renderTranslationFilter]]/[[renderTagFilter]], so it stays visible for a visitor with no session too.
+    */
+  private def renderMainOnlyToggle(): HtmlElement = {
+    label(
+      cls := "label gap-2 h-8 cursor-pointer",
+      input(
+        typ    := "checkbox",
+        cls    := "checkbox checkbox-sm",
+        controlled(
+          checked <-- querySignal.map(_.mainOnly),
+          onClick.mapToChecked --> Observer[Boolean](mainOnly => change(_.reset(_.copy(mainOnly = mainOnly)))),
+        ),
+      ),
+      span(cls := "label-text text-sm", I18n.t(UiKeys.wordsMainOnly)),
     )
   }
 

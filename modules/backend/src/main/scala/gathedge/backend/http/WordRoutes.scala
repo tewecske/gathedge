@@ -49,9 +49,9 @@ object WordRoutes {
     requested.flatMap(WordLanguage.fromString)
   }
 
-  /** The listing's ten query parameters, as the endpoint hands them over.
+  /** The listing's eleven query parameters, as the endpoint hands them over.
     *
-    * Taken as one tuple rather than ten arguments because zio-http's `handler` only unrolls functions up to arity
+    * Taken as one tuple rather than eleven arguments because zio-http's `handler` only unrolls functions up to arity
     * seven; past that the single-argument constructor is what applies, and the tuple has to be named and destructured.
     */
   private type ListQuery = (
@@ -66,12 +66,13 @@ object WordRoutes {
     Option[Long],
     Option[Boolean],
     Option[String],
+    Option[Boolean],
   )
 
   private val listRoute = {
     WordEndpoints.list.implementHandler(
       handler { (input: ListQuery) =>
-        val (page, pageSize, sort, dir, q, lang, target, pos, tag, mine, tr) = input
+        val (page, pageSize, sort, dir, q, lang, target, pos, tag, mine, tr, main) = input
         reader.flatMap { who =>
           WordService.list(
             page = Paging.boundedPage(page),
@@ -85,6 +86,7 @@ object WordRoutes {
             // dictionary is built around when nothing else was said.
             target = languageOf(target).getOrElse(WordLanguage.En),
             translationFilter = tr.flatMap(TranslationFilter.fromString).getOrElse(TranslationFilter.All),
+            mainOnly = main.getOrElse(false),
             sort = sort,
             descending = SortDirection.isDescending(dir),
             reader = who,

@@ -149,6 +149,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     language: WordLanguage = WordLanguage.De,
     target: WordLanguage = WordLanguage.Hu,
     translationFilter: TranslationFilter = TranslationFilter.All,
+    mainOnly: Boolean = false,
   ) = {
     WordService.list(
       page = Paging.firstPage,
@@ -160,6 +161,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       mine = mine,
       target = target,
       translationFilter = translationFilter,
+      mainOnly = mainOnly,
       sort = None,
       descending = false,
       reader = reader,
@@ -289,16 +291,16 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("a group member may now edit the group's tag content, but a non-member stranger still cannot") {
         for {
-          _         <- seed
-          tag       <- createTag("shared", 1L)
-          _         <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
-          word      <- list(search = Some("haus")).map(_.items.head.word)
-          member    <- WordService.tagWord(word.id, tag.id, 2L).either
+          _        <- seed
+          tag      <- createTag("shared", 1L)
+          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          word     <- list(search = Some("haus")).map(_.items.head.word)
+          member   <- WordService.tagWord(word.id, tag.id, 2L).either
           // `tagsFor`/`pairsFor` are widened to a group tag's members, not just its owner, so both the owner's and
           // the editing member's own listing view now reflect the write.
-          byOwner   <- list(search = Some("haus"), reader = Some(1L))
-          byMember  <- list(search = Some("haus"), reader = Some(2L))
-          stranger  <- WordService.tagWord(word.id, tag.id, 3L).either
+          byOwner  <- list(search = Some("haus"), reader = Some(1L))
+          byMember <- list(search = Some("haus"), reader = Some(2L))
+          stranger <- WordService.tagWord(word.id, tag.id, 3L).either
         } yield assertTrue(
           member.isRight,
           byOwner.items.head.tagIds == List(tag.id),
@@ -707,6 +709,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                        mine = false,
                        target = WordLanguage.Hu,
                        translationFilter = TranslationFilter.All,
+                       mainOnly = false,
                        sort = Some("nonsense"),
                        descending = false,
                        reader = None,
@@ -721,6 +724,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                        mine = false,
                        target = WordLanguage.Hu,
                        translationFilter = TranslationFilter.All,
+                       mainOnly = false,
                        sort = Some(WordSort.text),
                        descending = true,
                        reader = None,
@@ -728,6 +732,31 @@ object WordServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           unknown.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
           byText.items.map(_.word.text).headOption.contains("Haus"),
+        )
+      },
+      test("mainOnly drops a word that is itself a form of another word") {
+        for {
+          _        <- seed
+          haus     <- list(search = Some("haus")).map(_.items.head.word)
+          _        <- WordService.create(
+                        CreateWordRequest(
+                          WordLanguage.De,
+                          "Häuser",
+                          PartOfSpeech.Noun,
+                          Some(Gender.Das),
+                          Nil,
+                          Nil,
+                          mainWordId = Some(haus.id),
+                          variantType = Some("plural"),
+                        ),
+                        userId = 7L,
+                      )
+          every    <- list(search = Some("häuser"))
+          mainOnly <- list(search = Some("häuser"), mainOnly = true)
+        } yield assertTrue(
+          every.items.map(_.word.text).contains("Häuser"),
+          !mainOnly.items.map(_.word.text).contains("Häuser"),
+          mainOnly.total == 0L,
         )
       },
     ).provide(layer)

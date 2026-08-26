@@ -53,6 +53,7 @@ trait WordRepository {
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[WordRow]]
@@ -66,6 +67,7 @@ trait WordRepository {
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
   ): Task[Long]
 
   /** Every translation of those words into one language, as the edge and the word it points at. One query for a whole
@@ -167,8 +169,8 @@ trait WordRepository {
     */
   def tagsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagRow]]
 
-  /** The account's tags on one word, for the detail screen — its own, plus any group tag it may edit, the same
-    * widening [[tagsFor]] applies.
+  /** The account's tags on one word, for the detail screen — its own, plus any group tag it may edit, the same widening
+    * [[tagsFor]] applies.
     */
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]]
 
@@ -283,6 +285,7 @@ object WordRepository {
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
   ): RIO[WordRepository, List[WordRow]] = {
@@ -297,6 +300,7 @@ object WordRepository {
         taggedBy,
         translationFilter,
         targetLanguage,
+        mainOnly,
         sort,
         descending,
       )
@@ -311,9 +315,10 @@ object WordRepository {
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
   ): RIO[WordRepository, Long] = {
     ZIO.serviceWithZIO[WordRepository](
-      _.countMatching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage)
+      _.countMatching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly)
     )
   }
 
@@ -571,6 +576,13 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     translations.filter(edge => edge.sourceWordId == wordId).nonEmpty
   }
 
+  /** True when the word is itself an inflected/declined form of another word — a `word_forms` row naming it as the form
+    * side. A main word is one this is false for.
+    */
+  private inline def isForm = quote { (wordId: Long) =>
+    wordForms.filter(form => form.formWordId == wordId).nonEmpty
+  }
+
   /** The narrowing [[listPage]] and [[countMatching]] share, so the total counts the set the page is cut from.
     * `targetLanguage` is read only under [[TranslationFilter.HasTarget]].
     */
@@ -582,6 +594,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
   ): DynamicQuery[WordRow] = {
     val base = dynamicQuerySchema[WordRow]("words")
       .filterOpt(language)((word, value) => quote(word.language == unquote(value)))
@@ -591,6 +604,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         quote(wordTags.filter(link => link.wordId == word.id && link.tagId == unquote(value)).nonEmpty)
       )
       .filterOpt(taggedBy)((word, userId) => quote(taggedByUser(word.id, unquote(userId))))
+      .filterOpt(Option.when(mainOnly)(true))((word, _) => quote(!isForm(word.id)))
     translationFilter match {
       case TranslationFilter.All       =>
         base
@@ -633,11 +647,12 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[WordRow]] = {
     val page = ordered(
-      matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage),
+      matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly),
       sort,
       descending,
     ).drop(offset).take(limit)
@@ -655,8 +670,9 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     taggedBy: Option[Long],
     translationFilter: TranslationFilter,
     targetLanguage: String,
+    mainOnly: Boolean,
   ): Task[Long] = {
-    val q = matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage).size
+    val q = matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly).size
     logged(run(ctx.run(q)))(count => s"words.countMatching count=$count")
   }
 
@@ -931,9 +947,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
             .filter(tag => {
               tag.id == link.tagId &&
               (tag.userId == lift(userId) ||
-                tag.groupId.exists(gid =>
-                  groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty
-                ))
+                tag.groupId
+                  .exists(gid => groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty))
             })
             .nonEmpty
         })
@@ -1025,9 +1040,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
             .filter(tag => {
               tag.id == pair.tagId &&
               (tag.userId == lift(userId) ||
-                tag.groupId.exists(gid =>
-                  groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty
-                ))
+                tag.groupId
+                  .exists(gid => groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty))
             })
             .nonEmpty
         })

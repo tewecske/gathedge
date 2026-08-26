@@ -22,9 +22,9 @@ import zio.json.*
   * @param editableByMe
   *   whether the caller may edit this tag's *content* — `ownedByMe`, or a member of `group`. Every real construction
   *   states it explicitly (see `WordService.toTag`); the default is the conservative `false` rather than mirroring
-  *   `ownedByMe`, purely because a case class default cannot read a sibling parameter. This is what the collect
-  *   picker in `WordCollect` offers a tick or a chip against; it is never itself the authority — every write is
-  *   re-checked server-side by `WordService.requireEditableTag`.
+  *   `ownedByMe`, purely because a case class default cannot read a sibling parameter. This is what the collect picker
+  *   in `WordCollect` offers a tick or a chip against; it is never itself the authority — every write is re-checked
+  *   server-side by `WordService.requireEditableTag`.
   */
 final case class Tag(
   id: Long,

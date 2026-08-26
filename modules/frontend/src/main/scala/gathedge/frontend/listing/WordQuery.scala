@@ -30,6 +30,7 @@ final case class WordQuery(
   tagId: Option[Long] = None,
   mine: Boolean = false,
   translationFilter: TranslationFilter = TranslationFilter.All,
+  mainOnly: Boolean = false,
 ) {
 
   /** Any change other than turning the page starts again at the first one: page 4 of the old listing says nothing about
@@ -69,12 +70,13 @@ object WordQuery {
     Option[String],
     Option[String],
     Option[String],
+    Option[String],
   )
 
   private val codec: Codec[Args, WordQuery] = {
     Codec.factory(
       (args: Args) => {
-        val (page, size, sort, direction, search, language, target, pos, tag, mine, tr) = args
+        val (page, size, sort, direction, search, language, target, pos, tag, mine, tr, main) = args
         WordQuery(
           page = ListingParams.decodePage(page),
           pageSize = ListingParams.decodePageSize(size),
@@ -90,6 +92,7 @@ object WordQuery {
           tagId = tag.flatMap(_.toLongOption),
           mine = mine.contains("true"),
           translationFilter = tr.flatMap(TranslationFilter.fromString).getOrElse(default.translationFilter),
+          mainOnly = main.contains("true"),
         )
       },
       (query: WordQuery) => {
@@ -108,6 +111,7 @@ object WordQuery {
           Option.when(query.translationFilter != default.translationFilter)(
             TranslationFilter.code(query.translationFilter)
           ),
+          Option.when(query.mainOnly)("true"),
         )
       },
     )
@@ -117,7 +121,8 @@ object WordQuery {
   val params = {
     (
       ListingParams.common & param[String]("q").? & param[String]("lang").? & param[String]("target").? &
-        param[String]("pos").? & param[String]("tag").? & param[String]("mine").? & param[String]("tr").?
+        param[String]("pos").? & param[String]("tag").? & param[String]("mine").? & param[String]("tr").? &
+        param[String]("main").?
     ).as[WordQuery](using codec)
   }
 }

@@ -109,6 +109,7 @@ trait WordService {
     mine: Boolean,
     target: WordLanguage,
     translationFilter: TranslationFilter,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
@@ -236,6 +237,7 @@ object WordService {
     mine: Boolean,
     target: WordLanguage,
     translationFilter: TranslationFilter,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
@@ -251,6 +253,7 @@ object WordService {
         mine,
         target,
         translationFilter,
+        mainOnly,
         sort,
         descending,
         reader,
@@ -503,6 +506,7 @@ final case class WordServiceLive(
     mine: Boolean,
     target: WordLanguage,
     translationFilter: TranslationFilter,
+    mainOnly: Boolean,
     sort: Option[String],
     descending: Boolean,
     reader: Option[Long],
@@ -527,6 +531,7 @@ final case class WordServiceLive(
                                  taggedBy,
                                  translationFilter,
                                  WordLanguage.code(target),
+                                 mainOnly,
                                  sort,
                                  descending,
                                )
@@ -540,6 +545,7 @@ final case class WordServiceLive(
                                  taggedBy,
                                  translationFilter,
                                  WordLanguage.code(target),
+                                 mainOnly,
                                )
                                .orDie
         ids                = rows.map(_.id)
@@ -875,13 +881,13 @@ final case class WordServiceLive(
 
   def listTags(userId: Long): UIO[List[Tag]] = {
     for {
-      rows           <- repo.listTags(userId).orDie
-      groupRefs      <- resolveGroupRefs(rows.map { case (row, _, _) => row })
-      memberships    <- groupRepo.listMembershipsFor(userId).orDie
+      rows          <- repo.listTags(userId).orDie
+      groupRefs     <- resolveGroupRefs(rows.map { case (row, _, _) => row })
+      memberships   <- groupRepo.listMembershipsFor(userId).orDie
       // A tag not owned by the caller is still theirs to edit if it sits in a group they belong to — the same test
       // `WordService.requireEditableTag` makes a write against, restated here so the tag bar/collect picker can offer
       // it without the reader having to click first and find out.
-      memberGroupIds  = memberships.map(_.groupId).toSet
+      memberGroupIds = memberships.map(_.groupId).toSet
     } yield Tag.sorted(rows.map { case (row, count, ownedByMe) =>
       val editableByMe = ownedByMe || row.groupId.exists(memberGroupIds.contains)
       toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)

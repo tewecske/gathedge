@@ -466,6 +466,7 @@
   "ui.words.swapLanguages": "Swap languages",
   "ui.words.posAny": "Any kind",
   "ui.words.onlyMine": "Only my words",
+  "ui.words.mainOnly": "Main words only",
   "ui.words.translationFilterLabel": "Translations",
   "ui.words.translationFilterAll": "All words",
   "ui.words.translationFilterTarget": "Has target translation",

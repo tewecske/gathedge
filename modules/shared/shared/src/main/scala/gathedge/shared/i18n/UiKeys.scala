@@ -504,6 +504,7 @@ object UiKeys {
   val wordsSwapLanguages: String     = key("ui.words.swapLanguages")
   val wordsPosAny: String            = key("ui.words.posAny")
   val wordsOnlyMine: String          = key("ui.words.onlyMine")
+  val wordsMainOnly: String          = key("ui.words.mainOnly")
 
   /** The three-state filter shared by the word list and the bulk-upload review: every word, only those translated into
     * the target language, or only those translated into any language at all. See `TranslationFilter`.

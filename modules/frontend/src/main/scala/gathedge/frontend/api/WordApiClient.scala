@@ -43,6 +43,7 @@ object WordApiClient {
     tagId: Option[Long] = None,
     mine: Option[Boolean] = None,
     translationFilter: Option[TranslationFilter] = None,
+    mainOnly: Option[Boolean] = None,
   ): EventStream[Either[ApiError, WordPage]] = {
     run(
       executor(
@@ -58,6 +59,7 @@ object WordApiClient {
           tagId,
           mine,
           translationFilter.map(TranslationFilter.code),
+          mainOnly,
         )
       )
     )

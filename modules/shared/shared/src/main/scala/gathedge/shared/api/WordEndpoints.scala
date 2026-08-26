@@ -60,6 +60,7 @@ object WordEndpoints {
   private val tagQuery      = HttpCodec.query[Long]("tag").optional
   private val mineQuery     = HttpCodec.query[Boolean]("mine").optional
   private val trQuery       = HttpCodec.query[String]("tr").optional
+  private val mainQuery     = HttpCodec.query[Boolean]("main").optional
 
   /** The browse-and-tag listing, paged and counted by the database.
     *
@@ -85,6 +86,7 @@ object WordEndpoints {
       .query(tagQuery)
       .query(mineQuery)
       .query(trQuery)
+      .query(mainQuery)
       .withCodecError
       .out[WordPage]
       .outFailure(failure.badRequest)

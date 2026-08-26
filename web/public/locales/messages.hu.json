@@ -466,6 +466,7 @@
   "ui.words.swapLanguages": "Nyelvek cseréje",
   "ui.words.posAny": "Bármelyik",
   "ui.words.onlyMine": "Csak a saját szavaim",
+  "ui.words.mainOnly": "Csak alapszavak",
   "ui.words.translationFilterLabel": "Fordítások",
   "ui.words.translationFilterAll": "Minden szó",
   "ui.words.translationFilterTarget": "Van célnyelvi fordítása",
