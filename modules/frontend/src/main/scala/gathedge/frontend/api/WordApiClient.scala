@@ -1,7 +1,6 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
-import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
@@ -19,12 +18,12 @@ import gathedge.shared.dto.{
   WordDetail,
   WordPage,
 }
+import zio.json._
 
-import EndpointClient.{executor, run}
+import HttpClient.query
 
-/** The vocabulary's calls, generated from `WordEndpoints` the same way [[ApiClient]] is from `AuthEndpoints`.
-  *
-  * A separate file only because the resource is a separate one; nothing here knows a path or a method.
+/** The vocabulary's calls. A separate file only because the resource is a separate one; the shared `WordEndpoints`
+  * description stays the backend's and the OpenAPI document's source of truth, pinned by `ApiPathParitySpec`.
   *
   * The two reads answer for a caller with no session as well — they are the pair the server guards with `optionalUser`
   * — so a page may issue them before anybody has signed in and get words back with no tags marked.
@@ -45,72 +44,70 @@ object WordApiClient {
     translationFilter: Option[TranslationFilter] = None,
     mainOnly: Option[Boolean] = None,
   ): EventStream[Either[ApiError, WordPage]] = {
-    run(
-      executor(
-        WordEndpoints.list(
-          page,
-          pageSize,
-          sort,
-          dir,
-          search,
-          language.map(WordLanguage.code),
-          target.map(WordLanguage.code),
-          partOfSpeech.map(PartOfSpeech.code),
-          tagId,
-          mine,
-          translationFilter.map(TranslationFilter.code),
-          mainOnly,
-        )
+    HttpClient.get[WordPage](
+      "/api/words" + query(
+        "page"     -> page,
+        "pageSize" -> pageSize,
+        "sort"     -> sort,
+        "dir"      -> dir,
+        "q"        -> search,
+        "lang"     -> language.map(WordLanguage.code),
+        "target"   -> target.map(WordLanguage.code),
+        "pos"      -> partOfSpeech.map(PartOfSpeech.code),
+        "tag"      -> tagId,
+        "mine"     -> mine,
+        "tr"       -> translationFilter.map(TranslationFilter.code),
+        "main"     -> mainOnly,
       )
     )
   }
 
   def get(id: Long): EventStream[Either[ApiError, WordDetail]] = {
-    run(executor(WordEndpoints.get(id)))
+    HttpClient.get[WordDetail](s"/api/words/$id")
   }
 
   def create(request: CreateWordRequest): EventStream[Either[ApiError, WordDetail]] = {
-    run(executor(WordEndpoints.create(request)))
+    HttpClient.post[WordDetail]("/api/words", Some(request.toJson))
   }
 
   def addTranslation(wordId: Long, translation: NewTranslation): EventStream[Either[ApiError, WordDetail]] = {
-    run(executor(WordEndpoints.addTranslation(wordId, AddTranslationRequest(translation))))
+    HttpClient.post[WordDetail](s"/api/words/$wordId/translations", Some(AddTranslationRequest(translation).toJson))
   }
 
   def removeTranslation(wordId: Long, translationId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(WordEndpoints.removeTranslation(wordId, translationId)))
+    HttpClient.unit(_.DELETE, s"/api/words/$wordId/translations/$translationId")
   }
 
   def listTags: EventStream[Either[ApiError, List[Tag]]] = {
-    run(executor(WordEndpoints.listTags(())))
+    HttpClient.get[List[Tag]]("/api/tags")
   }
 
   def createTag(name: String): EventStream[Either[ApiError, TagResponse]] = {
-    run(executor(WordEndpoints.createTag(CreateTagRequest(name))))
+    HttpClient.post[TagResponse]("/api/tags", Some(CreateTagRequest(name).toJson))
   }
 
   def renameTag(tagId: Long, name: String): EventStream[Either[ApiError, TagResponse]] = {
-    run(executor(WordEndpoints.renameTag(tagId, RenameTagRequest(name))))
+    HttpClient.put[TagResponse](s"/api/tags/$tagId", Some(RenameTagRequest(name).toJson))
   }
 
   def deleteTag(tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(WordEndpoints.deleteTag(tagId)))
+    HttpClient.unit(_.DELETE, s"/api/tags/$tagId")
   }
 
   /** Seeds a tag of the caller's own from another tag's name, whoever owns it, and copies its word/pair snapshot with
     * it.
     */
   def copyTag(tagId: Long): EventStream[Either[ApiError, TagResponse]] = {
-    run(executor(WordEndpoints.copyTag(tagId)))
+    HttpClient.post[TagResponse](s"/api/tags/$tagId/copy")
   }
 
   /** Idempotent, which is what lets the listing's row toggle fire on every click without tracking what is in flight. */
   def tagWord(wordId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(WordEndpoints.tagWord(wordId, tagId)))
+    HttpClient.unit(_.PUT, s"/api/words/$wordId/tags/$tagId")
   }
 
   def untagWord(wordId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(WordEndpoints.untagWord(wordId, tagId)))
+    HttpClient.unit(_.DELETE, s"/api/words/$wordId/tags/$tagId")
   }
 
   /** Marks a translation as a practice answer for a word, inside the tag the page is collecting into. Idempotent for
@@ -121,16 +118,15 @@ object WordApiClient {
     tagId: Long,
     translationWordId: Long,
   ): EventStream[Either[ApiError, PairSelectionResponse]] = {
-    run(executor(WordEndpoints.selectPair(wordId, tagId, translationWordId)))
+    HttpClient.put[PairSelectionResponse](s"/api/words/$wordId/tags/$tagId/translations/$translationWordId")
   }
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(WordEndpoints.deselectPair(wordId, tagId, translationWordId)))
+    HttpClient.unit(_.DELETE, s"/api/words/$wordId/tags/$tagId/translations/$translationWordId")
   }
 
   /** Commits what the reader chose out of a bulk-upload preview — the confirm half only, since the preview itself needs
-    * upload-progress reporting `EndpointClient` has no hook for, and speaks to its endpoint directly
-    * (`BulkUploadDialog`).
+    * upload-progress reporting `HttpClient` has no hook for, and speaks to its endpoint directly (`BulkUploadDialog`).
     */
   def bulkUploadConfirm(
     tagId: Long,
@@ -141,20 +137,18 @@ object WordApiClient {
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
   ): EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
-    run(
-      executor(
-        WordEndpoints.bulkUploadConfirm(
-          tagId,
-          BulkUploadConfirmRequest(
-            sourceLanguage,
-            targetLanguage,
-            acceptedWordIds,
-            selectedTranslations,
-            manualPairs,
-            standaloneWords,
-          ),
-        )
-      )
+    HttpClient.post[BulkUploadConfirmResponse](
+      s"/api/words/tags/$tagId/bulk-upload/confirm",
+      Some(
+        BulkUploadConfirmRequest(
+          sourceLanguage,
+          targetLanguage,
+          acceptedWordIds,
+          selectedTranslations,
+          manualPairs,
+          standaloneWords,
+        ).toJson
+      ),
     )
   }
 }

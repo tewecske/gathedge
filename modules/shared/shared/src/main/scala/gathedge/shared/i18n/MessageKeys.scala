@@ -178,7 +178,7 @@ object MessageKeys {
   val notAdministrator: String  = key("error.notAdministrator")
   val invalidRedirect: String   = key("error.invalidRedirect")
 
-  /** Not a server answer at all: the request never got one. Minted by `EndpointClient`, not by any route. */
+  /** Not a server answer at all: the request never got one. Minted by the frontend `HttpClient`, not by any route. */
   val requestFailed: String = key("error.requestFailed")
 
   // -- Email -----------------------------------------------------------------------------------

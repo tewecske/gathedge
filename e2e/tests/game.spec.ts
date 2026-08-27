@@ -161,7 +161,9 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.locator('select option', { hasText: "Words I haven't played" })).toHaveCount(1);
   await expect(guestPage.locator('select option', { hasText: "Words I've made the most mistakes with" })).toHaveCount(1);
 
-  // Preview list reflects the full pool before any play — GameApiClient.playSetup fetched right on load.
+  // Preview list reflects the full pool before any play — GameApiClient.playSetup fetched right on load. On this
+  // screen the list sits behind a "Show words" collapse (it would otherwise spoil the pool), so open it first.
+  await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText('Eligible words')).toBeVisible();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
@@ -198,7 +200,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   for (let i = 0; i < 3; i++) {
     // Scoped to the prompt's own heading class: the guest banner above it is an `h2` too ("Your words are saved on
     // this device"), and a bare `h2` locator matches both once the guest account exists.
-    const heading = guestPage.locator('h2.text-xl');
+    const heading = guestPage.locator('h2.text-xl.font-semibold');
     const promptText = (await heading.textContent())?.trim() ?? '';
     const match = words.find((w) => w.term === promptText);
     expect(match, `unexpected quiz prompt: "${promptText}"`).toBeTruthy();
@@ -244,6 +246,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // regardless of which preference is picked; `renderPreviewList` never lists individual words, only the count.
   // The one place the "unplayed" narrowing is actually observable is the sampled prompt itself, below.
   await guestPage.locator('select').selectOption('unplayed');
+  await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
   await selectAllCheckbox.uncheck();
@@ -254,7 +257,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
   const secondPlayUrl = guestPage.url();
 
-  const heading = guestPage.locator('h2.text-xl');
+  const heading = guestPage.locator('h2.text-xl.font-semibold');
   await expect(heading).toHaveText(untouched!.term);
   await guestPage.getByPlaceholder('Type the translation').fill(untouched!.hu);
   await guestPage.getByRole('button', { name: 'Submit' }).click();

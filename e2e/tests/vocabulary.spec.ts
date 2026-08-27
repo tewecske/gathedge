@@ -18,6 +18,16 @@ const password = 'password123';
 
 test.describe.configure({ mode: 'serial' });
 
+// A word's own row — matched on its lead word-cell link (`a.font-medium`), the one place a row renders its
+// own headword. Inflected-form rows (`Häuser`, `das Hauserl`, `Häusern`, …) link *back* to the lemma, so a
+// plain `locator('tr', { hasText: 'das Haus' })` pulls those in too and stops being a single row.
+const wordRow = (p: Page, headword: string) =>
+  p.locator('tr').filter({
+    has: p
+      .locator('a.font-medium')
+      .filter({ hasText: new RegExp(`^${headword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }),
+  });
+
 let page: Page;
 let transferCode: string;
 
@@ -36,20 +46,23 @@ test('a visitor with no account can search the dictionary', async () => {
   await page.locator('input[type=search]').fill('hau');
   // Debounced at 300ms, then a round trip.
   await expect(page).toHaveURL(/[?&]q=hau/);
-  await expect(page.getByRole('link', { name: 'das Haus' })).toBeVisible();
+  // `das Haus` is also echoed as the lemma link on each of its inflected-form rows (Hause, Hauses, …), so match
+  // the word's own row rather than "any row mentioning das Haus".
+  await expect(wordRow(page, 'das Haus').getByRole('link', { name: 'das Haus', exact: true })).toBeVisible();
   // The German article is part of the word, and the Hungarian translation is on the row.
-  await expect(page.locator('tr', { hasText: 'das Haus' })).toContainText('ház');
+  await expect(wordRow(page, 'das Haus')).toContainText('ház');
 });
 
 test('searching a plural form shows it as its own row, with the lemma alongside for context', async () => {
   // "Häuser" (plural of "Haus") never shares a prefix with "haus" (the umlaut breaks it), so this is the search
   // landing on the variant's own spelling directly, not a leftover match from the test above.
   await page.goto('/en/words?q=h%C3%A4user');
-  const variantRow = page.locator('tr').filter({ has: page.getByRole('link', { name: 'Häuser', exact: true }) });
+  // Both rows carry a `Häuser` link (the lemma row lists it among its forms), so pick each by its lead word cell.
+  const variantRow = wordRow(page, 'Häuser');
   await expect(variantRow).toBeVisible();
   // Variant type column, in the language this row was searched in.
   await expect(variantRow).toContainText('plural');
-  const lemmaRow = page.locator('tr', { hasText: 'das Haus' });
+  const lemmaRow = wordRow(page, 'das Haus');
   await expect(lemmaRow).toBeVisible();
   await expect(lemmaRow).toContainText('★');
 });
@@ -63,7 +76,7 @@ test('the collect bar is there for a visitor with no account yet, but the tag fi
 });
 
 test('tagging a word mints a guest account and keeps the word', async () => {
-  await page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /my vocabulary/ }).click();
+  await wordRow(page, 'das Haus').getByRole('button', { name: /my vocabulary/ }).click();
 
   // The banner is the first thing that tells the visitor they now have an account.
   // By role: the account menu offers the same words as a link to the banner, so plain text matches twice.
@@ -73,11 +86,11 @@ test('tagging a word mints a guest account and keeps the word', async () => {
   // The banner appears as soon as the guest exists, which is two requests before the word is actually
   // filed — reloading on the banner alone cancels the tag write in flight. The tick is the signal that
   // the write landed.
-  await expect(page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'das Haus').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
 
   await page.reload();
   await page.locator('input[type=search]').fill('hau');
-  await expect(page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'das Haus').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
 });
 
 test('a transfer code is shown once and carries the vocabulary to another browser', async ({ browser }) => {
@@ -97,7 +110,7 @@ test('a transfer code is shown once and carries the vocabulary to another browse
 
   await expect(elsewhere).toHaveURL(/\/en\/words/);
   await elsewhere.locator('input[type=search]').fill('hau');
-  await expect(elsewhere.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(elsewhere, 'das Haus').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
   await other.close();
 });
 
@@ -135,7 +148,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await page.waitForURL(/\/en\/$/);
 
   await page.goto('/en/words?q=hau');
-  await expect(page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'das Haus').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
 });
 
 // The two tag controls are deliberately different things, and this is the test that says so: creating a
@@ -156,8 +169,8 @@ test('a tag files words under a name, and the filter is a separate control', asy
   const tagId = await collect.inputValue();
 
   await page.locator('input[type=search]').fill('brot');
-  await page.locator('tr', { hasText: 'das Brot' }).getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(page.locator('tr', { hasText: 'das Brot' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await wordRow(page, 'das Brot').getByRole('button', { name: /my vocabulary/ }).click();
+  await expect(wordRow(page, 'das Brot').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
 
   // Narrowing to the tag is the other control, and it is the half that reaches the URL.
   await page.locator('input[type=search]').fill('');
@@ -166,7 +179,7 @@ test('a tag files words under a name, and the filter is a separate control', asy
   await expect(page).not.toHaveURL(/[?&]q=/);
   await page.getByLabel('Filter by tag').selectOption(tagId);
   await expect(page).toHaveURL(/[?&]tag=\d+/);
-  await expect(page.locator('tr', { hasText: 'das Brot' })).toBeVisible();
+  await expect(wordRow(page, 'das Brot')).toBeVisible();
 
   // The whole listing state is in the address, so this is a link somebody could have been sent.
   await page.goto(page.url());
@@ -174,7 +187,7 @@ test('a tag files words under a name, and the filter is a separate control', asy
   // query is still the default one is made *against* the default, and takes the filter out with it.
   await expect(page.getByLabel('Filter by tag')).toHaveValue(tagId);
   await page.getByText('Only my words').click();
-  await expect(page.locator('tr', { hasText: 'das Brot' })).toBeVisible();
+  await expect(wordRow(page, 'das Brot')).toBeVisible();
 });
 
 // A chip is the second thing a click on this row can do: the tick says "I am learning this word", a chip
@@ -182,19 +195,23 @@ test('a tag files words under a name, and the filter is a separate control', asy
 // own as well, which is what makes the pair answerable from either side.
 test('clicking a translation marks it as a practice answer, and files the translation too', async () => {
   await page.goto('/en/words');
+  // The previous test left "Only my words" on and a collect tag selected; this test is about a plain
+  // dictionary row, so start from a clean filter state rather than inheriting that.
+  await page.getByRole('button', { name: 'Reset filters' }).click();
   await page.locator('input[type=search]').fill('hau');
-  const chip = page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /^ház/ });
+  await expect(page).toHaveURL(/[?&]q=hau/);
+  const chip = wordRow(page, 'das Haus').getByRole('button', { name: /^ház/ });
 
   await expect(chip).toHaveAttribute('aria-pressed', 'false');
   await chip.click();
-  await expect(page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /^ház/ })).toHaveAttribute(
+  await expect(wordRow(page, 'das Haus').getByRole('button', { name: /^ház/ })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
 
   await page.reload();
   await page.locator('input[type=search]').fill('hau');
-  await expect(page.locator('tr', { hasText: 'das Haus' }).getByRole('button', { name: /^ház/ })).toHaveAttribute(
+  await expect(wordRow(page, 'das Haus').getByRole('button', { name: /^ház/ })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -202,7 +219,7 @@ test('clicking a translation marks it as a practice answer, and files the transl
   // The Hungarian side is now in the vocabulary as well, which no tick put there.
   await page.goto('/en/words?lang=hu&target=de&q=ház');
   await expect(
-    page.locator('tr', { hasText: 'ház' }).first().getByRole('button', { name: /my vocabulary/ }),
+    wordRow(page, 'ház').getByRole('button', { name: /my vocabulary/ }),
   ).toContainText('✓');
 });
 
@@ -270,6 +287,6 @@ test('the detail page collects the word and marks a translation', async () => {
   // And the listing agrees, because there is one collect tag and not one per screen.
   await page.goto(`/en/words?lang=de&target=en&q=${newWord}`);
   await expect(
-    page.locator('tr', { hasText: newWord }).getByRole('button', { name: /my vocabulary/ }),
+    wordRow(page, newWord).getByRole('button', { name: /my vocabulary/ }),
   ).toContainText('✓');
 });

@@ -11,7 +11,7 @@ import zio.test._
   *
   * Both pages are almost entirely `child.maybe <-- signal.map(...)` over a loaded response, which is exactly the shape
   * that renders nothing at all if a signal is wired wrong, and exactly the shape jsdom can check cheaply. There is no
-  * backend here: `EndpointClient.run` turns the failed call into a `Left`, so the pages settle into their empty state.
+  * backend here: `HttpClient` turns the failed call into a `Left`, so the pages settle into their empty state.
   */
 object AdminSystemPageSpec extends ZIOSpecDefault {
 

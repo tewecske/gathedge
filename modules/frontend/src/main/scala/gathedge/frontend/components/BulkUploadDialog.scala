@@ -32,11 +32,11 @@ import scala.util.{Failure, Success}
   * only ''previews'' matches (`WordEndpoints.bulkUploadPreview`, no write), the reader accepts or declines each match
   * and optionally links unmatched tokens by hand, and only the final `bulkUploadConfirm` call writes anything.
   *
-  * This is the one call in the frontend that steps outside `EndpointClient`/`WordApiClient` — but only for the preview:
-  * it is the call carrying the file's text, and `EndpointClient`'s `fetch`-based client exposes no upload-progress
-  * event, so preview speaks to its endpoint directly with a plain `XMLHttpRequest`, sending and decoding the same DTOs
-  * the generated client would. Confirm's body is small (ids and a handful of short strings), so it is an ordinary
-  * `WordApiClient` call.
+  * This is the one call in the frontend that steps outside `HttpClient`/`WordApiClient` — but only for the preview: it
+  * is the call carrying the file's text, and neither `HttpClient`'s `FetchStream` nor a plain `fetch` exposes an
+  * upload-progress event, so preview speaks to its endpoint directly with a plain `XMLHttpRequest`, sending and
+  * decoding the same DTOs the client would. Confirm's body is small (ids and a handful of short strings), so it is an
+  * ordinary `WordApiClient` call.
   *
   * The progress bar's two halves mean different things, both only during the preview: 0-50% is `xhr.upload.onprogress`,
   * a real signal for how much of the request body has gone out. 50-100% has no real signal to show — the whole match
@@ -253,9 +253,9 @@ final class BulkUploadDialog(
     val xhr = new dom.XMLHttpRequest()
     xhr.open("POST", s"/api/words/tags/$tagId/bulk-upload/preview")
     xhr.setRequestHeader("Content-Type", "application/json; charset=UTF-8")
-    // The two headers `EndpointClient` sets globally on every call — CSRF, and the language transactional mail is
-    // written in. Neither is automatic on a hand-built `XMLHttpRequest`; the session cookie is, since this is
-    // same-origin in both dev (Vite proxy) and prod (nginx).
+    // The two headers `HttpClient` sets on every call — CSRF, and the language transactional mail is written in.
+    // Neither is automatic on a hand-built `XMLHttpRequest`; the session cookie is, since this is same-origin in both
+    // dev (Vite proxy) and prod (nginx).
     xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest")
     xhr.setRequestHeader("X-Locale", CurrentLocale.value.code)
     xhr.upload.onprogress = { (event: dom.ProgressEvent) =>

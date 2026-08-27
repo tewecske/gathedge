@@ -11,7 +11,7 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
     // Pinned so the app's language never depends on the machine running the suite: with no locale
     // prefix in the URL, index.html's boot script picks one from navigator.languages and redirects.
     // Every path below names /en explicitly anyway; this keeps a stray bare URL deterministic too.

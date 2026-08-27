@@ -42,11 +42,15 @@ object ApiEndpoint {
     *     not part of the API's contract, and describing it on all 25 operations said nothing an operation-specific
     *     document should say.
     *
-    * The cost of omitting a status is real and is the reason 401 is *not* in that list: a status a description omits is
-    * not decodable at all. The endpoint client fails such a response as a *defect* carrying "Expected status code ...
-    * but found ...", which `EndpointClient.run` flattens into `ApiError(0, "Request failed: ...")` — a generic error
-    * with no status for a page to branch on. That is the right shape for a CSRF rejection or a 500, and the wrong one
-    * for an expired session, which every authenticated page has to recognise.
+    * The cost of omitting a status is real for the typed JVM endpoint client (`AuthFlowSpec`): a status a description
+    * omits is not decodable at all, and it fails such a response as a *defect* carrying "Expected status code ... but
+    * found ...". That is why 401 is described everywhere it can occur — a defect is the right shape for a CSRF
+    * rejection or a 500, and the wrong one for an expired session, which every authenticated page has to recognise.
+    *
+    * The frontend `HttpClient` no longer builds on these descriptions: it reads the real HTTP status off the response
+    * and decodes every error body as `dto.ErrorResponse` (which every `ApiFailure` case is byte-identical to), so it
+    * carries the true status for a described *and* an undescribed failure alike. `ApiError(0, …)` there means only a
+    * call that got no answer at all.
     */
   object failure {
     val badRequest: ErrorCodec[ApiFailure.BadRequest]     = HttpCodec.error[ApiFailure.BadRequest](Status.BadRequest)
