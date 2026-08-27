@@ -92,6 +92,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/copy",
+              "/api/tags/with-pairs",
               "/api/games",
               "/api/games/setup",
               "/api/games/setup/words",
@@ -258,6 +259,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // threshold allows — `error.key` tells the two apart. The body may carry a warning instead when the
               // write only crossed the *soft* threshold.
               ("POST", "/api/tags")                                                       -> Set(Created, BadRequest, Unauthorized, Conflict),
+              // Creates a tag together with every pair the reader assembled: 404 is a `TagPairWord.Existing` naming no
+              // word; 409 covers a duplicate name *and* either quota's hard threshold, `error.key` telling them apart.
+              ("POST", "/api/tags/with-pairs")                                            ->
+                Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
               // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
               ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),

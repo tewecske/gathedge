@@ -139,6 +139,29 @@ final case class AddTranslationRequest(translation: NewTranslation) derives Json
 
 final case class CreateTagRequest(name: String) derives JsonCodec
 
+/** One side of a pair the tag-creation page is building.
+  *
+  * `Existing` names a word already in the dictionary by id — the ordinary case, where the page offered it from an
+  * autocomplete and the reader picked it. `New` carries the bare facts needed to create a word that is not there yet:
+  * the page's "type it out and press Enter" path, when no dictionary match exists, opens a part-of-speech (and, for a
+  * noun, gender) picker and arrives here.
+  */
+enum TagPairWord derives JsonCodec {
+  case Existing(id: Long)
+  case New(language: WordLanguage, text: String, partOfSpeech: PartOfSpeech, gender: Option[Gender])
+}
+
+/** One bilingual pair the reader assembled on the tag-creation page: a source word in the page's source language and a
+  * target word in its target language. Either side may be new to the dictionary.
+  */
+final case class TagPairInput(source: TagPairWord, target: TagPairWord) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.createTagWithPairs]]'s body: a tag name and the whole ordered list of pairs the
+  * reader built. Sent once, so the tag and every pair it carries are written as one unit of work rather than a create
+  * followed by N pair writes that could leave a half-built tag if one failed.
+  */
+final case class CreateTagWithPairsRequest(name: String, pairs: List[TagPairInput]) derives JsonCodec
+
 /** [[gathedge.shared.api.WordEndpoints.renameTag]]'s body: the tag's new name, validated and de-duplicated the same way
   * [[CreateTagRequest]]'s is.
   */

@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
   CreateTagRequest,
+  CreateTagWithPairsRequest,
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
@@ -87,6 +88,11 @@ object WordApiClient {
 
   def createTag(name: String): EventStream[Either[ApiError, TagResponse]] = {
     run(executor(WordEndpoints.createTag(CreateTagRequest(name))))
+  }
+
+  /** Creates a tag together with every bilingual pair the tag-creation page assembled, as one request. */
+  def createTagWithPairs(request: CreateTagWithPairsRequest): EventStream[Either[ApiError, TagResponse]] = {
+    run(executor(WordEndpoints.createTagWithPairs(request)))
   }
 
   def renameTag(tagId: Long, name: String): EventStream[Either[ApiError, TagResponse]] = {

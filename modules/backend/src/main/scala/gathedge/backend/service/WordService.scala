@@ -23,6 +23,8 @@ import gathedge.shared.dto.{
   BulkUploadSuggestion,
   CreateWordRequest,
   NewTranslation,
+  TagPairInput,
+  TagPairWord,
   PairSelectionResponse,
   TagResponse,
   TaggedPair,
@@ -129,6 +131,15 @@ trait WordService {
     * [[gathedge.shared.dto.TagResponse.warning]] set instead.
     */
   def createTag(name: String, userId: Long): IO[WordFailure, TagResponse]
+
+  /** Creates a tag and every bilingual pair the tag-creation page assembled, as one logical write.
+    *
+    * `DuplicateTag`/`TagQuotaExceeded`/`PairQuotaExceeded` follow [[createTag]]/[[copyTag]]'s own rules; `NotFound` is
+    * a `TagPairWord.Existing` naming no word. Both quotas are checked before anything is written, and every word on
+    * either side is resolved (a missing `Existing` id, or a `New` word created) before the tag row itself is inserted,
+    * so a request that fails does so having written nothing.
+    */
+  def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse]
 
   /** `TagNotFound` covers a tag that does not exist or is not the caller's, the same as every other tag-scoped write.
     * `DuplicateTag` is the new name colliding with a *different* tag of the caller's own, compared case-insensitively —
@@ -282,6 +293,13 @@ object WordService {
 
   def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.createTag(name, userId))
+
+  def createTagWithPairs(
+    name: String,
+    pairs: List[TagPairInput],
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagResponse] =
+    ZIO.serviceWithZIO[WordService](_.createTagWithPairs(name, pairs, userId))
 
   def renameTag(tagId: Long, name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.renameTag(tagId, name, userId))
@@ -969,6 +987,40 @@ final case class WordServiceLive(
       now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row            <- repo.insertTag(userId, valid, normal, now).orDie
     } yield TagResponse(toTag(row, 0L, ownedByMe = true, editableByMe = true), warning)
+  }
+
+  /** [[createTagWithPairs]]'s write: both quotas checked, every word resolved, and only then the tag row and its pairs.
+    * A missing `Existing` id or a `New` word that fails validation therefore surfaces before any tag is written.
+    */
+  def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse] = {
+    for {
+      prepared       <- prepareTagName(name, userId)
+      (valid, normal) = prepared
+      ownedTags      <- repo.countTagsOwnedBy(userId).orDie
+      tagWarning     <- tagQuota(ownedTags, 1)
+      ownedPairs     <- repo.countPairsOwnedBy(userId).orDie
+      pairWarning    <- pairQuota(ownedPairs, pairs.size * 2)
+      resolved       <- ZIO.foreach(pairs)(resolvePair(_, userId))
+      now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      tagRow         <- repo.createTagWithPairs(userId, valid, normal, now, resolved).orDie
+      wordCount       = resolved.flatMap { case (s, t) => List(s, t) }.toSet.size
+    } yield TagResponse(toTag(tagRow, wordCount.toLong, ownedByMe = true), tagWarning.orElse(pairWarning))
+  }
+
+  /** Resolves one pair's two sides to word ids, failing before any write if an `Existing` side names no word. */
+  private def resolvePair(pair: TagPairInput, userId: Long): IO[WordFailure, (Long, Long)] = {
+    for {
+      sourceId <- resolveWord(pair.source, userId)
+      targetId <- resolveWord(pair.target, userId)
+    } yield (sourceId, targetId)
+  }
+
+  private def resolveWord(ref: TagPairWord, userId: Long): IO[WordFailure, Long] = {
+    ref match {
+      case TagPairWord.Existing(id)                              => repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound).map(_.id)
+      case TagPairWord.New(language, text, partOfSpeech, gender) =>
+        ensure(language, text, partOfSpeech, gender, userId).map(_.id)
+    }
   }
 
   /** A snapshot copy: every word the source tag carries and every practice pair marked inside it travel into the new

@@ -871,6 +871,42 @@ object UiKeys {
   val originForm: String       = key(originPrefix + "form")
   val originUser: String       = key(originPrefix + "user")
 
+  // -- Tag creation ----------------------------------------------------------------------------
+  // The dedicated page that builds a tag as an ordered list of bilingual pairs. See `TagCreatePage`.
+
+  val tagsCreate: String          = key("ui.tags.create")
+  val tagsName: String            = key("ui.tags.name")
+  val tagsNamePlaceholder: String = key("ui.tags.namePlaceholder")
+
+  /** Resting text in the source/target word inputs, `{0}` being the language's endonym (never translated). */
+  val tagsSourcePlaceholder: String = key("ui.tags.sourcePlaceholder")
+  val tagsTargetPlaceholder: String = key("ui.tags.targetPlaceholder")
+
+  /** Heading above the two columns of pairs the reader has assembled so far. */
+  val tagsPairs: String = key("ui.tags.pairs")
+
+  /** Grammar of a word the reader types that is not in the dictionary: one shared selector above the inputs, not a
+    * per-word popup.
+    */
+  val tagsPartOfSpeech: String = key("ui.tags.partOfSpeech")
+
+  /** Marked on an autocomplete row whose word is already in the dictionary — the normal case, since this page adds
+    * existing words to a tag rather than creating them.
+    */
+  val tagsInDictionary: String = key("ui.tags.inDictionary")
+
+  /** Marked on the autocomplete row that creates the typed text as a brand-new word. */
+  val tagsNewWord: String = key("ui.tags.newWord")
+
+  /** Accessible label for a pair's remove button. */
+  val tagsRemovePair: String = key("ui.tags.removePair")
+
+  /** Save is blocked until the reader has added at least one pair; `{0}` is the tag name. */
+  val tagsEmptyPairs: String = key("ui.tags.emptyPairs")
+
+  /** Confirmation shown after the tag is saved, `{0}` being the tag name. */
+  val tagsSaved: String = key("ui.tags.saved")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // The banner a visitor who has tagged something sees, and the two ways out of it: a transfer code
   // for another machine, or a real account.

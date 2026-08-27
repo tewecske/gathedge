@@ -8,6 +8,7 @@ import gathedge.shared.dto.{
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
   CreateTagRequest,
+  CreateTagWithPairsRequest,
   CreateWordRequest,
   PairSelectionResponse,
   RenameTagRequest,
@@ -161,6 +162,25 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
   }
 
+  /** Creates a tag together with every bilingual pair the reader assembled on the tag-creation page, as one write.
+    *
+    * Differs from [[createTag]] (which makes an empty tag) and from calling [[selectPair]] once per pair in three ways
+    * a caller cannot see from the status alone: it checks the tag quota and the pair quota *together, before any
+    * write*, so a request that would cross a hard threshold writes nothing rather than leaving a half-built tag; it
+    * accepts a pair whose either side is a brand-new word (`TagPairWord.New`), creating that word on the fly; and it
+    * stores a pair with no requirement that a `word_translations` edge already link the two — the reader may pair any
+    * two words they chose. 404 is a `TagPairWord.Existing` naming no word; 409 covers the same two cases
+    * [[createTag]]'s does (a name the account already has, case-insensitively, and the tag limit) plus the pair limit,
+    * distinguished the same way by `error.key`.
+    */
+  val createTagWithPairs = {
+    Endpoint(Method.POST / "api" / "tags" / "with-pairs")
+      .in[CreateTagWithPairsRequest]
+      .withCodecError
+      .out[TagResponse](Status.Created)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
   /** Renames one of the caller's own tags. Follows [[createTag]]'s own rules for the name itself — 400 for blank, over
     * width, or reserved; 409 for a name the caller already has on a *different* tag of theirs, compared case-
     * insensitively — and 404 for a tag that is not theirs, the same as every other tag-scoped write here.
@@ -292,6 +312,7 @@ object WordEndpoints {
       removeTranslation,
       listTags,
       createTag,
+      createTagWithPairs,
       renameTag,
       deleteTag,
       copyTag,

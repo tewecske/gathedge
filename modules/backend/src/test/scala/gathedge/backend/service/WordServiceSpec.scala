@@ -11,6 +11,8 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
   Paging,
+  TagPairInput,
+  TagPairWord,
   TaggedPair,
   WordSort,
 }
@@ -81,6 +83,13 @@ object WordServiceSpec extends ZIOSpecDefault {
   private def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Tag] = {
     WordService.copyTag(tagId, userId).map(_.tag)
   }
+
+  private def createTagWithPairs(
+    name: String,
+    pairs: List[TagPairInput],
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Tag] =
+    WordService.createTagWithPairs(name, pairs, userId).map(_.tag)
 
   /** A dictionary row, as the importer would write it: no author, and a rank that decides where it lands in a search.
     */
@@ -1403,10 +1412,81 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  private def tagCreationSpec = {
+    suite("tag creation with pairs")(
+      test("creates a tag and records both-direction pairs for existing words") {
+        for {
+          _     <- seed
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
+          tag   <- createTagWithPairs(
+                     "lesson1",
+                     List(TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id))),
+                     1L,
+                   )
+          pairs <- WordRepository.countPairsOwnedBy(1L)
+          words <- WordRepository.countWordsInTag(tag.id)
+        } yield assertTrue(
+          tag.name == "lesson1",
+          tag.ownedByMe,
+          pairs == 2L,
+          words == 2L,
+        )
+      },
+      test("a missing Existing word id is NotFound and writes nothing") {
+        for {
+          before <- WordRepository.countTagsOwnedBy(1L)
+          result <- WordService
+                      .createTagWithPairs(
+                        "lesson1",
+                        List(TagPairInput(TagPairWord.Existing(9999L), TagPairWord.Existing(9999L))),
+                        1L,
+                      )
+                      .either
+          after  <- WordRepository.countTagsOwnedBy(1L)
+        } yield assertTrue(
+          result == Left(WordFailure.NotFound),
+          before == after,
+        )
+      },
+      test("a duplicate name is a DuplicateTag") {
+        for {
+          _     <- createTagWithPairs("lesson1", Nil, 1L)
+          clash <- WordService.createTagWithPairs("Lesson1", Nil, 1L).either
+        } yield assertTrue(clash == Left(WordFailure.DuplicateTag))
+      },
+      test("ensures a brand-new word on the fly and pairs it both ways") {
+        for {
+          tag   <- createTagWithPairs(
+                     "lesson1",
+                     List(
+                       TagPairInput(
+                         TagPairWord.New(WordLanguage.De, "Hund", PartOfSpeech.Noun, Some(Gender.Der)),
+                         TagPairWord.New(WordLanguage.Hu, "kutya", PartOfSpeech.Noun, None),
+                       )
+                     ),
+                     1L,
+                   )
+          found <- WordRepository.findWord(
+                     WordLanguage.code(WordLanguage.De),
+                     "hund",
+                     PartOfSpeech.code(PartOfSpeech.Noun),
+                     Gender.toColumn(Some(Gender.Der)),
+                   )
+        } yield assertTrue(
+          tag.name == "lesson1",
+          found.isDefined,
+          found.exists(_.text == "Hund"),
+        )
+      },
+    ).provide(layer)
+  }
+
   def spec = {
     suite("WordService (SQLite)")(
       coreSpec,
       quotaSpec,
+      tagCreationSpec,
       bulkUploadSpec,
       suggestionsSpec,
       wordFormsSpec,

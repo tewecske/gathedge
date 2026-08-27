@@ -3,6 +3,7 @@ project/target/
 project/project/
 data/
 node_modules/
+web/node_modules
 web/dist/
 # Copied from node_modules by web/scripts/copy-tesseract-assets.mjs (predev/prebuild) — see
 # web/public/tesseract/lang/README.md for the language-data files, which are committed.

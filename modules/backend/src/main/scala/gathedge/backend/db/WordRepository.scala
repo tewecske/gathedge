@@ -110,6 +110,18 @@ trait WordRepository {
   def findTagById(id: Long): Task[Option[TagRow]]
   def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): Task[TagRow]
 
+  /** One unit of work: seeds `name`/`nameNorm` as a new tag owned by `userId` and writes every resolved pair into it —
+    * the tag row and its `word_tags`/`word_tag_pairs` rows in a single transaction, so the pair rows' foreign keys see
+    * the new tag and a failure writes nothing. `pairs` are already-resolved `(wordId, translationWordId)` pairs.
+    */
+  def createTagWithPairs(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    pairs: List[(Long, Long)],
+  ): Task[TagRow]
+
   /** Renames `id`, scoped to `userId` the same way [[deleteTag]] is — a row count of `0` means either the tag does not
     * exist or it is not the caller's, which `WordService.renameTag` cannot tell apart and does not need to.
     */
@@ -370,6 +382,15 @@ object WordRepository {
 
   def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): RIO[WordRepository, TagRow] =
     ZIO.serviceWithZIO[WordRepository](_.insertTag(userId, name, nameNorm, createdAt))
+
+  def createTagWithPairs(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    pairs: List[(Long, Long)],
+  ): RIO[WordRepository, TagRow] =
+    ZIO.serviceWithZIO[WordRepository](_.createTagWithPairs(userId, name, nameNorm, createdAt, pairs))
 
   def updateTag(id: Long, userId: Long, name: String, nameNorm: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.updateTag(id, userId, name, nameNorm))
@@ -992,18 +1013,54 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
+  /** The four rows a bilingual pair adds inside one tag, in both directions, each inserted only if it is not already
+    * there. A `ZIO[DataSource, …]` so both [[pairTranslation]] and [[createTagWithPairs]] can run it inside their own
+    * transaction.
+    */
+  private def linkPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+  ): ZIO[DataSource, Throwable, Unit] = {
+    for {
+      _ <- linkOnce(wordId, tagId, createdAt)
+      _ <- linkOnce(translationWordId, tagId, createdAt)
+      _ <- pairOnce(wordId, tagId, translationWordId, createdAt)
+      _ <- pairOnce(translationWordId, tagId, wordId, createdAt)
+    } yield ()
+  }
+
   def pairTranslation(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit] = {
     // Four writes or none. A pair whose answer is not itself in the tag is a question the reader could never have
     // collected the answer to, and a half-recorded pair would be answerable one way round and not the other.
-    val marked = transaction(
-      for {
-        _ <- linkOnce(wordId, tagId, createdAt)
-        _ <- linkOnce(translationWordId, tagId, createdAt)
-        _ <- pairOnce(wordId, tagId, translationWordId, createdAt)
-        _ <- pairOnce(translationWordId, tagId, wordId, createdAt)
-      } yield ()
-    )
+    val marked = transaction(linkPair(wordId, tagId, translationWordId, createdAt))
     logged(marked)(_ => s"wordTagPairs.pair word=$wordId tag=$tagId translation=$translationWordId")
+  }
+
+  /** Seeds the tag and its pairs in one transaction. Inserting the tag and then calling [[pairTranslation]] would leave
+    * the tag on a connection whose commit the pair rows cannot see, so the pair rows' `tag_id` foreign key would fail —
+    * the whole tag-creation write has to be a single unit of work.
+    */
+  def createTagWithPairs(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    pairs: List[(Long, Long)],
+  ): Task[TagRow] = {
+    val row     = TagRow(0L, userId, name, nameNorm, createdAt)
+    val written = transaction(
+      for {
+        id <- ctx.run(quote(tags.insertValue(lift(row)).returningGenerated(_.id)))
+        _  <- ZIO.foreach(pairs) { case (sourceId, targetId) =>
+                linkPair(sourceId, id, targetId, createdAt)
+              }
+      } yield id
+    )
+    logged(written.map(id => row.copy(id = id))) { tag =>
+      s"tags.createWithPairs id=${tag.id} user=$userId pairs=${pairs.size}"
+    }
   }
 
   def unpairTranslation(wordId: Long, tagId: Long, translationWordId: Long): Task[Long] = {

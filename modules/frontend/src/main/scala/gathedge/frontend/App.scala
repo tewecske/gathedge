@@ -30,6 +30,7 @@ import gathedge.frontend.pages.{
   ResetPasswordPage,
   SettingsPage,
   SharedPlayerHistoryPage,
+  TagCreatePage,
   SharedProgressPage,
   SignInPage,
   SignUpPage,
@@ -377,6 +378,8 @@ object App {
         AboutPage.render()
       case Page.Settings                                  =>
         SettingsPage.render()
+      case Page.TagCreate                                 =>
+        TagCreatePage.render()
       case Page.Games                                     =>
         GamesPage.render()
       case Page.GameSetup                                 =>

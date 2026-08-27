@@ -18,6 +18,10 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
+  /** Builds a tag as an ordered list of bilingual pairs. Account-scoped, so it falls under the default `RequireAuth`.
+    */
+  case object TagCreate extends Page
+
   /** The catalog of game types. Public, like [[Words]]: a shared game link should show the catalog without bouncing a
     * signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
     */
@@ -222,6 +226,7 @@ object AppRouter {
   private val signUpRoute              = Route.static(SignUp, root / "sign-up", basePath)
   private val aboutRoute               = Route.static(About, root / "about", basePath)
   private val settingsRoute            = Route.static(Settings, root / "settings", basePath)
+  private val tagCreateRoute           = Route.static(TagCreate, root / "tags" / "new", basePath)
   private val gamesRoute               = Route.static(Games, root, basePath)
   private val gameSetupRoute           = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
   private val sharedProgressRoute      = Route.static(SharedProgress, root / "games" / "shared", basePath)
@@ -399,6 +404,8 @@ object AppRouter {
         "About"
       case Settings                  =>
         "Settings"
+      case TagCreate                 =>
+        "TagCreate"
       case Games                     =>
         "Games"
       case GameSetup                 =>
@@ -563,6 +570,8 @@ object AppRouter {
           About
         case "Settings"        =>
           Settings
+        case "TagCreate"       =>
+          TagCreate
         case "Games"           =>
           Games
         case "GameSetup"       =>
@@ -611,6 +620,7 @@ object AppRouter {
         signUpRoute,
         aboutRoute,
         settingsRoute,
+        tagCreateRoute,
         gamesRoute,
         gameSetupRoute,
         sharedProgressRoute,

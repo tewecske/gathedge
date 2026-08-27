@@ -588,6 +588,16 @@
   "ui.origin.pivot": "via English",
   "ui.origin.form": "via its main word",
   "ui.origin.user": "added by a user",
+  "ui.tags.create": "New tag",
+  "ui.tags.name": "Name",
+  "ui.tags.namePlaceholder": "lesson1",
+  "ui.tags.sourcePlaceholder": "Type a {0} word",
+  "ui.tags.targetPlaceholder": "Type a {0} word",
+  "ui.tags.pairs": "Pairs",
+  "ui.tags.partOfSpeech": "Part of speech",
+  "ui.tags.removePair": "Remove pair",
+  "ui.tags.emptyPairs": "Add at least one pair before saving {0}.",
+  "ui.tags.saved": "Tag {0} saved.",
   "ui.guest.bannerTitle": "Your words are saved on this device",
   "ui.guest.bannerHint": "Take a transfer code to use them elsewhere, or create an account.",
   "ui.guest.getCode": "Get a transfer code",
@@ -816,5 +826,7 @@
   "ui.groups.memberCount.one": "{0} member",
   "ui.groups.memberCount.other": "{0} members",
   "ui.groups.tagCount.one": "{0} tag",
-  "ui.groups.tagCount.other": "{0} tags"
+  "ui.groups.tagCount.other": "{0} tags",
+  "ui.tags.inDictionary": "in dictionary",
+  "ui.tags.newWord": "new"
 }

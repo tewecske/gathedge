@@ -588,6 +588,16 @@
   "ui.origin.pivot": "angolon át",
   "ui.origin.form": "a szótövön át",
   "ui.origin.user": "felhasználói",
+  "ui.tags.create": "Új címke",
+  "ui.tags.name": "Név",
+  "ui.tags.namePlaceholder": "lecke1",
+  "ui.tags.sourcePlaceholder": "Írj be egy {0} szót",
+  "ui.tags.targetPlaceholder": "Írj be egy {0} szót",
+  "ui.tags.pairs": "Párok",
+  "ui.tags.partOfSpeech": "Szófaj",
+  "ui.tags.removePair": "Pár eltávolítása",
+  "ui.tags.emptyPairs": "Adj hozzá legalább egy párt mentés előtt: {0}.",
+  "ui.tags.saved": "A(z) {0} címke mentve.",
   "ui.guest.bannerTitle": "A szavaid ezen az eszközön vannak elmentve",
   "ui.guest.bannerHint": "Kérj átviteli kódot, hogy máshol is használhasd őket, vagy hozz létre fiókot.",
   "ui.guest.getCode": "Átviteli kód kérése",
@@ -816,5 +826,7 @@
   "ui.groups.memberCount.one": "{0} tag",
   "ui.groups.memberCount.other": "{0} tag",
   "ui.groups.tagCount.one": "{0} címke",
-  "ui.groups.tagCount.other": "{0} címke"
+  "ui.groups.tagCount.other": "{0} címke",
+  "ui.tags.inDictionary": "a szótárban",
+  "ui.tags.newWord": "új"
 }

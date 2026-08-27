@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
   BulkUploadPreviewRequest,
   CreateTagRequest,
+  CreateTagWithPairsRequest,
   CreateWordRequest,
   Paging,
   RenameTagRequest,
@@ -140,6 +141,14 @@ object WordRoutes {
     )
   }
 
+  private val createTagWithPairsRoute = {
+    WordEndpoints.createTagWithPairs.implementHandler(
+      handler { (body: CreateTagWithPairsRequest) =>
+        userId.flatMap(id => WordService.createTagWithPairs(body.name, body.pairs, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   private val renameTagRoute = {
     WordEndpoints.renameTag.implementHandler(
       handler { (tagId: Long, body: RenameTagRequest) =>
@@ -241,6 +250,7 @@ object WordRoutes {
       renameTagRoute,
       deleteTagRoute,
       copyTagRoute,
+      createTagWithPairsRoute,
       tagWordRoute,
       untagWordRoute,
       selectPairRoute,
