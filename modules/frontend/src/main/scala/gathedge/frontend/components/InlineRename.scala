@@ -6,14 +6,13 @@ import gathedge.frontend.i18n.I18n
 import gathedge.shared.i18n.UiKeys
 
 /** The "click a pencil, edit a name inline, Save/Cancel" state machine and its whole title row, extracted from
-  * `GameInstancePage`'s quiz rename and reused by `TagDetailPage`'s tag rename — an editing flag, the text being
-  * typed, in-flight/error state, and the async submit wired through `flatMapSwitch` so a second Enter cannot race the
-  * first.
+  * `GameInstancePage`'s quiz rename and reused by `TagDetailPage`'s tag rename — an editing flag, the text being typed,
+  * in-flight/error state, and the async submit wired through `flatMapSwitch` so a second Enter cannot race the first.
   *
-  * What differs between callers — what gets renamed, what a success looks like, and any extra chrome beside the name
-  * (a results link, a delete icon) — stays with the page, threaded through [[renderTitle]]'s parameters. Both callers
-  * reach this page only once its subject is known to exist, so [[renderTitle]] never branches on whether there is
-  * one: `nameSignal` is always meaningful, even if briefly empty before the first load lands.
+  * What differs between callers — what gets renamed, what a success looks like, and any extra chrome beside the name (a
+  * results link, a delete icon) — stays with the page, threaded through [[renderTitle]]'s parameters. Both callers
+  * reach this page only once its subject is known to exist, so [[renderTitle]] never branches on whether there is one:
+  * `nameSignal` is always meaningful, even if briefly empty before the first load lands.
   *
   * @param submit
   *   the rename call itself, e.g. `text => GameApiClient.rename(slug, text)`. By-name per call, not stored, so it can
@@ -59,9 +58,9 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
   }
 
   /** The whole title: an `h1` swapped, purely on [[editingSignal]], between the name (with a pencil and whatever else
-    * the page passes as `extra`) and the inline edit form. Each item in `extra` is responsible for its own
-    * visibility — `GameInstancePage`'s results link and `TagDetailPage`'s delete icon each gate on a different
-    * condition, so this does not attempt to share one.
+    * the page passes as `extra`) and the inline edit form. Each item in `extra` is responsible for its own visibility —
+    * `GameInstancePage`'s results link and `TagDetailPage`'s delete icon each gate on a different condition, so this
+    * does not attempt to share one.
     *
     * @param canEdit
     *   whether the pencil is offered at all — `TagDetailPage` gates it on `tag.ownedByMe`, `GameInstancePage` on its
@@ -76,7 +75,7 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
     editLabel: String,
     formLabel: String,
     inputCls: String = "input input-sm",
-    extra: Modifier[HtmlElement]*,
+    extra: Modifier[HtmlElement]*
   ): HtmlElement = {
     h1(
       cls := "card-title text-2xl",
@@ -130,14 +129,14 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
           onKeyDown.filter(_.key == "Escape").mapToUnit --> Observer[Unit](_ => cancel()),
         ),
         button(
-          cls      := "btn btn-sm btn-primary",
-          typ      := "submit",
+          cls         := "btn btn-sm btn-primary",
+          typ         := "submit",
           disabled <-- submittingVar.signal,
           I18n.t(UiKeys.commonSave),
         ),
         button(
-          cls      := "btn btn-sm btn-ghost",
-          typ      := "button",
+          cls         := "btn btn-sm btn-ghost",
+          typ         := "button",
           disabled <-- submittingVar.signal,
           I18n.t(UiKeys.commonCancel),
           onClick.mapToUnit --> Observer[Unit](_ => cancel()),
@@ -150,8 +149,8 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
 
 object InlineRename {
 
-  /** The pencil [[renderTitle]] itself renders, and the shape `TagDetailPage`'s delete icon matches via
-    * [[iconButton]] so the two sit next to each other looking like one family of controls.
+  /** The pencil [[renderTitle]] itself renders, and the shape `TagDetailPage`'s delete icon matches via [[iconButton]]
+    * so the two sit next to each other looking like one family of controls.
     */
   def pencilMark(): SvgElement = {
     svg.svg(

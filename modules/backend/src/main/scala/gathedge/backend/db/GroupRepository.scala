@@ -34,8 +34,8 @@ trait GroupRepository {
   /** Rotates the group's invite code; the old one stops resolving the moment this returns. */
   def updateInviteCode(id: Long, code: String): Task[Unit]
 
-  /** Renames the group. `nameNorm` is [[gathedge.shared.domain.Group.normalize]]'d for sorted/case-insensitive
-    * listing, the same split `insertGroup` keeps between `name` and `nameNorm`.
+  /** Renames the group. `nameNorm` is [[gathedge.shared.domain.Group.normalize]]'d for sorted/case-insensitive listing,
+    * the same split `insertGroup` keeps between `name` and `nameNorm`.
     */
   def updateGroupName(id: Long, name: String, nameNorm: String): Task[Unit]
 

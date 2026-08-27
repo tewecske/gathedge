@@ -33,8 +33,8 @@ private class TagsPage {
   private def sections(tags: List[Tag]): List[(Option[GroupRef], List[Tag])] = {
     val editable         = tags.filter(_.editableByMe)
     val (mine, byOthers) = editable.partition(_.ownedByMe)
-    val mineSection       = Option.when(mine.nonEmpty)(None -> mine.sortBy(_.name.toLowerCase))
-    val groupSections      = byOthers
+    val mineSection      = Option.when(mine.nonEmpty)(None -> mine.sortBy(_.name.toLowerCase))
+    val groupSections    = byOthers
       .groupBy(_.group)
       .toList
       .sortBy { case (group, _) => group.map(_.name.toLowerCase).getOrElse("") }
@@ -50,7 +50,7 @@ private class TagsPage {
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          h1(cls  := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
+          h1(cls := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
           renderList(),
         ),
       ),
@@ -68,7 +68,9 @@ private class TagsPage {
   private def renderList(): HtmlElement = {
     div(
       child.maybe <--
-        tagsVar.signal.map(sections).map(list => Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsListEmpty)))),
+        tagsVar.signal
+          .map(sections)
+          .map(list => Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsListEmpty)))),
       div(
         cls := "overflow-x-auto",
         table(

@@ -479,7 +479,7 @@ final class WordCollect(
             button(cls := "btn btn-sm", typ := "submit", I18n.t(UiKeys.commonAdd)),
           ),
           a(
-            cls := "btn btn-sm btn-ghost",
+            cls        := "btn btn-sm btn-ghost",
             AppRouter.router.navigateTo(Page.Tags),
             I18n.t(UiKeys.wordsTagsListButton),
           ),

@@ -522,11 +522,11 @@ object ApiFailures {
     failure match {
       case GroupFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
-      case GroupFailure.NotFound                      =>
+      case GroupFailure.NotFound                     =>
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
-      case GroupFailure.NotAdmin                      =>
+      case GroupFailure.NotAdmin                     =>
         ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotAdmin), "You must be an admin of this group")
-      case _                                          =>
+      case _                                         =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
     }

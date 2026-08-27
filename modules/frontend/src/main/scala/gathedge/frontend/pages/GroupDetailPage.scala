@@ -59,7 +59,8 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private val nameSignal: Signal[String] = detailVar.signal.map(_.map(_.name).getOrElse("")).distinct
 
-  private val isAdminSignal: Signal[Boolean] = detailVar.signal.map(_.exists(_.viewerRole.contains(GroupRole.Admin))).distinct
+  private val isAdminSignal: Signal[Boolean] =
+    detailVar.signal.map(_.exists(_.viewerRole.contains(GroupRole.Admin))).distinct
 
   private val reloadBus       = new EventBus[Unit]()
   private val leaveBus        = new EventBus[Unit]()

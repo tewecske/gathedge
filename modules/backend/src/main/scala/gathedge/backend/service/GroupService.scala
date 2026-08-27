@@ -234,13 +234,13 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
 
   def renameGroup(groupId: Long, name: String, userId: Long): IO[GroupFailure, GroupDetail] = {
     for {
-      _              <- requireAdmin(groupId, userId)
-      valid          <- ZIO
-                          .fromEither(Validation.validateGroupName(name))
-                          .mapError(error => GroupFailure.ValidationError(Map("name" -> error)))
-      normal          = Group.normalize(valid)
-      _              <- repo.updateGroupName(groupId, valid, normal).orDie
-      result         <- detail(groupId, userId)
+      _      <- requireAdmin(groupId, userId)
+      valid  <- ZIO
+                  .fromEither(Validation.validateGroupName(name))
+                  .mapError(error => GroupFailure.ValidationError(Map("name" -> error)))
+      normal  = Group.normalize(valid)
+      _      <- repo.updateGroupName(groupId, valid, normal).orDie
+      result <- detail(groupId, userId)
     } yield result
   }
 

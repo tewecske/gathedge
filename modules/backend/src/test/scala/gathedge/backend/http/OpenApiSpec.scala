@@ -372,6 +372,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/groups")                                                      -> Set(Ok, Unauthorized),
               ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
+              // Admin-only, hence the 403; follows `create`'s own name validation, hence the 400.
+              ("PUT", "/api/groups/{groupId}")                                            ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               // 404 covers an unknown or rotated invite code alike, so the code space cannot be probed; 429 is the
               // caller's own groupJoin rate-limit budget.
               ("POST", "/api/groups/join")                                                -> Set(NoContent, BadRequest, Unauthorized, NotFound, TooManyRequests),
@@ -401,8 +404,9 @@ object OpenApiSpec extends ZIOSpecDefault {
       },
       // The uniform set this started from put all seven failure statuses on every operation. Describing each
       // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 236 across 60 operations (234 before groupJoin/shareRedeem got their own rate-limit budgets;
-      // 198 across 50 before shareable tag groups added its ten). (It was 136 across 44 while the Todo and Group example features were
+      // the count below: 240 across 61 operations (236 across 60 before renameGroup; 234 before groupJoin/shareRedeem
+      // got their own rate-limit budgets; 198 across 50 before shareable tag groups added its ten). (It was 136
+      // across 44 while the Todo and Group example features were
       // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
       // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
       // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
@@ -419,7 +423,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 236,
+          declared == 240,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -440,8 +444,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // requested sharer.
               ("GET", "/api/progress-shares/{sharerUserId}/plays"),
               // `GroupService`'s own admin/membership/ownership refusals — not being an admin of the group
-              // (regenerate/setMemberRole/removeMember), not a member of it or not owning the tag (attachTag), or
-              // being neither the tag's owner nor an admin of its group (detachTag).
+              // (rename/regenerate/setMemberRole/removeMember), not a member of it or not owning the tag (attachTag),
+              // or being neither the tag's owner nor an admin of its group (detachTag).
+              ("PUT", "/api/groups/{groupId}"),
               ("POST", "/api/groups/{groupId}/invite-code/regenerate"),
               ("PUT", "/api/groups/{groupId}/members/{userId}/role"),
               ("DELETE", "/api/groups/{groupId}/members/{userId}"),
