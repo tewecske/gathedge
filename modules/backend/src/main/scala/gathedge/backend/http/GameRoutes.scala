@@ -82,8 +82,8 @@ object GameRoutes {
     )
   }
 
-  private val mineRoute = {
-    GameEndpoints.mine.implementHandler(
+  private val allGamesRoute = {
+    GameEndpoints.allGames.implementHandler(
       handler {
         (
           page: Option[Int],
@@ -92,9 +92,8 @@ object GameRoutes {
           dir: Option[String],
           q: Option[String],
         ) =>
-          userId.flatMap { id =>
-            GameService.myGames(
-              id,
+          userId.flatMap { _ =>
+            GameService.allGames(
               searchTerm(q),
               Paging.boundedPage(page),
               Paging.boundedPageSize(pageSize),
@@ -251,7 +250,7 @@ object GameRoutes {
     Routes(
       setupRoute,
       setupWordsRoute,
-      mineRoute,
+      allGamesRoute,
       myPlaysRoute,
       createRoute,
       renameRoute,

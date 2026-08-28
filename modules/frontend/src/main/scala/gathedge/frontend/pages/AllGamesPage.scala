@@ -5,30 +5,30 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.listing.MyGameQuery
-import gathedge.shared.dto.{MyGamePage, MyGameSort, MyGameSummary}
+import gathedge.frontend.listing.AllGameQuery
+import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary}
 import gathedge.shared.i18n.UiKeys
 
-/** The signed-in owner's own games: name, tags, language pair, how many times each was played, and when it was created
-  * — see `GameService.myGames`.
+/** Every account's games: name, tags, language pair, how many times each was played, and when it was created — see
+  * `GameService.allGames`.
   *
   * Built to the same shape as `GameResultsPage`/`MyPlayHistoryPage`: a card table with sortable headings, a filter box
   * (here a substring of the game's name), and server-side paging. It carries its whole listing state in the URL, so it
-  * takes a `Signal[MyGameQuery]` and an `Observer[MyGameQuery]` the same way those pages do; `App` supplies both. There
-  * is no per-row detail modal — a game's own page is one click away on its name.
+  * takes a `Signal[AllGameQuery]` and an `Observer[AllGameQuery]` the same way those pages do; `App` supplies both.
+  * There is no per-row detail modal — a game's own page is one click away on its name.
   */
-object MyGamesPage {
+object AllGamesPage {
 
-  def render(query: Signal[MyGameQuery], onQuery: Observer[MyGameQuery]): HtmlElement = {
-    AppShell.render(Page.MyGames(), new MyGamesPage(query, onQuery).render())
+  def render(query: Signal[AllGameQuery], onQuery: Observer[AllGameQuery]): HtmlElement = {
+    AppShell.render(Page.AllGames(), new AllGamesPage(query, onQuery).render())
   }
 }
 
-private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGameQuery]) {
+private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[AllGameQuery]) {
 
   private val querySignal = pageQuery.distinct
 
-  private val gamesVar    = Var(List.empty[MyGameSummary])
+  private val gamesVar    = Var(List.empty[AllGameSummary])
   private val gamesSignal = gamesVar.signal
 
   private val totalVar    = Var(0L)
@@ -38,9 +38,9 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
   private val pageSignal     = querySignal.map(_.page).distinct
   private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
-  private val changeBus = new EventBus[MyGameQuery => MyGameQuery]()
+  private val changeBus = new EventBus[AllGameQuery => AllGameQuery]()
 
-  private def change(edit: MyGameQuery => MyGameQuery): Unit = changeBus.emit(edit)
+  private def change(edit: AllGameQuery => AllGameQuery): Unit = changeBus.emit(edit)
 
   // Same write-follows-the-query trick as `GameResultsPage`/`MyPlayHistoryPage` — the box cannot be a plain two-way
   // binding on the query itself.
@@ -60,7 +60,7 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
     div(
       div(
         cls := "mb-4",
-        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.myGamesTitle)),
+        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.allGamesTitle)),
       ),
       Alert.maybeError(errorVar.signal),
       renderSearch(),
@@ -77,16 +77,16 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
       changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
       querySignal.map(_.search).distinct --> searchInputVar.writer,
       searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->
-        Observer[(String, MyGameQuery)] { case (typed, current) =>
+        Observer[(String, AllGameQuery)] { case (typed, current) =>
           val wanted = typed.trim
           if (wanted != current.search) {
             change(_.reset(_.copy(search = wanted)))
           }
         },
       listRequests -->
-        Observer[MyGameQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
+        Observer[AllGameQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
       listRequests.flatMapSwitch(load) -->
-        Observer[Either[ApiError, MyGamePage]] {
+        Observer[Either[ApiError, AllGamePage]] {
           case Right(result) =>
             Var.set(
               gamesVar   -> result.items,
@@ -101,8 +101,8 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
     )
   }
 
-  private def load(query: MyGameQuery): EventStream[Either[ApiError, MyGamePage]] = {
-    GameApiClient.myGames(
+  private def load(query: AllGameQuery): EventStream[Either[ApiError, AllGamePage]] = {
+    GameApiClient.allGames(
       page = Some(query.page),
       pageSize = Some(query.pageSize),
       sort = query.sort.column,
@@ -113,9 +113,9 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
 
   private def summaryOf(total: Long): String = {
     if (total <= 0L)
-      I18n.t(UiKeys.myGamesEmpty)
+      I18n.t(UiKeys.allGamesEmpty)
     else
-      I18n.plural(UiKeys.myGamesCount, total)
+      I18n.plural(UiKeys.allGamesCount, total)
   }
 
   private def renderSearch(): HtmlElement = {
@@ -123,11 +123,11 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
       cls := "flex flex-wrap items-end gap-2 mb-4",
       label(
         cls := "form-control",
-        span(cls      := "label-text text-xs", I18n.t(UiKeys.myGamesFilterLabel)),
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.allGamesFilterLabel)),
         input(
           cls         := "input input-sm",
           typ         := "search",
-          placeholder := I18n.t(UiKeys.myGamesFilterPlaceholder),
+          placeholder := I18n.t(UiKeys.allGamesFilterPlaceholder),
           controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
           onInput.mapToValue --> searchTypedBus.writer,
         ),
@@ -144,13 +144,13 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
         cls := "table",
         thead(
           tr(
-            SortHeader.render(I18n.t(UiKeys.myGamesNameCol), MyGameSort.name, sortSignal, onSort),
-            // Tags, the language pair and the play count are filterable/readable but not sortable — see `MyGameSort`.
-            th(I18n.t(UiKeys.myGamesTagsCol)),
-            th(I18n.t(UiKeys.myGamesSourceCol)),
-            th(I18n.t(UiKeys.myGamesTargetCol)),
-            th(I18n.t(UiKeys.myGamesPlaysCol)),
-            SortHeader.render(I18n.t(UiKeys.myGamesCreatedCol), MyGameSort.createdAt, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.allGamesNameCol), AllGameSort.name, sortSignal, onSort),
+            // Tags, the language pair and the play count are filterable/readable but not sortable — see `AllGameSort`.
+            th(I18n.t(UiKeys.allGamesTagsCol)),
+            th(I18n.t(UiKeys.allGamesSourceCol)),
+            th(I18n.t(UiKeys.allGamesTargetCol)),
+            th(I18n.t(UiKeys.allGamesPlaysCol)),
+            SortHeader.render(I18n.t(UiKeys.allGamesCreatedCol), AllGameSort.createdAt, sortSignal, onSort),
           )
         ),
         tbody(
@@ -161,7 +161,7 @@ private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGa
     )
   }
 
-  private def renderRow(game: MyGameSummary): HtmlElement = {
+  private def renderRow(game: AllGameSummary): HtmlElement = {
     tr(
       cls := "hover",
       td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(game.slug)), game.name)),

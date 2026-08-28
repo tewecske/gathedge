@@ -2,6 +2,7 @@ package gathedge.shared.api
 
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
+  AllGamePage,
   CreateGameRequest,
   GameCreated,
   GameDetail,
@@ -10,7 +11,6 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
-  MyGamePage,
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
@@ -76,19 +76,19 @@ object GameEndpoints {
       .outFailure(failure.unauthorized)
   }
 
-  /** The caller's own games, one page at a time, most recently created first unless `sort` says otherwise — see
-    * `GameService.myGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
-    * `dto.MyGameSort`, and `q` is a case-insensitive substring of the game's name.
+  /** Every account's games, one page at a time, most recently created first unless `sort` says otherwise — see
+    * `GameService.allGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
+    * `dto.AllGameSort`, and `q` is a case-insensitive substring of the game's name.
     */
-  val mine = {
-    Endpoint(Method.GET / "api" / "games" / "mine")
+  val allGames = {
+    Endpoint(Method.GET / "api" / "games" / "all")
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
       .query(dirQuery)
       .query(searchQuery)
       .withCodecError
-      .out[MyGamePage]
+      .out[AllGamePage]
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
@@ -212,7 +212,7 @@ object GameEndpoints {
   val all: List[Endpoint[?, ?, ?, ?, ?]] = List(
     setup,
     setupWords,
-    mine,
+    allGames,
     myPlays,
     create,
     get,

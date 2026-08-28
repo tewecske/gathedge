@@ -95,7 +95,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games",
               "/api/games/setup",
               "/api/games/setup/words",
-              "/api/games/mine",
+              "/api/games/all",
               "/api/games/plays/mine",
               "/api/games/{slug}",
               "/api/games/{slug}/plays",
@@ -271,9 +271,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The setup screen's word-list preview. A missing/empty tagIds simply answers an empty list, not a
               // 400, so its only failure is the aspect's 401, the same shape as setup.
               ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
-              // The caller's own games, paged/sorted/filtered like the play history — so its only failures are the
+              // Every account's games, paged/sorted/filtered like the play history — so its only failures are the
               // query codec's 400 and the aspect's 401.
-              ("GET", "/api/games/mine")                                                  -> Set(Ok, BadRequest, Unauthorized),
+              ("GET", "/api/games/all")                                                   -> Set(Ok, BadRequest, Unauthorized),
               // The caller's own play history: always the caller's own data, so its only failures are the query
               // codec's 400 and the aspect's 401.
               ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),

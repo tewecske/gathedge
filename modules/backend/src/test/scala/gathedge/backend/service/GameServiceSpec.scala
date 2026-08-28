@@ -209,44 +209,53 @@ object GameServiceSpec extends ZIOSpecDefault {
           found   <- GameService.getBySlug(created.slug)
         } yield assertTrue(found == created)
       },
-      test("myGames answers only the caller's own games, with tag names and play counts") {
+      test("allGames answers every account's games, with tag names and play counts") {
+        // The listing is no longer owner-scoped, so other tests' games share the DB. Both games here carry a unique
+        // token in their name and the assertions filter on it, the same scoping trick the name-filter test uses.
         for {
           owner      <- newUser()
           other      <- newUser()
           ownTagId   <- eligibleTagWithPairs(owner, "mine", WordLanguage.De, WordLanguage.Hu, count = 1)
           otherTagId <- eligibleTagWithPairs(other, "notMine", WordLanguage.De, WordLanguage.Hu, count = 1)
           ownGame    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(ownTagId))
-          _          <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
-          unplayed   <- GameService.myGames(owner, None, 1, 20, None, false)
+          otherGame  <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
+          _          <- GameService.rename(ownGame.slug, "Zzyzx Own", owner)
+          _          <- GameService.rename(otherGame.slug, "Zzyzx Other", other)
+          unplayed   <- GameService.allGames(Some("zzyzx"), 1, 20, None, false)
           firstPlay  <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(firstPlay.playId, "mine", owner)
           secondPlay <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(secondPlay.playId, "mine", owner)
-          played     <- GameService.myGames(owner, None, 1, 20, None, false)
-        } yield assertTrue(
-          // Only the caller's own game comes back — the other account's game (and its tag) is invisible here.
-          unplayed.total == 1L,
-          unplayed.items.map(_.slug) == List(ownGame.slug),
-          unplayed.items.head.tagNames == List("mine"),
-          unplayed.items.head.sourceLanguage == WordLanguage.De,
-          unplayed.items.head.targetLanguage == WordLanguage.Hu,
-          unplayed.items.head.playCount == 0L,
-          played.items.head.playCount == 2L,
-        )
+          played     <- GameService.allGames(Some("zzyzx"), 1, 20, None, false)
+        } yield {
+          val ownRow    = unplayed.items.find(_.slug == ownGame.slug).get
+          val playedOwn = played.items.find(_.slug == ownGame.slug).get
+          assertTrue(
+            // Every account's game comes back now, not just the caller's own.
+            unplayed.total == 2L,
+            unplayed.items.map(_.slug).toSet == Set(ownGame.slug, otherGame.slug),
+            ownRow.tagNames == List("mine"),
+            ownRow.sourceLanguage == WordLanguage.De,
+            ownRow.targetLanguage == WordLanguage.Hu,
+            ownRow.playCount == 0L,
+            playedOwn.playCount == 2L,
+          )
+        }
       },
-      test("myGames narrows to games whose name contains the filter, case-insensitively") {
+      test("allGames narrows to games whose name contains the filter, case-insensitively") {
         for {
           owner <- newUser()
           tagId <- eligibleTagWithPairs(owner, "lesson", WordLanguage.De, WordLanguage.Hu, count = 1)
           gameA <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           gameB <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          _     <- GameService.rename(gameA.slug, "Alpha Quiz", owner)
-          _     <- GameService.rename(gameB.slug, "Beta Quiz", owner)
-          hit   <- GameService.myGames(owner, Some("ALPHA"), 1, 20, None, false)
-          miss  <- GameService.myGames(owner, Some("gamma"), 1, 20, None, false)
+          // A unique token: the listing is not owner-scoped, so another test's "Alpha Quiz" must not collide.
+          _     <- GameService.rename(gameA.slug, "Qwerty Alpha", owner)
+          _     <- GameService.rename(gameB.slug, "Qwerty Beta", owner)
+          hit   <- GameService.allGames(Some("QWERTY ALPHA"), 1, 20, None, false)
+          miss  <- GameService.allGames(Some("qwerty gamma"), 1, 20, None, false)
         } yield assertTrue(
           hit.total == 1L,
-          hit.items.map(_.name) == List("Alpha Quiz"),
+          hit.items.map(_.name) == List("Qwerty Alpha"),
           miss.total == 0L,
         )
       },

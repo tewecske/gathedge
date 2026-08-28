@@ -4,6 +4,7 @@ import com.raquo.laminar.api.L._
 import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
+  AllGamePage,
   CreateGameRequest,
   GameCreated,
   GameDetail,
@@ -12,7 +13,6 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
-  MyGamePage,
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
@@ -46,15 +46,15 @@ object GameApiClient {
     run(executor(GameEndpoints.setupWords(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)), joined)))
   }
 
-  /** The signed-in caller's own games, one page at a time, for the "my games" table. */
-  def myGames(
+  /** Every account's games, one page at a time, for the games table. */
+  def allGames(
     page: Option[Int] = None,
     pageSize: Option[Int] = None,
     sort: Option[String] = None,
     dir: Option[String] = None,
     search: Option[String] = None,
-  ): EventStream[Either[ApiError, MyGamePage]] = {
-    run(executor(GameEndpoints.mine(page, pageSize, sort, dir, search)))
+  ): EventStream[Either[ApiError, AllGamePage]] = {
+    run(executor(GameEndpoints.allGames(page, pageSize, sort, dir, search)))
   }
 
   def create(

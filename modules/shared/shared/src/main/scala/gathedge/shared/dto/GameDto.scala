@@ -100,10 +100,10 @@ final case class GameResults(
   variant: GameVariantDto,
 ) derives JsonCodec
 
-/** One row of `GET /api/games/mine` — the caller's own games, most recently created first. `playCount` is `0` for a
-  * game nobody has played yet, never absent.
+/** One row of `GET /api/games/all` — every account's games, most recently created first. `playCount` is `0` for a game
+  * nobody has played yet, never absent.
   */
-final case class MyGameSummary(
+final case class AllGameSummary(
   slug: String,
   name: String,
   sourceLanguage: WordLanguage,
@@ -113,15 +113,15 @@ final case class MyGameSummary(
   createdAt: Long,
 ) derives JsonCodec
 
-/** One page of the caller's own games. `total` counts what matches the name filter, the same rule [[GamePlayPage]]
+/** One page of every account's games. `total` counts what matches the name filter, the same rule [[GamePlayPage]]
   * follows for its own listing.
   */
-final case class MyGamePage(items: List[MyGameSummary], total: Long) derives JsonCodec
+final case class AllGamePage(items: List[AllGameSummary], total: Long) derives JsonCodec
 
-/** The columns `GET /api/games/mine` will order by. Tags, the language pair and the play count are absent: the play
+/** The columns `GET /api/games/all` will order by. Tags, the language pair and the play count are absent: the play
   * count is an aggregate this listing does not join, and the rest are labels, the same split [[GamePlaySort]] draws.
   */
-object MyGameSort {
+object AllGameSort {
   val name: String      = "name"
   val createdAt: String = "createdAt"
 

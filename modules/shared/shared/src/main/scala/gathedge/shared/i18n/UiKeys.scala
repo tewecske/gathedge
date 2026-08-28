@@ -902,10 +902,10 @@ object UiKeys {
   val gamesVocabQuizBody: String  = key("ui.games.vocabQuiz.body")
   val gamesVocabQuizPlay: String  = key("ui.games.vocabQuiz.play")
 
-  /** The "my games" card on the catalog page — a link to [[myGamesTitle]]'s table, shown only when signed in. */
-  val gamesMyGamesTitle: String = key("ui.games.myGames.title")
-  val gamesMyGamesBody: String  = key("ui.games.myGames.body")
-  val gamesMyGamesOpen: String  = key("ui.games.myGames.open")
+  /** The "games" card on the catalog page — a link to [[allGamesTitle]]'s table, shown only when signed in. */
+  val gamesAllGamesTitle: String = key("ui.games.allGames.title")
+  val gamesAllGamesBody: String  = key("ui.games.allGames.body")
+  val gamesAllGamesOpen: String  = key("ui.games.allGames.open")
 
   /** The "my play history" card — a link to [[myPlaysTitle]]'s table, shown only when signed in. */
   val gamesMyPlaysTitle: String = key("ui.games.myPlays.title")
@@ -917,22 +917,22 @@ object UiKeys {
   val gamesSharedProgressBody: String  = key("ui.games.sharedProgress.body")
   val gamesSharedProgressOpen: String  = key("ui.games.sharedProgress.open")
 
-  // -- My games --------------------------------------------------------------------------------
+  // -- Games ------------------------------------------------------------------------------------
 
-  /** The signed-in owner's own games: name, tags, language pair, how many times each was played, and when it was
-    * created. Paged/sorted/filtered the same way the play history is.
+  /** Every account's games: name, tags, language pair, how many times each was played, and when it was created.
+    * Paged/sorted/filtered the same way the play history is.
     */
-  val myGamesTitle: String             = key("ui.myGames.title")
-  val myGamesEmpty: String             = key("ui.myGames.empty")
-  val myGamesNameCol: String           = key("ui.myGames.nameCol")
-  val myGamesTagsCol: String           = key("ui.myGames.tagsCol")
-  val myGamesSourceCol: String         = key("ui.myGames.sourceCol")
-  val myGamesTargetCol: String         = key("ui.myGames.targetCol")
-  val myGamesPlaysCol: String          = key("ui.myGames.playsCol")
-  val myGamesCreatedCol: String        = key("ui.myGames.createdCol")
-  val myGamesFilterLabel: String       = key("ui.myGames.filterLabel")
-  val myGamesFilterPlaceholder: String = key("ui.myGames.filterPlaceholder")
-  val myGamesCount: String             = pluralKey("ui.myGames.count")
+  val allGamesTitle: String             = key("ui.allGames.title")
+  val allGamesEmpty: String             = key("ui.allGames.empty")
+  val allGamesNameCol: String           = key("ui.allGames.nameCol")
+  val allGamesTagsCol: String           = key("ui.allGames.tagsCol")
+  val allGamesSourceCol: String         = key("ui.allGames.sourceCol")
+  val allGamesTargetCol: String         = key("ui.allGames.targetCol")
+  val allGamesPlaysCol: String          = key("ui.allGames.playsCol")
+  val allGamesCreatedCol: String        = key("ui.allGames.createdCol")
+  val allGamesFilterLabel: String       = key("ui.allGames.filterLabel")
+  val allGamesFilterPlaceholder: String = key("ui.allGames.filterPlaceholder")
+  val allGamesCount: String             = pluralKey("ui.allGames.count")
 
   // -- Tag words list ---------------------------------------------------------------------------
 

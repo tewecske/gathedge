@@ -307,8 +307,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // only bites on this dialect. Real Postgres is the only place `listPlaysPage`/`countPlaysMatching`/
       // `findPlayInGame`/`usersByIds` actually run as SQL rather than just compiling. `matchingMyPlays`'s game-name
       // filter is the same shape against `games`, plus a `LOWER()` (via `String.toLowerCase`) whose case folding the
-      // two dialects can disagree about — so it is exercised here too, as is `matchingMyGames`, which lowers the same
-      // `games.name` column for the owner's own listing.
+      // two dialects can disagree about — so it is exercised here too, as is `matchingAllGames`, which lowers the same
+      // `games.name` column for the games listing.
       test(
         "a game's owner-facing plays listing filters by player, the caller's history filters by game name, for real"
       ) {
@@ -354,10 +354,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           myByName      <- GameRepository.listMyPlaysPage(alice.id, None, Some("tracked a"), 0, 20, None, false)
           myByNameCount <- GameRepository.countMyPlaysMatching(alice.id, None, Some("TRACKED"))
           myByNameMiss  <- GameRepository.countMyPlaysMatching(alice.id, None, Some("no-such-game"))
-          gamesAll      <- GameRepository.listMyGamesPage(owner.id, None, 0, 20, None, false)
-          gamesByName   <- GameRepository.listMyGamesPage(owner.id, Some("tracked a"), 0, 20, None, false)
-          gamesCount    <- GameRepository.countMyGamesMatching(owner.id, Some("TRACKED"))
-          gamesMiss     <- GameRepository.countMyGamesMatching(owner.id, Some("no-such-game"))
+          gamesByName   <- GameRepository.listAllGamesPage(Some("pg tracked a"), 0, 20, None, false)
+          gamesCount    <- GameRepository.countAllGamesMatching(Some("PG TRACKED"))
+          gamesMiss     <- GameRepository.countAllGamesMatching(Some("no-such-game"))
         } yield assertTrue(
           all.map(_.id).toSet == Set(playAlice.id, playBob.id),
           total == 2L,
@@ -372,8 +371,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           myByName.map(_.id) == List(playAlice.id),
           myByNameCount == 2L,
           myByNameMiss == 0L,
-          // owner owns both games; its own listing filters that same `games.name` column the same way.
-          gamesAll.map(_.id).toSet == Set(gameA.id, gameB.id),
+          // the games listing is not owner-scoped; it filters that same `games.name` column the same way.
           gamesByName.map(_.id) == List(gameA.id),
           gamesCount == 2L,
           gamesMiss == 0L,

@@ -12,6 +12,7 @@ import gathedge.frontend.pages.{
   AdminUsersPage,
   AdminWordFormsPage,
   AboutPage,
+  AllGamesPage,
   CheckInboxPage,
   ForbiddenPage,
   ForgotPasswordPage,
@@ -23,7 +24,6 @@ import gathedge.frontend.pages.{
   GroupDetailPage,
   GroupJoinPage,
   GroupsPage,
-  MyGamesPage,
   MyPlayHistoryPage,
   NotFoundPage,
   ResetPasswordPage,
@@ -40,7 +40,7 @@ import gathedge.frontend.pages.{
 }
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyGameQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
@@ -170,9 +170,9 @@ object App {
       .collectSignalPF[MyPlayQuery] { case (gate, page: Page.MyPlays) if gate.loaded => page.query }(query =>
         MyPlayHistoryPage.render(query, onMyPlaysQuery)
       )
-      // The "my games" listing carries its state in the URL the same way — a signal renderer for the same reason.
-      .collectSignalPF[MyGameQuery] { case (gate, page: Page.MyGames) if gate.loaded => page.query }(query =>
-        MyGamesPage.render(query, onMyGamesQuery)
+      // The games listing carries its state in the URL the same way — a signal renderer for the same reason.
+      .collectSignalPF[AllGameQuery] { case (gate, page: Page.AllGames) if gate.loaded => page.query }(query =>
+        AllGamesPage.render(query, onAllGamesQuery)
       )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
@@ -259,17 +259,17 @@ object App {
   }
 
   /** Same rule as [[onMyPlaysQuery]]: a name filter being typed out further replaces, everything else pushes. */
-  private val onMyGamesQuery: Observer[MyGameQuery] = {
+  private val onAllGamesQuery: Observer[AllGameQuery] = {
     Observer { query =>
       val refinesSearch = {
         AppRouter.router.currentPageSignal.now() match {
-          case Page.MyGames(previous) =>
+          case Page.AllGames(previous) =>
             query.refines(previous)
-          case _                      =>
+          case _                       =>
             false
         }
       }
-      navigate(Page.MyGames(query), replace = refinesSearch)
+      navigate(Page.AllGames(query), replace = refinesSearch)
     }
   }
 
@@ -354,8 +354,8 @@ object App {
         GameSetupPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words`/`Page.GameResults`.
-      case Page.MyGames(query)                      =>
-        MyGamesPage.render(Val(query), onMyGamesQuery)
+      case Page.AllGames(query)                     =>
+        AllGamesPage.render(Val(query), onAllGamesQuery)
       case Page.MyPlays(query)                      =>
         MyPlayHistoryPage.render(Val(query), onMyPlaysQuery)
       case Page.SharedProgress                      =>

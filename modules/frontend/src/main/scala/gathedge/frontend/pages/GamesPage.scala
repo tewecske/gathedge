@@ -7,7 +7,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.i18n.UiKeys
 
-/** The catalog of game types (Vocabulary Quiz today), plus a link to the reader's own games when signed in. A local
+/** The catalog of game types (Vocabulary Quiz today), plus a link to the games listing when signed in. A local
   * `gameCard` helper renders both, so adding the next game type is a call, not a reshape.
   */
 object GamesPage {
@@ -31,10 +31,10 @@ object GamesPage {
           child.maybe <-- AppState.isSignedInSignal.map(signedIn => {
             Option.when(signedIn)(
               gameCard(
-                title = I18n.t(UiKeys.gamesMyGamesTitle),
-                body = I18n.t(UiKeys.gamesMyGamesBody),
-                playLabel = I18n.t(UiKeys.gamesMyGamesOpen),
-                target = Page.MyGames(),
+                title = I18n.t(UiKeys.gamesAllGamesTitle),
+                body = I18n.t(UiKeys.gamesAllGamesBody),
+                playLabel = I18n.t(UiKeys.gamesAllGamesOpen),
+                target = Page.AllGames(),
               )
             )
           }),

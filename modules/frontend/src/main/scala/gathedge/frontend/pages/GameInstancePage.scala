@@ -300,13 +300,13 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   private def pageUrl(): String = dom.window.location.href
 
   /** Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
-    * comment. Links to the results listing rather than opening it here, the same split `MyGamesPage`/`GameInstance`
+    * comment. Links to the results listing rather than opening it here, the same split `AllGamesPage`/`GameInstance`
     * already draw between "this game" and "a listing about it". Passed to `InlineRename.renderTitle` as `extra`, so it
     * is absent from the title only in edit mode, same as the pencil beside it.
     */
   private def resultsLink(): Modifier[HtmlElement] = {
     // Owner-only. Links to the results listing rather than opening it here, the same split
-    // `MyGamesPage`/`GameInstance` already draw between "this game" and "a listing about it".
+    // `AllGamesPage`/`GameInstance` already draw between "this game" and "a listing about it".
     child.maybe <-- isOwnerVar.signal.map { owner =>
       Option.when(owner)(
         a(
