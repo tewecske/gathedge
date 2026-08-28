@@ -186,7 +186,8 @@ object GameEndpoints {
   }
 
   /** The caller's own play history across every game, most recently started first unless `sort` says otherwise — see
-    * `GameService.myPlays`. Unlike [[listPlays]] this needs no ownership check: it is always the caller's own data.
+    * `GameService.myPlays`. Unlike [[listPlays]] this needs no ownership check: it is always the caller's own data. `q`
+    * is a case-insensitive substring of the game's name, the cross-game counterpart of [[listPlays]]'s player filter.
     */
   val myPlays = {
     Endpoint(Method.GET / "api" / "games" / "plays" / "mine")
@@ -195,6 +196,7 @@ object GameEndpoints {
       .query(pageSizeQuery)
       .query(sortQuery)
       .query(dirQuery)
+      .query(searchQuery)
       .withCodecError
       .out[MyPlayPage]
       .outErrors(failure.badRequest, failure.unauthorized)

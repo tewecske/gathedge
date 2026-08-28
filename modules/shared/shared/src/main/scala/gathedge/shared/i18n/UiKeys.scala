@@ -1042,12 +1042,15 @@ object UiKeys {
   // The signed-in caller's own play history across every game — `GET /api/games/plays/mine`. Always the caller's
   // own data, unlike the owner-facing listing above.
 
-  val myPlaysTitle: String      = key("ui.myPlays.title")
-  val myPlaysEmpty: String      = key("ui.myPlays.empty")
-  val myPlaysGameCol: String    = key("ui.myPlays.gameCol")
-  val myPlaysScoreCol: String   = key("ui.myPlays.scoreCol")
-  val myPlaysWordsCol: String   = key("ui.myPlays.wordsCol")
-  val myPlaysStartedCol: String = key("ui.myPlays.startedCol")
+  val myPlaysTitle: String             = key("ui.myPlays.title")
+  val myPlaysEmpty: String             = key("ui.myPlays.empty")
+  val myPlaysGameCol: String           = key("ui.myPlays.gameCol")
+  val myPlaysScoreCol: String          = key("ui.myPlays.scoreCol")
+  val myPlaysWordsCol: String          = key("ui.myPlays.wordsCol")
+  val myPlaysStartedCol: String        = key("ui.myPlays.startedCol")
+  val myPlaysFilterLabel: String       = key("ui.myPlays.filterLabel")
+  val myPlaysFilterPlaceholder: String = key("ui.myPlays.filterPlaceholder")
+  val myPlaysCount: String             = pluralKey("ui.myPlays.count")
 
   // -- Progress sharing --------------------------------------------------------------------------
   // Letting one account read another's game history, on either side's own say-so — a "sharer" whose plays become

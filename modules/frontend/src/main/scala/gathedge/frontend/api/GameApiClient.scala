@@ -135,7 +135,8 @@ object GameApiClient {
     pageSize: Option[Int] = None,
     sort: Option[String] = None,
     dir: Option[String] = None,
+    search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    run(executor(GameEndpoints.myPlays(gameId, page, pageSize, sort, dir)))
+    run(executor(GameEndpoints.myPlays(gameId, page, pageSize, sort, dir, search)))
   }
 }

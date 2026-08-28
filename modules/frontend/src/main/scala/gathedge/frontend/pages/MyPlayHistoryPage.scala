@@ -3,38 +3,68 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, GameHeader, Labels, PlayHistoryTable}
+import gathedge.frontend.components.{Alert, AppShell, Formats, GameHeader, Labels, Pagination, SortHeader}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.listing.MyPlayQuery
 import gathedge.frontend.state.{PendingPlay, PlayHandoff}
 import gathedge.shared.domain.AnswerOutcome
-import gathedge.shared.dto.{GameAnswerResult, GameResults, MyPlayPage, MyPlaySummary}
+import gathedge.shared.dto.{GameAnswerResult, GamePlaySort, GameResults, MyPlayPage, MyPlaySummary}
 import gathedge.shared.i18n.UiKeys
 
 /** The signed-in caller's own play history across every game — see `GameService.myPlays`. Always the caller's own data,
   * unlike the owner-facing `GameResultsPage`.
   *
-  * A personal list rendered straight through with no URL-carried query state, the same shape `MyGamesPage` follows.
-  * Each row opens a detail modal via `GameApiClient.getResults` — the player-facing equivalent of `GameResultsPage`'s
+  * Built to the same shape as `GameResultsPage`: a card table with sortable headings, a filter box (here a substring of
+  * the game's name, not the player's address), server-side paging, and a per-row detail modal. It carries its whole
+  * listing state in the URL, so it takes a `Signal[MyPlayQuery]` and an `Observer[MyPlayQuery]` the same way the admin
+  * listings and `GameResultsPage` do; `App` supplies both.
+  *
+  * The modal fetches through `GameApiClient.getResults` — the player-facing equivalent of `GameResultsPage`'s
   * owner-facing `getPlayDetail` modal, minus a player identity line since every row here is always "me".
   */
 object MyPlayHistoryPage {
 
-  def render(): HtmlElement = {
-    AppShell.render(Page.MyPlays, new MyPlayHistoryPage().render())
+  def render(query: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]): HtmlElement = {
+    AppShell.render(Page.MyPlays(), new MyPlayHistoryPage(query, onQuery).render())
   }
 }
 
-private class MyPlayHistoryPage {
+private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]) {
 
-  private val playsVar: Var[Option[List[MyPlaySummary]]] = Var(None)
-  private val errorVar: Var[Option[String]]              = Var(None)
+  private val querySignal = pageQuery.distinct
 
-  private val reloadBus = new EventBus[Unit]()
+  private val playsVar    = Var(List.empty[MyPlaySummary])
+  private val playsSignal = playsVar.signal
 
-  /** The ids of the currently loaded plays, in the order shown — what the modal's prev/next arrows step through, same
-    * as `GameResultsPage.currentPageIdsVar`.
+  private val totalVar    = Var(0L)
+  private val totalSignal = totalVar.signal
+
+  private val sortSignal     = querySignal.map(_.sort).distinct
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
+
+  private val changeBus = new EventBus[MyPlayQuery => MyPlayQuery]()
+
+  private def change(edit: MyPlayQuery => MyPlayQuery): Unit = changeBus.emit(edit)
+
+  // Same write-follows-the-query trick as `GameResultsPage`/`AdminUsersPage` — the box cannot be a plain two-way
+  // binding on the query itself.
+  private val searchInputVar   = Var("")
+  private val searchTypedBus   = new EventBus[String]()
+  private val searchDebounceMs = 300
+
+  private val errorVar: Var[Option[String]] = Var(None)
+
+  private val loadingVar    = Var(false)
+  private val loadingSignal = loadingVar.signal
+
+  private val reloadBus    = new EventBus[Unit]()
+  private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
+
+  /** The ids on the currently loaded page, in the order shown — what the modal's prev/next arrows step through, the
+    * same "only within this page" rule `GameResultsPage.currentPageIdsVar` follows.
     */
-  private val currentIdsVar = Var(List.empty[Long])
+  private val currentPageIdsVar = Var(List.empty[Long])
 
   private val selectedPlayIdVar: Var[Option[Long]] = Var(None)
   private val resultsVar: Var[Option[GameResults]] = Var(None)
@@ -47,21 +77,46 @@ private class MyPlayHistoryPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4",
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.myPlaysTitle)),
+      div(
+        cls := "mb-4",
+        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.myPlaysTitle)),
+      ),
       Alert.maybeError(errorVar.signal),
-      child <-- playsVar.signal.map(renderBody),
+      renderSearch(),
+      renderTable(),
+      Pagination.render(
+        page = pageSignal,
+        total = totalSignal,
+        pageSize = pageSizeSignal,
+        onPage = Observer[Int](page => change(_.copy(page = page))),
+        onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
+        summary = totalSignal.map(summaryOf).distinct,
+        busy = loadingSignal,
+      ),
       renderModal(),
-      reloadBus.events.flatMapSwitch(_ => GameApiClient.myPlays(pageSize = Some(100))) -->
+      changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
+      querySignal.map(_.search).distinct --> searchInputVar.writer,
+      searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->
+        Observer[(String, MyPlayQuery)] { case (typed, current) =>
+          val wanted = typed.trim
+          if (wanted != current.search) {
+            change(_.reset(_.copy(search = wanted)))
+          }
+        },
+      listRequests -->
+        Observer[MyPlayQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
+      listRequests.flatMapSwitch(load) -->
         Observer[Either[ApiError, MyPlayPage]] {
-          case Right(page) =>
+          case Right(result) =>
             Var.set(
-              playsVar      -> Some(page.items),
-              errorVar      -> None,
-              currentIdsVar -> page.items.map(_.playId),
+              playsVar          -> result.items,
+              totalVar          -> result.total,
+              currentPageIdsVar -> result.items.map(_.playId),
+              loadingVar        -> false,
+              errorVar          -> None,
             )
-          case Left(err)   =>
-            errorVar.set(Some(err.message))
+          case Left(err)     =>
+            Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
       viewBus.events -->
         Observer[Long] { id =>
@@ -95,19 +150,18 @@ private class MyPlayHistoryPage {
     )
   }
 
-  private def renderBody(plays: Option[List[MyPlaySummary]]): HtmlElement = {
-    plays match {
-      case None                       =>
-        div(cls := "flex justify-center p-8", span(cls := "loading loading-spinner"))
-      case Some(rows) if rows.isEmpty =>
-        div(cls := "text-base-content/70", I18n.t(UiKeys.myPlaysEmpty))
-      case Some(rows)                 =>
-        PlayHistoryTable.render(Val(rows), onView = Some(viewBus.writer), onPlayAgain = Some(playAgainBus.writer))
-    }
+  private def load(query: MyPlayQuery): EventStream[Either[ApiError, MyPlayPage]] = {
+    GameApiClient.myPlays(
+      page = Some(query.page),
+      pageSize = Some(query.pageSize),
+      sort = query.sort.column,
+      dir = query.sort.wire,
+      search = Option(query.search).filter(_.nonEmpty),
+    )
   }
 
   private def step(delta: Int): Unit = {
-    val ids    = currentIdsVar.now()
+    val ids    = currentPageIdsVar.now()
     val target = for {
       current <- selectedPlayIdVar.now()
       index    = ids.indexOf(current)
@@ -117,6 +171,91 @@ private class MyPlayHistoryPage {
     target.foreach(id => Var.set(selectedPlayIdVar -> Some(id), resultsVar -> None, modalErrorVar -> None))
   }
 
+  private def summaryOf(total: Long): String = {
+    if (total <= 0L)
+      I18n.t(UiKeys.myPlaysEmpty)
+    else
+      I18n.plural(UiKeys.myPlaysCount, total)
+  }
+
+  private def renderSearch(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-end gap-2 mb-4",
+      label(
+        cls := "form-control",
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.myPlaysFilterLabel)),
+        input(
+          cls         := "input input-sm",
+          typ         := "search",
+          placeholder := I18n.t(UiKeys.myPlaysFilterPlaceholder),
+          controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
+          onInput.mapToValue --> searchTypedBus.writer,
+        ),
+      ),
+    )
+  }
+
+  private def renderTable(): HtmlElement = {
+    val onSort = Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort))))
+
+    div(
+      cls := "overflow-x-auto card bg-base-100 shadow",
+      table(
+        cls := "table",
+        thead(
+          tr(
+            // The game is filterable, via the search box above, but not sortable — ordering by it would need a join
+            // the listing avoids, the same split `GameResultsPage`'s player column draws.
+            th(I18n.t(UiKeys.myPlaysGameCol)),
+            SortHeader.render(I18n.t(UiKeys.myPlaysScoreCol), GamePlaySort.score, sortSignal, onSort),
+            SortHeader.render(I18n.t(UiKeys.myPlaysWordsCol), GamePlaySort.wordCount, sortSignal, onSort),
+            th(I18n.t(UiKeys.gameResultsVariantCol)),
+            SortHeader.render(I18n.t(UiKeys.myPlaysStartedCol), GamePlaySort.startedAt, sortSignal, onSort),
+            th(),
+          )
+        ),
+        tbody(
+          children <--
+            playsSignal.map(_.map(renderRow))
+        ),
+      ),
+    )
+  }
+
+  private def renderRow(play: MyPlaySummary): HtmlElement = {
+    tr(
+      cls := "hover",
+      td(
+        a(
+          cls := "link link-hover",
+          AppRouter.router.navigateTo(Page.GameInstance(play.gameSlug)),
+          play.gameName,
+        )
+      ),
+      td(s"${play.score} / ${play.maxScore}"),
+      td(play.wordCount.toString),
+      td(Labels.variant(play.variant)),
+      td(Formats.dateTime(play.startedAt)),
+      td(
+        div(
+          cls := "flex gap-1",
+          button(
+            cls := "btn btn-ghost btn-xs",
+            typ := "button",
+            I18n.t(UiKeys.gameResultsViewButton),
+            onClick.mapTo(play.playId) --> viewBus.writer,
+          ),
+          button(
+            cls := "btn btn-ghost btn-xs",
+            typ := "button",
+            I18n.t(UiKeys.gameInstancePlayAgain),
+            onClick.mapTo(play) --> playAgainBus.writer,
+          ),
+        )
+      ),
+    )
+  }
+
   /** The selected row's `gameName`, looked up from the already-loaded [[playsVar]] — a history row spans every game, so
     * unlike `GameResultsPage`'s single-game modal, [[GameHeader]] needs a name resolved per selected play, and
     * `GameResults` itself (the modal's own fetch) never carries one.
@@ -124,21 +263,20 @@ private class MyPlayHistoryPage {
   private val selectedGameNameSignal: Signal[Option[String]] = {
     playsVar.signal.combineWith(selectedPlayIdVar.signal).map { case (plays, selected) =>
       for {
-        id   <- selected
-        rows <- plays
-        row  <- rows.find(_.playId == id)
+        id  <- selected
+        row <- plays.find(_.playId == id)
       } yield row.gameName
     }
   }
 
   /** Same `div.modal` + `Var[Boolean]` pattern `GameResultsPage.renderModal` uses, for the same jsdom reason. */
   private def renderModal(): HtmlElement = {
-    val indexSignal = currentIdsVar.signal.combineWith(selectedPlayIdVar.signal).map { case (ids, selected) =>
+    val indexSignal = currentPageIdsVar.signal.combineWith(selectedPlayIdVar.signal).map { case (ids, selected) =>
       selected.map(ids.indexOf)
     }
     val atFirst     = indexSignal.map(index => index.forall(_ <= 0)).distinct
     val atLast      = {
-      currentIdsVar.signal
+      currentPageIdsVar.signal
         .combineWith(indexSignal)
         .map { case (ids, index) => index.forall(i => i < 0 || i >= ids.size - 1) }
         .distinct

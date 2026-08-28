@@ -627,11 +627,34 @@ object GameServiceSpec extends ZIOSpecDefault {
           _      <- playThrough(playA.playId, "myPlaysA", player)
           playB  <- GameService.startPlay(gameB.slug, player)
           _      <- playThrough(playB.playId, "myPlaysB", player)
-          mine   <- GameService.myPlays(player, None, 1, 20, None, false)
+          mine   <- GameService.myPlays(player, None, None, 1, 20, None, false)
         } yield assertTrue(
           mine.total == 2L,
           mine.items.map(_.playId).toSet == Set(playA.playId, playB.playId),
           mine.items.map(_.gameSlug).toSet == Set(gameA.slug, gameB.slug),
+        )
+      },
+      test("myPlays narrows to games whose name contains the filter, case-insensitively") {
+        for {
+          player <- newUser()
+          tagA   <- eligibleTagWithPairs(player, "myPlaysFilterA", WordLanguage.De, WordLanguage.Hu, count = 1)
+          tagB   <- eligibleTagWithPairs(player, "myPlaysFilterB", WordLanguage.De, WordLanguage.Hu, count = 1)
+          gameA  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA))
+          gameB  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB))
+          _      <- GameService.rename(gameA.slug, "Alpha Quiz", player)
+          _      <- GameService.rename(gameB.slug, "Beta Quiz", player)
+          playA  <- GameService.startPlay(gameA.slug, player)
+          _      <- playThrough(playA.playId, "myPlaysFilterA", player)
+          playB  <- GameService.startPlay(gameB.slug, player)
+          _      <- playThrough(playB.playId, "myPlaysFilterB", player)
+          hit    <- GameService.myPlays(player, None, Some("ALPHA"), 1, 20, None, false)
+          miss   <- GameService.myPlays(player, None, Some("gamma"), 1, 20, None, false)
+        } yield assertTrue(
+          hit.total == 1L,
+          hit.items.map(_.playId) == List(playA.playId),
+          hit.items.map(_.gameName) == List("Alpha Quiz"),
+          miss.total == 0L,
+          miss.items.isEmpty,
         )
       },
       test("myPlays never answers another account's plays") {
@@ -642,7 +665,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           created <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagId))
           started <- GameService.startPlay(created.slug, player)
           _       <- playThrough(started.playId, "myPlaysGuard", player)
-          theirs  <- GameService.myPlays(other, None, 1, 20, None, false)
+          theirs  <- GameService.myPlays(other, None, None, 1, 20, None, false)
         } yield assertTrue(theirs.total == 0L, theirs.items.isEmpty)
       },
       test("playsOf answers the target user's plays across every game") {

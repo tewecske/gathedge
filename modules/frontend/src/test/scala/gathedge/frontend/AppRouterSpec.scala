@@ -2,7 +2,7 @@ package gathedge.frontend
 
 import gathedge.frontend.components.SortHeader
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.shared.domain.Locale.urlPrefix
 import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
 import gathedge.shared.dto.{GamePlaySort, Paging, UserSort, WordSort}
@@ -164,11 +164,33 @@ object AppRouterSpec extends ZIOSpecDefault {
           "brave-otter",
           GamePlayQuery(page = 2, sort = SortHeader.Sort.descending(GamePlaySort.score), search = "alice"),
         )
+        val history = Page.MyPlays(
+          MyPlayQuery(page = 3, sort = SortHeader.Sort.descending(GamePlaySort.startedAt), search = "quiz")
+        )
 
         assertTrue(
           AppRouter.deserialize(AppRouter.serialize(page)) == page,
           AppRouter.deserialize(AppRouter.serialize(words)) == words,
           AppRouter.deserialize(AppRouter.serialize(results)) == results,
+          AppRouter.deserialize(AppRouter.serialize(history)) == history,
+        )
+      },
+      test("the cross-game history is the bare path by default and carries its query when filtered") {
+        val filtered = Page.MyPlays(
+          MyPlayQuery(page = 2, sort = SortHeader.Sort.ascending(GamePlaySort.score), search = "otter")
+        )
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.MyPlays()) == s"$prefix/games/history",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/games/history").contains(Page.MyPlays()),
+          url.startsWith(s"$prefix/games/history?"),
+          url.contains("page=2"),
+          url.contains(s"sort=${GamePlaySort.score}"),
+          url.contains("q=otter"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          // A hand-edited unknown column is dropped rather than refused.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/games/history?sort=nonsense").contains(Page.MyPlays()),
         )
       },
       // Unlike the other listings, this one needs a path segment (the game's slug) *and* a query — see

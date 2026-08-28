@@ -143,11 +143,12 @@ trait GameService {
   def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail]
 
   /** `userId`'s own plays across every game, most recently started first unless `sort` says otherwise. Always the
-    * caller's own data. `gameId` narrows to one game.
+    * caller's own data. `gameId` narrows to one game; `nameContains` narrows to games whose name contains it.
     */
   def myPlays(
     userId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     page: Int,
     pageSize: Int,
     sort: Option[String],
@@ -257,12 +258,13 @@ object GameService {
   def myPlays(
     userId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     page: Int,
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
   ): URIO[GameService, MyPlayPage] =
-    ZIO.serviceWithZIO[GameService](_.myPlays(userId, gameId, page, pageSize, sort, descending))
+    ZIO.serviceWithZIO[GameService](_.myPlays(userId, gameId, nameContains, page, pageSize, sort, descending))
 
   def playsOf(
     targetUserId: Long,
@@ -915,6 +917,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   private def playsPageFor(
     targetUserId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     page: Int,
     pageSize: Int,
     sort: Option[String],
@@ -925,13 +928,14 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                      .listMyPlaysPage(
                        targetUserId,
                        gameId,
+                       nameContains,
                        Paging.offset(page, pageSize),
                        pageSize,
                        sort,
                        descending,
                      )
                      .orDie
-      total     <- repo.countMyPlaysMatching(targetUserId, gameId).orDie
+      total     <- repo.countMyPlaysMatching(targetUserId, gameId, nameContains).orDie
       gamesById <- repo.gamesByIds(plays.map(_.gameId).distinct).orDie.map(_.map(g => g.id -> g).toMap)
     } yield MyPlayPage(plays.map(play => myPlaySummaryOf(play, gamesById)), total)
   }
@@ -939,12 +943,13 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   def myPlays(
     userId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     page: Int,
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
   ): UIO[MyPlayPage] = {
-    playsPageFor(userId, gameId, page, pageSize, sort, descending)
+    playsPageFor(userId, gameId, nameContains, page, pageSize, sort, descending)
   }
 
   def playsOf(
@@ -955,6 +960,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sort: Option[String],
     descending: Boolean,
   ): UIO[MyPlayPage] = {
-    playsPageFor(targetUserId, gameId, page, pageSize, sort, descending)
+    playsPageFor(targetUserId, gameId, None, page, pageSize, sort, descending)
   }
 }

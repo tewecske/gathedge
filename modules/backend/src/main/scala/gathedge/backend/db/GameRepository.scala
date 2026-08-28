@@ -131,11 +131,12 @@ trait GameRepository {
 
   /** One page of `playerUserId`'s own plays across every game, most recently started first unless `sort` says otherwise
     * — the cross-game history [[listPlaysPage]] does not answer, since that one is scoped to a single game and its
-    * owner. `gameId` narrows to one game.
+    * owner. `gameId` narrows to one game; `nameContains` narrows to games whose name contains it, case-insensitively.
     */
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     offset: Int,
     limit: Int,
     sort: Option[String],
@@ -143,7 +144,7 @@ trait GameRepository {
   ): Task[List[GamePlayRow]]
 
   /** How many of `playerUserId`'s plays [[listMyPlaysPage]] would return across every page. */
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): Task[Long]
+  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], nameContains: Option[String]): Task[Long]
 }
 
 object GameRepository {
@@ -241,18 +242,23 @@ object GameRepository {
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): RIO[GameRepository, List[GamePlayRow]] = {
     ZIO.serviceWithZIO[GameRepository](
-      _.listMyPlaysPage(playerUserId, gameId, offset, limit, sort, descending)
+      _.listMyPlaysPage(playerUserId, gameId, nameContains, offset, limit, sort, descending)
     )
   }
 
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.countMyPlaysMatching(playerUserId, gameId))
+  def countMyPlaysMatching(
+    playerUserId: Long,
+    gameId: Option[Long],
+    nameContains: Option[String],
+  ): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countMyPlaysMatching(playerUserId, gameId, nameContains))
 
   val live: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new GameRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GameRepository
@@ -583,35 +589,55 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"games.gamesByIds requested=${ids.size} rows=${rows.size}")
   }
 
+  /** The `LIKE` pattern behind the cross-game history's game-name filter, or `None` when it is empty — the counterpart
+    * of [[playerPattern]]. Game names are display strings, not normalised on write like an address, so the column is
+    * lowered too (via `String.toLowerCase`, which Quill renders as `LOWER(...)` in either dialect). A `%` or `_` typed
+    * into the box stays a wildcard, the same accepted tradeoff [[UserRepository.emailPattern]] documents.
+    */
+  private def namePattern(nameContains: Option[String]): Option[String] = {
+    nameContains.map(_.trim.toLowerCase).filter(_.nonEmpty).map(needle => s"%$needle%")
+  }
+
   /** The rows a page of a player's cross-game history is cut from, before ordering — the same "narrowing the two paged
-    * methods share" split [[matchingPlays]] draws for the owner-facing listing.
+    * methods share" split [[matchingPlays]] draws for the owner-facing listing. The game-name filter is a correlated
+    * subquery against `games`, the same shape [[matchingPlays]]'s player filter uses against `users`.
     */
   private def matchingMyPlays(
     playerUserId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
   ): DynamicQuery[GamePlayRow] = {
     dynamicQuerySchema[GamePlayRow]("game_plays")
       .filterOpt(Some(playerUserId))((play, id) => quote(play.playerUserId == unquote(id)))
       .filterOpt(gameId)((play, id) => quote(play.gameId == unquote(id)))
+      .filterOpt(namePattern(nameContains))((play, pattern) => {
+        quote(
+          games
+            .filter(game => game.id == play.gameId && game.name.toLowerCase.like(unquote(pattern)))
+            .nonEmpty
+        )
+      })
   }
 
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
+    nameContains: Option[String],
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[GamePlayRow]] = {
     val page =
-      orderedPlays(matchingMyPlays(playerUserId, gameId), sort, descending).drop(offset).take(limit)
+      orderedPlays(matchingMyPlays(playerUserId, gameId, nameContains), sort, descending).drop(offset).take(limit)
+    // The game filter is a fragment of a name, so it stays out of the message, the same as the owner-facing one.
     logged(run(ctx.run(page))) { rows =>
       s"games.listMyPlaysPage player=$playerUserId offset=$offset limit=$limit sort=${sort.getOrElse("-")} rows=${rows.size}"
     }
   }
 
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): Task[Long] = {
-    logged(run(ctx.run(matchingMyPlays(playerUserId, gameId).size))) { count =>
+  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], nameContains: Option[String]): Task[Long] = {
+    logged(run(ctx.run(matchingMyPlays(playerUserId, gameId, nameContains).size))) { count =>
       s"games.countMyPlaysMatching player=$playerUserId count=$count"
     }
   }

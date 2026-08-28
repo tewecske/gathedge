@@ -113,9 +113,9 @@ final case class MyGameSummary(
   createdAt: Long,
 ) derives JsonCodec
 
-/** One row of `GET /api/games/{slug}/plays` — a game's owner-facing plays listing. `playerEmail` is `None` for a
-  * guest who never gave one; `playerIsGuest` lets the table badge that instead of showing a blank cell. `variant` is
-  * the settings this particular play actually ran under.
+/** One row of `GET /api/games/{slug}/plays` — a game's owner-facing plays listing. `playerEmail` is `None` for a guest
+  * who never gave one; `playerIsGuest` lets the table badge that instead of showing a blank cell. `variant` is the
+  * settings this particular play actually ran under.
   */
 final case class GamePlaySummary(
   playId: Long,

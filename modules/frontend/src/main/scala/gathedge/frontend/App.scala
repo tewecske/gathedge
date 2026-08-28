@@ -40,7 +40,7 @@ import gathedge.frontend.pages.{
 }
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
@@ -164,6 +164,12 @@ object App {
           latestGameResultsSlug = page.slug
           page.query
       }(query => GameResultsPage.render(latestGameResultsSlug, query, onGameResultsQuery))
+      // The cross-game history carries its listing state in the URL like the admin listings, so every keystroke in its
+      // filter box is a new `Page` — it needs a signal renderer for the same reason they do. Auth is enforced by the
+      // redirect observer, not here, the same as `GameResults` above: `gate.loaded` is the only precondition.
+      .collectSignalPF[MyPlayQuery] { case (gate, page: Page.MyPlays) if gate.loaded => page.query }(query =>
+        MyPlayHistoryPage.render(query, onMyPlaysQuery)
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -231,6 +237,21 @@ object App {
   /** No refinement case: the audit trail's two filters are applied on a button, so every change here is deliberate. */
   private val onAdminAuditQuery: Observer[AuditQuery] = {
     Observer(query => navigate(Page.AdminAudit(query), replace = false))
+  }
+
+  /** Same rule as the user list: a game-name filter being typed out further replaces, everything else pushes. */
+  private val onMyPlaysQuery: Observer[MyPlayQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.MyPlays(previous) =>
+            query.refines(previous)
+          case _                      =>
+            false
+        }
+      }
+      navigate(Page.MyPlays(query), replace = refinesSearch)
+    }
   }
 
   /** Same rule as the user list, keyed to [[latestGameResultsSlug]] as well as the query: a query change on a
@@ -314,8 +335,10 @@ object App {
         GameSetupPage.render()
       case Page.MyGames                             =>
         MyGamesPage.render()
-      case Page.MyPlays                             =>
-        MyPlayHistoryPage.render()
+      // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
+      // `Page.Words`/`Page.GameResults`.
+      case Page.MyPlays(query)                      =>
+        MyPlayHistoryPage.render(Val(query), onMyPlaysQuery)
       case Page.SharedProgress                      =>
         SharedProgressPage.render()
       case Page.SharedPlayerHistory(sharerUserId)   =>

@@ -44,7 +44,7 @@ object GamesPage {
                 title = I18n.t(UiKeys.gamesMyPlaysTitle),
                 body = I18n.t(UiKeys.gamesMyPlaysBody),
                 playLabel = I18n.t(UiKeys.gamesMyPlaysOpen),
-                target = Page.MyPlays,
+                target = Page.MyPlays(),
               )
             )
           }),

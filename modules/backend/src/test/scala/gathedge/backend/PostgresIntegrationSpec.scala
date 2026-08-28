@@ -305,9 +305,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // `GameRepository.matchingPlays`'s player filter is a correlated subquery against `users` — the first query in
       // this repository to reach that table at all, and the reserved-word lambda-naming rule (`row`, never `user`)
       // only bites on this dialect. Real Postgres is the only place `listPlaysPage`/`countPlaysMatching`/
-      // `findPlayInGame`/`usersByIds` actually run as SQL rather than just compiling.
+      // `findPlayInGame`/`usersByIds` actually run as SQL rather than just compiling. `matchingMyPlays`'s game-name
+      // filter is the same shape against `games`, plus a `LOWER()` (via `String.toLowerCase`) whose case folding the
+      // two dialects can disagree about — so it is exercised here too.
       test(
-        "a game's owner-facing plays listing filters by player and scopes a play to its own game, for real"
+        "a game's owner-facing plays listing filters by player, the caller's history filters by game name, for real"
       ) {
         for {
           owner         <- AuthService.signup("pgowner@example.com", "password123").map(_._1)
@@ -347,6 +349,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           crossGame     <- GameRepository.findPlayInGame(gameB.id, playAlice.id)
           crossGame2    <- GameRepository.findPlayInGame(gameA.id, playOtherGame.id)
           players       <- GameRepository.usersByIds(List(alice.id, bob.id)).map(_.map(u => u.id -> u.email).toMap)
+          myAll         <- GameRepository.listMyPlaysPage(alice.id, None, None, 0, 20, None, false)
+          myByName      <- GameRepository.listMyPlaysPage(alice.id, None, Some("tracked a"), 0, 20, None, false)
+          myByNameCount <- GameRepository.countMyPlaysMatching(alice.id, None, Some("TRACKED"))
+          myByNameMiss  <- GameRepository.countMyPlaysMatching(alice.id, None, Some("no-such-game"))
         } yield assertTrue(
           all.map(_.id).toSet == Set(playAlice.id, playBob.id),
           total == 2L,
@@ -356,6 +362,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           crossGame2.isEmpty,
           players.get(alice.id).flatten.contains("pgalice@example.com"),
           players.get(bob.id).flatten.contains("pgbob@example.com"),
+          // alice played both games; the game-name filter is a case-insensitive substring of the game's own name.
+          myAll.map(_.id).toSet == Set(playAlice.id, playOtherGame.id),
+          myByName.map(_.id) == List(playAlice.id),
+          myByNameCount == 2L,
+          myByNameMiss == 0L,
         )
       },
       // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather

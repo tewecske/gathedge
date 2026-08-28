@@ -89,11 +89,19 @@ object GameRoutes {
   private val myPlaysRoute = {
     GameEndpoints.myPlays.implementHandler(
       handler {
-        (gameId: Option[Long], page: Option[Int], pageSize: Option[Int], sort: Option[String], dir: Option[String]) =>
+        (
+          gameId: Option[Long],
+          page: Option[Int],
+          pageSize: Option[Int],
+          sort: Option[String],
+          dir: Option[String],
+          q: Option[String],
+        ) =>
           userId.flatMap { id =>
             GameService.myPlays(
               id,
               gameId,
+              searchTerm(q),
               Paging.boundedPage(page),
               Paging.boundedPageSize(pageSize),
               sort,
