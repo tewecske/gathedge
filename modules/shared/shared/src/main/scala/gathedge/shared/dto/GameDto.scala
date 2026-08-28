@@ -86,10 +86,14 @@ final case class GamePrompt(
 
 final case class SubmitAnswerRequest(wordId: Long, answerText: String) derives JsonCodec
 
-/** One row of the results screen's mistakes table. */
+/** One row of the results screen's mistakes table. `expectedTexts` is every translation the game would have accepted
+  * for this word in the play's direction — more than one when the word is marked to several translations, or sits under
+  * more than one of the game's tags — sorted for a stable render. Never empty: the translation actually scored against
+  * is always in it.
+  */
 final case class GameAnswerResult(
   wordText: String,
-  expectedText: String,
+  expectedTexts: List[String],
   givenText: String,
   outcome: AnswerOutcome,
 ) derives JsonCodec

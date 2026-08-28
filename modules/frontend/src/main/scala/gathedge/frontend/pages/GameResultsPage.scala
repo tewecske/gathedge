@@ -2,12 +2,20 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Formats, GameHeader, Labels, Pagination, SortHeader}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  Formats,
+  GameAnswersTable,
+  GameHeader,
+  Labels,
+  Pagination,
+  SortHeader,
+}
 import gathedge.frontend.listing.GamePlayQuery
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.AnswerOutcome
-import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePlayDetail, GamePlayPage, GamePlaySort, GamePlaySummary}
+import gathedge.shared.dto.{GameDetail, GamePlayDetail, GamePlayPage, GamePlaySort, GamePlaySummary}
 import gathedge.shared.i18n.UiKeys
 
 /** A game's owner-facing plays listing: who played `slug` and how they scored, paged/sorted/filtered the same way
@@ -319,50 +327,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
       p(cls := "text-sm opacity-70", detail.playerEmail.getOrElse(I18n.t(UiKeys.gameResultsGuestBadge))),
       p(cls := "font-bold mb-2", s"${detail.score} / ${detail.maxScore}"),
       p(cls := "text-sm opacity-70 mb-2", Labels.variant(detail.variant)),
-      renderAnswersTable(detail.answers),
+      GameAnswersTable.render(detail.answers),
     )
-  }
-
-  private def renderAnswersTable(answers: List[GameAnswerResult]): HtmlElement = {
-    div(
-      cls := "overflow-x-auto",
-      table(
-        cls := "table table-sm",
-        thead(
-          tr(
-            th(I18n.t(UiKeys.gameInstanceResultsWordCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsExpectedCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsAnswerCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsOutcomeCol)),
-          )
-        ),
-        tbody(answers.map(renderAnswerRow)),
-      ),
-    )
-  }
-
-  private def renderAnswerRow(answer: GameAnswerResult): HtmlElement = {
-    tr(
-      cls := "hover",
-      td(answer.wordText),
-      td(answer.expectedText),
-      td(answer.givenText),
-      td(renderOutcomeBadge(answer.outcome)),
-    )
-  }
-
-  /** Same styling `GameInstancePage.renderOutcomeBadge` uses — kept as its own copy rather than shared, since neither
-    * page exposes the other's private helpers.
-    */
-  private def renderOutcomeBadge(outcome: AnswerOutcome): HtmlElement = {
-    val style = outcome match {
-      case AnswerOutcome.Correct =>
-        "badge-success badge-soft"
-      case AnswerOutcome.Typo    =>
-        "badge-warning"
-      case AnswerOutcome.Wrong   =>
-        "badge-error"
-    }
-    span(cls := s"badge $style", Labels.gameOutcome(outcome))
   }
 }

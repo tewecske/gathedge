@@ -3,12 +3,20 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, Formats, GameHeader, Labels, Pagination, SortHeader}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  Formats,
+  GameAnswersTable,
+  GameHeader,
+  Labels,
+  Pagination,
+  SortHeader,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.MyPlayQuery
 import gathedge.frontend.state.{PendingPlay, PlayHandoff}
-import gathedge.shared.domain.AnswerOutcome
-import gathedge.shared.dto.{GameAnswerResult, GamePlaySort, GameResults, MyPlayPage, MyPlaySummary}
+import gathedge.shared.dto.{GamePlaySort, GameResults, MyPlayPage, MyPlaySummary}
 import gathedge.shared.i18n.UiKeys
 
 /** The signed-in caller's own play history across every game — see `GameService.myPlays`. Always the caller's own data,
@@ -273,7 +281,8 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
               I18n.t(UiKeys.gameInstancePlayAgain),
               onClick.mapTo(play) --> playAgainBus.writer,
             )
-          })
+          },
+        )
       ),
     )
   }
@@ -359,50 +368,7 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
     div(
       GameHeader.render(gameName, results.variant),
       p(cls := "font-bold mb-2 mt-2", s"${results.score} / ${results.maxScore}"),
-      renderAnswersTable(results.answers),
+      GameAnswersTable.render(results.answers),
     )
-  }
-
-  private def renderAnswersTable(answers: List[GameAnswerResult]): HtmlElement = {
-    div(
-      cls := "overflow-x-auto",
-      table(
-        cls := "table table-sm",
-        thead(
-          tr(
-            th(I18n.t(UiKeys.gameInstanceResultsWordCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsExpectedCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsAnswerCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsOutcomeCol)),
-          )
-        ),
-        tbody(answers.map(renderAnswerRow)),
-      ),
-    )
-  }
-
-  private def renderAnswerRow(answer: GameAnswerResult): HtmlElement = {
-    tr(
-      cls := "hover",
-      td(answer.wordText),
-      td(answer.expectedText),
-      td(answer.givenText),
-      td(renderOutcomeBadge(answer.outcome)),
-    )
-  }
-
-  /** Same styling `GameResultsPage.renderOutcomeBadge`/`GameInstancePage.renderOutcomeBadge` use — kept as its own copy
-    * rather than shared, matching those pages' own pattern.
-    */
-  private def renderOutcomeBadge(outcome: AnswerOutcome): HtmlElement = {
-    val style = outcome match {
-      case AnswerOutcome.Correct =>
-        "badge-success badge-soft"
-      case AnswerOutcome.Typo    =>
-        "badge-warning"
-      case AnswerOutcome.Wrong   =>
-        "badge-error"
-    }
-    span(cls := s"badge $style", Labels.gameOutcome(outcome))
   }
 }

@@ -4,11 +4,11 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, GameHeader, GuestBanner, Labels}
+import gathedge.frontend.components.{Alert, AppShell, GameAnswersTable, GameHeader, GuestBanner}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{AnswerOutcome, Gender, WordLanguage}
-import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
+import gathedge.shared.domain.{Gender, WordLanguage}
+import gathedge.shared.dto.{GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -265,7 +265,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
-      renderResultsTable(results.answers),
+      GameAnswersTable.render(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",
         button(
@@ -284,46 +284,4 @@ private class GamePlayPage(slug: String, playId: Long) {
     )
   }
 
-  private def renderResultsTable(answers: List[GameAnswerResult]): HtmlElement = {
-    div(
-      cls := "overflow-x-auto",
-      table(
-        cls := "table table-sm",
-        thead(
-          tr(
-            th(I18n.t(UiKeys.gameInstanceResultsWordCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsExpectedCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsAnswerCol)),
-            th(I18n.t(UiKeys.gameInstanceResultsOutcomeCol)),
-          )
-        ),
-        tbody(answers.map(renderResultRow)),
-      ),
-    )
-  }
-
-  private def renderResultRow(answer: GameAnswerResult): HtmlElement = {
-    tr(
-      cls := "hover",
-      td(answer.wordText),
-      td(answer.expectedText),
-      td(answer.givenText),
-      td(renderOutcomeBadge(answer.outcome)),
-    )
-  }
-
-  /** Mistakes (typo/wrong) get a warning/error badge, matching `AdminUserDiagnostics.renderOutcome`'s style for
-    * `login_attempts.outcome` — the same "outcome of one attempt, in a table" shape.
-    */
-  private def renderOutcomeBadge(outcome: AnswerOutcome): HtmlElement = {
-    val style = outcome match {
-      case AnswerOutcome.Correct =>
-        "badge-success badge-soft"
-      case AnswerOutcome.Typo    =>
-        "badge-warning"
-      case AnswerOutcome.Wrong   =>
-        "badge-error"
-    }
-    span(cls := s"badge $style", Labels.gameOutcome(outcome))
-  }
 }

@@ -891,18 +891,29 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
 
   /** `answers` mapped to their display text, shared by [[getResults]] (player-facing) and [[getPlayDetail]]
     * (owner-facing) — the two answer to the same shape, just addressed and gated differently.
+    *
+    * `expectedTexts` carries '''every''' translation the play would have accepted for a word, not just the one row
+    * [[submitAnswer]] scored against: the same union [[candidateTranslationIds]] builds — every marked target of the
+    * word across all the game's tags in the play's direction, plus the recorded `translationWordId` as a floor in case
+    * a pair was unmarked since. Sorted, deduped, and never empty.
     */
   private def answerResultsOf(
+    play: GamePlayRow,
     answers: List[GamePlayAnswerRow],
-    includeDefiniteArticles: Boolean,
   ): UIO[List[GameAnswerResult]] = {
     for {
-      words <- repo.wordsByIds(answers.flatMap(a => List(a.wordId, a.translationWordId)).distinct).orDie
-      textOf = words.map(w => w.id -> wordText(w, includeDefiniteArticles)).toMap
+      pairs        <- repo.eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage).orDie
+      targetsByWord = pairs.groupBy(_._1).view.mapValues(_.map(_._2)).toMap
+      expectedIds   = answers.map { a =>
+                        a.id -> (a.translationWordId :: targetsByWord.getOrElse(a.wordId, Nil)).distinct
+                      }.toMap
+      allIds        = answers.flatMap(a => a.wordId :: expectedIds.getOrElse(a.id, Nil)).distinct
+      words        <- repo.wordsByIds(allIds).orDie
+      textOf        = words.map(w => w.id -> wordText(w, play.includeDefiniteArticles)).toMap
     } yield answers.map { a =>
       GameAnswerResult(
         wordText = textOf.getOrElse(a.wordId, ""),
-        expectedText = textOf.getOrElse(a.translationWordId, ""),
+        expectedTexts = expectedIds.getOrElse(a.id, Nil).flatMap(textOf.get).distinct.sorted,
         givenText = a.userAnswer,
         outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
       )
@@ -939,7 +950,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   private def assembleResults(play: GamePlayRow): IO[GameFailure, GameResults] = {
     for {
       answers <- repo.answersOf(play.id).orDie
-      results <- answerResultsOf(answers, play.includeDefiniteArticles)
+      results <- answerResultsOf(play, answers)
     } yield GameResults(play.score, play.maxScore, play.wordCount, results, variantOf(play))
   }
 
@@ -983,7 +994,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       play    <- repo.findPlayInGame(game.id, playId).orDie.someOrFail(GameFailure.NotFound)
       player  <- repo.usersByIds(List(play.playerUserId)).orDie.map(_.headOption)
       answers <- repo.answersOf(playId).orDie
-      results <- answerResultsOf(answers, play.includeDefiniteArticles)
+      results <- answerResultsOf(play, answers)
     } yield GamePlayDetail(
       playId = play.id,
       playerEmail = player.flatMap(_.email),

@@ -568,7 +568,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           prompt.wordText.contains("der Tisch"),
           results.answers.head.wordText == "der Tisch",
           // The expected answer is the ungendered Hungarian target: it is unaffected.
-          results.answers.head.expectedText == "asztal",
+          results.answers.head.expectedTexts == List("asztal"),
           results.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
@@ -591,11 +591,11 @@ object GameServiceSpec extends ZIOSpecDefault {
           _        <- GameService.submitAnswer(restart.playId, prompt2.wordId.get, "multi-target-1", owner)
           results2 <- GameService.getResults(restart.playId, owner)
         } yield assertTrue(
-          // Whichever of the two marked translations is typed, it scores correct and the results show that one.
+          // Whichever of the two marked translations is typed, it scores correct; the results list both as accepted.
           results.answers.head.outcome == AnswerOutcome.Correct,
-          results.answers.head.expectedText == "multi-target-2",
+          results.answers.head.expectedTexts == List("multi-target-1", "multi-target-2"),
           results2.answers.head.outcome == AnswerOutcome.Correct,
-          results2.answers.head.expectedText == "multi-target-1",
+          results2.answers.head.expectedTexts == List("multi-target-1", "multi-target-2"),
         )
       },
       test("a gendered expected answer requires its article to score as correct") {
@@ -620,7 +620,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           prompt.wordText.contains("asztal"),
           // Typing the noun without its article is nowhere near a one-letter typo of "der Tisch", so it scores wrong.
           bareResults.answers.head.outcome == AnswerOutcome.Wrong,
-          bareResults.answers.head.expectedText == "der Tisch",
+          bareResults.answers.head.expectedTexts == List("der Tisch"),
           // Typing the noun with its correct article scores correct.
           fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
@@ -643,7 +643,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           defaultResults.variant.includeDefiniteArticles,
           !results.variant.includeDefiniteArticles,
           results.answers.head.outcome == AnswerOutcome.Correct,
-          results.answers.head.expectedText == "Schrank",
+          results.answers.head.expectedTexts == List("Schrank"),
         )
       },
       test("listPlays/getPlayDetail are refused to anyone but the game's owner") {
@@ -845,11 +845,14 @@ object GameServiceSpec extends ZIOSpecDefault {
           after1.finished,
           res1.answers.size == 1,
           res1.answers.head.outcome == AnswerOutcome.Correct,
+          // The one prompt lists both tags' translations as accepted.
+          res1.answers.head.expectedTexts == List("haz", "otthon"),
           res2.answers.head.outcome == AnswerOutcome.Correct,
+          res2.answers.head.expectedTexts == List("haz", "otthon"),
           play3.wordCount == 2,
           play3.maxScore == 4,
           res3.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct),
-          res3.answers.map(_.expectedText).toSet == Set("haus"),
+          res3.answers.flatMap(_.expectedTexts).toSet == Set("haus"),
           res3.answers.map(_.wordText).toSet == Set("haz", "otthon"),
         )
       },
@@ -881,10 +884,12 @@ object GameServiceSpec extends ZIOSpecDefault {
           after1.finished,
           res1.answers.size == 1,
           res1.answers.head.outcome == AnswerOutcome.Correct,
+          res1.answers.head.expectedTexts == List("konyv"),
           play2.wordCount == 1,
           play2.maxScore == 2,
           res2.answers.size == 1,
           res2.answers.head.outcome == AnswerOutcome.Correct,
+          res2.answers.head.expectedTexts == List("buch"),
         )
       },
       test("same word across three tags with overlapping translation sets: one prompt, every translation accepted") {
@@ -929,10 +934,12 @@ object GameServiceSpec extends ZIOSpecDefault {
           resA.answers.head.outcome == AnswerOutcome.Correct,
           resB.answers.head.outcome == AnswerOutcome.Correct,
           resC.answers.head.outcome == AnswerOutcome.Correct,
+          // The single forward prompt lists the union of all three tags' translations.
+          resA.answers.head.expectedTexts == List("datum", "nap", "napszak"),
           play3.wordCount == 3,
           play3.maxScore == 6,
           res3.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct),
-          res3.answers.map(_.expectedText).toSet == Set("tag"),
+          res3.answers.flatMap(_.expectedTexts).toSet == Set("tag"),
           res3.answers.map(_.wordText).toSet == Set("nap", "napszak", "datum"),
         )
       },
