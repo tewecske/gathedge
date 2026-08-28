@@ -1069,6 +1069,12 @@ object UiKeys {
   val myPlaysFilterPlaceholder: String = key("ui.myPlays.filterPlaceholder")
   val myPlaysCount: String             = pluralKey("ui.myPlays.count")
 
+  // An unfinished play — `finishedAt` still unset — shows this badge in place of a score, and a "Continue" action
+  // that re-enters the play loop where the player left off. Progress is already on the server; the loop is
+  // `playId`-addressed and resumes from the next unanswered word.
+  val myPlaysInProgress: String     = key("ui.myPlays.inProgress")
+  val myPlaysContinueButton: String = key("ui.myPlays.continueButton")
+
   // -- Progress sharing --------------------------------------------------------------------------
   // Letting one account read another's game history, on either side's own say-so — a "sharer" whose plays become
   // visible and a "viewer" who may read them, joined by a share code, never a role like "parent" or "teacher".

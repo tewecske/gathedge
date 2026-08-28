@@ -384,6 +384,8 @@
   "ui.myPlays.filterPlaceholder": "Szűrés játék szerint…",
   "ui.myPlays.count.one": "{0} játszma",
   "ui.myPlays.count.other": "{0} játszma",
+  "ui.myPlays.inProgress": "Folyamatban",
+  "ui.myPlays.continueButton": "Folytatás",
   "ui.settings.share.title": "Haladásom megosztása",
   "ui.settings.share.hint": "Ezzel a kóddal bárki láthatja, mely játékokat játszottad, és hogyan teljesítettél azokban a játékokban, amelyek követik az eredményeket. Add oda annak, akivel meg szeretnéd osztani a haladásodat.",
   "ui.settings.share.getCode": "Megosztási kód kérése",

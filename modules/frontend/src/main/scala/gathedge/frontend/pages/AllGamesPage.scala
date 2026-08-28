@@ -188,14 +188,14 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         cls := "table",
         thead(
           tr(
-            th(),
+            // The first column holds the heart button and the like count together, so it carries the likes sort.
+            SortHeader.render(I18n.t(UiKeys.allGamesLikesCol), AllGameSort.likeCount, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.allGamesNameCol), AllGameSort.name, sortSignal, onSort),
             // Tags, the language pair and the play count are filterable/readable but not sortable — see `AllGameSort`.
             th(I18n.t(UiKeys.allGamesTagsCol)),
             th(I18n.t(UiKeys.allGamesSourceCol)),
             th(I18n.t(UiKeys.allGamesTargetCol)),
             th(I18n.t(UiKeys.allGamesPlaysCol)),
-            SortHeader.render(I18n.t(UiKeys.allGamesLikesCol), AllGameSort.likeCount, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.allGamesCreatedCol), AllGameSort.createdAt, sortSignal, onSort),
           )
         ),
@@ -210,13 +210,18 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private def renderRow(game: AllGameSummary): HtmlElement = {
     tr(
       cls := "hover",
-      td(renderFavorite(game)),
+      td(
+        div(
+          cls := "flex items-center gap-1",
+          renderFavorite(game),
+          span(cls := "tabular-nums", game.likeCount.toString),
+        )
+      ),
       td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(game.slug)), game.name)),
       td(renderTags(game.tags)),
       td(Labels.language(game.sourceLanguage)),
       td(Labels.language(game.targetLanguage)),
       td(game.playCount.toString),
-      td(game.likeCount.toString),
       td(Formats.dateTime(game.createdAt)),
     )
   }

@@ -16,10 +16,6 @@ go back to previous word in game?
 flags?
 [ ] on the words page when clicking on a word, it shows the word details and the new translation should have the same target language selected as the selected tags target language by default
 
-[ ] save game progress, so it can be continued later from game history
-
-[ ] merge the like button and the number of likes into the first column, so it looks cleaner
-
 share with icons
 
 words sent one by one on import, triggers rate limiter, add bulk import option for words

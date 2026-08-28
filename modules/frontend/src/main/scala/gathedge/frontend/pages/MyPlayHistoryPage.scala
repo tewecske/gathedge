@@ -74,6 +74,7 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
   private val viewBus      = new EventBus[Long]()
   private val stepBus      = new EventBus[Int]()
   private val playAgainBus = new EventBus[MyPlaySummary]()
+  private val continueBus  = new EventBus[MyPlaySummary]()
 
   def render(): HtmlElement = {
     div(
@@ -146,6 +147,13 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
           case Left(err)     =>
             errorVar.set(Some(err.message))
         },
+      // No `GameReplay.start` here: the play already exists on the server, so this hands off its own
+      // name/wordCount/variant (all already on the row) and re-enters the loop, which resumes from the next
+      // unanswered word.
+      continueBus.events --> Observer[MyPlaySummary] { play =>
+        PendingPlay.set(play.playId, PlayHandoff(play.gameName, play.wordCount, play.variant))
+        AppRouter.router.pushState(Page.GamePlay(play.gameSlug, play.playId))
+      },
       onMountCallback(_ => reloadBus.emit(())),
     )
   }
@@ -232,7 +240,12 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
           play.gameName,
         )
       ),
-      td(s"${play.score} / ${play.maxScore}"),
+      td(
+        if (play.finishedAt.isEmpty)
+          span(cls := "badge badge-ghost badge-sm", I18n.t(UiKeys.myPlaysInProgress))
+        else
+          span(s"${play.score} / ${play.maxScore}")
+      ),
       td(play.wordCount.toString),
       td(Labels.variant(play.variant)),
       td(Formats.dateTime(play.startedAt)),
@@ -245,13 +258,22 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
             I18n.t(UiKeys.gameResultsViewButton),
             onClick.mapTo(play.playId) --> viewBus.writer,
           ),
-          button(
-            cls := "btn btn-ghost btn-xs",
-            typ := "button",
-            I18n.t(UiKeys.gameInstancePlayAgain),
-            onClick.mapTo(play) --> playAgainBus.writer,
-          ),
-        )
+          // An unfinished play resumes where it left off; a finished one can only be replayed fresh.
+          if (play.finishedAt.isEmpty) {
+            button(
+              cls := "btn btn-ghost btn-xs",
+              typ := "button",
+              I18n.t(UiKeys.myPlaysContinueButton),
+              onClick.mapTo(play) --> continueBus.writer,
+            )
+          } else {
+            button(
+              cls := "btn btn-ghost btn-xs",
+              typ := "button",
+              I18n.t(UiKeys.gameInstancePlayAgain),
+              onClick.mapTo(play) --> playAgainBus.writer,
+            )
+          })
       ),
     )
   }
