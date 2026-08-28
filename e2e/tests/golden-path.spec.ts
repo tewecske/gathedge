@@ -36,7 +36,7 @@ test('an unauthenticated visitor lands on the public games page', async () => {
   // signed-out click on it must not bounce back to sign-in.
   await page.goto('/');
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
 test('sign up creates an account and lands on the games page', async () => {
@@ -45,13 +45,13 @@ test('sign up creates an account and lands on the games page', async () => {
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
 test('the session survives a page refresh', async () => {
   await page.reload();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
 test('theme toggle switches the page theme immediately', async () => {
@@ -76,7 +76,7 @@ test('log back in with the same credentials', async () => {
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
-  await expect(page.getByRole('heading', { name: 'Games' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
 test('a non-admin is denied access to the admin area', async () => {
