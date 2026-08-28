@@ -7,6 +7,9 @@ web/dist/
 # Copied from node_modules by web/scripts/copy-tesseract-assets.mjs (predev/prebuild) — see
 # web/public/tesseract/lang/README.md for the language-data files, which are committed.
 web/public/tesseract/core/
+# Generated from PUBLIC_BASE_URL by web/scripts/gen-site-meta.mjs (predev/prebuild).
+web/public/robots.txt
+web/public/sitemap.xml
 .bsp/
 .metals/
 .bloop/

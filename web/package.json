@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-tesseract-assets.mjs",
+    "predev": "node scripts/copy-tesseract-assets.mjs && node scripts/gen-site-meta.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/copy-tesseract-assets.mjs",
+    "prebuild": "node scripts/copy-tesseract-assets.mjs && node scripts/gen-site-meta.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

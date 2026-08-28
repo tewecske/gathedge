@@ -5,6 +5,9 @@ services:
     build:
       context: .
       target: web
+      args:
+        # Baked into robots.txt / sitemap.xml at build time; match the backend's PUBLIC_BASE_URL.
+        PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
     image: gathedge-web
     restart: unless-stopped
     ports:

@@ -47,6 +47,11 @@ RUN --mount=type=cache,target=/root/.cache/coursier \
 # ---------------------------------------------------------------------------------------------
 FROM backend-build AS web-build
 
+# Baked into web/public/{robots.txt,sitemap.xml} by the prebuild hook (web/scripts/gen-site-meta.mjs).
+# Defaults to the origin the backend's compose service uses; docker-compose passes the real one.
+ARG PUBLIC_BASE_URL=http://localhost:8080
+ENV PUBLIC_BASE_URL=$PUBLIC_BASE_URL
+
 RUN --mount=type=cache,target=/root/.cache/coursier \
     --mount=type=cache,target=/root/.sbt \
     --mount=type=cache,target=/root/.ivy2 \
