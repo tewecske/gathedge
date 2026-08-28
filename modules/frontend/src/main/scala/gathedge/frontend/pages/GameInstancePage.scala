@@ -287,9 +287,18 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           cls   := "text-sm opacity-70",
           s"${Labels.language(detail.sourceLanguage)} → ${Labels.language(detail.targetLanguage)}",
         ),
-        if (detail.tagNames.nonEmpty)
-          div(cls := "flex flex-wrap gap-2 mt-1", detail.tagNames.map(name => span(cls := "badge badge-ghost", name)))
-        else
+        if (detail.tags.nonEmpty) {
+          div(
+            cls := "flex flex-wrap gap-2 mt-1",
+            detail.tags.map(tag => {
+              a(
+                cls := "link",
+                AppRouter.router.navigateTo(Page.TagDetail(tag.id)),
+                tag.name,
+              )
+            }),
+          )
+        } else
           emptyNode,
         shareRow.render(),
         div(cls := "mt-4", renderStart()),

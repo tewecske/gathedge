@@ -14,6 +14,7 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
+  GameTagRef,
   GameVariantDto,
   MyPlayPage,
   MyPlaySummary,
@@ -388,7 +389,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       total         <- repo.countAllGamesMatching(nameContains, favoritesOf).orDie
       gameIds        = rows.map(_.id)
       tagsByGame    <- ZIO
-                         .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tags.map(_.name).sorted))
+                         .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tagRefs(tags)))
                          .map(_.toMap)
       playCounts    <- repo.playCounts(gameIds).orDie
       likeCounts    <- repo.favoriteCounts(gameIds).orDie
@@ -400,7 +401,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
           name = row.name,
           sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
           targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
-          tagNames = tagsByGame.getOrElse(row.id, Nil),
+          tags = tagsByGame.getOrElse(row.id, Nil),
           playCount = playCounts.getOrElse(row.id, 0L),
           likeCount = likeCounts.getOrElse(row.id, 0L),
           favoritedByMe = favoritedMine.contains(row.id),
@@ -507,7 +508,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       row        <-
         insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt = 0, lastPair = None)
       tags       <- repo.tagsOf(row.id).orDie
-    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted)
+    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tagRefs(tags))
   }
 
   /** The setup screen's preview of the pool a game built from `tagIds` would draw from, one row per source word with
@@ -533,6 +534,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       .sortBy(_.text)
   }
 
+  /** A game's tag rows as the wire carries them: id plus name, ordered by name so a listing renders them the same way
+    * every time. The id lets the frontend link each name to the tag's own page.
+    */
+  private def tagRefs(rows: List[TagRow]): List[GameTagRef] =
+    rows.map(row => GameTagRef(row.id, row.name)).sortBy(_.name)
+
   private def detailOf(row: GameRow): UIO[GameDetail] = {
     repo.tagsOf(row.id).orDie.map { tags =>
       GameDetail(
@@ -540,7 +547,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
         row.name,
         WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
         WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
-        tags.map(_.name).sorted,
+        tagRefs(tags),
       )
     }
   }

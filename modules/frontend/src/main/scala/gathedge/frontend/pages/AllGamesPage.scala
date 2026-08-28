@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AllGameQuery
-import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary}
+import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary, GameTagRef}
 import gathedge.shared.i18n.UiKeys
 
 /** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
@@ -212,7 +212,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       cls := "hover",
       td(renderFavorite(game)),
       td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(game.slug)), game.name)),
-      td(renderTags(game.tagNames)),
+      td(renderTags(game.tags)),
       td(Labels.language(game.sourceLanguage)),
       td(Labels.language(game.targetLanguage)),
       td(game.playCount.toString),
@@ -232,10 +232,16 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
     )
   }
 
-  private def renderTags(tagNames: List[String]): HtmlElement = {
+  private def renderTags(tags: List[GameTagRef]): HtmlElement = {
     div(
-      cls := "flex flex-wrap gap-1",
-      tagNames.map(name => span(cls := "badge badge-primary badge-soft badge-sm", name)),
+      cls := "flex flex-wrap gap-2",
+      tags.map(tag => {
+        a(
+          cls := "link",
+          AppRouter.router.navigateTo(Page.TagDetail(tag.id)),
+          tag.name,
+        )
+      }),
     )
   }
 }

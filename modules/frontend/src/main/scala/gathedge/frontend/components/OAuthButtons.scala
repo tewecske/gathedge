@@ -26,7 +26,7 @@ object OAuthButtons {
   }
 
   private def button(provider: OAuthProvider, link: Boolean): HtmlElement = {
-    val label = {
+    val label  = {
       if (link)
         I18n.t(UiKeys.oauthLink, provider.display)
       else
@@ -36,7 +36,7 @@ object OAuthButtons {
       cls  := s"btn btn-block ${brandClasses(provider)}",
       href := ApiClient.oauthStartUrl(provider, link),
       brandIcon(provider),
-      label
+      label,
     )
   }
 
@@ -59,12 +59,12 @@ object OAuthButtons {
           svg.cls     := "size-4",
           svg.viewBox := "0 0 512 512",
           svg.g(
-            svg.path(svg.fill := "#fff", svg.d := "m0 0H512V512H0"),
+            svg.path(svg.fill := "#fff", svg.d    := "m0 0H512V512H0"),
             svg.path(svg.fill := "#34a853", svg.d := "M153 292c30 82 118 95 171 60h62v48A192 192 0 0190 341"),
             svg.path(svg.fill := "#4285f4", svg.d := "m386 400a140 140 0 0053-179H260v74h102q-7 37-38 57"),
             svg.path(svg.fill := "#fbbc02", svg.d := "m90 341a208 208 0 010-171l63 49q-12 37 0 73"),
-            svg.path(svg.fill := "#ea4335", svg.d := "m153 219c22-69 116-109 179-50l55-54c-78-75-230-72-297 55")
-          )
+            svg.path(svg.fill := "#ea4335", svg.d := "m153 219c22-69 116-109 179-50l55-54c-78-75-230-72-297 55"),
+          ),
         )
       case OAuthProvider.Microsoft =>
         svg.svg(
@@ -73,7 +73,7 @@ object OAuthButtons {
           svg.path(svg.fill := "#f24f23", svg.d := "M96 96H247V247H96"),
           svg.path(svg.fill := "#7eba03", svg.d := "M265 96H416V247H265"),
           svg.path(svg.fill := "#3ca4ef", svg.d := "M96 265H247V416H96"),
-          svg.path(svg.fill := "#f9ba00", svg.d := "M265 265H416V416H265")
+          svg.path(svg.fill := "#f9ba00", svg.d := "M265 265H416V416H265"),
         )
     }
   }

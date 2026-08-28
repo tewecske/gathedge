@@ -167,7 +167,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           detail <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
         } yield assertTrue(
           Set("brave-otter", "brave-fox", "calm-otter", "calm-fox").contains(detail.slug),
-          detail.tagNames == List("lesson1"),
+          detail.tags.map(_.name) == List("lesson1"),
+          detail.tags.forall(_.id == tagId),
           detail.sourceLanguage == WordLanguage.De,
           detail.targetLanguage == WordLanguage.Hu,
         )
@@ -235,7 +236,8 @@ object GameServiceSpec extends ZIOSpecDefault {
             // Every account's game comes back now, not just the caller's own.
             unplayed.total == 2L,
             unplayed.items.map(_.slug).toSet == Set(ownGame.slug, otherGame.slug),
-            ownRow.tagNames == List("mine"),
+            ownRow.tags.map(_.name) == List("mine"),
+            ownRow.tags.forall(_.id > 0L),
             ownRow.sourceLanguage == WordLanguage.De,
             ownRow.targetLanguage == WordLanguage.Hu,
             ownRow.playCount == 0L,

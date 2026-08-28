@@ -16,6 +16,11 @@ final case class CreateGameRequest(
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name. */
 final case class GameCreated(slug: String, name: String) derives JsonCodec
 
+/** One of a game's tags, as [[GameDetail]] and [[AllGameSummary]] carry it: the id so the name can link to the tag's
+  * own page, the same plain link the group detail page's tag list renders. Sorted by `name`.
+  */
+final case class GameTagRef(id: Long, name: String) derives JsonCodec
+
 final case class RenameGameRequest(name: String) derives JsonCodec
 
 /** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
@@ -32,7 +37,7 @@ final case class GameDetail(
   name: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
-  tagNames: List[String],
+  tags: List[GameTagRef],
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design
@@ -109,7 +114,7 @@ final case class AllGameSummary(
   name: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
-  tagNames: List[String],
+  tags: List[GameTagRef],
   playCount: Long,
   likeCount: Long,
   favoritedByMe: Boolean,
