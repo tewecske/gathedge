@@ -1,8 +1,23 @@
+
+big project: phrases
+game to translate a phrase using drag and drop words in the correct order
+
+big project: llm image to text
+
+big project: new tag creation screen with focus on ease of use
+
+
+
+new game mode, show one word and show 4 translate options, all the game creation settings are the same, only the gameplay is different because the user doesn't have to type, only click on the correct word. for the 4 options use words from the tags assigned to the game, or word forms/main word of the games
+
+
+
 in game plural words should be shown specially or marked somehow
 go back to previous word in game?
 
 flags?
 on the words page when clicking on a word, it shows the word details and the new translation should have the same target language selected as the selected tags target language by default
+
 save game progress, so it can be continued later from game history
 
 [+] games/mine change it to games/all and show all games not just mine
@@ -11,6 +26,7 @@ save game progress, so it can be continued later from game history
 
 on the admin / users / user detail, I see a play history block at the bottom of the page, and it's titled "My play history", why is it there? If I requested it, it's still doesn't seem right. Remove it and add a button to the user list "Play history" and that should bring the admin to a new page which looks like the users play history page
 save game progress and continue from play history
+
 share with icons
 
 words sent one by one on import, triggers rate limiter, add bulk import option for words
