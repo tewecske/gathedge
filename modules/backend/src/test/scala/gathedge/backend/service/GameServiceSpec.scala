@@ -140,6 +140,25 @@ object GameServiceSpec extends ZIOSpecDefault {
     }
   }
 
+  /** Marks `src -> tgt` (both directions, per `WordRepository.pairTranslation`) inside `tagId`. The building block for
+    * the "same word under more than one tag" cases, where the helpers above — each assuming a single tag — do not fit.
+    */
+  private def markPair(tagId: Long, src: WordRow, tgt: WordRow): RIO[WordRepository, Unit] =
+    WordRepository.pairTranslation(src.id, tagId, tgt.id, 0L).unit
+
+  /** Answers every remaining prompt of `playId` with the same text, until the play reports finished. Unlike
+    * [[playThrough]] it does not vary the answer by prompt — the combined-tags cases below fix one correct answer and
+    * check it scores for every prompt.
+    */
+  private def answerEach(playId: Long, userId: Long, answer: String): ZIO[GameService, GameFailure, Unit] = {
+    GameService.nextPrompt(playId, userId).flatMap { prompt =>
+      if (prompt.finished)
+        ZIO.unit
+      else
+        GameService.submitAnswer(playId, prompt.wordId.get, answer, userId) *> answerEach(playId, userId, answer)
+    }
+  }
+
   def spec = {
     suite("GameService")(
       test("eligible tags are only the ones with a pair spanning both languages, own tag first") {
@@ -789,6 +808,132 @@ object GameServiceSpec extends ZIOSpecDefault {
           asAdmin == mine,
           wrongId == Left(GameFailure.NotFound),
           missing == Left(GameFailure.NotFound),
+        )
+      },
+      test("same word under two tags with different translations: one prompt, either translation accepted") {
+        for {
+          owner <- newUser()
+          w     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "haus"))
+          t1    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
+          t2    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "otthon"))
+          tagA  <- WordRepository.insertTag(owner, "combA", "combA", 0L).map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "combB", "combB", 0L).map(_.id)
+          _     <- markPair(tagA, w, t1)
+          _     <- markPair(tagB, w, t2)
+
+          // Forward De -> Hu: the word sits under both tags, so it is prompted once.
+          fwd     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagA, tagB))
+          play1   <- GameService.startPlay(fwd.slug, owner)
+          prompt1 <- GameService.nextPrompt(play1.playId, owner)
+          _       <- GameService.submitAnswer(play1.playId, prompt1.wordId.get, "otthon", owner)
+          after1  <- GameService.nextPrompt(play1.playId, owner)
+          res1    <- GameService.getResults(play1.playId, owner)
+          play2   <- GameService.startPlay(fwd.slug, owner)
+          prompt2 <- GameService.nextPrompt(play2.playId, owner)
+          _       <- GameService.submitAnswer(play2.playId, prompt2.wordId.get, "haz", owner)
+          res2    <- GameService.getResults(play2.playId, owner)
+
+          // Swapped Hu -> De: two distinct source words that share the one answer, both asked (no word limit).
+          swp   <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tagA, tagB))
+          play3 <- GameService.startPlay(swp.slug, owner)
+          _     <- answerEach(play3.playId, owner, "haus")
+          res3  <- GameService.getResults(play3.playId, owner)
+        } yield assertTrue(
+          play1.wordCount == 1,
+          play1.maxScore == 2,
+          prompt1.wordText.contains("haus"),
+          after1.finished,
+          res1.answers.size == 1,
+          res1.answers.head.outcome == AnswerOutcome.Correct,
+          res2.answers.head.outcome == AnswerOutcome.Correct,
+          play3.wordCount == 2,
+          play3.maxScore == 4,
+          res3.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct),
+          res3.answers.map(_.expectedText).toSet == Set("haus"),
+          res3.answers.map(_.wordText).toSet == Set("haz", "otthon"),
+        )
+      },
+      test("same word under two tags with the same translation: plain distinct, one prompt each direction") {
+        for {
+          owner <- newUser()
+          w     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "buch"))
+          t     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "konyv"))
+          tagA  <- WordRepository.insertTag(owner, "dupA", "dupA", 0L).map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "dupB", "dupB", 0L).map(_.id)
+          _     <- markPair(tagA, w, t)
+          _     <- markPair(tagB, w, t)
+
+          fwd     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagA, tagB))
+          play1   <- GameService.startPlay(fwd.slug, owner)
+          prompt1 <- GameService.nextPrompt(play1.playId, owner)
+          _       <- GameService.submitAnswer(play1.playId, prompt1.wordId.get, "konyv", owner)
+          after1  <- GameService.nextPrompt(play1.playId, owner)
+          res1    <- GameService.getResults(play1.playId, owner)
+
+          swp     <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tagA, tagB))
+          play2   <- GameService.startPlay(swp.slug, owner)
+          prompt2 <- GameService.nextPrompt(play2.playId, owner)
+          _       <- GameService.submitAnswer(play2.playId, prompt2.wordId.get, "buch", owner)
+          res2    <- GameService.getResults(play2.playId, owner)
+        } yield assertTrue(
+          play1.wordCount == 1,
+          play1.maxScore == 2,
+          after1.finished,
+          res1.answers.size == 1,
+          res1.answers.head.outcome == AnswerOutcome.Correct,
+          play2.wordCount == 1,
+          play2.maxScore == 2,
+          res2.answers.size == 1,
+          res2.answers.head.outcome == AnswerOutcome.Correct,
+        )
+      },
+      test("same word across three tags with overlapping translation sets: one prompt, every translation accepted") {
+        for {
+          owner <- newUser()
+          w     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "tag"))
+          a     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "nap"))
+          b     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "napszak"))
+          c     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "datum"))
+          tagA  <- WordRepository.insertTag(owner, "triA", "triA", 0L).map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "triB", "triB", 0L).map(_.id)
+          tagC  <- WordRepository.insertTag(owner, "triC", "triC", 0L).map(_.id)
+          _     <- markPair(tagA, w, a)
+          _     <- markPair(tagB, w, a)
+          _     <- markPair(tagB, w, b)
+          _     <- markPair(tagC, w, a)
+          _     <- markPair(tagC, w, c)
+
+          fwd     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagA, tagB, tagC))
+          playA   <- GameService.startPlay(fwd.slug, owner)
+          promptA <- GameService.nextPrompt(playA.playId, owner)
+          _       <- GameService.submitAnswer(playA.playId, promptA.wordId.get, "nap", owner)
+          afterA  <- GameService.nextPrompt(playA.playId, owner)
+          resA    <- GameService.getResults(playA.playId, owner)
+          playB   <- GameService.startPlay(fwd.slug, owner)
+          promptB <- GameService.nextPrompt(playB.playId, owner)
+          _       <- GameService.submitAnswer(playB.playId, promptB.wordId.get, "napszak", owner)
+          resB    <- GameService.getResults(playB.playId, owner)
+          playC   <- GameService.startPlay(fwd.slug, owner)
+          promptC <- GameService.nextPrompt(playC.playId, owner)
+          _       <- GameService.submitAnswer(playC.playId, promptC.wordId.get, "datum", owner)
+          resC    <- GameService.getResults(playC.playId, owner)
+
+          swp   <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tagA, tagB, tagC))
+          play3 <- GameService.startPlay(swp.slug, owner)
+          _     <- answerEach(play3.playId, owner, "tag")
+          res3  <- GameService.getResults(play3.playId, owner)
+        } yield assertTrue(
+          playA.wordCount == 1,
+          playA.maxScore == 2,
+          afterA.finished,
+          resA.answers.head.outcome == AnswerOutcome.Correct,
+          resB.answers.head.outcome == AnswerOutcome.Correct,
+          resC.answers.head.outcome == AnswerOutcome.Correct,
+          play3.wordCount == 3,
+          play3.maxScore == 6,
+          res3.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct),
+          res3.answers.map(_.expectedText).toSet == Set("tag"),
+          res3.answers.map(_.wordText).toSet == Set("nap", "napszak", "datum"),
         )
       },
     ).provide(layer)
