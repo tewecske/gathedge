@@ -970,11 +970,6 @@ object UiKeys {
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
 
-  // Whether the owner can later see who played and how they scored — see `GameRow.trackResults`. Off by default,
-  // like every prior addition to this screen.
-  val gameSetupTrackResultsLabel: String = key("ui.gameSetup.trackResults.label")
-  val gameSetupTrackResultsHint: String  = key("ui.gameSetup.trackResults.hint")
-
   // -- Game instance -----------------------------------------------------------------------------
 
   val gameInstanceNotFound: String = key("ui.gameInstance.notFound")
@@ -1017,7 +1012,7 @@ object UiKeys {
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 
-  // Owner-only, shown only when `GameDetail.trackResults` is true — links to the results listing below.
+  // Owner-only — links to the results listing below.
   val gameInstanceViewResults: String = key("ui.gameInstance.viewResults")
 
   // -- Game results ------------------------------------------------------------------------------
@@ -1035,7 +1030,6 @@ object UiKeys {
   val gameResultsStartedCol: String        = key("ui.gameResults.startedCol")
   val gameResultsViewButton: String        = key("ui.gameResults.viewButton")
   val gameResultsGuestBadge: String        = key("ui.gameResults.guestBadge")
-  val gameResultsNotTracked: String        = key("ui.gameResults.notTracked")
 
   // The result modal: prev/next step through the currently loaded page only — see `GameResultsPage`'s doc comment.
   val gameResultsModalTitle: String   = key("ui.gameResults.modal.title")
@@ -1045,8 +1039,8 @@ object UiKeys {
   val gameResultsModalLoading: String = key("ui.gameResults.modal.loading")
 
   // -- My play history ---------------------------------------------------------------------------
-  // The signed-in caller's own play history across every game — `GET /api/games/plays/mine`. Never gated by
-  // `trackResults`, unlike the owner-facing listing above.
+  // The signed-in caller's own play history across every game — `GET /api/games/plays/mine`. Always the caller's
+  // own data, unlike the owner-facing listing above.
 
   val myPlaysTitle: String      = key("ui.myPlays.title")
   val myPlaysEmpty: String      = key("ui.myPlays.empty")

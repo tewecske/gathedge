@@ -273,7 +273,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
               // Same shape as setup: no input the codec can fail to decode, so its only failure is the aspect's 401.
               ("GET", "/api/games/mine")                                                  -> Set(Ok, Unauthorized),
-              // The caller's own play history: never gated by trackResults, so its only failures are the query
+              // The caller's own play history: always the caller's own data, so its only failures are the query
               // codec's 400 and the aspect's 401.
               ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),
               // createGame's own failures are all BadRequest (no tags selected, a tag ineligible for the language
@@ -302,13 +302,12 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/games/plays/{playId}/results")                                ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
-              // Owner-only, and only for a `trackResults = true` game: NotFound for an unknown slug (or, for the
-              // detail operation, a playId that does not belong to it), Forbidden for a game that belongs to somebody
-              // else, Conflict for a game that never turned tracking on.
+              // Owner-only: NotFound for an unknown slug (or, for the detail operation, a playId that does not belong
+              // to it), Forbidden for a game that belongs to somebody else.
               ("GET", "/api/games/{slug}/plays")                                          ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/games/{slug}/plays/{playId}")                                 ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/me")                                                          -> Set(Ok, Unauthorized),
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
@@ -402,16 +401,6 @@ object OpenApiSpec extends ZIOSpecDefault {
             )
         )
       },
-      // The uniform set this started from put all seven failure statuses on every operation. Describing each
-      // endpoint's own failures, and then dropping the three a well-behaved caller cannot provoke, is what takes it to
-      // the count below: 240 across 61 operations (236 across 60 before renameGroup; 234 before groupJoin/shareRedeem
-      // got their own rate-limit budgets; 198 across 50 before shareable tag groups added its ten). (It was 136
-      // across 44 while the Todo and Group example features were
-      // in the skeleton, and the shape of that arithmetic is the same — an operation declares its handler's failures
-      // plus a 401 where an aspect guards it, plus a 400 wherever it has an input, a query parameter or a header codec
-      // that can fail to decode.) Nothing enforces the total; it is here so a change that quietly re-widens the
-      // descriptions shows up as a number going up. The three assertions under it are the rule itself, stated where it
-      // can be checked.
       test("no operation documents a status only some other endpoint can answer with") {
         val successes: Set[Status] = Set(Ok, Created, NoContent)
         val declared               = statuses.values.map(_.diff(successes).size).sum
@@ -423,7 +412,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 240,
+          declared == 238,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

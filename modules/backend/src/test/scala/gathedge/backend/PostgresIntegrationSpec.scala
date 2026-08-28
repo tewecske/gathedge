@@ -307,7 +307,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // only bites on this dialect. Real Postgres is the only place `listPlaysPage`/`countPlaysMatching`/
       // `findPlayInGame`/`usersByIds` actually run as SQL rather than just compiling.
       test(
-        "a tracked game's owner-facing plays listing filters by player and scopes a play to its own game, for real"
+        "a game's owner-facing plays listing filters by player and scopes a play to its own game, for real"
       ) {
         for {
           owner         <- AuthService.signup("pgowner@example.com", "password123").map(_._1)
@@ -321,11 +321,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             WordRepository.ensureWord(WordRow(0L, "hu", "Pgnyom", "pgnyom", "noun", "", 1, "user", None, 0L, "pgnyom"))
           _             <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
           gameA         <- GameRepository.insertGame(
-                             GameRow(0L, owner.id, "pg-tracked-a", "PG Tracked A", "de", "hu", 0L, 0L, trackResults = true),
+                             GameRow(0L, owner.id, "pg-tracked-a", "PG Tracked A", "de", "hu", 0L, 0L),
                              List(tag.id),
                            )
           gameB         <- GameRepository.insertGame(
-                             GameRow(0L, owner.id, "pg-tracked-b", "PG Tracked B", "de", "hu", 0L, 0L, trackResults = true),
+                             GameRow(0L, owner.id, "pg-tracked-b", "PG Tracked B", "de", "hu", 0L, 0L),
                              List(tag.id),
                            )
           playAlice     <- GameRepository.insertPlay(

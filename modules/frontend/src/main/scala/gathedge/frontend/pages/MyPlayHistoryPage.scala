@@ -10,8 +10,8 @@ import gathedge.shared.domain.AnswerOutcome
 import gathedge.shared.dto.{GameAnswerResult, GameResults, MyPlayPage, MyPlaySummary}
 import gathedge.shared.i18n.UiKeys
 
-/** The signed-in caller's own play history across every game — see `GameService.myPlays`. Never gated by
-  * `trackResults`, unlike the owner-facing `GameResultsPage`: it is always the caller's own data.
+/** The signed-in caller's own play history across every game — see `GameService.myPlays`. Always the caller's own data,
+  * unlike the owner-facing `GameResultsPage`.
   *
   * A personal list rendered straight through with no URL-carried query state, the same shape `MyGamesPage` follows.
   * Each row opens a detail modal via `GameApiClient.getResults` — the player-facing equivalent of `GameResultsPage`'s

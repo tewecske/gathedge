@@ -41,10 +41,6 @@ enum GameFailure {
     */
   case NoEligibleWords
 
-  /** [[GameService.listPlays]]/[[GameService.getPlayDetail]] on a game whose owner never turned on `trackResults` — the
-    * play history is recorded regardless, this only refuses to show it.
-    */
-  case NotTracked
   case ValidationError(fieldErrors: Map[String, MessageRef])
 }
 
@@ -59,17 +55,14 @@ trait GameService {
   /** `userId`'s own games, most recently created first, with their tag names and how many times each was played. */
   def myGames(userId: Long): UIO[List[MyGameSummary]]
 
-  /** `trackResults`: `false` (the default, and the only behaviour before this parameter existed) means
-    * [[listPlays]]/[[getPlayDetail]] answer [[GameFailure.NotTracked]] for this game; `true` opts into the owner-facing
-    * results listing. Set once, here — there is no route to change it after creation. Direction, word count, article
-    * display and word preference are no longer part of a game at all — see [[startPlay]].
+  /** Every game records its plays for its owner to read back via [[listPlays]]/[[getPlayDetail]]. Direction, word
+    * count, article display and word preference are no longer part of a game at all — see [[startPlay]].
     */
   def createGame(
     userId: Long,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
-    trackResults: Boolean = false,
   ): IO[GameFailure, GameDetail]
 
   /** The eligible pool a game built from `tagIds`/`sourceLanguage`/`targetLanguage` would draw from, one row per source
@@ -131,8 +124,8 @@ trait GameService {
     */
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults]
 
-  /** One page of `slug`'s plays, for its owner. [[GameFailure.NotOwner]] for anyone else; [[GameFailure.NotTracked]] if
-    * the game never turned on `trackResults`. `playerContains` narrows to players whose address contains it.
+  /** One page of `slug`'s plays, for its owner. [[GameFailure.NotOwner]] for anyone else. `playerContains` narrows to
+    * players whose address contains it.
     */
   def listPlays(
     slug: String,
@@ -149,9 +142,8 @@ trait GameService {
     */
   def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail]
 
-  /** `userId`'s own plays across every game, most recently started first unless `sort` says otherwise. Never gated by
-    * `trackResults` — it is always the caller's own data, the same reasoning [[getResults]] is never gated either.
-    * `gameId` narrows to one game.
+  /** `userId`'s own plays across every game, most recently started first unless `sort` says otherwise. Always the
+    * caller's own data. `gameId` narrows to one game.
     */
   def myPlays(
     userId: Long,
@@ -162,11 +154,10 @@ trait GameService {
     descending: Boolean,
   ): UIO[MyPlayPage]
 
-  /** `targetUserId`'s plays across every game, narrowed to games whose owner turned on `trackResults` — the same rule
-    * that gates a game's own owner. Authorization (a progress share, or being an administrator) is the caller's job;
-    * this never fails on its own.
+  /** `targetUserId`'s plays across every game. Authorization (a progress share, or being an administrator) is the
+    * caller's job; this never fails on its own.
     */
-  def trackedPlaysOf(
+  def playsOf(
     targetUserId: Long,
     gameId: Option[Long],
     page: Int,
@@ -193,9 +184,8 @@ object GameService {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
-    trackResults: Boolean = false,
   ): ZIO[GameService, GameFailure, GameDetail] = {
-    ZIO.serviceWithZIO[GameService](_.createGame(userId, sourceLanguage, targetLanguage, tagIds, trackResults))
+    ZIO.serviceWithZIO[GameService](_.createGame(userId, sourceLanguage, targetLanguage, tagIds))
   }
 
   def eligibleWords(
@@ -274,7 +264,7 @@ object GameService {
   ): URIO[GameService, MyPlayPage] =
     ZIO.serviceWithZIO[GameService](_.myPlays(userId, gameId, page, pageSize, sort, descending))
 
-  def trackedPlaysOf(
+  def playsOf(
     targetUserId: Long,
     gameId: Option[Long],
     page: Int,
@@ -282,7 +272,7 @@ object GameService {
     sort: Option[String],
     descending: Boolean,
   ): URIO[GameService, MyPlayPage] =
-    ZIO.serviceWithZIO[GameService](_.trackedPlaysOf(targetUserId, gameId, page, pageSize, sort, descending))
+    ZIO.serviceWithZIO[GameService](_.playsOf(targetUserId, gameId, page, pageSize, sort, descending))
 
   val live: URLayer[GameRepository & GameWordList & GroupRepository, GameService] = {
     ZLayer.fromFunction((repo: GameRepository, words: GameWordList, groupRepo: GroupRepository) =>
@@ -392,7 +382,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
-    trackResults: Boolean,
     now: Long,
     attempt: Int,
     lastPair: Option[(String, String)],
@@ -410,7 +399,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
           targetLanguage = WordLanguage.code(targetLanguage),
           createdAt = now,
           updatedAt = now,
-          trackResults = trackResults,
         )
         repo.insertGame(row, tagIds).catchAll { error =>
           repo.findBySlug(slug).orDie.flatMap {
@@ -420,7 +408,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                 sourceLanguage,
                 targetLanguage,
                 tagIds,
-                trackResults,
                 now,
                 attempt + 1,
                 Some(pair),
@@ -438,7 +425,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     tagIds: List[Long],
-    trackResults: Boolean = false,
   ): IO[GameFailure, GameDetail] = {
     for {
       _          <- ZIO.when(tagIds.isEmpty)(ZIO.fail(GameFailure.NoTagsSelected))
@@ -447,9 +433,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       _          <- ZIO.unless(tagIds.forall(eligibleIds.contains))(ZIO.fail(GameFailure.TagNotEligible))
       now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row        <-
-        insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, trackResults, now, attempt = 0, lastPair = None)
+        insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt = 0, lastPair = None)
       tags       <- repo.tagsOf(row.id).orDie
-    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted, row.trackResults)
+    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tags.map(_.name).sorted)
   }
 
   /** The setup screen's preview of the pool a game built from `tagIds` would draw from, one row per source word with
@@ -483,7 +469,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
         WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
         WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
         tags.map(_.name).sorted,
-        row.trackResults,
       )
     }
   }
@@ -880,7 +865,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   ): IO[GameFailure, GamePlayPage] = {
     for {
       game      <- requireOwnGame(slug, requesterUserId)
-      _         <- ZIO.unless(game.trackResults)(ZIO.fail(GameFailure.NotTracked))
       plays     <- repo
                      .listPlaysPage(game.id, Paging.offset(page, pageSize), pageSize, playerContains, sort, descending)
                      .orDie
@@ -892,7 +876,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   def getPlayDetail(slug: String, playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayDetail] = {
     for {
       game    <- requireOwnGame(slug, requesterUserId)
-      _       <- ZIO.unless(game.trackResults)(ZIO.fail(GameFailure.NotTracked))
       play    <- repo.findPlayInGame(game.id, playId).orDie.someOrFail(GameFailure.NotFound)
       player  <- repo.usersByIds(List(play.playerUserId)).orDie.map(_.headOption)
       answers <- repo.answersOf(playId).orDie
@@ -926,13 +909,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     )
   }
 
-  /** Shared by [[myPlays]] and [[trackedPlaysOf]] — the only difference between "my own history" and "someone else's,
-    * already authorized" is whether untracked games are filtered out.
+  /** Shared by [[myPlays]] and [[playsOf]] — one page of a user's cross-game play history. The two differ only in who
+    * the caller is and who ran the authorization check; the query is the same.
     */
   private def playsPageFor(
     targetUserId: Long,
     gameId: Option[Long],
-    trackedOnly: Boolean,
     page: Int,
     pageSize: Int,
     sort: Option[String],
@@ -943,14 +925,13 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                      .listMyPlaysPage(
                        targetUserId,
                        gameId,
-                       trackedOnly,
                        Paging.offset(page, pageSize),
                        pageSize,
                        sort,
                        descending,
                      )
                      .orDie
-      total     <- repo.countMyPlaysMatching(targetUserId, gameId, trackedOnly).orDie
+      total     <- repo.countMyPlaysMatching(targetUserId, gameId).orDie
       gamesById <- repo.gamesByIds(plays.map(_.gameId).distinct).orDie.map(_.map(g => g.id -> g).toMap)
     } yield MyPlayPage(plays.map(play => myPlaySummaryOf(play, gamesById)), total)
   }
@@ -963,10 +944,10 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sort: Option[String],
     descending: Boolean,
   ): UIO[MyPlayPage] = {
-    playsPageFor(userId, gameId, trackedOnly = false, page, pageSize, sort, descending)
+    playsPageFor(userId, gameId, page, pageSize, sort, descending)
   }
 
-  def trackedPlaysOf(
+  def playsOf(
     targetUserId: Long,
     gameId: Option[Long],
     page: Int,
@@ -974,6 +955,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sort: Option[String],
     descending: Boolean,
   ): UIO[MyPlayPage] = {
-    playsPageFor(targetUserId, gameId, trackedOnly = true, page, pageSize, sort, descending)
+    playsPageFor(targetUserId, gameId, page, pageSize, sort, descending)
   }
 }

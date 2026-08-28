@@ -32,7 +32,7 @@ enum ProgressShareFailure {
 
 /** Progress sharing: letting one account's game history be read by another, on either side's own say-so — a "sharer"
   * whose plays become visible and a "viewer" who may read them, never a role like "parent" or "teacher".
-  * `GameService.trackedPlaysOf` is what actually answers the plays, once this has decided the read is allowed.
+  * `GameService.playsOf` is what actually answers the plays, once this has decided the read is allowed.
   */
 trait ProgressShareService {
 
@@ -52,7 +52,7 @@ trait ProgressShareService {
   def viewersOf(sharerUserId: Long): UIO[List[SharedViewer]]
 
   /** Fails [[ProgressShareFailure.NotShared]] unless `sharerUserId` has granted `viewerUserId` a share — the
-    * authorization check `ProgressShareRoutes` runs before ever calling `GameService.trackedPlaysOf`.
+    * authorization check `ProgressShareRoutes` runs before ever calling `GameService.playsOf`.
     */
   def requireShareAccess(viewerUserId: Long, sharerUserId: Long): IO[ProgressShareFailure, Unit]
 

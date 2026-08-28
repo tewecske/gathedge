@@ -109,7 +109,7 @@ object GameRoutes {
       handler { (body: CreateGameRequest) =>
         userId.flatMap(id => {
           GameService
-            .createGame(id, body.sourceLanguage, body.targetLanguage, body.tagIds, body.trackResults)
+            .createGame(id, body.sourceLanguage, body.targetLanguage, body.tagIds)
             .map(detail => GameCreated(detail.slug, detail.name))
             .mapError(ApiFailures.gameCreate)
         })

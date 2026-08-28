@@ -3,15 +3,14 @@ package gathedge.shared.dto
 import gathedge.shared.domain.{AnswerOutcome, WordLanguage, WordPreference}
 import zio.json.*
 
-/** What `POST /api/games` needs: the language pair and tags a base game is built from, and whether it tracks results.
-  * Nothing here ever changes after creation — word count, direction, article display and word preference are all
-  * play-time choices now, carried by [[StartPlayRequest]] instead. See the "game variants redesign" design doc.
+/** What `POST /api/games` needs: the language pair and tags a base game is built from. Nothing here ever changes after
+  * creation — word count, direction, article display and word preference are all play-time choices now, carried by
+  * [[StartPlayRequest]] instead. See the "game variants redesign" design doc.
   */
 final case class CreateGameRequest(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   tagIds: List[Long],
-  trackResults: Boolean = false,
 ) derives JsonCodec
 
 /** `POST /api/games`'s answer: just enough to navigate to the game and show its name. */
@@ -34,7 +33,6 @@ final case class GameDetail(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   tagNames: List[String],
-  trackResults: Boolean = false,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design
@@ -115,7 +113,7 @@ final case class MyGameSummary(
   createdAt: Long,
 ) derives JsonCodec
 
-/** One row of `GET /api/games/{slug}/plays` — a tracked game's owner-facing listing. `playerEmail` is `None` for a
+/** One row of `GET /api/games/{slug}/plays` — a game's owner-facing plays listing. `playerEmail` is `None` for a
   * guest who never gave one; `playerIsGuest` lets the table badge that instead of showing a blank cell. `variant` is
   * the settings this particular play actually ran under.
   */
@@ -131,9 +129,7 @@ final case class GamePlaySummary(
   variant: GameVariantDto,
 ) derives JsonCodec
 
-/** One page of a tracked game's plays. `total` counts what matches the player filter, the same rule [[UserPage]]
-  * follows.
-  */
+/** One page of a game's plays. `total` counts what matches the player filter, the same rule [[UserPage]] follows. */
 final case class GamePlayPage(items: List[GamePlaySummary], total: Long) derives JsonCodec
 
 /** `GET /api/games/{slug}/plays/{playId}`'s answer: one player's full attempt, for the owner-facing result modal. */

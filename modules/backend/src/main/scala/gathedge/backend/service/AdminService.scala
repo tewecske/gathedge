@@ -103,9 +103,7 @@ trait AdminService {
   /** Everything the administrator's account screen shows, gathered in one call. */
   def userDetail(id: Long): IO[AdminFailure, AdminUserDetail]
 
-  /** One page of `id`'s game plays across every game, narrowed to games whose owner turned on `trackResults` — the same
-    * rule that gates a game's own owner. [[AdminFailure.NotFound]] for an unknown `id`.
-    */
+  /** One page of `id`'s game plays across every game. [[AdminFailure.NotFound]] for an unknown `id`. */
   def userPlays(
     id: Long,
     gameId: Option[Long],
@@ -560,7 +558,7 @@ final case class AdminServiceLive(
     sort: Option[String],
     descending: Boolean,
   ): IO[AdminFailure, MyPlayPage] = {
-    requireUser(id) *> gameService.trackedPlaysOf(id, gameId, page, pageSize, sort, descending)
+    requireUser(id) *> gameService.playsOf(id, gameId, page, pageSize, sort, descending)
   }
 
   def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {

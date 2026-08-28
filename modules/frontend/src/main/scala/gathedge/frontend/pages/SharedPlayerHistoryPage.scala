@@ -9,8 +9,8 @@ import gathedge.shared.dto.{MyPlayPage, MyPlaySummary, SharedWithMe}
 import gathedge.shared.i18n.UiKeys
 
 /** One sharer's play history, for a viewer that sharer has granted access to — reuses `MyPlayHistoryPage`'s table,
-  * narrowed server-side to `trackResults = true` games and gated by `ProgressShareService.requireShareAccess`. The 403
-  * that check can still answer (a revoked share, or a stale local link) is what actually enforces it.
+  * gated server-side by `ProgressShareService.requireShareAccess`. The 403 that check can still answer (a revoked
+  * share, or a stale local link) is what actually enforces it.
   */
 object SharedPlayerHistoryPage {
 

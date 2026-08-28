@@ -231,9 +231,8 @@ final case class GuestClaimCodeRow(
   * typed like [[PasswordResetTokenRow.token]] / [[GuestClaimCodeRow.code]]. `name` is the opposite: cosmetic, free to
   * edit at will, which is why the two are separate columns rather than one renameable field.
   *
-  * `trackResults` gates only whether the owner-facing play listing/detail is reachable
-  * (`GameService.listPlays`/`getPlayDetail`) — `false` (the default) is the only behaviour before this field existed.
-  * [[GamePlayRow]] and [[GamePlayAnswerRow]] are written unconditionally by every play regardless of this flag.
+  * Every game's plays are readable by its owner (`GameService.listPlays`/`getPlayDetail`); [[GamePlayRow]] and
+  * [[GamePlayAnswerRow]] are written by every play, and there is no per-game opt-in gating that read.
   */
 final case class GameRow(
   id: Long,
@@ -244,7 +243,6 @@ final case class GameRow(
   targetLanguage: String,
   createdAt: Long,
   updatedAt: Long,
-  trackResults: Boolean = false,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like
@@ -330,7 +328,5 @@ final case class ProgressShareCodeRow(
   revokedAt: Option[Long],
 )
 
-/** One (sharer, viewer) grant: `viewerUserId` may read `sharerUserId`'s game history, subject to each game's own
-  * `trackResults` flag — the same rule a game's own owner is bound by.
-  */
+/** One (sharer, viewer) grant: `viewerUserId` may read `sharerUserId`'s game history across every game. */
 final case class ProgressShareRow(id: Long, sharerUserId: Long, viewerUserId: Long, createdAt: Long)

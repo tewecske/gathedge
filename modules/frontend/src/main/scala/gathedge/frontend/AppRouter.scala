@@ -51,7 +51,7 @@ object Page {
     */
   final case class GamePlay(slug: String, playId: Long) extends Page
 
-  /** A tracked game's owner-facing results listing: who played `slug` and how they scored. Owner-only (the default
+  /** A game's owner-facing results listing: who played `slug` and how they scored. Owner-only (the default
     * `AuthGuard.RequireAuth` covers it — see `guardFor`), unlike [[GameInstance]]: a shared link must stay public, but
     * a game's play history is not something a shared link should leak. It carries its whole listing state, the same
     * reason [[Admin]]/[[AdminAudit]]/[[Words]] do — see [[gathedge.frontend.listing.GamePlayQuery]] and the route
@@ -70,8 +70,8 @@ object Page {
     */
   case object SharedProgress extends Page
 
-  /** One sharer's play history, for a viewer that sharer has granted access to — reuses [[MyPlays]]'s table, filtered
-    * server-side to `trackResults = true` games and gated by `ProgressShareService.requireShareAccess`.
+  /** One sharer's play history, for a viewer that sharer has granted access to — reuses [[MyPlays]]'s table, gated
+    * server-side by `ProgressShareService.requireShareAccess`.
     */
   final case class SharedPlayerHistory(sharerUserId: Long) extends Page
 

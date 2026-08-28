@@ -21,7 +21,7 @@ import { test, expect, type Page } from '@playwright/test';
 // moved off GameSetupPage (creation) and onto GameInstancePage (play), chosen fresh each play rather than fixed
 // at creation. This suite now also exercises the swap-direction arrow, the play-time word-limit control, and the
 // "words I haven't played" preference actually skewing a narrower second play toward words the first play never
-// touched — plus the owner's tracked-results listing showing both plays as distinct rows.
+// touched — plus the owner's results listing showing both plays as distinct rows.
 
 const unique = Date.now();
 const ownerEmail = `e2e-game-${unique}@example.com`;
@@ -88,7 +88,7 @@ test('a tag collects four words, each with its Hungarian translation marked', as
   }
 });
 
-test('the setup screen is short — only language pair, tags, and track results — and creating tracks results', async () => {
+test('the setup screen is short — only language pair and tags — and every game records its plays', async () => {
   await page.goto('/en/games/vocabulary-quiz');
 
   // Default language pair is German -> Hungarian already (GameSetupPage's own default), matching the direction
@@ -98,17 +98,14 @@ test('the setup screen is short — only language pair, tags, and track results 
   await expect(tagRow).toContainText(`${tagName} (${words.length})`);
 
   // The word-count/randomize/articles controls this screen used to have all moved to the play-time picker on
-  // GameInstancePage — confirm none of them survive here.
+  // GameInstancePage — confirm none of them survive here. Neither does the old "Track results" opt-in: every
+  // game records its plays now.
   await expect(page.getByText('Include definite articles')).toHaveCount(0);
   await expect(page.getByText(/Randomize/i)).toHaveCount(0);
+  await expect(page.getByText('Track results')).toHaveCount(0);
   await expect(page.locator('input[type=number]')).toHaveCount(0);
 
   await tagRow.locator('input[type=checkbox]').check();
-
-  // Track results, so the owner-facing plays listing (Step 4's equivalent, below) has something to show.
-  const trackRow = page.locator('label', { hasText: 'Track results' });
-  await expect(trackRow).toContainText('See who played and how they scored');
-  await trackRow.locator('input[type=checkbox]').check();
 
   await page.getByRole('button', { name: 'Play', exact: true }).click();
   await expect(page).toHaveURL(/\/en\/g\/[a-z0-9-]+$/);
@@ -117,8 +114,8 @@ test('the setup screen is short — only language pair, tags, and track results 
   expect(gameSlug).not.toBe('');
 
   // The owner lands straight on the instance page it just created (GameSetupPage's own pushState) and is
-  // recognized as the owner in this same browser — the "View results" link only shows for the owner of a
-  // trackResults game (GameInstancePage.renderNameHeader).
+  // recognized as the owner in this same browser — the "View results" link shows for the game's owner
+  // (GameInstancePage.renderNameHeader).
   await expect(page.getByRole('link', { name: 'View results' })).toBeVisible();
 });
 
@@ -287,7 +284,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await guestContext.close();
 });
 
-test("the owner's tracked-results listing shows all three plays as distinct rows", async () => {
+test("the owner's results listing shows all three plays as distinct rows", async () => {
   await page.goto(`/en/games/${gameSlug}/results`);
 
   await expect(page.getByRole('heading', { name: 'Results' })).toBeVisible();

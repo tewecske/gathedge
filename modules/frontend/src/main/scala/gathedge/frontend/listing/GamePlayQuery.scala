@@ -5,7 +5,7 @@ import urldsl.vocabulary.Codec
 import gathedge.frontend.components.SortHeader
 import gathedge.shared.dto.{GamePlaySort, Paging}
 
-/** Everything that decides which plays of one tracked game the server sends back — the `GamePlaySort` counterpart to
+/** Everything that decides which plays of one game the server sends back — the `GamePlaySort` counterpart to
   * [[UserQuery]], for `GET /api/games/{slug}/plays`. The game's `slug` itself is not part of this: it is the route's
   * path segment, not its query, the same split [[UserQuery]] draws between path and query for every other listing.
   */

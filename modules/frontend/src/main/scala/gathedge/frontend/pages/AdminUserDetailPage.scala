@@ -88,8 +88,8 @@ private class AdminUserDetailPage(userId: Long) {
   // for a re-read rather than leaving the two views disagreeing.
   private val diagnostics = new AdminUserDiagnostics(userId, loadBus.writer)
 
-  // Closing the gap the games feature otherwise leaves in the admin screens: this account's own play history,
-  // narrowed to games whose owner turned on `trackResults` — the same rule that gates a game's own owner.
+  // Closing the gap the games feature otherwise leaves in the admin screens: this account's own play history
+  // across every game.
   private val playsVar: Var[Option[List[MyPlaySummary]]] = Var(None)
   private val playsReloadBus                             = new EventBus[Unit]()
 

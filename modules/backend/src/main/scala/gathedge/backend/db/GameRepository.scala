@@ -131,14 +131,11 @@ trait GameRepository {
 
   /** One page of `playerUserId`'s own plays across every game, most recently started first unless `sort` says otherwise
     * — the cross-game history [[listPlaysPage]] does not answer, since that one is scoped to a single game and its
-    * owner. `gameId` narrows to one game; `trackedOnly` narrows to games whose owner turned on `trackResults` — `false`
-    * for the player's own "my history" view (their own data needs no such gate), `true` for a viewer reading a share,
-    * or an admin reading anyone's, both of which respect the same rule a game's own owner is bound by.
+    * owner. `gameId` narrows to one game.
     */
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
-    trackedOnly: Boolean,
     offset: Int,
     limit: Int,
     sort: Option[String],
@@ -146,7 +143,7 @@ trait GameRepository {
   ): Task[List[GamePlayRow]]
 
   /** How many of `playerUserId`'s plays [[listMyPlaysPage]] would return across every page. */
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], trackedOnly: Boolean): Task[Long]
+  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): Task[Long]
 }
 
 object GameRepository {
@@ -244,19 +241,18 @@ object GameRepository {
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
-    trackedOnly: Boolean,
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): RIO[GameRepository, List[GamePlayRow]] = {
     ZIO.serviceWithZIO[GameRepository](
-      _.listMyPlaysPage(playerUserId, gameId, trackedOnly, offset, limit, sort, descending)
+      _.listMyPlaysPage(playerUserId, gameId, offset, limit, sort, descending)
     )
   }
 
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], trackedOnly: Boolean): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.countMyPlaysMatching(playerUserId, gameId, trackedOnly))
+  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countMyPlaysMatching(playerUserId, gameId))
 
   val live: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
     new GameRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GameRepository
@@ -588,41 +584,34 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   /** The rows a page of a player's cross-game history is cut from, before ordering — the same "narrowing the two paged
-    * methods share" split [[matchingPlays]] draws for the owner-facing listing. `trackedOnly` is a correlated subquery
-    * against `games`, the same shape [[matchingPlays]] uses against `users` for its player filter, rather than a join —
-    * there is no precedent in this codebase for joining a `DynamicQuery`.
+    * methods share" split [[matchingPlays]] draws for the owner-facing listing.
     */
   private def matchingMyPlays(
     playerUserId: Long,
     gameId: Option[Long],
-    trackedOnly: Boolean,
   ): DynamicQuery[GamePlayRow] = {
     dynamicQuerySchema[GamePlayRow]("game_plays")
       .filterOpt(Some(playerUserId))((play, id) => quote(play.playerUserId == unquote(id)))
       .filterOpt(gameId)((play, id) => quote(play.gameId == unquote(id)))
-      .filterOpt(Option.when(trackedOnly)(true))((play, _) =>
-        quote(games.filter(g => g.id == play.gameId && g.trackResults).nonEmpty)
-      )
   }
 
   def listMyPlaysPage(
     playerUserId: Long,
     gameId: Option[Long],
-    trackedOnly: Boolean,
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[GamePlayRow]] = {
     val page =
-      orderedPlays(matchingMyPlays(playerUserId, gameId, trackedOnly), sort, descending).drop(offset).take(limit)
+      orderedPlays(matchingMyPlays(playerUserId, gameId), sort, descending).drop(offset).take(limit)
     logged(run(ctx.run(page))) { rows =>
       s"games.listMyPlaysPage player=$playerUserId offset=$offset limit=$limit sort=${sort.getOrElse("-")} rows=${rows.size}"
     }
   }
 
-  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], trackedOnly: Boolean): Task[Long] = {
-    logged(run(ctx.run(matchingMyPlays(playerUserId, gameId, trackedOnly).size))) { count =>
+  def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long]): Task[Long] = {
+    logged(run(ctx.run(matchingMyPlays(playerUserId, gameId).size))) { count =>
       s"games.countMyPlaysMatching player=$playerUserId count=$count"
     }
   }

@@ -54,12 +54,7 @@ private class GameSetupPage {
 
   private val selectedTagIdsVar = Var(Set.empty[Long])
 
-  /** Whether the owner will later be able to see who played and how they scored — see `GameRow.trackResults`. Off by
-    * default, like every prior addition to this screen.
-    */
-  private val trackResultsVar = Var(false)
-
-  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal, trackResultsVar.signal)
+  private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal)
 
   /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
     * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
@@ -177,9 +172,8 @@ private class GameSetupPage {
             Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
         },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
-      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch {
-        case (source, target, tagIds, trackResults) =>
-          asReader(() => GameApiClient.create(source, target, tagIds.toList, trackResults))
+      playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch { case (source, target, tagIds) =>
+        asReader(() => GameApiClient.create(source, target, tagIds.toList))
       } -->
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
@@ -231,7 +225,6 @@ private class GameSetupPage {
   private def renderWordsColumn(): HtmlElement = {
     div(
       cls := "flex-1",
-      renderTrackResultsControl(),
       TagWordsList.render(wordsVar.signal, wordsLoadingVar.signal),
     )
   }
@@ -332,25 +325,6 @@ private class GameSetupPage {
         ),
       ),
       span(cls := "label-text text-sm", s"${tag.name} (${tag.wordCount})"),
-    )
-  }
-
-  /** A single checkbox — see [[trackResultsVar]]. */
-  private def renderTrackResultsControl(): HtmlElement = {
-    div(
-      cls := "mb-4",
-      label(
-        cls := "flex items-center gap-2 cursor-pointer",
-        input(
-          typ := "checkbox",
-          cls := "checkbox checkbox-sm",
-          controlled(checked <-- trackResultsVar.signal, onClick.mapToChecked --> trackResultsVar.writer),
-        ),
-        div(
-          span(cls := "label-text text-sm", I18n.t(UiKeys.gameSetupTrackResultsLabel)),
-          p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameSetupTrackResultsHint)),
-        ),
-      ),
     )
   }
 

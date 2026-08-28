@@ -55,9 +55,8 @@ object GameApiClient {
     source: WordLanguage,
     target: WordLanguage,
     tagIds: List[Long],
-    trackResults: Boolean = false,
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds, trackResults))))
+    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds))))
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */
@@ -112,7 +111,7 @@ object GameApiClient {
     run(executor(GameEndpoints.results(playId)))
   }
 
-  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays. */
+  /** Owner-only: one page of `slug`'s plays. */
   def listPlays(
     slug: String,
     page: Option[Int] = None,
@@ -129,7 +128,7 @@ object GameApiClient {
     run(executor(GameEndpoints.playDetail(slug, playId)))
   }
 
-  /** The caller's own play history across every game — never gated by `trackResults`, unlike [[listPlays]]. */
+  /** The caller's own play history across every game — always the caller's own data, unlike [[listPlays]]. */
   def myPlays(
     gameId: Option[Long] = None,
     page: Option[Int] = None,

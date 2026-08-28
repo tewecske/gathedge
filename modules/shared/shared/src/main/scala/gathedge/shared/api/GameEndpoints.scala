@@ -161,8 +161,8 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
-  /** Owner-only, and only for a `trackResults = true` game: one page of `slug`'s plays, most recent first unless `sort`
-    * says otherwise — see `GameService.listPlays`. `conflict` covers a game that does not track results.
+  /** Owner-only: one page of `slug`'s plays, most recent first unless `sort` says otherwise — see
+    * `GameService.listPlays`.
     */
   val listPlays = {
     Endpoint(Method.GET / "api" / "games" / gameSlug / "plays")
@@ -173,7 +173,7 @@ object GameEndpoints {
       .query(searchQuery)
       .withCodecError
       .out[GamePlayPage]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
   /** Owner-only equivalent of [[results]]: one play's full answer history, addressed by game and play together so an
@@ -182,12 +182,11 @@ object GameEndpoints {
   val playDetail = {
     Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / playId).withCodecError
       .out[GamePlayDetail]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
   /** The caller's own play history across every game, most recently started first unless `sort` says otherwise — see
-    * `GameService.myPlays`. Unlike [[listPlays]] this is never gated by `trackResults`: it is always the caller's own
-    * data, the same reasoning [[results]] is never gated either.
+    * `GameService.myPlays`. Unlike [[listPlays]] this needs no ownership check: it is always the caller's own data.
     */
   val myPlays = {
     Endpoint(Method.GET / "api" / "games" / "plays" / "mine")

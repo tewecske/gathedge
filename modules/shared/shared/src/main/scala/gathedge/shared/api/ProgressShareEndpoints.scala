@@ -63,9 +63,8 @@ object ProgressShareEndpoints {
       .outFailure(failure.unauthorized)
   }
 
-  /** One page of `sharerUserId`'s plays, for a viewer the sharer has granted access to — narrowed to games whose owner
-    * turned on `trackResults`, the same rule the game's own owner is bound by. 403 covers a caller with no share from
-    * `sharerUserId`.
+  /** One page of `sharerUserId`'s plays across every game, for a viewer the sharer has granted access to. 403 covers a
+    * caller with no share from `sharerUserId`.
     */
   val sharerPlays = {
     Endpoint(Method.GET / "api" / "progress-shares" / sharerUserId / "plays")

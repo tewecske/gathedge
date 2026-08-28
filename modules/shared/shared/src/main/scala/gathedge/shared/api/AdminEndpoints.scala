@@ -277,8 +277,7 @@ object AdminEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
-  /** One page of `id`'s game plays across every game, most recently started first unless `sort` says otherwise,
-    * narrowed to games whose owner turned on `trackResults` — the same rule that gates a game's own owner. See
+  /** One page of `id`'s game plays across every game, most recently started first unless `sort` says otherwise. See
     * `AdminService.userPlays`.
     */
   val userPlays = {

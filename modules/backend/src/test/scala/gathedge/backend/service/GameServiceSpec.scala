@@ -562,32 +562,13 @@ object GameServiceSpec extends ZIOSpecDefault {
           results.answers.head.expectedText == "Schrank",
         )
       },
-      test("createGame's trackResults defaults to false and round-trips when set") {
-        for {
-          owner   <- newUser()
-          tagId   <- eligibleTag(owner, "trackDefault", WordLanguage.De, WordLanguage.Hu)
-          default <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          tracked <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
-        } yield assertTrue(!default.trackResults, tracked.trackResults)
-      },
-      test("listPlays/getPlayDetail are refused for a game that never turned on trackResults") {
-        for {
-          owner   <- newUser()
-          tagId   <- eligibleTagWithPairs(owner, "untracked", WordLanguage.De, WordLanguage.Hu, count = 1)
-          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          started <- GameService.startPlay(created.slug, owner)
-          _       <- playThrough(started.playId, "untracked", owner)
-          listed  <- GameService.listPlays(created.slug, owner, 1, 20, None, None, false).either
-          detail  <- GameService.getPlayDetail(created.slug, started.playId, owner).either
-        } yield assertTrue(listed == Left(GameFailure.NotTracked), detail == Left(GameFailure.NotTracked))
-      },
       test("listPlays/getPlayDetail are refused to anyone but the game's owner") {
         for {
           owner   <- newUser()
           other   <- newUser()
           tagId   <- eligibleTagWithPairs(owner, "trackedGuard", WordLanguage.De, WordLanguage.Hu, count = 1)
           created <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           started <- GameService.startPlay(created.slug, owner)
           _       <- playThrough(started.playId, "trackedGuard", owner)
           listed  <- GameService.listPlays(created.slug, other, 1, 20, None, None, false).either
@@ -602,7 +583,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner    <- newUser()
           tagId    <- eligibleTagWithPairs(owner, "listed", WordLanguage.De, WordLanguage.Hu, count = 1)
           created  <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           alice    <- UserRepository.insert("alice@example.com", Some("hash"), false, "light", "en", 0L, None).map(_.id)
           guest    <- newUser()
           playA    <- GameService.startPlay(created.slug, alice)
@@ -628,28 +609,26 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner  <- newUser()
           tagId  <- eligibleTagWithPairs(owner, "crossGame", WordLanguage.De, WordLanguage.Hu, count = 1)
           gameA  <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           gameB  <-
-            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId), trackResults = true)
+            GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           playA  <- GameService.startPlay(gameA.slug, owner)
           result <- GameService.getPlayDetail(gameB.slug, playA.playId, owner).either
         } yield assertTrue(result == Left(GameFailure.NotFound))
       },
-      test("myPlays answers the caller's own plays across every game, including an untracked one") {
+      test("myPlays answers the caller's own plays across every game") {
         for {
           player <- newUser()
           tagA   <- eligibleTagWithPairs(player, "myPlaysA", WordLanguage.De, WordLanguage.Hu, count = 1)
           tagB   <- eligibleTagWithPairs(player, "myPlaysB", WordLanguage.De, WordLanguage.Hu, count = 1)
-          gameA  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA)) // untracked
-          gameB  <-
-            GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB), trackResults = true)
+          gameA  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA))
+          gameB  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB))
           playA  <- GameService.startPlay(gameA.slug, player)
           _      <- playThrough(playA.playId, "myPlaysA", player)
           playB  <- GameService.startPlay(gameB.slug, player)
           _      <- playThrough(playB.playId, "myPlaysB", player)
           mine   <- GameService.myPlays(player, None, 1, 20, None, false)
         } yield assertTrue(
-          // Own plays across both games come back, tracked or not — myPlays is never gated by trackResults.
           mine.total == 2L,
           mine.items.map(_.playId).toSet == Set(playA.playId, playB.playId),
           mine.items.map(_.gameSlug).toSet == Set(gameA.slug, gameB.slug),
@@ -666,22 +645,22 @@ object GameServiceSpec extends ZIOSpecDefault {
           theirs  <- GameService.myPlays(other, None, 1, 20, None, false)
         } yield assertTrue(theirs.total == 0L, theirs.items.isEmpty)
       },
-      test("trackedPlaysOf narrows to games whose owner turned on trackResults") {
+      test("playsOf answers the target user's plays across every game") {
         for {
           player   <- newUser()
-          tagA     <- eligibleTagWithPairs(player, "trackedA", WordLanguage.De, WordLanguage.Hu, count = 1)
-          tagB     <- eligibleTagWithPairs(player, "trackedB", WordLanguage.De, WordLanguage.Hu, count = 1)
-          untracked = GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA))
-          tracked   =
-            GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB), trackResults = true)
-          gameA    <- untracked
-          gameB    <- tracked
+          tagA     <- eligibleTagWithPairs(player, "playsOfA", WordLanguage.De, WordLanguage.Hu, count = 1)
+          tagB     <- eligibleTagWithPairs(player, "playsOfB", WordLanguage.De, WordLanguage.Hu, count = 1)
+          gameA    <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA))
+          gameB    <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB))
           playA    <- GameService.startPlay(gameA.slug, player)
-          _        <- playThrough(playA.playId, "trackedA", player)
+          _        <- playThrough(playA.playId, "playsOfA", player)
           playB    <- GameService.startPlay(gameB.slug, player)
-          _        <- playThrough(playB.playId, "trackedB", player)
-          answered <- GameService.trackedPlaysOf(player, None, 1, 20, None, false)
-        } yield assertTrue(answered.total == 1L, answered.items.map(_.playId) == List(playB.playId))
+          _        <- playThrough(playB.playId, "playsOfB", player)
+          answered <- GameService.playsOf(player, None, 1, 20, None, false)
+        } yield assertTrue(
+          answered.total == 2L,
+          answered.items.map(_.playId).toSet == Set(playA.playId, playB.playId),
+        )
       },
     ).provide(layer)
   }

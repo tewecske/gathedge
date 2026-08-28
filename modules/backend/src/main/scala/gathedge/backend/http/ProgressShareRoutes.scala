@@ -53,7 +53,7 @@ object ProgressShareRoutes {
         ) =>
           userId.flatMap { viewerId =>
             ProgressShareService.requireShareAccess(viewerId, sharerUserId).mapError(ApiFailures.progressShareAccess) *>
-              GameService.trackedPlaysOf(
+              GameService.playsOf(
                 sharerUserId,
                 gameId,
                 Paging.boundedPage(page),

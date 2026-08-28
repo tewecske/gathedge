@@ -10,12 +10,12 @@ import gathedge.shared.domain.AnswerOutcome
 import gathedge.shared.dto.{GameAnswerResult, GameDetail, GamePlayDetail, GamePlayPage, GamePlaySort, GamePlaySummary}
 import gathedge.shared.i18n.UiKeys
 
-/** A tracked game's owner-facing plays listing: who played `slug` and how they scored, paged/sorted/filtered the same
-  * way `AdminUsersPage` is, plus a per-play detail modal.
+/** A game's owner-facing plays listing: who played `slug` and how they scored, paged/sorted/filtered the same way
+  * `AdminUsersPage` is, plus a per-play detail modal.
   *
   * Ownership is enforced server-side, not here — `GameInstancePage` only links here when `GameOwnership.isOwned(slug)`
-  * and `GameDetail.trackResults` both hold, but the 403/409 this page's own requests can still answer (a stale local
-  * hint, a different account, or a game that never turned tracking on) is what actually enforces it.
+  * holds, but the 403 this page's own requests can still answer (a stale local hint, or a different account) is what
+  * actually enforces it.
   */
 object GameResultsPage {
 
@@ -55,12 +55,6 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
 
   private val errorVar: Var[Option[String]] = Var(None)
 
-  /** Set instead of [[errorVar]] when the listing answers `409` — `slug` exists and is owned, it simply never turned on
-    * `trackResults`. Worded through its own key rather than the server's `err.message` so the page's copy stays
-    * `ui.`-namespaced, per the project's i18n rule.
-    */
-  private val notTrackedVar = Var(false)
-
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
 
@@ -93,7 +87,6 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
         ),
       ),
       Alert.maybeError(errorVar.signal),
-      child.maybe <-- notTrackedVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.gameResultsNotTracked)))),
       renderSearch(),
       renderTable(),
       Pagination.render(
@@ -125,10 +118,10 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
             errorVar.set(Some(err.message))
         },
       listRequests -->
-        Observer[GamePlayQuery](_ => Var.set(loadingVar -> true, errorVar -> None, notTrackedVar -> false)),
+        Observer[GamePlayQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
       listRequests.flatMapSwitch(load) -->
         Observer[Either[ApiError, GamePlayPage]] {
-          case Right(result)                  =>
+          case Right(result) =>
             Var.set(
               playsVar          -> result.items,
               totalVar          -> result.total,
@@ -136,15 +129,7 @@ private class GameResultsPage(slug: String, pageQuery: Signal[GamePlayQuery], on
               loadingVar        -> false,
               errorVar          -> None,
             )
-          case Left(err) if err.status == 409 =>
-            Var.set(
-              loadingVar        -> false,
-              notTrackedVar     -> true,
-              playsVar          -> Nil,
-              totalVar          -> 0L,
-              currentPageIdsVar -> Nil,
-            )
-          case Left(err)                      =>
+          case Left(err)     =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
       viewBus.events -->
