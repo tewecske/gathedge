@@ -251,6 +251,29 @@ object AppRouterSpec extends ZIOSpecDefault {
             .contains(Page.GameResults("brave-otter")),
         )
       },
+      // Same `Route.withQuery` shape as the game results listing, but with a `Long` path segment — one account's play
+      // history, for an administrator.
+      test("an admin user's play history carries both the account id and its query through the URL") {
+        val filtered = Page.AdminUserPlays(
+          3,
+          MyPlayQuery(page = 2, sort = SortHeader.Sort.descending(GamePlaySort.score), search = "alice"),
+        )
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          url.startsWith(s"$prefix/admin/users/3/plays?"),
+          url.contains("page=2"),
+          url.contains(s"sort=${GamePlaySort.score}"),
+          url.contains("dir=desc"),
+          url.contains("q=alice"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          AppRouter.deserialize(AppRouter.serialize(filtered)) == filtered,
+          AppRouter.router
+            .pageForRelativeUrl(AppRouter.router.relativeUrlForPage(Page.AdminUserPlays(3)))
+            .contains(Page.AdminUserPlays(3)),
+          AppRouter.deserialize(AppRouter.serialize(Page.AdminUserPlays(3))) == Page.AdminUserPlays(3),
+        )
+      },
     )
   }
 }

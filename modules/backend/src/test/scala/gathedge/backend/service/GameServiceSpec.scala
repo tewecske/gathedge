@@ -750,6 +750,47 @@ object GameServiceSpec extends ZIOSpecDefault {
           answered.items.map(_.playId).toSet == Set(playA.playId, playB.playId),
         )
       },
+      test("playsOf narrows to games whose name contains nameContains, case-insensitively") {
+        for {
+          player <- newUser()
+          tagA   <- eligibleTagWithPairs(player, "playsOfFilterA", WordLanguage.De, WordLanguage.Hu, count = 1)
+          tagB   <- eligibleTagWithPairs(player, "playsOfFilterB", WordLanguage.De, WordLanguage.Hu, count = 1)
+          gameA  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagA))
+          gameB  <- GameService.createGame(player, WordLanguage.De, WordLanguage.Hu, List(tagB))
+          _      <- GameService.rename(gameA.slug, "Alpha Quiz", player)
+          _      <- GameService.rename(gameB.slug, "Beta Quiz", player)
+          playA  <- GameService.startPlay(gameA.slug, player)
+          _      <- playThrough(playA.playId, "playsOfFilterA", player)
+          playB  <- GameService.startPlay(gameB.slug, player)
+          _      <- playThrough(playB.playId, "playsOfFilterB", player)
+          hit    <- GameService.playsOf(player, None, 1, 20, None, false, Some("ALPHA"))
+          miss   <- GameService.playsOf(player, None, 1, 20, None, false, Some("gamma"))
+        } yield assertTrue(
+          hit.total == 1L,
+          hit.items.map(_.playId) == List(playA.playId),
+          hit.items.map(_.gameName) == List("Alpha Quiz"),
+          miss.total == 0L,
+          miss.items.isEmpty,
+        )
+      },
+      test("resultsForPlayer answers a play when it belongs to the given user, NotFound otherwise") {
+        for {
+          owner   <- newUser()
+          other   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "resultsForPlayer", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner)
+          _       <- playThrough(started.playId, "resultsForPlayer", owner)
+          mine    <- GameService.getResults(started.playId, owner)
+          asAdmin <- GameService.resultsForPlayer(started.playId, owner)
+          wrongId <- GameService.resultsForPlayer(started.playId, other).either
+          missing <- GameService.resultsForPlayer(started.playId + 9999L, owner).either
+        } yield assertTrue(
+          asAdmin == mine,
+          wrongId == Left(GameFailure.NotFound),
+          missing == Left(GameFailure.NotFound),
+        )
+      },
     ).provide(layer)
   }
 }

@@ -7,25 +7,18 @@ big project: llm image to text
 big project: new tag creation screen with focus on ease of use
 
 
-
 new game mode, show one word and show 4 translate options, all the game creation settings are the same, only the gameplay is different because the user doesn't have to type, only click on the correct word. for the 4 options use words from the tags assigned to the game, or word forms/main word of the games
-
 
 
 in game plural words should be shown specially or marked somehow
 go back to previous word in game?
 
 flags?
-on the words page when clicking on a word, it shows the word details and the new translation should have the same target language selected as the selected tags target language by default
+[ ] on the words page when clicking on a word, it shows the word details and the new translation should have the same target language selected as the selected tags target language by default
 
-save game progress, so it can be continued later from game history
+[ ] save game progress, so it can be continued later from game history
 
-[+] games/mine change it to games/all and show all games not just mine
-[ ] on games/all page add a column which shows the last time I played that game and allow sorting by that column
-[+] add a daisyui like button to each row which when clicked then add that game to user's favorites and show filled heart icon and then on the games/all page add a filter to show only my liked games and a number of likes for each game in the list and a sort by number of likes column
-
-on the admin / users / user detail, I see a play history block at the bottom of the page, and it's titled "My play history", why is it there? If I requested it, it's still doesn't seem right. Remove it and add a button to the user list "Play history" and that should bring the admin to a new page which looks like the users play history page
-save game progress and continue from play history
+[ ] merge the like button and the number of likes into the first column, so it looks cleaner
 
 share with icons
 
@@ -36,27 +29,6 @@ security check of the webapp
 remove unnecessary dependencies because the frontend build is too large
 CVE check for all dependencies and update to latest versions
 
-[+] make the play history page look like the game results page, have the same layout and design, have a filter for the list which filters the game name and add pagination
-[+] social login daisyui buttons
-[+] add ocr image to text to bulk upload options
-[+] does the wiktionary database have info about plural forms and verb tenses? if yes then add this information to the database. add all forms to the database and apply special links between the words like plural, past tense, present tense, conjugation, etc.
-[+] when importing then check the words in the source language, then check all words in the target language and try to match them, instead of the split source and target view only view them together in one list, like the current source view, in german don't add the same word capitalized and non-capitalized and with and without der/die/das, one word should have one version, unless there is the same word can mean different word types, but then still a noun should be only with der/die/das and capitalized, other types only non-capitalized. if a word was found with translation then it shouldn't appear in the no translation found list, deduplicate but first apply the rules i just mentioned. possible matches list should also not contain words from the previous lists.
-[+] add an option to the bulk import and word page too to only show words which have translation in the target language and another option to show words which have translation in any language, or show all words.
-[+] search without accents
-
-[+] selectable der die das in game
-[+] if in the source language multiple words are translated to the same word in the target language then don't ask those source words in the same game, unless all worlds is selected
-[+] always see my own game history and results
-
-[+] on the game start page show all the words and their accepted translations in a list so the user can study them before playing, when swapping the source and target language then also swap the words and their translations
-
-[+] backup database daily to google drive and keep backups for 7 days
-[+] do i need a cookie banner for my website?
-
-[+] add robots.txt file to website
-[+] do i need a sitemap.xml file for my website?
-[+] how to improve SEO
-
 bugs:
-[+] searhing for "das ei" doesn't find the existing Ei with das prefix
+[ ] on the admin / users / user detail, I see a play history block at the bottom of the page, and it's titled "My play history", why is it there? If I requested it, it's still doesn't seem right. Remove it and add a button to the user list "Play history" and that should bring the admin to a new page which looks like the users play history page
 

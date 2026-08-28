@@ -9,6 +9,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   DeleteWordFormRequest,
+  GameResults,
   LoginAttemptEntry,
   MyPlayPage,
   PruneResult,
@@ -62,9 +63,7 @@ object AdminApiClient {
     run(executor(AdminEndpoints.userDetail(id)))
   }
 
-  /** One page of `id`'s game plays across every game — narrowed to games whose owner turned on `trackResults`, the same
-    * rule that gates a game's own owner.
-    */
+  /** One page of `id`'s game plays across every game. `search` is a case-insensitive substring of the game's name. */
   def userPlays(
     id: Long,
     gameId: Option[Long] = None,
@@ -72,8 +71,16 @@ object AdminApiClient {
     pageSize: Option[Int] = None,
     sort: Option[String] = None,
     dir: Option[String] = None,
+    search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    run(executor(AdminEndpoints.userPlays(id, gameId, page, pageSize, sort, dir)))
+    run(executor(AdminEndpoints.userPlays(id, gameId, page, pageSize, sort, dir, search)))
+  }
+
+  /** One of `id`'s finished plays, with its score and full answer history — the admin-scoped counterpart of
+    * `GameApiClient.getResults`, which is owner-only.
+    */
+  def userPlayResults(id: Long, playId: Long): EventStream[Either[ApiError, GameResults]] = {
+    run(executor(AdminEndpoints.userPlayResults(id, playId)))
   }
 
   def verifyUserEmail(id: Long): EventStream[Either[ApiError, Unit]] = {

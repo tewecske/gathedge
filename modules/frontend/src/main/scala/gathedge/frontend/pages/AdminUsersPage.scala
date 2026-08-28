@@ -325,6 +325,7 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
             // The one column with nothing behind it to order by; see `lockedVar`.
             th(I18n.t(UiKeys.adminUsersColSignIn)),
             SortHeader.render(I18n.t(UiKeys.adminUsersColCreated), UserSort.created, sortSignal, onSort),
+            th(I18n.t(UiKeys.adminUserPlaysColHeader)),
           )
         ),
         tbody(
@@ -388,6 +389,13 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
             }
       ),
       td(text <-- userSignal.map(user => Formats.dateTimeFromString(user.createdAt)).distinct),
+      td(
+        a(
+          cls := "link link-hover",
+          AppRouter.router.navigateTo(Page.AdminUserPlays(id)),
+          I18n.t(UiKeys.adminUserPlaysColHeader),
+        )
+      ),
     )
   }
 

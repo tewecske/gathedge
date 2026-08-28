@@ -108,6 +108,14 @@ object Page {
 
   final case class AdminUserDetail(id: Long) extends Page
 
+  /** One account's play history across every game, for an administrator. Admin-only — the `adminOnly` aspect enforces
+    * it server-side and `App.renderPage` bounces a non-administrator to [[Forbidden]], the same as [[AdminUserDetail]].
+    * It carries its whole listing state in the URL, the same reason [[GameResults]]/[[MyPlays]]/[[Admin]] do — see
+    * [[gathedge.frontend.listing.MyPlayQuery]] (reused verbatim: cross-game, `search` is the game name) and the route
+    * below.
+    */
+  final case class AdminUserPlays(id: Long, query: MyPlayQuery = MyPlayQuery.default) extends Page
+
   /** The two administrator screens that are not about one account: the audit trail, and the deployment itself. */
   final case class AdminAudit(query: AuditQuery = AuditQuery.default) extends Page
 
@@ -269,6 +277,16 @@ object AppRouter {
     pattern = root / "admin" / "users" / segment[Long],
     basePath = basePath,
   )
+
+  /** One account's play history — a path segment *and* a query, so it uses `withQuery` rather than the "two routes,
+    * query first" trick, the same as [[gameResultsRoute]] and for the same reason (see its doc comment).
+    */
+  private val adminUserPlaysRoute  = Route.withQuery[AdminUserPlays, Long, MyPlayQuery](
+    encode = (p: AdminUserPlays) => PatternArgs(p.id, p.query),
+    decode = (args: PatternArgs[Long, MyPlayQuery]) => AdminUserPlays(args.path, args.params),
+    pattern = (root / "admin" / "users" / segment[Long] / "plays") ? MyPlayQuery.params,
+    basePath = basePath,
+  )
   private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
   private val adminUsageRoute      = Route.static(AdminUsage, root / "admin" / "usage", basePath)
   private val adminWordFormsRoute  = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
@@ -373,71 +391,73 @@ object AppRouter {
   // file calls either of them.
   private[frontend] def serialize(page: Page): String = {
     page match {
-      case SignIn                   =>
+      case SignIn                    =>
         "SignIn"
-      case SignUp                   =>
+      case SignUp                    =>
         "SignUp"
-      case About                    =>
+      case About                     =>
         "About"
-      case Settings                 =>
+      case Settings                  =>
         "Settings"
-      case Games                    =>
+      case Games                     =>
         "Games"
-      case GameSetup                =>
+      case GameSetup                 =>
         "GameSetup"
-      case AllGames(query)          =>
+      case AllGames(query)           =>
         "AllGames:" + AllGameQuery.params.createParamsString(query)
-      case MyPlays(query)           =>
+      case MyPlays(query)            =>
         "MyPlays:" + MyPlayQuery.params.createParamsString(query)
-      case SharedProgress           =>
+      case SharedProgress            =>
         "SharedProgress"
-      case SharedPlayerHistory(id)  =>
+      case SharedPlayerHistory(id)   =>
         s"SharedPlayerHistory:$id"
-      case GameInstance(slug)       =>
+      case GameInstance(slug)        =>
         s"GameInstance:$slug"
-      case GamePlay(slug, playId)   =>
+      case GamePlay(slug, playId)    =>
         s"GamePlay:$slug:$playId"
-      case GameResults(slug, query) =>
+      case GameResults(slug, query)  =>
         s"GameResults:$slug:" + GamePlayQuery.params.createParamsString(query)
-      case VerifyEmail(token)       =>
+      case VerifyEmail(token)        =>
         s"VerifyEmail:$token"
-      case CheckInbox               =>
+      case CheckInbox                =>
         "CheckInbox"
-      case ForgotPassword           =>
+      case ForgotPassword            =>
         "ForgotPassword"
-      case ResetPassword(token)     =>
+      case ResetPassword(token)      =>
         s"ResetPassword:$token"
-      case Admin(query)             =>
+      case Admin(query)              =>
         "Admin:" + UserQuery.params.createParamsString(query)
-      case AdminUserDetail(id)      =>
+      case AdminUserDetail(id)       =>
         s"AdminUserDetail:$id"
-      case Words(query)             =>
+      case AdminUserPlays(id, query) =>
+        s"AdminUserPlays:$id:" + MyPlayQuery.params.createParamsString(query)
+      case Words(query)              =>
         "Words:" + WordQuery.params.createParamsString(query)
-      case WordDetail(id)           =>
+      case WordDetail(id)            =>
         s"WordDetail:$id"
-      case AdminAudit(query)        =>
+      case AdminAudit(query)         =>
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
-      case AdminSystem              =>
+      case AdminSystem               =>
         "AdminSystem"
-      case AdminUsage               =>
+      case AdminUsage                =>
         "AdminUsage"
-      case AdminWordForms           =>
+      case AdminWordForms            =>
         "AdminWordForms"
-      case AdminRateLimits          =>
+      case AdminRateLimits           =>
         "AdminRateLimits"
-      case Groups                   =>
+      case Groups                    =>
         "Groups"
-      case GroupDetail(id)          =>
+      case GroupDetail(id)           =>
         s"GroupDetail:$id"
-      case GroupJoin(code)          =>
+      case GroupJoin(code)           =>
         s"GroupJoin:$code"
-      case TagDetail(id)            =>
+      case TagDetail(id)             =>
         s"TagDetail:$id"
-      case Tags                     =>
+      case Tags                      =>
         "Tags"
-      case Forbidden                =>
+      case Forbidden                 =>
         "Forbidden"
-      case NotFound                 =>
+      case NotFound                  =>
         "NotFound"
     }
   }
@@ -497,6 +517,25 @@ object AppRouter {
       withId(tag, "WordDetail:")(WordDetail.apply)
     } else if (tag.startsWith("Words:")) {
       WordQuery.params.matchQueryString(tag.stripPrefix("Words:")).map(query => Words(query)).getOrElse(Words())
+    } else if (tag.startsWith("AdminUserPlays:")) {
+      // Same shape as the `GameResults:` branch — a corrupt id is `NotFound` (like `withId`), an unreadable query
+      // falls back to the account's default play-history view (like `AdminAudit`'s fallback).
+      val rest = tag.stripPrefix("AdminUserPlays:")
+      val sep  = rest.indexOf(':')
+      if (sep < 0) {
+        rest.toLongOption.map(id => AdminUserPlays(id)).getOrElse(NotFound)
+      } else {
+        rest
+          .substring(0, sep)
+          .toLongOption
+          .map { id =>
+            MyPlayQuery.params
+              .matchQueryString(rest.substring(sep + 1))
+              .map(query => AdminUserPlays(id, query))
+              .getOrElse(AdminUserPlays(id))
+          }
+          .getOrElse(NotFound)
+      }
     } else if (tag.startsWith("AdminUserDetail:")) {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else if (tag.startsWith("GroupDetail:")) {
@@ -593,6 +632,7 @@ object AppRouter {
         wordDetailRoute,
         adminQueryRoute,
         adminRoute,
+        adminUserPlaysRoute,
         adminUserDetailRoute,
         adminAuditQueryRoute,
         adminAuditRoute,

@@ -11,7 +11,8 @@ import gathedge.shared.i18n.UiKeys
   * the system overview and the word-forms diagnostics are reached, so none needs a navbar entry of its own for a screen
   * most sessions never open.
   *
-  * `Page.AdminUserDetail` counts as the Users tab: it is reached from that list and returns to it.
+  * `Page.AdminUserDetail` and `Page.AdminUserPlays` count as the Users tab: both are reached from that list and return
+  * to it.
   */
 object AdminSubmenu {
   def render(active: Page): HtmlElement = {
@@ -32,9 +33,9 @@ object AdminSubmenu {
     */
   private def isUsersTab(active: Page): Boolean = {
     active match {
-      case Page.Admin(_) | Page.AdminUserDetail(_) =>
+      case Page.Admin(_) | Page.AdminUserDetail(_) | Page.AdminUserPlays(_, _) =>
         true
-      case _                                       =>
+      case _                                                                   =>
         false
     }
   }

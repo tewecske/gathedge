@@ -28,6 +28,7 @@ import gathedge.shared.dto.{
   AuditEntry,
   AuditPage,
   DeleteWordFormRequest,
+  GameResults,
   LockoutStatus,
   LoginAttemptEntry,
   MyPlayPage,
@@ -103,7 +104,9 @@ trait AdminService {
   /** Everything the administrator's account screen shows, gathered in one call. */
   def userDetail(id: Long): IO[AdminFailure, AdminUserDetail]
 
-  /** One page of `id`'s game plays across every game. [[AdminFailure.NotFound]] for an unknown `id`. */
+  /** One page of `id`'s game plays across every game. [[AdminFailure.NotFound]] for an unknown `id`. `nameContains`
+    * narrows to games whose name contains it.
+    */
   def userPlays(
     id: Long,
     gameId: Option[Long],
@@ -111,7 +114,13 @@ trait AdminService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String],
   ): IO[AdminFailure, MyPlayPage]
+
+  /** One of `id`'s finished plays, with its score and full answer history. [[AdminFailure.NotFound]] for an unknown
+    * `id`, or a `playId` that is not `id`'s.
+    */
+  def userPlayResults(id: Long, playId: Long): IO[AdminFailure, GameResults]
 
   /** Confirms the address without a link, for a user who cannot receive one. */
   def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit]
@@ -201,8 +210,12 @@ object AdminService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String],
   ): ZIO[AdminService, AdminFailure, MyPlayPage] =
-    ZIO.serviceWithZIO[AdminService](_.userPlays(id, gameId, page, pageSize, sort, descending))
+    ZIO.serviceWithZIO[AdminService](_.userPlays(id, gameId, page, pageSize, sort, descending, nameContains))
+
+  def userPlayResults(id: Long, playId: Long): ZIO[AdminService, AdminFailure, GameResults] =
+    ZIO.serviceWithZIO[AdminService](_.userPlayResults(id, playId))
 
   def verifyEmailFor(actor: AdminActor, id: Long): ZIO[AdminService, AdminFailure, Unit] =
     ZIO.serviceWithZIO[AdminService](_.verifyEmailFor(actor, id))
@@ -557,8 +570,13 @@ final case class AdminServiceLive(
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String],
   ): IO[AdminFailure, MyPlayPage] = {
-    requireUser(id) *> gameService.playsOf(id, gameId, page, pageSize, sort, descending)
+    requireUser(id) *> gameService.playsOf(id, gameId, page, pageSize, sort, descending, nameContains)
+  }
+
+  def userPlayResults(id: Long, playId: Long): IO[AdminFailure, GameResults] = {
+    requireUser(id) *> gameService.resultsForPlayer(playId, id).mapError(_ => AdminFailure.NotFound)
   }
 
   def verifyEmailFor(actor: AdminActor, id: Long): IO[AdminFailure, Unit] = {

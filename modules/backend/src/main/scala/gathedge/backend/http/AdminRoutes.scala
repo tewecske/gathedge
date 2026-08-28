@@ -123,6 +123,7 @@ object AdminRoutes {
             pageSize: Option[Int],
             sort: Option[String],
             dir: Option[String],
+            q: Option[String],
           ) =>
             AdminService
               .userPlays(
@@ -132,8 +133,18 @@ object AdminRoutes {
                 Paging.boundedPageSize(pageSize),
                 sort,
                 SortDirection.isDescending(dir),
+                searchTerm(q),
               )
               .mapError(ApiFailures.admin)
+        }
+      )
+  }
+
+  private val userPlayResultsRoute = {
+    AdminEndpoints.userPlayResults
+      .implementHandler(
+        handler { (id: Long, playId: Long) =>
+          AdminService.userPlayResults(id, playId).mapError(ApiFailures.admin)
         }
       )
   }
@@ -293,6 +304,7 @@ object AdminRoutes {
       deleteUserRoute,
       userDetailRoute,
       userPlaysRoute,
+      userPlayResultsRoute,
       verifyUserEmailRoute,
       resendUserVerificationRoute,
       revokeUserSessionsRoute,

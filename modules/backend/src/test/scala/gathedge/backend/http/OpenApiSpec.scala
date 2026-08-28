@@ -115,6 +115,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/users/{id}",
               "/api/admin/users/{id}/detail",
               "/api/admin/users/{id}/plays",
+              "/api/admin/users/{id}/plays/{playId}/results",
               "/api/admin/users/{id}/verify-email",
               "/api/admin/users/{id}/verification/resend",
               "/api/admin/users/{id}/sessions",
@@ -334,6 +335,13 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/admin/users/{id}/detail")                                     -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               // Same union as the other five account-diagnostic operations, through the same `ApiFailures.admin`.
               ("GET", "/api/admin/users/{id}/plays")                                      -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users/{id}/plays/{playId}/results")                     -> Set(
+                Ok,
+                BadRequest,
+                Unauthorized,
+                NotFound,
+                Conflict,
+              ),
               ("POST", "/api/admin/users/{id}/verify-email")                              ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/admin/users/{id}/verification/resend")                       ->
@@ -418,7 +426,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 245,
+          declared == 249,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

@@ -273,6 +273,12 @@ object UiKeys {
   val adminUserDeleteConfirm: String       = key("ui.admin.user.deleteConfirm")
   val adminUserSaved: String               = key("ui.admin.user.saved")
 
+  // -- Administration: one account's play history --------------------------------------------
+
+  val adminUserPlaysTitle: String     = key("ui.admin.user.plays.title")
+  val adminUserPlaysColHeader: String = key("ui.admin.user.plays.colHeader")
+  val adminUserPlaysBack: String      = key("ui.admin.user.plays.back")
+
   // -- Administration: account diagnostics -----------------------------------------------------
 
   val adminDiagEmailConfirmed: String = key("ui.admin.diag.emailConfirmed")

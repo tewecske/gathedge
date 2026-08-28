@@ -143,6 +143,13 @@ trait GameService {
     */
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults]
 
+  /** `playId`'s score and full answer history, for an administrator viewing `playerUserId`'s history. Authorization is
+    * the caller's job (the `adminOnly` aspect); this only checks that `playId` really is `playerUserId`'s, answering
+    * [[GameFailure.NotFound]] otherwise — an administrator is not "the owner", so there is no [[GameFailure.NotOwner]]
+    * here. The admin-scoped counterpart of [[getResults]].
+    */
+  def resultsForPlayer(playId: Long, playerUserId: Long): IO[GameFailure, GameResults]
+
   /** One page of `slug`'s plays, for its owner. [[GameFailure.NotOwner]] for anyone else. `playerContains` narrows to
     * players whose address contains it.
     */
@@ -175,7 +182,8 @@ trait GameService {
   ): UIO[MyPlayPage]
 
   /** `targetUserId`'s plays across every game. Authorization (a progress share, or being an administrator) is the
-    * caller's job; this never fails on its own.
+    * caller's job; this never fails on its own. `gameId` narrows to one game; `nameContains` narrows to games whose
+    * name contains it.
     */
   def playsOf(
     targetUserId: Long,
@@ -184,6 +192,7 @@ trait GameService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String] = None,
   ): UIO[MyPlayPage]
 }
 
@@ -274,6 +283,9 @@ object GameService {
   def getResults(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GameResults] =
     ZIO.serviceWithZIO[GameService](_.getResults(playId, requesterUserId))
 
+  def resultsForPlayer(playId: Long, playerUserId: Long): ZIO[GameService, GameFailure, GameResults] =
+    ZIO.serviceWithZIO[GameService](_.resultsForPlayer(playId, playerUserId))
+
   def listPlays(
     slug: String,
     requesterUserId: Long,
@@ -309,8 +321,9 @@ object GameService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String] = None,
   ): URIO[GameService, MyPlayPage] =
-    ZIO.serviceWithZIO[GameService](_.playsOf(targetUserId, gameId, page, pageSize, sort, descending))
+    ZIO.serviceWithZIO[GameService](_.playsOf(targetUserId, gameId, page, pageSize, sort, descending, nameContains))
 
   val live: URLayer[GameRepository & GameWordList & GroupRepository, GameService] = {
     ZLayer.fromFunction((repo: GameRepository, words: GameWordList, groupRepo: GroupRepository) =>
@@ -911,9 +924,21 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   }
 
   def getResults(playId: Long, requesterUserId: Long): IO[GameFailure, GameResults] = {
+    requireOwnedPlay(playId, requesterUserId).flatMap(assembleResults)
+  }
+
+  def resultsForPlayer(playId: Long, playerUserId: Long): IO[GameFailure, GameResults] = {
     for {
-      play    <- requireOwnedPlay(playId, requesterUserId)
-      answers <- repo.answersOf(playId).orDie
+      play    <- repo.findPlay(playId).orDie.someOrFail(GameFailure.NotFound)
+      _       <- ZIO.unless(play.playerUserId == playerUserId)(ZIO.fail(GameFailure.NotFound))
+      results <- assembleResults(play)
+    } yield results
+  }
+
+  /** The tail shared by [[getResults]] and [[resultsForPlayer]] once the play is loaded and the caller is cleared. */
+  private def assembleResults(play: GamePlayRow): IO[GameFailure, GameResults] = {
+    for {
+      answers <- repo.answersOf(play.id).orDie
       results <- answerResultsOf(answers, play.includeDefiniteArticles)
     } yield GameResults(play.score, play.maxScore, play.wordCount, results, variantOf(play))
   }
@@ -1036,7 +1061,8 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    nameContains: Option[String],
   ): UIO[MyPlayPage] = {
-    playsPageFor(targetUserId, gameId, None, page, pageSize, sort, descending)
+    playsPageFor(targetUserId, gameId, nameContains, page, pageSize, sort, descending)
   }
 }

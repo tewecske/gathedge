@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   DeleteWordFormRequest,
+  GameResults,
   LoginAttemptEntry,
   MyPlayPage,
   PruneResult,
@@ -39,6 +40,7 @@ import ApiSchemas.given
 object AdminEndpoints {
 
   private val userId   = PathCodec.long("id")
+  private val playId   = PathCodec.long("playId")
   private val provider = PathCodec.string("provider")
 
   /** See [[deleteUser]] for why an empty 204 is described as a status codec and never as `.out[Unit]`. */
@@ -277,8 +279,8 @@ object AdminEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
-  /** One page of `id`'s game plays across every game, most recently started first unless `sort` says otherwise. See
-    * `AdminService.userPlays`.
+  /** One page of `id`'s game plays across every game, most recently started first unless `sort` says otherwise. `q`
+    * narrows to games whose name contains it, a case-insensitive substring. See `AdminService.userPlays`.
     */
   val userPlays = {
     Endpoint(Method.GET / "api" / "admin" / "users" / userId / "plays")
@@ -287,8 +289,19 @@ object AdminEndpoints {
       .query(pageSizeQuery)
       .query(sortQuery)
       .query(dirQuery)
+      .query(searchQuery)
       .withCodecError
       .out[MyPlayPage]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** One of `id`'s finished plays, with its score and full answer history — the admin-scoped counterpart of
+    * `GameEndpoints.results`, which is owner-only. `playId` must belong to `id`, else 404. See
+    * `AdminService.userPlayResults`.
+    */
+  val userPlayResults = {
+    Endpoint(Method.GET / "api" / "admin" / "users" / userId / "plays" / playId / "results").withCodecError
+      .out[GameResults]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
@@ -301,6 +314,7 @@ object AdminEndpoints {
       deleteUser,
       userDetail,
       userPlays,
+      userPlayResults,
       verifyUserEmail,
       resendUserVerification,
       revokeUserSessions,

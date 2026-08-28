@@ -9,6 +9,7 @@ import gathedge.frontend.pages.{
   AdminSystemPage,
   AdminUsagePage,
   AdminUserDetailPage,
+  AdminUserPlaysPage,
   AdminUsersPage,
   AdminWordFormsPage,
   AboutPage,
@@ -66,6 +67,9 @@ object App {
 
   /** Same hand-off trick as [[latestGameSlug]], for the `GameResults` signal renderer below. */
   private var latestGameResultsSlug: String = ""
+
+  /** Same hand-off trick as [[latestGameSlug]], for the `AdminUserPlays` signal renderer below. */
+  private var latestAdminUserPlaysId: Long = 0L
 
   /** The *only* user-derived facts that change which page element is built. Deliberately not the whole `User`: a theme
     * toggle (or any other profile write) must not tear down and rebuild the mounted page, discarding its `Var`s,
@@ -164,6 +168,13 @@ object App {
           latestGameResultsSlug = page.slug
           page.query
       }(query => GameResultsPage.render(latestGameResultsSlug, query, onGameResultsQuery))
+      // One account's play history, for an administrator: admin-gated like `Page.Admin` above, and a path-param +
+      // query like `GameResults` above — the id is stashed as a side effect, the query is what the signal tracks.
+      .collectSignalPF[MyPlayQuery] {
+        case (gate, page: Page.AdminUserPlays) if showsAdminScreen(gate) =>
+          latestAdminUserPlaysId = page.id
+          page.query
+      }(query => AdminUserPlaysPage.render(latestAdminUserPlaysId, query, onAdminUserPlaysQuery))
       // The cross-game history carries its listing state in the URL like the admin listings, so every keystroke in its
       // filter box is a new `Page` — it needs a signal renderer for the same reason they do. Auth is enforced by the
       // redirect observer, not here, the same as `GameResults` above: `gate.loaded` is the only precondition.
@@ -291,6 +302,24 @@ object App {
     }
   }
 
+  /** Same rule as [[onGameResultsQuery]], keyed to [[latestAdminUserPlaysId]] as well as the query: a query change for
+    * a *different* account's play history (only reachable via a hand-edited URL) must never be treated as a refinement
+    * of this one.
+    */
+  private val onAdminUserPlaysQuery: Observer[MyPlayQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.AdminUserPlays(id, previous) if id == latestAdminUserPlaysId =>
+            query.refines(previous)
+          case _                                                                 =>
+            false
+        }
+      }
+      navigate(Page.AdminUserPlays(latestAdminUserPlaysId, query), replace = refinesSearch)
+    }
+  }
+
   /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the
     * navigating; the one thing it cannot do is talk to the API, so the write-back lives here where there is an owner to
     * subscribe with.
@@ -340,29 +369,29 @@ object App {
 
   private def renderPage(gate: Gate, page: Page): HtmlElement = {
     page match {
-      case Page.SignIn                              =>
+      case Page.SignIn                                    =>
         SignInPage.render()
-      case Page.SignUp                              =>
+      case Page.SignUp                                    =>
         SignUpPage.render()
-      case Page.About                               =>
+      case Page.About                                     =>
         AboutPage.render()
-      case Page.Settings                            =>
+      case Page.Settings                                  =>
         SettingsPage.render()
-      case Page.Games                               =>
+      case Page.Games                                     =>
         GamesPage.render()
-      case Page.GameSetup                           =>
+      case Page.GameSetup                                 =>
         GameSetupPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words`/`Page.GameResults`.
-      case Page.AllGames(query)                     =>
+      case Page.AllGames(query)                           =>
         AllGamesPage.render(Val(query), onAllGamesQuery)
-      case Page.MyPlays(query)                      =>
+      case Page.MyPlays(query)                            =>
         MyPlayHistoryPage.render(Val(query), onMyPlaysQuery)
-      case Page.SharedProgress                      =>
+      case Page.SharedProgress                            =>
         SharedProgressPage.render()
-      case Page.SharedPlayerHistory(sharerUserId)   =>
+      case Page.SharedPlayerHistory(sharerUserId)         =>
         SharedPlayerHistoryPage.render(sharerUserId)
-      case Page.GameInstance(slug)                  =>
+      case Page.GameInstance(slug)                        =>
         GameInstancePage.render(slug, generateQr)
       // No signal renderer needed here, unlike `GameInstance`/`GameResults` above: this page is reached only after
       // `startPlay` has already succeeded, i.e. after any guest-mint already ran — so there is no in-flight request to
@@ -370,62 +399,67 @@ object App {
       // state, not reusable across plays). Falling straight through to this plain match arm gives that for free: the
       // catch-all rebuilds on every distinct `(Gate, Page)` change, and two different `playId`s are different `Page`
       // values.
-      case Page.GamePlay(slug, playId)              =>
+      case Page.GamePlay(slug, playId)                    =>
         GamePlayPage.render(slug, playId)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words` below.
-      case Page.GameResults(slug, query)            =>
+      case Page.GameResults(slug, query)                  =>
         GameResultsPage.render(slug, Val(query), onGameResultsQuery)
-      case Page.VerifyEmail(token)                  =>
+      case Page.VerifyEmail(token)                        =>
         VerifyEmailPage.render(token)
-      case Page.CheckInbox                          =>
+      case Page.CheckInbox                                =>
         CheckInboxPage.render()
-      case Page.ForgotPassword                      =>
+      case Page.ForgotPassword                            =>
         ForgotPasswordPage.render()
-      case Page.ResetPassword(token)                =>
+      case Page.ResetPassword(token)                      =>
         ResetPasswordPage.render(token)
       // The two listings reach here only when the gate said no: a signed-in administrator gets them from the signal
       // renderers above, which is the only way they keep their state across a query change.
-      case Page.Admin(_) | Page.AdminAudit(_)       =>
+      case Page.Admin(_) | Page.AdminAudit(_)             =>
         ForbiddenPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise.
-      case Page.Words(query)                        =>
+      case Page.Words(query)                              =>
         WordsPage.render(Val(query), onWordQuery, ImageOcr.recognize)
-      case Page.WordDetail(id)                      =>
+      case Page.WordDetail(id)                            =>
         WordDetailPage.render(id)
-      case Page.AdminUserDetail(id) if gate.isAdmin =>
+      case Page.AdminUserDetail(id) if gate.isAdmin       =>
         AdminUserDetailPage.render(id)
-      case Page.AdminUserDetail(_)                  =>
+      case Page.AdminUserDetail(_)                        =>
         ForbiddenPage.render()
-      case Page.AdminSystem if gate.isAdmin         =>
+      // Reached only before the session has loaded; the signal renderer above answers otherwise.
+      case Page.AdminUserPlays(id, query) if gate.isAdmin =>
+        AdminUserPlaysPage.render(id, Val(query), onAdminUserPlaysQuery)
+      case Page.AdminUserPlays(_, _)                      =>
+        ForbiddenPage.render()
+      case Page.AdminSystem if gate.isAdmin               =>
         AdminSystemPage.render()
-      case Page.AdminSystem                         =>
+      case Page.AdminSystem                               =>
         ForbiddenPage.render()
-      case Page.AdminUsage if gate.isAdmin          =>
+      case Page.AdminUsage if gate.isAdmin                =>
         AdminUsagePage.render()
-      case Page.AdminUsage                          =>
+      case Page.AdminUsage                                =>
         ForbiddenPage.render()
-      case Page.AdminWordForms if gate.isAdmin      =>
+      case Page.AdminWordForms if gate.isAdmin            =>
         AdminWordFormsPage.render()
-      case Page.AdminWordForms                      =>
+      case Page.AdminWordForms                            =>
         ForbiddenPage.render()
-      case Page.AdminRateLimits if gate.isAdmin     =>
+      case Page.AdminRateLimits if gate.isAdmin           =>
         AdminRateLimitsPage.render()
-      case Page.AdminRateLimits                     =>
+      case Page.AdminRateLimits                           =>
         ForbiddenPage.render()
-      case Page.Groups                              =>
+      case Page.Groups                                    =>
         GroupsPage.render()
-      case Page.GroupDetail(id)                     =>
+      case Page.GroupDetail(id)                           =>
         GroupDetailPage.render(id, generateQr)
-      case Page.GroupJoin(code)                     =>
+      case Page.GroupJoin(code)                           =>
         GroupJoinPage.render(code)
-      case Page.TagDetail(id)                       =>
+      case Page.TagDetail(id)                             =>
         TagDetailPage.render(id)
-      case Page.Tags                                =>
+      case Page.Tags                                      =>
         TagsPage.render()
-      case Page.Forbidden                           =>
+      case Page.Forbidden                                 =>
         ForbiddenPage.render()
-      case Page.NotFound                            =>
+      case Page.NotFound                                  =>
         NotFoundPage.render()
     }
   }
