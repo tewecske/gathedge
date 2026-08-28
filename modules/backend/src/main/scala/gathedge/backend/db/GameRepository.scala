@@ -8,8 +8,8 @@ import zio.*
 
 import javax.sql.DataSource
 
-/** `games`/`game_tags` — creating a game and reading it back — and `game_plays`/`game_play_answers` — one attempt at a
-  * game and its per-word answer history.
+/** `games`/`game_tags` — creating a game and reading it back — `game_plays`/`game_play_answers` — one attempt at a game
+  * and its per-word answer history — and `game_favorites` — a per-account favorite mark on a game.
   *
   * '''Nothing here logs a game's name or slug, or a submitted answer's text.''' A slug is a public identifier, not a
   * credential, but a game's name and a player's typed answer are both free text somebody typed — the same rule
@@ -41,18 +41,38 @@ trait GameRepository {
   def rename(id: Long, name: String, updatedAt: Long): Task[Long]
 
   /** One page of every account's games, most recent first unless `sort` says otherwise — the games listing's source
-    * rows. `nameContains` narrows to games whose name contains it, case-insensitively.
+    * rows. `nameContains` narrows to games whose name contains it, case-insensitively. `favoritesOf`, when set, keeps
+    * only games that account has marked as a favorite (`game_favorites`).
     */
   def listAllGamesPage(
     nameContains: Option[String],
+    favoritesOf: Option[Long],
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[GameRow]]
 
-  /** How many games [[listAllGamesPage]] would return across every page. */
-  def countAllGamesMatching(nameContains: Option[String]): Task[Long]
+  /** How many games [[listAllGamesPage]] would return across every page, under the same `nameContains`/`favoritesOf`
+    * narrowing.
+    */
+  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): Task[Long]
+
+  /** Marks `gameId` as `userId`'s favorite — idempotent: a second call for a pair already marked is a no-op, not a
+    * unique-constraint error. Ownership is not checked; anyone may favorite any game.
+    */
+  def addFavorite(userId: Long, gameId: Long, now: Long): Task[Unit]
+
+  /** Removes `userId`'s favorite mark on `gameId`. Rows affected — `0` means it was not marked. */
+  def removeFavorite(userId: Long, gameId: Long): Task[Long]
+
+  /** How many accounts have favorited each of `gameIds`, as one grouped query — a game nobody favorited is simply
+    * absent from the map, the same split [[playCounts]] draws.
+    */
+  def favoriteCounts(gameIds: List[Long]): Task[Map[Long, Long]]
+
+  /** Which of `gameIds` `userId` has favorited — for the listing's filled-heart state. */
+  def favoritedGameIds(userId: Long, gameIds: List[Long]): Task[Set[Long]]
 
   /** How many `game_plays` rows exist for each of `gameIds`, as one grouped query rather than one per game. A game with
     * zero plays is simply absent from the map — the caller's job to default it to `0`, the same split
@@ -180,15 +200,28 @@ object GameRepository {
 
   def listAllGamesPage(
     nameContains: Option[String],
+    favoritesOf: Option[Long],
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): RIO[GameRepository, List[GameRow]] =
-    ZIO.serviceWithZIO[GameRepository](_.listAllGamesPage(nameContains, offset, limit, sort, descending))
+    ZIO.serviceWithZIO[GameRepository](_.listAllGamesPage(nameContains, favoritesOf, offset, limit, sort, descending))
 
-  def countAllGamesMatching(nameContains: Option[String]): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.countAllGamesMatching(nameContains))
+  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countAllGamesMatching(nameContains, favoritesOf))
+
+  def addFavorite(userId: Long, gameId: Long, now: Long): RIO[GameRepository, Unit] =
+    ZIO.serviceWithZIO[GameRepository](_.addFavorite(userId, gameId, now))
+
+  def removeFavorite(userId: Long, gameId: Long): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.removeFavorite(userId, gameId))
+
+  def favoriteCounts(gameIds: List[Long]): RIO[GameRepository, Map[Long, Long]] =
+    ZIO.serviceWithZIO[GameRepository](_.favoriteCounts(gameIds))
+
+  def favoritedGameIds(userId: Long, gameIds: List[Long]): RIO[GameRepository, Set[Long]] =
+    ZIO.serviceWithZIO[GameRepository](_.favoritedGameIds(userId, gameIds))
 
   def playCounts(gameIds: List[Long]): RIO[GameRepository, Map[Long, Long]] =
     ZIO.serviceWithZIO[GameRepository](_.playCounts(gameIds))
@@ -305,6 +338,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def gamePlays       = quote(querySchema[GamePlayRow]("game_plays"))
   private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
   private inline def gamePlayWords   = quote(querySchema[GamePlayWordRow]("game_play_words"))
+  private inline def gameFavorites   = quote(querySchema[GameFavoriteRow]("game_favorites"))
   // Read-only view of a table `UserRepository` owns, for the one question only this repository can ask: which
   // player played a tracked game. Reading another repository's tables is fine — see `UserRepository`'s own note
   // on this for `findAbandonedGuests`. The lambda parameter is `row`, never `user` — Postgres reserved word.
@@ -660,13 +694,18 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     * subquery like [[matchingMyPlays]]'s: this query already reads that table. The column is lowered ([[namePattern]]
     * lowers the needle to match) since a game's name is a display string, not normalised on write.
     */
-  private def matchingAllGames(nameContains: Option[String]): DynamicQuery[GameRow] = {
+  private def matchingAllGames(nameContains: Option[String], favoritesOf: Option[Long]): DynamicQuery[GameRow] = {
     dynamicQuerySchema[GameRow]("games")
       .filterOpt(namePattern(nameContains))((game, pattern) => quote(game.name.toLowerCase.like(unquote(pattern))))
+      .filterOpt(favoritesOf)((game, uid) =>
+        quote(gameFavorites.filter(fav => fav.gameId == game.id && fav.userId == unquote(uid)).nonEmpty)
+      )
   }
 
   /** The `dto.AllGameSort` vocabulary translated to an `ORDER BY`; anything else falls back to newest first, the same
-    * default [[orderedPlays]] uses. Tags, the language pair and the play count have no case here — see `AllGameSort`.
+    * default [[orderedPlays]] uses. Tags and the language pair have no case here — see `AllGameSort`. `likeCount`
+    * orders by a correlated `COUNT(*)` over `game_favorites`, the same subquery shape [[matchingAllGames]]'s favorites
+    * filter uses; the play count stays absent, an aggregate over a different table this ordering does not reach for.
     */
   private def orderedAllGames(
     query: DynamicQuery[GameRow],
@@ -678,6 +717,8 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         query.sortBy(_.name)(using ordering(descending))
       case Some(AllGameSort.createdAt) =>
         query.sortBy(_.createdAt)(using ordering(descending))
+      case Some(AllGameSort.likeCount) =>
+        query.sortBy(game => quote(gameFavorites.filter(fav => fav.gameId == game.id).size))(using ordering(descending))
       case _                           =>
         query.sortBy(_.createdAt)(using Ord.desc)
     }
@@ -685,21 +726,73 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def listAllGamesPage(
     nameContains: Option[String],
+    favoritesOf: Option[Long],
     offset: Int,
     limit: Int,
     sort: Option[String],
     descending: Boolean,
   ): Task[List[GameRow]] = {
-    val page = orderedAllGames(matchingAllGames(nameContains), sort, descending).drop(offset).take(limit)
+    val page =
+      orderedAllGames(matchingAllGames(nameContains, favoritesOf), sort, descending).drop(offset).take(limit)
     // The name filter is a fragment of a game's name, so it stays out of the message, the same as every other one.
     logged(run(ctx.run(page))) { rows =>
-      s"games.listAllGamesPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} rows=${rows.size}"
+      s"games.listAllGamesPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} mine=${favoritesOf.isDefined} rows=${rows.size}"
     }
   }
 
-  def countAllGamesMatching(nameContains: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matchingAllGames(nameContains).size))) { count =>
-      s"games.countAllGamesMatching count=$count"
+  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): Task[Long] = {
+    logged(run(ctx.run(matchingAllGames(nameContains, favoritesOf).size))) { count =>
+      s"games.countAllGamesMatching mine=${favoritesOf.isDefined} count=$count"
+    }
+  }
+
+  def addFavorite(userId: Long, gameId: Long, now: Long): Task[Unit] = {
+    val exists = quote(gameFavorites.filter(fav => fav.userId == lift(userId) && fav.gameId == lift(gameId)).nonEmpty)
+    val insert = quote(
+      gameFavorites.insert(_.userId -> lift(userId), _.gameId -> lift(gameId), _.createdAt -> lift(now))
+    )
+    val effect = transaction(
+      ctx.run(exists).flatMap {
+        case true  => ZIO.unit
+        case false => ctx.run(insert).unit
+      }
+    )
+    logged(effect)(_ => s"games.addFavorite user=$userId game=$gameId")
+  }
+
+  def removeFavorite(userId: Long, gameId: Long): Task[Long] = {
+    val q = quote(gameFavorites.filter(fav => fav.userId == lift(userId) && fav.gameId == lift(gameId)).delete)
+    logged(run(ctx.run(q)))(rows => s"games.removeFavorite user=$userId game=$gameId rows=$rows")
+  }
+
+  def favoriteCounts(gameIds: List[Long]): Task[Map[Long, Long]] = {
+    if (gameIds.isEmpty)
+      ZIO.succeed(Map.empty)
+    else {
+      val q = quote {
+        gameFavorites
+          .filter(fav => liftQuery(gameIds).contains(fav.gameId))
+          .groupBy(fav => fav.gameId)
+          .map { case (gameId, favs) => (gameId, favs.size) }
+      }
+      logged(run(ctx.run(q)).map(_.toMap)) { counts =>
+        s"games.favoriteCounts games=${gameIds.size} rows=${counts.size}"
+      }
+    }
+  }
+
+  def favoritedGameIds(userId: Long, gameIds: List[Long]): Task[Set[Long]] = {
+    if (gameIds.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      val q = quote {
+        gameFavorites
+          .filter(fav => fav.userId == lift(userId) && liftQuery(gameIds).contains(fav.gameId))
+          .map(_.gameId)
+      }
+      logged(run(ctx.run(q)).map(_.toSet)) { ids =>
+        s"games.favoritedGameIds user=$userId games=${gameIds.size} rows=${ids.size}"
+      }
     }
   }
 }

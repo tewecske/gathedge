@@ -168,7 +168,12 @@ object AppRouterSpec extends ZIOSpecDefault {
           MyPlayQuery(page = 3, sort = SortHeader.Sort.descending(GamePlaySort.startedAt), search = "quiz")
         )
         val games   = Page.AllGames(
-          AllGameQuery(page = 2, sort = SortHeader.Sort.descending(AllGameSort.name), search = "quiz")
+          AllGameQuery(
+            page = 2,
+            sort = SortHeader.Sort.descending(AllGameSort.likeCount),
+            search = "quiz",
+            favoritesOnly = true,
+          )
         )
 
         assertTrue(
@@ -181,7 +186,12 @@ object AppRouterSpec extends ZIOSpecDefault {
       },
       test("the games listing is the bare path by default and carries its query when filtered") {
         val filtered = Page.AllGames(
-          AllGameQuery(page = 2, sort = SortHeader.Sort.ascending(AllGameSort.name), search = "otter")
+          AllGameQuery(
+            page = 2,
+            sort = SortHeader.Sort.ascending(AllGameSort.name),
+            search = "otter",
+            favoritesOnly = true,
+          )
         )
         val url      = AppRouter.router.relativeUrlForPage(filtered)
 
@@ -192,6 +202,7 @@ object AppRouterSpec extends ZIOSpecDefault {
           url.contains("page=2"),
           url.contains(s"sort=${AllGameSort.name}"),
           url.contains("q=otter"),
+          url.contains("fav=true"),
           AppRouter.router.pageForRelativeUrl(url).contains(filtered),
           // A hand-edited unknown column is dropped rather than refused.
           AppRouter.router.pageForRelativeUrl(s"$prefix/games/all?sort=nonsense").contains(Page.AllGames()),

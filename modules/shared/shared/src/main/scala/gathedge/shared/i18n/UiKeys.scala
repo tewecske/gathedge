@@ -919,8 +919,9 @@ object UiKeys {
 
   // -- Games ------------------------------------------------------------------------------------
 
-  /** Every account's games: name, tags, language pair, how many times each was played, and when it was created.
-    * Paged/sorted/filtered the same way the play history is.
+  /** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
+    * and when it was created. Paged/sorted/filtered the same way the play history is, plus a per-row favorite toggle
+    * and a "my favorites" filter.
     */
   val allGamesTitle: String             = key("ui.allGames.title")
   val allGamesEmpty: String             = key("ui.allGames.empty")
@@ -929,9 +930,13 @@ object UiKeys {
   val allGamesSourceCol: String         = key("ui.allGames.sourceCol")
   val allGamesTargetCol: String         = key("ui.allGames.targetCol")
   val allGamesPlaysCol: String          = key("ui.allGames.playsCol")
+  val allGamesLikesCol: String          = key("ui.allGames.likesCol")
   val allGamesCreatedCol: String        = key("ui.allGames.createdCol")
   val allGamesFilterLabel: String       = key("ui.allGames.filterLabel")
   val allGamesFilterPlaceholder: String = key("ui.allGames.filterPlaceholder")
+  val allGamesFavoritesFilter: String   = key("ui.allGames.favoritesFilter")
+  val allGamesFavoriteAdd: String       = key("ui.allGames.favoriteAdd")
+  val allGamesFavoriteRemove: String    = key("ui.allGames.favoriteRemove")
   val allGamesCount: String             = pluralKey("ui.allGames.count")
 
   // -- Tag words list ---------------------------------------------------------------------------

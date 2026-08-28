@@ -100,8 +100,9 @@ final case class GameResults(
   variant: GameVariantDto,
 ) derives JsonCodec
 
-/** One row of `GET /api/games/all` — every account's games, most recently created first. `playCount` is `0` for a game
-  * nobody has played yet, never absent.
+/** One row of `GET /api/games/all` — every account's games, most recently created first. `playCount` and `likeCount`
+  * are `0` for a game nobody has played or favorited yet, never absent. `favoritedByMe` is this caller's own heart
+  * state for the row's toggle.
   */
 final case class AllGameSummary(
   slug: String,
@@ -110,6 +111,8 @@ final case class AllGameSummary(
   targetLanguage: WordLanguage,
   tagNames: List[String],
   playCount: Long,
+  likeCount: Long,
+  favoritedByMe: Boolean,
   createdAt: Long,
 ) derives JsonCodec
 
@@ -120,12 +123,14 @@ final case class AllGamePage(items: List[AllGameSummary], total: Long) derives J
 
 /** The columns `GET /api/games/all` will order by. Tags, the language pair and the play count are absent: the play
   * count is an aggregate this listing does not join, and the rest are labels, the same split [[GamePlaySort]] draws.
+  * `likeCount` is the one aggregate it does order by — `game_favorites` counted per game.
   */
 object AllGameSort {
   val name: String      = "name"
   val createdAt: String = "createdAt"
+  val likeCount: String = "likeCount"
 
-  val all: List[String] = List(name, createdAt)
+  val all: List[String] = List(name, createdAt, likeCount)
 }
 
 /** One row of `GET /api/games/{slug}/plays` — a game's owner-facing plays listing. `playerEmail` is `None` for a guest

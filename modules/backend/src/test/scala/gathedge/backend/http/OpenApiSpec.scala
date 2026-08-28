@@ -98,6 +98,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games/all",
               "/api/games/plays/mine",
               "/api/games/{slug}",
+              "/api/games/{slug}/favorite",
               "/api/games/{slug}/plays",
               "/api/games/{slug}/plays/setup",
               "/api/games/{slug}/plays/{playId}",
@@ -283,6 +284,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Guarded by `optionalUser`, the same reasoning as the vocabulary reads: a shared game link must be
               // viewable before any guest is minted, so this declares no 401.
               ("GET", "/api/games/{slug}")                                                -> Set(Ok, NotFound),
+              // Toggle the caller's favorite mark on a game — idempotent 204 either way. `BadRequest` is the slug
+              // path codec, `NotFound` an unknown slug; the aspect supplies 401.
+              ("POST", "/api/games/{slug}/favorite")                                      -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("DELETE", "/api/games/{slug}/favorite")                                    -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // The only endpoint whose 403 is a business rule outside login/guest: `GameService.rename` raises
               // `NotOwner` for anyone but the game's owner.
               ("PATCH", "/api/games/{slug}")                                              ->
@@ -413,7 +418,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 239,
+          declared == 245,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

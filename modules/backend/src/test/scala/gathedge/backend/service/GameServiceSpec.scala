@@ -3,6 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.db.{GameRepository, GroupRepository, TextSearch, UserRepository, WordRepository, WordRow}
 import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage, WordPreference}
+import gathedge.shared.dto.AllGameSort
 import zio._
 import zio.test._
 
@@ -221,12 +222,12 @@ object GameServiceSpec extends ZIOSpecDefault {
           otherGame  <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
           _          <- GameService.rename(ownGame.slug, "Zzyzx Own", owner)
           _          <- GameService.rename(otherGame.slug, "Zzyzx Other", other)
-          unplayed   <- GameService.allGames(Some("zzyzx"), 1, 20, None, false)
+          unplayed   <- GameService.allGames(owner, Some("zzyzx"), false, 1, 20, None, false)
           firstPlay  <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(firstPlay.playId, "mine", owner)
           secondPlay <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(secondPlay.playId, "mine", owner)
-          played     <- GameService.allGames(Some("zzyzx"), 1, 20, None, false)
+          played     <- GameService.allGames(owner, Some("zzyzx"), false, 1, 20, None, false)
         } yield {
           val ownRow    = unplayed.items.find(_.slug == ownGame.slug).get
           val playedOwn = played.items.find(_.slug == ownGame.slug).get
@@ -251,13 +252,49 @@ object GameServiceSpec extends ZIOSpecDefault {
           // A unique token: the listing is not owner-scoped, so another test's "Alpha Quiz" must not collide.
           _     <- GameService.rename(gameA.slug, "Qwerty Alpha", owner)
           _     <- GameService.rename(gameB.slug, "Qwerty Beta", owner)
-          hit   <- GameService.allGames(Some("QWERTY ALPHA"), 1, 20, None, false)
-          miss  <- GameService.allGames(Some("qwerty gamma"), 1, 20, None, false)
+          hit   <- GameService.allGames(owner, Some("QWERTY ALPHA"), false, 1, 20, None, false)
+          miss  <- GameService.allGames(owner, Some("qwerty gamma"), false, 1, 20, None, false)
         } yield assertTrue(
           hit.total == 1L,
           hit.items.map(_.name) == List("Qwerty Alpha"),
           miss.total == 0L,
         )
+      },
+      test("favoriteGame drives the like count, the my-heart state, the favorites filter and the like-count sort") {
+        // Unique name token so the shared DB's other games do not leak into the filtered assertions.
+        for {
+          owner      <- newUser()
+          other      <- newUser()
+          tagId      <- eligibleTagWithPairs(owner, "mine", WordLanguage.De, WordLanguage.Hu, count = 1)
+          liked      <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          plain      <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          _          <- GameService.rename(liked.slug, "Frobnitz Liked", owner)
+          _          <- GameService.rename(plain.slug, "Frobnitz Plain", owner)
+          _          <- GameService.favoriteGame(liked.slug, owner)
+          _          <- GameService.favoriteGame(liked.slug, other)
+          _          <- GameService.favoriteGame(liked.slug, owner) // idempotent — still one row for owner
+          listed     <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, None, false)
+          byLikes    <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, Some(AllGameSort.likeCount), true)
+          ownerMine  <- GameService.allGames(owner, Some("frobnitz"), true, 1, 20, None, false)
+          otherMine  <- GameService.allGames(other, Some("frobnitz"), true, 1, 20, None, false)
+          _          <- GameService.unfavoriteGame(liked.slug, other)
+          afterUnfav <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, None, false)
+          missing    <- GameService.favoriteGame("no-such-game", owner).either
+        } yield {
+          val likedRow = listed.items.find(_.slug == liked.slug).get
+          val plainRow = listed.items.find(_.slug == plain.slug).get
+          assertTrue(
+            likedRow.likeCount == 2L,
+            likedRow.favoritedByMe,
+            plainRow.likeCount == 0L,
+            !plainRow.favoritedByMe,
+            byLikes.items.map(_.slug) == List(liked.slug, plain.slug),
+            ownerMine.items.map(_.slug) == List(liked.slug),
+            otherMine.items.map(_.slug) == List(liked.slug),
+            afterUnfav.items.find(_.slug == liked.slug).get.likeCount == 1L,
+            missing == Left(GameFailure.NotFound),
+          )
+        }
       },
       test("only the owner may rename a game") {
         for {

@@ -91,16 +91,35 @@ object GameRoutes {
           sort: Option[String],
           dir: Option[String],
           q: Option[String],
+          favorites: Option[Boolean],
         ) =>
-          userId.flatMap { _ =>
+          userId.flatMap { id =>
             GameService.allGames(
+              id,
               searchTerm(q),
+              favorites.getOrElse(false),
               Paging.boundedPage(page),
               Paging.boundedPageSize(pageSize),
               sort,
               SortDirection.isDescending(dir),
             )
           }
+      }
+    )
+  }
+
+  private val favoriteRoute = {
+    GameEndpoints.favorite.implementHandler(
+      handler { (slug: String) =>
+        userId.flatMap(id => GameService.favoriteGame(slug, id).mapError(ApiFailures.game))
+      }
+    )
+  }
+
+  private val unfavoriteRoute = {
+    GameEndpoints.unfavorite.implementHandler(
+      handler { (slug: String) =>
+        userId.flatMap(id => GameService.unfavoriteGame(slug, id).mapError(ApiFailures.game))
       }
     )
   }
@@ -251,6 +270,8 @@ object GameRoutes {
       setupRoute,
       setupWordsRoute,
       allGamesRoute,
+      favoriteRoute,
+      unfavoriteRoute,
       myPlaysRoute,
       createRoute,
       renameRoute,

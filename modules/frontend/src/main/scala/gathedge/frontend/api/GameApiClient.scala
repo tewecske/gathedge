@@ -53,8 +53,19 @@ object GameApiClient {
     sort: Option[String] = None,
     dir: Option[String] = None,
     search: Option[String] = None,
+    favoritesOnly: Option[Boolean] = None,
   ): EventStream[Either[ApiError, AllGamePage]] = {
-    run(executor(GameEndpoints.allGames(page, pageSize, sort, dir, search)))
+    run(executor(GameEndpoints.allGames(page, pageSize, sort, dir, search, favoritesOnly)))
+  }
+
+  /** Marks `slug` as the caller's favorite — idempotent, answers 204. */
+  def favorite(slug: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GameEndpoints.favorite(slug)))
+  }
+
+  /** Clears the caller's favorite mark on `slug` — idempotent, answers 204. */
+  def unfavorite(slug: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GameEndpoints.unfavorite(slug)))
   }
 
   def create(

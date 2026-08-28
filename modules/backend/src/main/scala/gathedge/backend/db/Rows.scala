@@ -250,6 +250,11 @@ final case class GameRow(
   */
 final case class GameTagRow(id: Long, gameId: Long, tagId: Long)
 
+/** One account's "favorite" mark on one game — a join table exactly like [[GameTagRow]], `UNIQUE (user_id, game_id)`.
+  * Backs the games listing's heart toggle, its "my favorites" filter, and its per-game like count.
+  */
+final case class GameFavoriteRow(id: Long, userId: Long, gameId: Long, createdAt: Long)
+
 /** One attempt at a game, by one account, under one play-time variant.
   *
   * `score`, `maxScore` and `wordCount` are denormalized here rather than derived from [[GamePlayAnswerRow]] on every

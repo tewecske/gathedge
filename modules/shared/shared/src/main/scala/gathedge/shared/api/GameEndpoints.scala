@@ -41,6 +41,9 @@ object GameEndpoints {
   private val swapDirectionQuery  = HttpCodec.query[Boolean]("swapDirection").optional
   private val wordPreferenceQuery = HttpCodec.query[String]("wordPreference").optional
 
+  /** The games listing's "only my favorites" toggle — absent or `false` is the whole listing. */
+  private val favoritesQuery = HttpCodec.query[Boolean]("favorites").optional
+
   /** The owner-facing plays listing's paging/sort/filter params — same shape as `AdminEndpoints`'s own, not shared
     * across files since neither hoists them today. `sort` names a column out of `dto.GamePlaySort`; `q` is a
     * case-insensitive substring of the player's address.
@@ -78,7 +81,8 @@ object GameEndpoints {
 
   /** Every account's games, one page at a time, most recently created first unless `sort` says otherwise — see
     * `GameService.allGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
-    * `dto.AllGameSort`, and `q` is a case-insensitive substring of the game's name.
+    * `dto.AllGameSort`, `q` is a case-insensitive substring of the game's name, and `favorites=true` keeps only games
+    * the caller has favorited.
     */
   val allGames = {
     Endpoint(Method.GET / "api" / "games" / "all")
@@ -87,9 +91,26 @@ object GameEndpoints {
       .query(sortQuery)
       .query(dirQuery)
       .query(searchQuery)
+      .query(favoritesQuery)
       .withCodecError
       .out[AllGamePage]
       .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
+  /** Marks `slug` as the caller's favorite — idempotent, so a repeated call is still a 204. `POST`/`DELETE` on the same
+    * path toggle the heart on the games listing. See `GameService.favoriteGame`.
+    */
+  val favorite = {
+    Endpoint(Method.POST / "api" / "games" / gameSlug / "favorite").withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Clears the caller's favorite mark on `slug` — idempotent, a 204 whether or not it was marked. */
+  val unfavorite = {
+    Endpoint(Method.DELETE / "api" / "games" / gameSlug / "favorite").withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
   val create = {
@@ -213,6 +234,8 @@ object GameEndpoints {
     setup,
     setupWords,
     allGames,
+    favorite,
+    unfavorite,
     myPlays,
     create,
     get,

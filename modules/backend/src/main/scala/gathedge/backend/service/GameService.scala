@@ -53,16 +53,25 @@ trait GameService {
   /** Tags with a marked pair in the `sourceLanguage` -> `targetLanguage` direction, own tags first. */
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]]
 
-  /** One page of every account's games, most recently created first unless `sort` says otherwise, with their tag names
-    * and how many times each was played. `nameContains` narrows to games whose name contains it.
+  /** One page of every account's games, most recently created first unless `sort` says otherwise, with their tag names,
+    * how many times each was played, how many accounts favorited each, and whether `viewerId` did. `nameContains`
+    * narrows to games whose name contains it; `favoritesOnly` keeps only games `viewerId` favorited.
     */
   def allGames(
+    viewerId: Long,
     nameContains: Option[String],
+    favoritesOnly: Boolean,
     page: Int,
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
   ): UIO[AllGamePage]
+
+  /** Marks `slug` as `userId`'s favorite — idempotent. [[GameFailure.NotFound]] if there is no such game. */
+  def favoriteGame(slug: String, userId: Long): IO[GameFailure, Unit]
+
+  /** Clears `userId`'s favorite mark on `slug` — idempotent. [[GameFailure.NotFound]] if there is no such game. */
+  def unfavoriteGame(slug: String, userId: Long): IO[GameFailure, Unit]
 
   /** Every game records its plays for its owner to read back via [[listPlays]]/[[getPlayDetail]]. Direction, word
     * count, article display and word preference are no longer part of a game at all — see [[startPlay]].
@@ -187,13 +196,24 @@ object GameService {
     ZIO.serviceWithZIO[GameService](_.eligibleTags(sourceLanguage, targetLanguage, viewerId))
 
   def allGames(
+    viewerId: Long,
     nameContains: Option[String],
+    favoritesOnly: Boolean,
     page: Int,
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
-  ): URIO[GameService, AllGamePage] =
-    ZIO.serviceWithZIO[GameService](_.allGames(nameContains, page, pageSize, sort, descending))
+  ): URIO[GameService, AllGamePage] = {
+    ZIO.serviceWithZIO[GameService](
+      _.allGames(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending)
+    )
+  }
+
+  def favoriteGame(slug: String, userId: Long): ZIO[GameService, GameFailure, Unit] =
+    ZIO.serviceWithZIO[GameService](_.favoriteGame(slug, userId))
+
+  def unfavoriteGame(slug: String, userId: Long): ZIO[GameService, GameFailure, Unit] =
+    ZIO.serviceWithZIO[GameService](_.unfavoriteGame(slug, userId))
 
   def createGame(
     userId: Long,
@@ -352,21 +372,27 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   }
 
   def allGames(
+    viewerId: Long,
     nameContains: Option[String],
+    favoritesOnly: Boolean,
     page: Int,
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
   ): UIO[AllGamePage] = {
+    val favoritesOf = Option.when(favoritesOnly)(viewerId)
     for {
-      rows       <- repo
-                      .listAllGamesPage(nameContains, Paging.offset(page, pageSize), pageSize, sort, descending)
-                      .orDie
-      total      <- repo.countAllGamesMatching(nameContains).orDie
-      tagsByGame <- ZIO
-                      .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tags.map(_.name).sorted))
-                      .map(_.toMap)
-      counts     <- repo.playCounts(rows.map(_.id)).orDie
+      rows          <- repo
+                         .listAllGamesPage(nameContains, favoritesOf, Paging.offset(page, pageSize), pageSize, sort, descending)
+                         .orDie
+      total         <- repo.countAllGamesMatching(nameContains, favoritesOf).orDie
+      gameIds        = rows.map(_.id)
+      tagsByGame    <- ZIO
+                         .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tags.map(_.name).sorted))
+                         .map(_.toMap)
+      playCounts    <- repo.playCounts(gameIds).orDie
+      likeCounts    <- repo.favoriteCounts(gameIds).orDie
+      favoritedMine <- repo.favoritedGameIds(viewerId, gameIds).orDie
     } yield AllGamePage(
       rows.map { row =>
         AllGameSummary(
@@ -375,12 +401,29 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
           sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
           targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
           tagNames = tagsByGame.getOrElse(row.id, Nil),
-          playCount = counts.getOrElse(row.id, 0L),
+          playCount = playCounts.getOrElse(row.id, 0L),
+          likeCount = likeCounts.getOrElse(row.id, 0L),
+          favoritedByMe = favoritedMine.contains(row.id),
           createdAt = row.createdAt,
         )
       },
       total,
     )
+  }
+
+  def favoriteGame(slug: String, userId: Long): IO[GameFailure, Unit] = {
+    for {
+      game <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _    <- repo.addFavorite(userId, game.id, now).orDie
+    } yield ()
+  }
+
+  def unfavoriteGame(slug: String, userId: Long): IO[GameFailure, Unit] = {
+    for {
+      game <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      _    <- repo.removeFavorite(userId, game.id).orDie
+    } yield ()
   }
 
   private def capitalize(word: String): String = {

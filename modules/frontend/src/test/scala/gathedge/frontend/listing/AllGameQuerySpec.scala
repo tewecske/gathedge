@@ -25,12 +25,18 @@ object AllGameQuerySpec extends ZIOSpecDefault {
           !AllGameQuery().refines(quiz),
         )
       },
-      test("a page, a size or a column is never a refinement, whatever the search says") {
+      test("a page, a size, a column or the favorites toggle is never a refinement, whatever the search says") {
         assertTrue(
           !quiz.copy(page = 2).refines(quiz),
           !quiz.copy(pageSize = 50).refines(quiz),
           !quiz.copy(sort = SortHeader.Sort.descending(AllGameSort.name)).refines(quiz),
+          !quiz.copy(favoritesOnly = true).refines(quiz),
           !quiz.refines(quiz),
+        )
+      },
+      test("the favorites toggle survives reset but returns to the first page") {
+        assertTrue(
+          AllGameQuery(page = 4).reset(_.copy(favoritesOnly = true)) == AllGameQuery(favoritesOnly = true)
         )
       },
       test("any change but a page turn returns to the first page") {

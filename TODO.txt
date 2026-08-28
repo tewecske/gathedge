@@ -4,6 +4,11 @@ go back to previous word in game?
 flags?
 on the words page when clicking on a word, it shows the word details and the new translation should have the same target language selected as the selected tags target language by default
 save game progress, so it can be continued later from game history
+
+[+] games/mine change it to games/all and show all games not just mine
+[ ] on games/all page add a column which shows the last time I played that game and allow sorting by that column
+[+] add a daisyui like button to each row which when clicked then add that game to user's favorites and show filled heart icon and then on the games/all page add a filter to show only my liked games and a number of likes for each game in the list and a sort by number of likes column
+
 on the admin / users / user detail, I see a play history block at the bottom of the page, and it's titled "My play history", why is it there? If I requested it, it's still doesn't seem right. Remove it and add a button to the user list "Play history" and that should bring the admin to a new page which looks like the users play history page
 save game progress and continue from play history
 share with icons

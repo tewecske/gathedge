@@ -204,6 +204,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                           gathedge.backend.db.GameRow(0L, target.id, "pg-delete-slug", "PG Delete", "de", "hu", 0L, 0L),
                           List(tag.id),
                         )
+          // `game_favorites` references both `users` and `games`; `user_id` cascades directly, so deleting the
+          // account that favorited a game must not raise a violation.
+          _          <- GameRepository.addFavorite(target.id, game.id, 0L)
           _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone       <- AdminService.getUser(target.id).either
           sessions   <- SessionRepository.listForUser(target.id)
@@ -213,6 +216,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           pairs      <- WordRepository.pairsFor(target.id, List(word.id, spoon.id))
           codes      <- GuestClaimCodeRepository.countFor(target.id)
           gameGone   <- GameRepository.findBySlug(game.slug)
+          favGone    <- GameRepository.favoriteCounts(List(game.id))
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
           stillThere <- WordRepository.findWordById(word.id)
           links      <- WordRepository.allTranslationsOf(word.id)
@@ -225,6 +229,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           pairs.isEmpty,
           codes == 0L,
           gameGone.isEmpty,
+          favGone.isEmpty,
           stillThere.isDefined,
           stillThere.flatMap(_.createdBy).isEmpty,
           links.map(_._2.text) == List("kanál"),
@@ -354,9 +359,22 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           myByName      <- GameRepository.listMyPlaysPage(alice.id, None, Some("tracked a"), 0, 20, None, false)
           myByNameCount <- GameRepository.countMyPlaysMatching(alice.id, None, Some("TRACKED"))
           myByNameMiss  <- GameRepository.countMyPlaysMatching(alice.id, None, Some("no-such-game"))
-          gamesByName   <- GameRepository.listAllGamesPage(Some("pg tracked a"), 0, 20, None, false)
-          gamesCount    <- GameRepository.countAllGamesMatching(Some("PG TRACKED"))
-          gamesMiss     <- GameRepository.countAllGamesMatching(Some("no-such-game"))
+          gamesByName   <- GameRepository.listAllGamesPage(Some("pg tracked a"), None, 0, 20, None, false)
+          gamesCount    <- GameRepository.countAllGamesMatching(Some("PG TRACKED"), None)
+          gamesMiss     <- GameRepository.countAllGamesMatching(Some("no-such-game"), None)
+          // `game_favorites` filter/count/sort — a correlated subquery over yet another table, plus the `.sortBy` one,
+          // only ever SQL here. alice favorites gameB, bob favorites gameA and gameB.
+          _             <- GameRepository.addFavorite(alice.id, gameB.id, 0L)
+          _             <- GameRepository.addFavorite(alice.id, gameB.id, 0L) // idempotent
+          _             <- GameRepository.addFavorite(bob.id, gameA.id, 0L)
+          _             <- GameRepository.addFavorite(bob.id, gameB.id, 0L)
+          favMine       <- GameRepository.listAllGamesPage(Some("pg tracked"), Some(alice.id), 0, 20, None, false)
+          favMineCount  <- GameRepository.countAllGamesMatching(Some("pg tracked"), Some(bob.id))
+          favCounts     <- GameRepository.favoriteCounts(List(gameA.id, gameB.id))
+          favIds        <- GameRepository.favoritedGameIds(bob.id, List(gameA.id, gameB.id))
+          bySort        <- GameRepository.listAllGamesPage(Some("pg tracked"), None, 0, 20, Some("likeCount"), true)
+          removed       <- GameRepository.removeFavorite(alice.id, gameB.id)
+          removedAgain  <- GameRepository.removeFavorite(alice.id, gameB.id)
         } yield assertTrue(
           all.map(_.id).toSet == Set(playAlice.id, playBob.id),
           total == 2L,
@@ -375,6 +393,14 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           gamesByName.map(_.id) == List(gameA.id),
           gamesCount == 2L,
           gamesMiss == 0L,
+          // `favoritesOf` keeps only that account's favorites; the count/id lookups and the like-count sort agree.
+          favMine.map(_.id) == List(gameB.id),
+          favMineCount == 2L,
+          favCounts == Map(gameA.id -> 1L, gameB.id -> 2L),
+          favIds == Set(gameA.id, gameB.id),
+          bySort.map(_.id) == List(gameB.id, gameA.id),
+          removed == 1L,
+          removedAgain == 0L,
         )
       },
       // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather

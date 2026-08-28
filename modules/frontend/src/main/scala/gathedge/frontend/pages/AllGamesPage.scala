@@ -9,13 +9,14 @@ import gathedge.frontend.listing.AllGameQuery
 import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary}
 import gathedge.shared.i18n.UiKeys
 
-/** Every account's games: name, tags, language pair, how many times each was played, and when it was created — see
-  * `GameService.allGames`.
+/** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
+  * and when it was created — see `GameService.allGames`.
   *
   * Built to the same shape as `GameResultsPage`/`MyPlayHistoryPage`: a card table with sortable headings, a filter box
-  * (here a substring of the game's name), and server-side paging. It carries its whole listing state in the URL, so it
-  * takes a `Signal[AllGameQuery]` and an `Observer[AllGameQuery]` the same way those pages do; `App` supplies both.
-  * There is no per-row detail modal — a game's own page is one click away on its name.
+  * (here a substring of the game's name), a "my favorites" toggle, and server-side paging. It carries its whole listing
+  * state in the URL, so it takes a `Signal[AllGameQuery]` and an `Observer[AllGameQuery]` the same way those pages do;
+  * `App` supplies both. Each row's heart button toggles the caller's favorite mark — patched optimistically, reverted
+  * if the call fails. There is no per-row detail modal — a game's own page is one click away on its name.
   */
 object AllGamesPage {
 
@@ -55,6 +56,20 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
 
   private val reloadBus    = new EventBus[Unit]()
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
+
+  // The row as it looked when its heart was clicked — carries the pre-toggle `favoritedByMe`/`likeCount`, so a failed
+  // call can put both back exactly.
+  private val favoriteToggleBus = new EventBus[AllGameSummary]()
+
+  /** Rewrites one row in place: its heart state, and its like count nudged by `delta` (never below zero). */
+  private def patchFavorite(slug: String, favorited: Boolean, delta: Long): Unit = {
+    gamesVar.update(_.map { game =>
+      if (game.slug == slug)
+        game.copy(favoritedByMe = favorited, likeCount = math.max(0L, game.likeCount + delta))
+      else
+        game
+    })
+  }
 
   def render(): HtmlElement = {
     div(
@@ -97,6 +112,24 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           case Left(err)     =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
+      // Patch the row the instant the heart is clicked, then fire the call; a failure puts the row back and surfaces
+      // the error. Concurrent toggles on different rows are independent, hence `flatMapMerge`.
+      favoriteToggleBus.events -->
+        Observer[AllGameSummary](game =>
+          patchFavorite(game.slug, !game.favoritedByMe, if (game.favoritedByMe) -1L else 1L)
+        ),
+      favoriteToggleBus.events.flatMapMerge { game =>
+        val adding = !game.favoritedByMe
+        val call   = if (adding) GameApiClient.favorite(game.slug) else GameApiClient.unfavorite(game.slug)
+        call.map(result => (game, adding, result))
+      } -->
+        Observer[(AllGameSummary, Boolean, Either[ApiError, Unit])] {
+          case (game, adding, Left(err)) =>
+            patchFavorite(game.slug, game.favoritedByMe, if (adding) -1L else 1L)
+            errorVar.set(Some(err.message))
+          case (_, _, Right(_))          =>
+            ()
+        },
       onMountCallback(_ => reloadBus.emit(())),
     )
   }
@@ -108,6 +141,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       sort = query.sort.column,
       dir = query.sort.wire,
       search = Option(query.search).filter(_.nonEmpty),
+      favoritesOnly = Option.when(query.favoritesOnly)(true),
     )
   }
 
@@ -120,7 +154,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
 
   private def renderSearch(): HtmlElement = {
     div(
-      cls := "flex flex-wrap items-end gap-2 mb-4",
+      cls := "flex flex-wrap items-end gap-4 mb-4",
       label(
         cls := "form-control",
         span(cls      := "label-text text-xs", I18n.t(UiKeys.allGamesFilterLabel)),
@@ -131,6 +165,16 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
           onInput.mapToValue --> searchTypedBus.writer,
         ),
+      ),
+      label(
+        cls := "label cursor-pointer gap-2",
+        input(
+          typ    := "checkbox",
+          cls    := "toggle toggle-sm",
+          checked <-- querySignal.map(_.favoritesOnly),
+          onClick.mapToChecked --> Observer[Boolean](on => change(_.reset(_.copy(favoritesOnly = on)))),
+        ),
+        span(cls := "label-text text-xs", I18n.t(UiKeys.allGamesFavoritesFilter)),
       ),
     )
   }
@@ -144,12 +188,14 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         cls := "table",
         thead(
           tr(
+            th(),
             SortHeader.render(I18n.t(UiKeys.allGamesNameCol), AllGameSort.name, sortSignal, onSort),
             // Tags, the language pair and the play count are filterable/readable but not sortable — see `AllGameSort`.
             th(I18n.t(UiKeys.allGamesTagsCol)),
             th(I18n.t(UiKeys.allGamesSourceCol)),
             th(I18n.t(UiKeys.allGamesTargetCol)),
             th(I18n.t(UiKeys.allGamesPlaysCol)),
+            SortHeader.render(I18n.t(UiKeys.allGamesLikesCol), AllGameSort.likeCount, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.allGamesCreatedCol), AllGameSort.createdAt, sortSignal, onSort),
           )
         ),
@@ -164,12 +210,25 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private def renderRow(game: AllGameSummary): HtmlElement = {
     tr(
       cls := "hover",
+      td(renderFavorite(game)),
       td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(game.slug)), game.name)),
       td(renderTags(game.tagNames)),
       td(Labels.language(game.sourceLanguage)),
       td(Labels.language(game.targetLanguage)),
       td(game.playCount.toString),
+      td(game.likeCount.toString),
       td(Formats.dateTime(game.createdAt)),
+    )
+  }
+
+  private def renderFavorite(game: AllGameSummary): HtmlElement = {
+    button(
+      typ               := "button",
+      cls               := "btn btn-ghost btn-circle btn-sm",
+      cls("text-error") := game.favoritedByMe,
+      aria.label        := I18n.t(if (game.favoritedByMe) UiKeys.allGamesFavoriteRemove else UiKeys.allGamesFavoriteAdd),
+      span(cls := "text-lg leading-none", if (game.favoritedByMe) "♥" else "♡"),
+      onClick.mapTo(game) --> favoriteToggleBus.writer,
     )
   }
 
