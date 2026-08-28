@@ -271,8 +271,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The setup screen's word-list preview. A missing/empty tagIds simply answers an empty list, not a
               // 400, so its only failure is the aspect's 401, the same shape as setup.
               ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
-              // Same shape as setup: no input the codec can fail to decode, so its only failure is the aspect's 401.
-              ("GET", "/api/games/mine")                                                  -> Set(Ok, Unauthorized),
+              // The caller's own games, paged/sorted/filtered like the play history — so its only failures are the
+              // query codec's 400 and the aspect's 401.
+              ("GET", "/api/games/mine")                                                  -> Set(Ok, BadRequest, Unauthorized),
               // The caller's own play history: always the caller's own data, so its only failures are the query
               // codec's 400 and the aspect's 401.
               ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),
@@ -412,7 +413,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 238,
+          declared == 239,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

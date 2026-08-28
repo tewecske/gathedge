@@ -113,6 +113,21 @@ final case class MyGameSummary(
   createdAt: Long,
 ) derives JsonCodec
 
+/** One page of the caller's own games. `total` counts what matches the name filter, the same rule [[GamePlayPage]]
+  * follows for its own listing.
+  */
+final case class MyGamePage(items: List[MyGameSummary], total: Long) derives JsonCodec
+
+/** The columns `GET /api/games/mine` will order by. Tags, the language pair and the play count are absent: the play
+  * count is an aggregate this listing does not join, and the rest are labels, the same split [[GamePlaySort]] draws.
+  */
+object MyGameSort {
+  val name: String      = "name"
+  val createdAt: String = "createdAt"
+
+  val all: List[String] = List(name, createdAt)
+}
+
 /** One row of `GET /api/games/{slug}/plays` — a game's owner-facing plays listing. `playerEmail` is `None` for a guest
   * who never gave one; `playerIsGuest` lets the table badge that instead of showing a blank cell. `variant` is the
   * settings this particular play actually ran under.

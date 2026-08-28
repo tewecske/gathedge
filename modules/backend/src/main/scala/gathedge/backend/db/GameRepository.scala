@@ -3,7 +3,7 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import gathedge.shared.dto.GamePlaySort
+import gathedge.shared.dto.{GamePlaySort, MyGameSort}
 import zio.*
 
 import javax.sql.DataSource
@@ -40,8 +40,20 @@ trait GameRepository {
   /** Rows affected — `0` means `id` does not exist. Ownership is the service's job: this only writes. */
   def rename(id: Long, name: String, updatedAt: Long): Task[Long]
 
-  /** Every game `ownerUserId` created, most recent first — the "my games" listing's source rows. */
-  def gamesByOwner(ownerUserId: Long): Task[List[GameRow]]
+  /** One page of the games `ownerUserId` created, most recent first unless `sort` says otherwise — the "my games"
+    * listing's source rows. `nameContains` narrows to games whose name contains it, case-insensitively.
+    */
+  def listMyGamesPage(
+    ownerUserId: Long,
+    nameContains: Option[String],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[GameRow]]
+
+  /** How many of `ownerUserId`'s games [[listMyGamesPage]] would return across every page. */
+  def countMyGamesMatching(ownerUserId: Long, nameContains: Option[String]): Task[Long]
 
   /** How many `game_plays` rows exist for each of `gameIds`, as one grouped query rather than one per game. A game with
     * zero plays is simply absent from the map — the caller's job to default it to `0`, the same split
@@ -167,8 +179,18 @@ object GameRepository {
   def rename(id: Long, name: String, updatedAt: Long): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt))
 
-  def gamesByOwner(ownerUserId: Long): RIO[GameRepository, List[GameRow]] =
-    ZIO.serviceWithZIO[GameRepository](_.gamesByOwner(ownerUserId))
+  def listMyGamesPage(
+    ownerUserId: Long,
+    nameContains: Option[String],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): RIO[GameRepository, List[GameRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.listMyGamesPage(ownerUserId, nameContains, offset, limit, sort, descending))
+
+  def countMyGamesMatching(ownerUserId: Long, nameContains: Option[String]): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countMyGamesMatching(ownerUserId, nameContains))
 
   def playCounts(gameIds: List[Long]): RIO[GameRepository, Map[Long, Long]] =
     ZIO.serviceWithZIO[GameRepository](_.playCounts(gameIds))
@@ -347,13 +369,6 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       games.filter(_.id == lift(id)).update(_.name -> lift(name), _.updatedAt -> lift(updatedAt))
     }
     logged(run(ctx.run(q)))(rows => s"games.rename id=$id rows=$rows")
-  }
-
-  def gamesByOwner(ownerUserId: Long): Task[List[GameRow]] = {
-    val q = quote {
-      games.filter(_.ownerUserId == lift(ownerUserId)).sortBy(_.createdAt)(using Ord.desc)
-    }
-    logged(run(ctx.run(q)))(rows => s"games.gamesByOwner owner=$ownerUserId rows=${rows.size}")
   }
 
   def playCounts(gameIds: List[Long]): Task[Map[Long, Long]] = {
@@ -639,6 +654,56 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], nameContains: Option[String]): Task[Long] = {
     logged(run(ctx.run(matchingMyPlays(playerUserId, gameId, nameContains).size))) { count =>
       s"games.countMyPlaysMatching player=$playerUserId count=$count"
+    }
+  }
+
+  /** The rows a page of the "my games" listing is cut from, before ordering — the narrowing [[listMyGamesPage]] and
+    * [[countMyGamesMatching]] have to share. The name filter is a plain predicate on `games` itself, not a correlated
+    * subquery like [[matchingMyPlays]]'s: this query already reads that table. The column is lowered ([[namePattern]]
+    * lowers the needle to match) since a game's name is a display string, not normalised on write.
+    */
+  private def matchingMyGames(ownerUserId: Long, nameContains: Option[String]): DynamicQuery[GameRow] = {
+    dynamicQuerySchema[GameRow]("games")
+      .filterOpt(Some(ownerUserId))((game, id) => quote(game.ownerUserId == unquote(id)))
+      .filterOpt(namePattern(nameContains))((game, pattern) => quote(game.name.toLowerCase.like(unquote(pattern))))
+  }
+
+  /** The `dto.MyGameSort` vocabulary translated to an `ORDER BY`; anything else falls back to newest first, the same
+    * default [[orderedPlays]] uses. Tags, the language pair and the play count have no case here — see `MyGameSort`.
+    */
+  private def orderedMyGames(
+    query: DynamicQuery[GameRow],
+    sort: Option[String],
+    descending: Boolean,
+  ): DynamicQuery[GameRow] = {
+    sort match {
+      case Some(MyGameSort.name)      =>
+        query.sortBy(_.name)(using ordering(descending))
+      case Some(MyGameSort.createdAt) =>
+        query.sortBy(_.createdAt)(using ordering(descending))
+      case _                          =>
+        query.sortBy(_.createdAt)(using Ord.desc)
+    }
+  }
+
+  def listMyGamesPage(
+    ownerUserId: Long,
+    nameContains: Option[String],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[GameRow]] = {
+    val page = orderedMyGames(matchingMyGames(ownerUserId, nameContains), sort, descending).drop(offset).take(limit)
+    // The name filter is a fragment of a game's name, so it stays out of the message, the same as every other one.
+    logged(run(ctx.run(page))) { rows =>
+      s"games.listMyGamesPage owner=$ownerUserId offset=$offset limit=$limit sort=${sort.getOrElse("-")} rows=${rows.size}"
+    }
+  }
+
+  def countMyGamesMatching(ownerUserId: Long, nameContains: Option[String]): Task[Long] = {
+    logged(run(ctx.run(matchingMyGames(ownerUserId, nameContains).size))) { count =>
+      s"games.countMyGamesMatching owner=$ownerUserId count=$count"
     }
   }
 }

@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   GameVariantDto,
+  MyGamePage,
   MyGameSummary,
   MyPlayPage,
   MyPlaySummary,
@@ -52,8 +53,17 @@ trait GameService {
   /** Tags with a marked pair in the `sourceLanguage` -> `targetLanguage` direction, own tags first. */
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]]
 
-  /** `userId`'s own games, most recently created first, with their tag names and how many times each was played. */
-  def myGames(userId: Long): UIO[List[MyGameSummary]]
+  /** One page of `userId`'s own games, most recently created first unless `sort` says otherwise, with their tag names
+    * and how many times each was played. `nameContains` narrows to games whose name contains it.
+    */
+  def myGames(
+    userId: Long,
+    nameContains: Option[String],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyGamePage]
 
   /** Every game records its plays for its owner to read back via [[listPlays]]/[[getPlayDetail]]. Direction, word
     * count, article display and word preference are no longer part of a game at all — see [[startPlay]].
@@ -177,8 +187,15 @@ object GameService {
   ): URIO[GameService, List[Tag]] =
     ZIO.serviceWithZIO[GameService](_.eligibleTags(sourceLanguage, targetLanguage, viewerId))
 
-  def myGames(userId: Long): URIO[GameService, List[MyGameSummary]] =
-    ZIO.serviceWithZIO[GameService](_.myGames(userId))
+  def myGames(
+    userId: Long,
+    nameContains: Option[String],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): URIO[GameService, MyGamePage] =
+    ZIO.serviceWithZIO[GameService](_.myGames(userId, nameContains, page, pageSize, sort, descending))
 
   def createGame(
     userId: Long,
@@ -336,24 +353,37 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       }
   }
 
-  def myGames(userId: Long): UIO[List[MyGameSummary]] = {
+  def myGames(
+    userId: Long,
+    nameContains: Option[String],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[MyGamePage] = {
     for {
-      rows       <- repo.gamesByOwner(userId).orDie
+      rows       <- repo
+                      .listMyGamesPage(userId, nameContains, Paging.offset(page, pageSize), pageSize, sort, descending)
+                      .orDie
+      total      <- repo.countMyGamesMatching(userId, nameContains).orDie
       tagsByGame <- ZIO
                       .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tags.map(_.name).sorted))
                       .map(_.toMap)
       counts     <- repo.playCounts(rows.map(_.id)).orDie
-    } yield rows.map { row =>
-      MyGameSummary(
-        slug = row.slug,
-        name = row.name,
-        sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
-        targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
-        tagNames = tagsByGame.getOrElse(row.id, Nil),
-        playCount = counts.getOrElse(row.id, 0L),
-        createdAt = row.createdAt,
-      )
-    }
+    } yield MyGamePage(
+      rows.map { row =>
+        MyGameSummary(
+          slug = row.slug,
+          name = row.name,
+          sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
+          targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
+          tagNames = tagsByGame.getOrElse(row.id, Nil),
+          playCount = counts.getOrElse(row.id, 0L),
+          createdAt = row.createdAt,
+        )
+      },
+      total,
+    )
   }
 
   private def capitalize(word: String): String = {

@@ -2,10 +2,10 @@ package gathedge.frontend
 
 import gathedge.frontend.components.SortHeader
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyGameQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.shared.domain.Locale.urlPrefix
 import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
-import gathedge.shared.dto.{GamePlaySort, Paging, UserSort, WordSort}
+import gathedge.shared.dto.{GamePlaySort, MyGameSort, Paging, UserSort, WordSort}
 import zio.test._
 
 /** That every route carries the language prefix.
@@ -167,12 +167,34 @@ object AppRouterSpec extends ZIOSpecDefault {
         val history = Page.MyPlays(
           MyPlayQuery(page = 3, sort = SortHeader.Sort.descending(GamePlaySort.startedAt), search = "quiz")
         )
+        val games   = Page.MyGames(
+          MyGameQuery(page = 2, sort = SortHeader.Sort.descending(MyGameSort.name), search = "quiz")
+        )
 
         assertTrue(
           AppRouter.deserialize(AppRouter.serialize(page)) == page,
           AppRouter.deserialize(AppRouter.serialize(words)) == words,
           AppRouter.deserialize(AppRouter.serialize(results)) == results,
           AppRouter.deserialize(AppRouter.serialize(history)) == history,
+          AppRouter.deserialize(AppRouter.serialize(games)) == games,
+        )
+      },
+      test("the my-games listing is the bare path by default and carries its query when filtered") {
+        val filtered = Page.MyGames(
+          MyGameQuery(page = 2, sort = SortHeader.Sort.ascending(MyGameSort.name), search = "otter")
+        )
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.MyGames()) == s"$prefix/games/mine",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/games/mine").contains(Page.MyGames()),
+          url.startsWith(s"$prefix/games/mine?"),
+          url.contains("page=2"),
+          url.contains(s"sort=${MyGameSort.name}"),
+          url.contains("q=otter"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          // A hand-edited unknown column is dropped rather than refused.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/games/mine?sort=nonsense").contains(Page.MyGames()),
         )
       },
       test("the cross-game history is the bare path by default and carries its query when filtered") {

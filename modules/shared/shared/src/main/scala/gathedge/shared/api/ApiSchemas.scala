@@ -68,6 +68,7 @@ import gathedge.shared.dto.{
   LoginAttemptEntry,
   LoginRequest,
   MigrationInfo,
+  MyGamePage,
   MyGameSummary,
   MyPlayPage,
   MyPlaySummary,
@@ -234,6 +235,7 @@ object ApiSchemas {
   given Schema[GameResults]         = DeriveSchema.gen[GameResults]
   given Schema[GameSetupWord]       = DeriveSchema.gen[GameSetupWord]
   given Schema[MyGameSummary]       = DeriveSchema.gen[MyGameSummary]
+  given Schema[MyGamePage]          = DeriveSchema.gen[MyGamePage]
   given Schema[GamePlaySummary]     = DeriveSchema.gen[GamePlaySummary]
   given Schema[GamePlayPage]        = DeriveSchema.gen[GamePlayPage]
   given Schema[GamePlayDetail]      = DeriveSchema.gen[GamePlayDetail]

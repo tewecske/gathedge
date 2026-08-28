@@ -217,20 +217,37 @@ object GameServiceSpec extends ZIOSpecDefault {
           otherTagId <- eligibleTagWithPairs(other, "notMine", WordLanguage.De, WordLanguage.Hu, count = 1)
           ownGame    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(ownTagId))
           _          <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
-          unplayed   <- GameService.myGames(owner)
+          unplayed   <- GameService.myGames(owner, None, 1, 20, None, false)
           firstPlay  <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(firstPlay.playId, "mine", owner)
           secondPlay <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(secondPlay.playId, "mine", owner)
-          played     <- GameService.myGames(owner)
+          played     <- GameService.myGames(owner, None, 1, 20, None, false)
         } yield assertTrue(
           // Only the caller's own game comes back — the other account's game (and its tag) is invisible here.
-          unplayed.map(_.slug) == List(ownGame.slug),
-          unplayed.head.tagNames == List("mine"),
-          unplayed.head.sourceLanguage == WordLanguage.De,
-          unplayed.head.targetLanguage == WordLanguage.Hu,
-          unplayed.head.playCount == 0L,
-          played.head.playCount == 2L,
+          unplayed.total == 1L,
+          unplayed.items.map(_.slug) == List(ownGame.slug),
+          unplayed.items.head.tagNames == List("mine"),
+          unplayed.items.head.sourceLanguage == WordLanguage.De,
+          unplayed.items.head.targetLanguage == WordLanguage.Hu,
+          unplayed.items.head.playCount == 0L,
+          played.items.head.playCount == 2L,
+        )
+      },
+      test("myGames narrows to games whose name contains the filter, case-insensitively") {
+        for {
+          owner <- newUser()
+          tagId <- eligibleTagWithPairs(owner, "lesson", WordLanguage.De, WordLanguage.Hu, count = 1)
+          gameA <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          gameB <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          _     <- GameService.rename(gameA.slug, "Alpha Quiz", owner)
+          _     <- GameService.rename(gameB.slug, "Beta Quiz", owner)
+          hit   <- GameService.myGames(owner, Some("ALPHA"), 1, 20, None, false)
+          miss  <- GameService.myGames(owner, Some("gamma"), 1, 20, None, false)
+        } yield assertTrue(
+          hit.total == 1L,
+          hit.items.map(_.name) == List("Alpha Quiz"),
+          miss.total == 0L,
         )
       },
       test("only the owner may rename a game") {

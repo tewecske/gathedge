@@ -83,7 +83,27 @@ object GameRoutes {
   }
 
   private val mineRoute = {
-    GameEndpoints.mine.implementHandler(handler((_: Unit) => userId.flatMap(GameService.myGames)))
+    GameEndpoints.mine.implementHandler(
+      handler {
+        (
+          page: Option[Int],
+          pageSize: Option[Int],
+          sort: Option[String],
+          dir: Option[String],
+          q: Option[String],
+        ) =>
+          userId.flatMap { id =>
+            GameService.myGames(
+              id,
+              searchTerm(q),
+              Paging.boundedPage(page),
+              Paging.boundedPageSize(pageSize),
+              sort,
+              SortDirection.isDescending(dir),
+            )
+          }
+      }
+    )
   }
 
   private val myPlaysRoute = {

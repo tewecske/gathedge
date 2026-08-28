@@ -10,7 +10,7 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
-  MyGameSummary,
+  MyGamePage,
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
@@ -76,13 +76,20 @@ object GameEndpoints {
       .outFailure(failure.unauthorized)
   }
 
-  /** The caller's own games, most recently created first — see `GameService.myGames`. Takes no input, so its only
-    * failure is the aspect's 401, the same shape as [[setup]].
+  /** The caller's own games, one page at a time, most recently created first unless `sort` says otherwise — see
+    * `GameService.myGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
+    * `dto.MyGameSort`, and `q` is a case-insensitive substring of the game's name.
     */
   val mine = {
     Endpoint(Method.GET / "api" / "games" / "mine")
-      .out[List[MyGameSummary]]
-      .outFailure(failure.unauthorized)
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .query(searchQuery)
+      .withCodecError
+      .out[MyGamePage]
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   val create = {

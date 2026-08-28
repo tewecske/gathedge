@@ -2,7 +2,7 @@ package gathedge.frontend
 
 import com.raquo.waypoint._
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyGameQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.shared.Branding
 
 sealed trait Page
@@ -31,9 +31,10 @@ object Page {
 
   /** The signed-in owner's own games: name, tags, language pair, and how many times each was played. Unlike
     * [[Games]]/[[GameSetup]]/[[GameInstance]], there is no shared link to keep public — it is a personal listing, so it
-    * requires auth like the rest of the account-scoped pages.
+    * requires auth like the rest of the account-scoped pages. It carries its whole listing state, the same reason
+    * [[MyPlays]]/[[GameResults]]/[[Admin]] do — see [[gathedge.frontend.listing.MyGameQuery]] and the routes below.
     */
-  case object MyGames extends Page
+  final case class MyGames(query: MyGameQuery = MyGameQuery.default) extends Page
 
   /** One quiz, playable from its shared link: `/g/{slug}`. Public for the same reason [[GameSetup]] is public and
     * [[WordDetail]] is — a shared link has to render for a signed-out visitor — but nothing here mints a guest on
@@ -215,7 +216,6 @@ object AppRouter {
   private val settingsRoute            = Route.static(Settings, root / "settings", basePath)
   private val gamesRoute               = Route.static(Games, root, basePath)
   private val gameSetupRoute           = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
-  private val myGamesRoute             = Route.static(MyGames, root / "games" / "mine", basePath)
   private val sharedProgressRoute      = Route.static(SharedProgress, root / "games" / "shared", basePath)
   private val sharedPlayerHistoryRoute = Route(
     encode = (p: SharedPlayerHistory) => p.sharerUserId,
@@ -304,6 +304,18 @@ object AppRouter {
     * for the default. Order in [[router]] decides which of a pair answers, and it is the same list for building a URL
     * and for matching one, so the query route has to come first in both.
     */
+  /** The "my games" listing's "two routes, query first" pair — a fully static path, so the same trick the admin
+    * listings and the cross-game history use (see [[adminQueryRoute]]).
+    */
+  private val myGamesQueryRoute = Route.onlyQueryPF[MyGames, MyGameQuery](
+    matchEncode = { case page: MyGames if page.query != MyGameQuery.default => page.query },
+    decode = { case query if query != MyGameQuery.default => MyGames(query) },
+    pattern = (root / "games" / "mine") ? MyGameQuery.params,
+    basePath = basePath,
+  )
+
+  private val myGamesRoute = Route.staticPartial(MyGames(), root / "games" / "mine", basePath)
+
   /** The cross-game history's "two routes, query first" pair — its path is fully static, so it uses the same trick the
     * admin listings do (see [[adminQueryRoute]]) rather than [[gameResultsRoute]]'s `withQuery`.
     */
@@ -373,8 +385,8 @@ object AppRouter {
         "Games"
       case GameSetup                =>
         "GameSetup"
-      case MyGames                  =>
-        "MyGames"
+      case MyGames(query)           =>
+        "MyGames:" + MyGameQuery.params.createParamsString(query)
       case MyPlays(query)           =>
         "MyPlays:" + MyPlayQuery.params.createParamsString(query)
       case SharedProgress           =>
@@ -465,6 +477,12 @@ object AppRouter {
           .map(query => GameResults(slug, query))
           .getOrElse(GameResults(slug))
       }
+    } else if (tag.startsWith("MyGames:")) {
+      // A tag from an older build falls back to the default view, the same reasoning `AdminAudit`'s fallback uses.
+      MyGameQuery.params
+        .matchQueryString(tag.stripPrefix("MyGames:"))
+        .map(query => MyGames(query))
+        .getOrElse(MyGames())
     } else if (tag.startsWith("MyPlays:")) {
       // A tag from an older build falls back to the default view, the same reasoning `AdminAudit`'s fallback uses.
       MyPlayQuery.params
@@ -511,7 +529,7 @@ object AppRouter {
         case "GameSetup"       =>
           GameSetup
         case "MyGames"         =>
-          MyGames
+          MyGames()
         case "MyPlays"         =>
           MyPlays()
         case "SharedProgress"  =>
@@ -556,7 +574,6 @@ object AppRouter {
         settingsRoute,
         gamesRoute,
         gameSetupRoute,
-        myGamesRoute,
         sharedProgressRoute,
         sharedPlayerHistoryRoute,
         gameInstanceRoute,
@@ -567,6 +584,8 @@ object AppRouter {
         forgotPasswordRoute,
         resetPasswordRoute,
         // Each listing's query route must precede its bare-path one; see the comment on `adminQueryRoute`.
+        myGamesQueryRoute,
+        myGamesRoute,
         myPlaysQueryRoute,
         myPlaysRoute,
         wordsQueryRoute,

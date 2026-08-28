@@ -3,74 +3,160 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels}
+import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.dto.MyGameSummary
+import gathedge.frontend.listing.MyGameQuery
+import gathedge.shared.dto.{MyGamePage, MyGameSort, MyGameSummary}
 import gathedge.shared.i18n.UiKeys
 
-/** The signed-in owner's own games: name, tags, language pair, and how many times each was played.
+/** The signed-in owner's own games: name, tags, language pair, how many times each was played, and when it was created
+  * — see `GameService.myGames`.
   *
-  * A personal list, not a paged admin table — `GameService.myGames` answers the whole thing in one response (there is
-  * no reader with enough games for offset paging to matter), so this renders it straight through with no URL-carried
-  * query state, unlike `AdminUsersPage`/`AdminAuditPage`.
+  * Built to the same shape as `GameResultsPage`/`MyPlayHistoryPage`: a card table with sortable headings, a filter box
+  * (here a substring of the game's name), and server-side paging. It carries its whole listing state in the URL, so it
+  * takes a `Signal[MyGameQuery]` and an `Observer[MyGameQuery]` the same way those pages do; `App` supplies both. There
+  * is no per-row detail modal — a game's own page is one click away on its name.
   */
 object MyGamesPage {
 
-  def render(): HtmlElement = {
-    AppShell.render(Page.MyGames, new MyGamesPage().render())
+  def render(query: Signal[MyGameQuery], onQuery: Observer[MyGameQuery]): HtmlElement = {
+    AppShell.render(Page.MyGames(), new MyGamesPage(query, onQuery).render())
   }
 }
 
-private class MyGamesPage {
+private class MyGamesPage(pageQuery: Signal[MyGameQuery], onQuery: Observer[MyGameQuery]) {
 
-  private val gamesVar: Var[Option[List[MyGameSummary]]] = Var(None)
-  private val errorVar: Var[Option[String]]              = Var(None)
+  private val querySignal = pageQuery.distinct
 
-  private val reloadBus = new EventBus[Unit]()
+  private val gamesVar    = Var(List.empty[MyGameSummary])
+  private val gamesSignal = gamesVar.signal
+
+  private val totalVar    = Var(0L)
+  private val totalSignal = totalVar.signal
+
+  private val sortSignal     = querySignal.map(_.sort).distinct
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
+
+  private val changeBus = new EventBus[MyGameQuery => MyGameQuery]()
+
+  private def change(edit: MyGameQuery => MyGameQuery): Unit = changeBus.emit(edit)
+
+  // Same write-follows-the-query trick as `GameResultsPage`/`MyPlayHistoryPage` — the box cannot be a plain two-way
+  // binding on the query itself.
+  private val searchInputVar   = Var("")
+  private val searchTypedBus   = new EventBus[String]()
+  private val searchDebounceMs = 300
+
+  private val errorVar: Var[Option[String]] = Var(None)
+
+  private val loadingVar    = Var(false)
+  private val loadingSignal = loadingVar.signal
+
+  private val reloadBus    = new EventBus[Unit]()
+  private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4",
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.myGamesTitle)),
+      div(
+        cls := "mb-4",
+        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.myGamesTitle)),
+      ),
       Alert.maybeError(errorVar.signal),
-      child <-- gamesVar.signal.map(renderBody),
-      reloadBus.events.flatMapSwitch(_ => GameApiClient.myGames()) -->
-        Observer[Either[ApiError, List[MyGameSummary]]] {
-          case Right(games) =>
-            Var.set(gamesVar -> Some(games), errorVar -> None)
-          case Left(err)    =>
-            errorVar.set(Some(err.message))
+      renderSearch(),
+      renderTable(),
+      Pagination.render(
+        page = pageSignal,
+        total = totalSignal,
+        pageSize = pageSizeSignal,
+        onPage = Observer[Int](page => change(_.copy(page = page))),
+        onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
+        summary = totalSignal.map(summaryOf).distinct,
+        busy = loadingSignal,
+      ),
+      changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) } --> onQuery,
+      querySignal.map(_.search).distinct --> searchInputVar.writer,
+      searchTypedBus.events.debounce(searchDebounceMs).withCurrentValueOf(querySignal) -->
+        Observer[(String, MyGameQuery)] { case (typed, current) =>
+          val wanted = typed.trim
+          if (wanted != current.search) {
+            change(_.reset(_.copy(search = wanted)))
+          }
+        },
+      listRequests -->
+        Observer[MyGameQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
+      listRequests.flatMapSwitch(load) -->
+        Observer[Either[ApiError, MyGamePage]] {
+          case Right(result) =>
+            Var.set(
+              gamesVar   -> result.items,
+              totalVar   -> result.total,
+              loadingVar -> false,
+              errorVar   -> None,
+            )
+          case Left(err)     =>
+            Var.set(loadingVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => reloadBus.emit(())),
     )
   }
 
-  private def renderBody(games: Option[List[MyGameSummary]]): HtmlElement = {
-    games match {
-      case None                       =>
-        div(cls := "flex justify-center p-8", span(cls := "loading loading-spinner"))
-      case Some(rows) if rows.isEmpty =>
-        div(cls := "text-base-content/70", I18n.t(UiKeys.myGamesEmpty))
-      case Some(rows)                 =>
-        renderTable(rows)
-    }
+  private def load(query: MyGameQuery): EventStream[Either[ApiError, MyGamePage]] = {
+    GameApiClient.myGames(
+      page = Some(query.page),
+      pageSize = Some(query.pageSize),
+      sort = query.sort.column,
+      dir = query.sort.wire,
+      search = Option(query.search).filter(_.nonEmpty),
+    )
   }
 
-  private def renderTable(rows: List[MyGameSummary]): HtmlElement = {
+  private def summaryOf(total: Long): String = {
+    if (total <= 0L)
+      I18n.t(UiKeys.myGamesEmpty)
+    else
+      I18n.plural(UiKeys.myGamesCount, total)
+  }
+
+  private def renderSearch(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-end gap-2 mb-4",
+      label(
+        cls := "form-control",
+        span(cls      := "label-text text-xs", I18n.t(UiKeys.myGamesFilterLabel)),
+        input(
+          cls         := "input input-sm",
+          typ         := "search",
+          placeholder := I18n.t(UiKeys.myGamesFilterPlaceholder),
+          controlled(value <-- searchInputVar.signal, onInput.mapToValue --> searchInputVar.writer),
+          onInput.mapToValue --> searchTypedBus.writer,
+        ),
+      ),
+    )
+  }
+
+  private def renderTable(): HtmlElement = {
+    val onSort = Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort))))
+
     div(
       cls := "overflow-x-auto card bg-base-100 shadow",
       table(
-        cls := "table table-sm",
+        cls := "table",
         thead(
           tr(
-            th(I18n.t(UiKeys.myGamesNameCol)),
+            SortHeader.render(I18n.t(UiKeys.myGamesNameCol), MyGameSort.name, sortSignal, onSort),
+            // Tags, the language pair and the play count are filterable/readable but not sortable — see `MyGameSort`.
             th(I18n.t(UiKeys.myGamesTagsCol)),
             th(I18n.t(UiKeys.myGamesSourceCol)),
             th(I18n.t(UiKeys.myGamesTargetCol)),
             th(I18n.t(UiKeys.myGamesPlaysCol)),
+            SortHeader.render(I18n.t(UiKeys.myGamesCreatedCol), MyGameSort.createdAt, sortSignal, onSort),
           )
         ),
-        tbody(rows.map(renderRow)),
+        tbody(
+          children <--
+            gamesSignal.map(_.map(renderRow))
+        ),
       ),
     )
   }
@@ -83,6 +169,7 @@ private class MyGamesPage {
       td(Labels.language(game.sourceLanguage)),
       td(Labels.language(game.targetLanguage)),
       td(game.playCount.toString),
+      td(Formats.dateTime(game.createdAt)),
     )
   }
 

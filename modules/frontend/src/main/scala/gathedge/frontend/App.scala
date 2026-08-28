@@ -40,7 +40,7 @@ import gathedge.frontend.pages.{
 }
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AuditQuery, GamePlayQuery, MyGameQuery, MyPlayQuery, UserQuery, WordQuery}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
@@ -170,6 +170,10 @@ object App {
       .collectSignalPF[MyPlayQuery] { case (gate, page: Page.MyPlays) if gate.loaded => page.query }(query =>
         MyPlayHistoryPage.render(query, onMyPlaysQuery)
       )
+      // The "my games" listing carries its state in the URL the same way — a signal renderer for the same reason.
+      .collectSignalPF[MyGameQuery] { case (gate, page: Page.MyGames) if gate.loaded => page.query }(query =>
+        MyGamesPage.render(query, onMyGamesQuery)
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -254,6 +258,21 @@ object App {
     }
   }
 
+  /** Same rule as [[onMyPlaysQuery]]: a name filter being typed out further replaces, everything else pushes. */
+  private val onMyGamesQuery: Observer[MyGameQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.MyGames(previous) =>
+            query.refines(previous)
+          case _                      =>
+            false
+        }
+      }
+      navigate(Page.MyGames(query), replace = refinesSearch)
+    }
+  }
+
   /** Same rule as the user list, keyed to [[latestGameResultsSlug]] as well as the query: a query change on a
     * *different* game's results page (only reachable via a hand-edited URL) must never be treated as a refinement of
     * this one.
@@ -333,10 +352,10 @@ object App {
         GamesPage.render()
       case Page.GameSetup                           =>
         GameSetupPage.render()
-      case Page.MyGames                             =>
-        MyGamesPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words`/`Page.GameResults`.
+      case Page.MyGames(query)                      =>
+        MyGamesPage.render(Val(query), onMyGamesQuery)
       case Page.MyPlays(query)                      =>
         MyPlayHistoryPage.render(Val(query), onMyPlaysQuery)
       case Page.SharedProgress                      =>

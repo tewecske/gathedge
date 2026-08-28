@@ -919,14 +919,20 @@ object UiKeys {
 
   // -- My games --------------------------------------------------------------------------------
 
-  /** The signed-in owner's own games: name, tags, language pair, and how many times each was played. */
-  val myGamesTitle: String     = key("ui.myGames.title")
-  val myGamesEmpty: String     = key("ui.myGames.empty")
-  val myGamesNameCol: String   = key("ui.myGames.nameCol")
-  val myGamesTagsCol: String   = key("ui.myGames.tagsCol")
-  val myGamesSourceCol: String = key("ui.myGames.sourceCol")
-  val myGamesTargetCol: String = key("ui.myGames.targetCol")
-  val myGamesPlaysCol: String  = key("ui.myGames.playsCol")
+  /** The signed-in owner's own games: name, tags, language pair, how many times each was played, and when it was
+    * created. Paged/sorted/filtered the same way the play history is.
+    */
+  val myGamesTitle: String             = key("ui.myGames.title")
+  val myGamesEmpty: String             = key("ui.myGames.empty")
+  val myGamesNameCol: String           = key("ui.myGames.nameCol")
+  val myGamesTagsCol: String           = key("ui.myGames.tagsCol")
+  val myGamesSourceCol: String         = key("ui.myGames.sourceCol")
+  val myGamesTargetCol: String         = key("ui.myGames.targetCol")
+  val myGamesPlaysCol: String          = key("ui.myGames.playsCol")
+  val myGamesCreatedCol: String        = key("ui.myGames.createdCol")
+  val myGamesFilterLabel: String       = key("ui.myGames.filterLabel")
+  val myGamesFilterPlaceholder: String = key("ui.myGames.filterPlaceholder")
+  val myGamesCount: String             = pluralKey("ui.myGames.count")
 
   // -- Tag words list ---------------------------------------------------------------------------
 

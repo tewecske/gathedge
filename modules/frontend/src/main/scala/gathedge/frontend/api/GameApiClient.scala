@@ -12,7 +12,7 @@ import gathedge.shared.dto.{
   GamePrompt,
   GameResults,
   GameSetupWord,
-  MyGameSummary,
+  MyGamePage,
   MyPlayPage,
   PlayStarted,
   RenameGameRequest,
@@ -46,9 +46,15 @@ object GameApiClient {
     run(executor(GameEndpoints.setupWords(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)), joined)))
   }
 
-  /** The signed-in caller's own games, for the "my games" table. */
-  def myGames(): EventStream[Either[ApiError, List[MyGameSummary]]] = {
-    run(executor(GameEndpoints.mine(())))
+  /** The signed-in caller's own games, one page at a time, for the "my games" table. */
+  def myGames(
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+    search: Option[String] = None,
+  ): EventStream[Either[ApiError, MyGamePage]] = {
+    run(executor(GameEndpoints.mine(page, pageSize, sort, dir, search)))
   }
 
   def create(
