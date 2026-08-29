@@ -134,6 +134,18 @@ trait GameRepository {
 
   def wordsByIds(ids: List[Long]): Task[List[WordRow]]
 
+  /** Every word linked to one of `wordIds` through `word_forms`, in either direction — the forms of a lemma (a plural,
+    * a declined case, an inflected verb) and the lemma of a form. One of the multiple-choice distractor sources: a form
+    * of a word the game already teaches is a far better wrong answer than an unrelated one. Two queries, one per
+    * direction, concatenated here rather than a SQL union, which this codebase has no precedent for.
+    */
+  def relatedWords(wordIds: List[Long]): Task[List[WordRow]]
+
+  /** Every `words` row in `language` whose text is one of `texts`. Gender is part of a word's identity, so this is what
+    * answers `der See` alongside `die See` — the other multiple-choice distractor source for a German noun.
+    */
+  def wordsByTexts(language: String, texts: List[String]): Task[List[WordRow]]
+
   /** One page of `gameId`'s plays, ordered by `sort` (a `dto.GamePlaySort` value; anything else falls back to newest
     * first) and narrowed to players whose address contains `playerContains`. Paged in SQL — see [[countPlaysMatching]]
     * for the other half. Player identity is resolved separately, via [[usersByIds]], the same split [[wordsByIds]]
@@ -270,6 +282,12 @@ object GameRepository {
   def wordsByIds(ids: List[Long]): RIO[GameRepository, List[WordRow]] =
     ZIO.serviceWithZIO[GameRepository](_.wordsByIds(ids))
 
+  def relatedWords(wordIds: List[Long]): RIO[GameRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.relatedWords(wordIds))
+
+  def wordsByTexts(language: String, texts: List[String]): RIO[GameRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.wordsByTexts(language, texts))
+
   def listPlaysPage(
     gameId: Long,
     offset: Int,
@@ -339,6 +357,7 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private inline def gamePlayAnswers = quote(querySchema[GamePlayAnswerRow]("game_play_answers"))
   private inline def gamePlayWords   = quote(querySchema[GamePlayWordRow]("game_play_words"))
   private inline def gameFavorites   = quote(querySchema[GameFavoriteRow]("game_favorites"))
+  private inline def wordForms       = quote(querySchema[WordFormRow]("word_forms"))
   // Read-only view of a table `UserRepository` owns, for the one question only this repository can ask: which
   // player played a tracked game. Reading another repository's tables is fine — see `UserRepository`'s own note
   // on this for `findAbandonedGuests`. The lambda parameter is `row`, never `user` — Postgres reserved word.
@@ -546,6 +565,45 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       words.filter(w => liftQuery(ids).contains(w.id))
     }
     logged(run(ctx.run(q)))(rows => s"games.wordsByIds requested=${ids.size} rows=${rows.size}")
+  }
+
+  def relatedWords(wordIds: List[Long]): Task[List[WordRow]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val formsOfThese  = quote {
+        wordForms
+          .join(words)
+          .on((form, word) => form.formWordId == word.id)
+          .filter { case (form, _) => liftQuery(wordIds).contains(form.lemmaWordId) }
+          .map { case (_, word) => word }
+      }
+      val lemmasOfThese = quote {
+        wordForms
+          .join(words)
+          .on((form, word) => form.lemmaWordId == word.id)
+          .filter { case (form, _) => liftQuery(wordIds).contains(form.formWordId) }
+          .map { case (_, word) => word }
+      }
+      val effect        = for {
+        forms  <- run(ctx.run(formsOfThese))
+        lemmas <- run(ctx.run(lemmasOfThese))
+      } yield (forms ++ lemmas).distinctBy(_.id)
+      logged(effect)(rows => s"games.relatedWords requested=${wordIds.size} rows=${rows.size}")
+    }
+  }
+
+  def wordsByTexts(language: String, texts: List[String]): Task[List[WordRow]] = {
+    if (texts.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        words.filter(w => w.language == lift(language) && liftQuery(texts).contains(w.text))
+      }
+      logged(run(ctx.run(q)))(rows =>
+        s"games.wordsByTexts language=$language requested=${texts.size} rows=${rows.size}"
+      )
+    }
   }
 
   /** The `LIKE` pattern behind the owner-facing player filter, or `None` when it is empty — same shape as

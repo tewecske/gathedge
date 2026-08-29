@@ -27,7 +27,14 @@ object GameReplay {
       case Right(detail) =>
         val swap = variant.sourceLanguage != detail.sourceLanguage
         GameApiClient
-          .startPlay(slug, swap, variant.wordLimit, variant.includeDefiniteArticles, variant.wordPreference)
+          .startPlay(
+            slug,
+            swap,
+            variant.wordLimit,
+            variant.includeDefiniteArticles,
+            variant.wordPreference,
+            variant.mode,
+          )
           .map(_.map(started => Started(slug, started.playId, started.wordCount, detail.name, variant)))
       case Left(err)     =>
         EventStream.fromValue(Left(err))

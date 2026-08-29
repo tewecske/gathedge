@@ -51,11 +51,26 @@ final case class ScoredAnswer(outcome: AnswerOutcome, points: Int) derives JsonC
   */
 object GameScoring {
 
-  /** What an exact match is worth; `wordCount * maxPointsPerWord` is a play's `max_score`. */
+  /** What an exact typed match is worth; `wordCount * maxPointsPerWord` is a typed play's `max_score`. */
   val maxPointsPerWord = 2
 
   /** A single typo — insertion, deletion, or substitution — is worth this many points. */
   val typoPoints = 1
+
+  /** What a correct click is worth. Half a typed answer, because picking one of four is the easier task, and there is
+    * no partial credit to earn below it — see [[scoreChoice]].
+    */
+  val choicePoints = 1
+
+  /** A play's per-word ceiling, which is what its `max_score` is built from. */
+  def pointsPerWord(mode: GameMode): Int = {
+    mode match {
+      case GameMode.Typing         =>
+        maxPointsPerWord
+      case GameMode.MultipleChoice =>
+        choicePoints
+    }
+  }
 
   /** The number of single-character edits (insert, delete, substitute) that turn `a` into `b`.
     *
@@ -98,5 +113,29 @@ object GameScoring {
       ScoredAnswer(AnswerOutcome.Typo, typoPoints)
     else
       ScoredAnswer(AnswerOutcome.Wrong, 0)
+  }
+
+  /** [[score]]'s counterpart for [[GameMode.MultipleChoice]]: the same normalizing, then an exact match is worth
+    * [[choicePoints]] and everything else is worth nothing.
+    *
+    * Deliberately no edit-distance tier. Two options one edit apart are exactly what a good distractor set holds — `der
+    * See` next to `die See`, `der Hund` next to `die Hunde` — so reusing [[score]] here would pay a point for clicking
+    * the wrong button.
+    */
+  def scoreChoice(expected: String, submitted: String): ScoredAnswer = {
+    if (expected.trim.toLowerCase == submitted.trim.toLowerCase)
+      ScoredAnswer(AnswerOutcome.Correct, choicePoints)
+    else
+      ScoredAnswer(AnswerOutcome.Wrong, 0)
+  }
+
+  /** The scoring rule `mode` plays by — [[score]] or [[scoreChoice]]. */
+  def scoreFor(mode: GameMode): (String, String) => ScoredAnswer = {
+    mode match {
+      case GameMode.Typing         =>
+        score
+      case GameMode.MultipleChoice =>
+        scoreChoice
+    }
   }
 }

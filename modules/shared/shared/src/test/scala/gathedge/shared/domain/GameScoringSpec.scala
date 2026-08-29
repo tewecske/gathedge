@@ -47,6 +47,37 @@ object GameScoringSpec extends ZIOSpecDefault {
           assertTrue(GameScoring.score("Haus", "Katze") == ScoredAnswer(AnswerOutcome.Wrong, 0))
         },
       ),
+      suite("scoreChoice")(
+        test("the right button is worth one point") {
+          assertTrue(GameScoring.scoreChoice("der Hund", "der Hund") == ScoredAnswer(AnswerOutcome.Correct, 1))
+        },
+        test("case and surrounding whitespace still count as the right button") {
+          assertTrue(GameScoring.scoreChoice("der Hund", "  DER hund ") == ScoredAnswer(AnswerOutcome.Correct, 1))
+        },
+        test("a button one edit away is wrong, not a typo") {
+          assertTrue(
+            GameScoring.scoreChoice("der Hund", "der Hunde") == ScoredAnswer(AnswerOutcome.Wrong, 0),
+            GameScoring.score("der Hund", "der Hunde") == ScoredAnswer(AnswerOutcome.Typo, 1),
+          )
+        },
+        test("an unrelated button is worth nothing") {
+          assertTrue(GameScoring.scoreChoice("Haus", "Katze") == ScoredAnswer(AnswerOutcome.Wrong, 0))
+        },
+      ),
+      suite("pointsPerWord")(
+        test("a clicked word is worth half a typed one") {
+          assertTrue(
+            GameScoring.pointsPerWord(GameMode.Typing) == 2,
+            GameScoring.pointsPerWord(GameMode.MultipleChoice) == 1,
+          )
+        },
+        test("scoreFor picks the mode's own rule") {
+          assertTrue(
+            GameScoring.scoreFor(GameMode.Typing)("Haus", "Hause") == ScoredAnswer(AnswerOutcome.Typo, 1),
+            GameScoring.scoreFor(GameMode.MultipleChoice)("Haus", "Hause") == ScoredAnswer(AnswerOutcome.Wrong, 0),
+          )
+        },
+      ),
     )
   }
 }

@@ -656,6 +656,35 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterLemma.isEmpty,
         )
       },
+      // Not a referential-integrity case either — the two distractor readers touch `words` and `word_forms` only. They
+      // earn a place here because both are new queries over `words` (the rule `CLAUDE.md` states for that table), one
+      // of them lifting a list of Strings into an `IN` clause, and because `relatedWords` runs two statements and
+      // concatenates them in Scala rather than in SQL.
+      test("the multiple-choice distractor readers run on the real dialect") {
+        for {
+          lemma     <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "PgHund", "pghund", "noun", "der", 1, "dictionary", None, 0L, "pghund")
+                       )
+          plural    <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "PgHunde", "pghunde", "noun", "die", 1, "dictionary", None, 0L, "pghunde")
+                       )
+          otherSee  <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "PgSee", "pgsee", "noun", "der", 1, "dictionary", None, 0L, "pgsee")
+                       )
+          sameSee   <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "PgSee", "pgsee", "noun", "die", 1, "dictionary", None, 0L, "pgsee")
+                       )
+          now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _         <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, plural.id, "plural", now)))
+          fromLemma <- GameRepository.relatedWords(List(lemma.id))
+          fromForm  <- GameRepository.relatedWords(List(plural.id))
+          byText    <- GameRepository.wordsByTexts("de", List("PgSee"))
+        } yield assertTrue(
+          fromLemma.map(_.id) == List(plural.id),
+          fromForm.map(_.id) == List(lemma.id),
+          byText.map(_.id).toSet == Set(otherSee.id, sameSee.id),
+        )
+      },
       // Not a referential-integrity case — `findWordsByLengthRange` touches only `words`, no FK. It earns a place here
       // anyway because it is the first query in this codebase to call `.length` on a quoted String column, and Quill
       // lowers that to `LEN(...)`, a SQL Server spelling neither dialect has: SQLite's own suite already caught this

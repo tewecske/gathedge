@@ -1050,10 +1050,15 @@ object UiKeys {
   val gameInstancePreferenceUnplayed: String     = key("ui.gameInstance.preference.unplayed")
   val gameInstancePreferenceMostMistakes: String = key("ui.gameInstance.preference.mostMistakes")
 
+  val gameInstanceModeLabel: String          = key("ui.gameInstance.mode.label")
+  val gameInstanceModeTyping: String         = key("ui.gameInstance.mode.typing")
+  val gameInstanceModeMultipleChoice: String = key("ui.gameInstance.mode.multipleChoice")
+
   val gameInstanceProgress: String          = key("ui.gameInstance.progress")
   val gameInstanceAnswerLabel: String       = key("ui.gameInstance.answerLabel")
   val gameInstanceAnswerPlaceholder: String = key("ui.gameInstance.answerPlaceholder")
   val gameInstanceSubmit: String            = key("ui.gameInstance.submit")
+  val gameInstanceChooseLabel: String       = key("ui.gameInstance.chooseLabel")
   val gameInstanceFinishedTitle: String     = key("ui.gameInstance.finishedTitle")
   val gameInstanceBackToGames: String       = key("ui.gameInstance.backToGames")
 

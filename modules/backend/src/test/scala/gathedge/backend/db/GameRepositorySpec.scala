@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import gathedge.backend.TestDataSource
+import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import zio._
 import zio.test._
 
@@ -10,8 +11,27 @@ object GameRepositorySpec extends ZIOSpecDefault {
 
   private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L).map(_.id)
 
+  /** A dictionary word, shaped like `GameServiceSpec.dictionaryWord` — the distractor cases below need real `words`
+    * rows to read back by id and by text.
+    */
+  private def dictionaryWord(language: WordLanguage, text: String, gender: Option[Gender] = None): WordRow = {
+    WordRow(
+      id = 0L,
+      language = WordLanguage.code(language),
+      text = text,
+      textNorm = text.toLowerCase,
+      partOfSpeech = PartOfSpeech.code(PartOfSpeech.Noun),
+      gender = Gender.toColumn(gender),
+      frequencyRank = 1,
+      source = "dictionary",
+      createdBy = None,
+      createdAt = 0L,
+      textSearch = TextSearch.fold(text.toLowerCase),
+    )
+  }
+
   def spec = {
-    suite("GameRepository.answerOutcomesFor")(
+    suite("GameRepository")(
       test("answers only the given player's answers, in the given direction, for the given game") {
         for {
           owner            <- newUser()
@@ -89,7 +109,39 @@ object GameRepositorySpec extends ZIOSpecDefault {
           deRows == List((1L, "correct")),
           huRows == List((1L, "wrong")),
         )
-      }
+      },
+      test("relatedWords answers both directions of word_forms, and nothing unlinked") {
+        for {
+          lemma     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hund", Some(Gender.Der)))
+          plural    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hunde", Some(Gender.Die)))
+          unlinked  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Katze", Some(Gender.Die)))
+          _         <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, plural.id, "plural", 0L)))
+          fromLemma <- GameRepository.relatedWords(List(lemma.id))
+          fromForm  <- GameRepository.relatedWords(List(plural.id))
+          fromOther <- GameRepository.relatedWords(List(unlinked.id))
+          fromNone  <- GameRepository.relatedWords(Nil)
+        } yield assertTrue(
+          fromLemma.map(_.id) == List(plural.id),
+          fromForm.map(_.id) == List(lemma.id),
+          fromOther.isEmpty,
+          fromNone.isEmpty,
+        )
+      },
+      test("wordsByTexts answers every gendered spelling of a word, in that language only") {
+        for {
+          der     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Der)))
+          die     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Die)))
+          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "texts-See"))
+          german  <- GameRepository.wordsByTexts("de", List("texts-See"))
+          missing <- GameRepository.wordsByTexts("de", List("texts-nothing"))
+          none    <- GameRepository.wordsByTexts("de", Nil)
+        } yield assertTrue(
+          german.map(_.id).toSet == Set(der.id, die.id),
+          german.map(_.gender).toSet == Set("der", "die"),
+          missing.isEmpty,
+          none.isEmpty,
+        )
+      },
     ).provide(layer)
   }
 }

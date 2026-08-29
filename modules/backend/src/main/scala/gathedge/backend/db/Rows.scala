@@ -268,8 +268,9 @@ final case class GameFavoriteRow(id: Long, userId: Long, gameId: Long, createdAt
   * swapped direction or picked a narrower/differently-preferenced sample than another play of the same game.
   * `wordLimit` keeps its old `games.word_limit` meaning: `None` for "every eligible word", `Some(n)` for "sampled
   * exactly n (or fewer, if the pool was smaller)". `wordPreference` holds a [[gathedge.shared.domain.WordPreference]]
-  * code. These five default to English/English/no limit/articles on/"all" only so pre-migration test fixtures that
-  * construct a `GamePlayRow` positionally keep compiling — `GameService.startPlay` always supplies real values.
+  * code. `mode` holds a [[gathedge.shared.domain.GameMode]] code — whether the play was typed or clicked. These six
+  * default to English/English/no limit/articles on/"all"/"typing" only so pre-migration test fixtures that construct a
+  * `GamePlayRow` positionally keep compiling — `GameService.startPlay` always supplies real values.
   */
 final case class GamePlayRow(
   id: Long,
@@ -285,6 +286,7 @@ final case class GamePlayRow(
   wordLimit: Option[Int] = None,
   includeDefiniteArticles: Boolean = true,
   wordPreference: String = "all",
+  mode: String = "typing",
 )
 
 /** One word pair asked and answered inside one play — the per-word-pair progression record the whole feature is built

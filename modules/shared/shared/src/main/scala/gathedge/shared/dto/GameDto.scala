@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.{AnswerOutcome, WordLanguage, WordPreference}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, WordLanguage, WordPreference}
 import zio.json.*
 
 /** What `POST /api/games` needs: the language pair and tags a base game is built from. Nothing here ever changes after
@@ -47,13 +47,16 @@ final case class GameDetail(
   * `wordLimit`: `None` = every eligible word in the resolved direction (the default); `Some(n)` = sample `n` (or the
   * whole pool, if smaller). `includeDefiniteArticles`: `true` (the default) keeps a German noun's "der"/"die"/"das" in
   * the prompt, the accepted answer, and the results text. `wordPreference`: `All` (the default) samples uniformly; the
-  * other two cases only change *which* words a narrowed sample favors, never the total count.
+  * other two cases only change *which* words a narrowed sample favors, never the total count. `mode`: `Typing` (the
+  * default) asks the player to write the translation; `MultipleChoice` shows up to four of them to click instead — see
+  * [[gathedge.shared.domain.GameMode]].
   */
 final case class StartPlayRequest(
   swapDirection: Boolean = false,
   wordLimit: Option[Int] = None,
   includeDefiniteArticles: Boolean = true,
   wordPreference: WordPreference = WordPreference.All,
+  mode: GameMode = GameMode.Typing,
 ) derives JsonCodec
 
 /** The variant settings one specific play actually ran under — a snapshot, not a live reference to the (now immutable)
@@ -67,6 +70,7 @@ final case class GameVariantDto(
   wordLimit: Option[Int],
   includeDefiniteArticles: Boolean,
   wordPreference: WordPreference,
+  mode: GameMode,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s answer: enough for the play loop to start — the id every later play call addresses,
@@ -76,12 +80,18 @@ final case class PlayStarted(playId: Long, wordCount: Int, maxScore: Int) derive
 
 /** `GET /api/games/plays/{playId}/prompt`'s answer: the next word to show, or `finished = true` once none remain.
   * `wordId`/`wordText`/`position` are absent exactly when `finished` is true.
+  *
+  * `options` is empty in every typed play. In a [[gathedge.shared.domain.GameMode.MultipleChoice]] one it holds the
+  * shuffled buttons — the accepted translation plus up to three distractors, never more than four in total and
+  * sometimes fewer, since a thin word pool is answered with fewer choices rather than invented ones. See
+  * `GameService.optionsFor`.
   */
 final case class GamePrompt(
   finished: Boolean,
   wordId: Option[Long] = None,
   wordText: Option[String] = None,
   position: Option[Int] = None,
+  options: List[String] = Nil,
 ) derives JsonCodec
 
 final case class SubmitAnswerRequest(wordId: Long, answerText: String) derives JsonCodec

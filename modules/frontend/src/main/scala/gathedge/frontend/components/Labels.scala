@@ -3,6 +3,7 @@ package gathedge.frontend.components
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{
   AnswerOutcome,
+  GameMode,
   GrammarCategory,
   PartOfSpeech,
   TranslationFilter,
@@ -149,12 +150,24 @@ object Labels {
     }
   }
 
+  /** The picker's own worded option text for the play mode, reused on every results screen so a play states how it was
+    * answered — typed, or clicked. Matched exhaustively, like [[wordPreference]].
+    */
+  def gameMode(mode: GameMode): String = {
+    mode match {
+      case GameMode.Typing         =>
+        I18n.t(UiKeys.gameInstanceModeTyping)
+      case GameMode.MultipleChoice =>
+        I18n.t(UiKeys.gameInstanceModeMultipleChoice)
+    }
+  }
+
   /** The played variant, worded exactly as `GameResultsPage.renderRow`/`.renderModalBody` and
     * `GameInstancePage.renderResults` need it: direction plus preference, one string — the fourth of the design doc's
     * four variant-visibility surfaces (`PlayHistoryTable`) uses this too, so all four read identically.
     */
   def variant(v: GameVariantDto): String = {
-    s"${language(v.sourceLanguage)} → ${language(v.targetLanguage)} · ${wordPreference(v.wordPreference)}"
+    s"${language(v.sourceLanguage)} → ${language(v.targetLanguage)} · ${wordPreference(v.wordPreference)} · ${gameMode(v.mode)}"
   }
 
   private def humanizeTag(tag: String): String = {

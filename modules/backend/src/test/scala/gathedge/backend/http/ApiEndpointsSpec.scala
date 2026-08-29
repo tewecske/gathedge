@@ -13,9 +13,11 @@ import gathedge.backend.db.{
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
   SessionRepository,
+  TextSearch,
   UsageEventRepository,
   UserRepository,
   WordRepository,
+  WordRow,
 }
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
 import gathedge.backend.service.{
@@ -35,7 +37,7 @@ import gathedge.backend.service.{
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{Gender, PartOfSpeech, Theme, User, WordLanguage}
+import gathedge.shared.domain.{GameMode, Gender, PartOfSpeech, Theme, User, WordLanguage}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
@@ -48,6 +50,10 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   ErrorResponse,
   ForgotPasswordRequest,
+  GamePrompt,
+  GameResults,
+  PlayStarted,
+  StartPlayRequest,
   NewTranslation,
   LoginRequest,
   PairSelectionResponse,
@@ -117,6 +123,56 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       admin   <- orDieWithFailure(AdminService.createUser(AdminActor.system, email, "password123", isAdmin = true))
       session <- orDieWithFailure(AuthService.login(email, "password123")).map(_._2)
     } yield (admin, session)
+  }
+
+  /** A one-pair game owned by a fresh account, plus that account's session — the smallest thing a play can run on.
+    * Built through the services rather than over HTTP: the tag and the marked pair behind an eligible game are `words`'
+    * business, and this suite is about the game endpoints' own encoding.
+    */
+  private def gameFixture(
+    email: String
+  ): ZIO[AuthService & WordRepository & GameService, Nothing, (String, String)] = {
+    for {
+      signedUp       <- orDieWithFailure(AuthService.signup(email, "password123"))
+      (user, session) = signedUp
+      tag            <- WordRepository.insertTag(user.id, "wire", "wire", 0L).orDie
+      source         <- WordRepository
+                          .ensureWord(
+                            WordRow(
+                              0L,
+                              "de",
+                              "Hund",
+                              "hund",
+                              PartOfSpeech.code(PartOfSpeech.Noun),
+                              Gender.toColumn(Some(Gender.Der)),
+                              1,
+                              "dictionary",
+                              None,
+                              0L,
+                              TextSearch.fold("hund"),
+                            )
+                          )
+                          .orDie
+      target         <- WordRepository
+                          .ensureWord(
+                            WordRow(
+                              0L,
+                              "hu",
+                              "kutya",
+                              "kutya",
+                              PartOfSpeech.code(PartOfSpeech.Noun),
+                              "",
+                              1,
+                              "dictionary",
+                              None,
+                              0L,
+                              TextSearch.fold("kutya"),
+                            )
+                          )
+                          .orDie
+      _              <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L).orDie
+      game           <- orDieWithFailure(GameService.createGame(user.id, WordLanguage.De, WordLanguage.Hu, List(tag.id)))
+    } yield (game.slug, session.get)
   }
 
   private def body(response: Response): ZIO[Any, Nothing, String] = {
@@ -655,6 +711,42 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                      )
           } yield assertTrue(read.status == Status.Ok, write.status == Status.Unauthorized)
         },
+      ),
+      suite("games")(
+        test("a play carries its mode both ways, and a clicked prompt carries its options") {
+          for {
+            fixture        <- gameFixture("games-wire@example.com")
+            (slug, session) = fixture
+            startRequest    = Request.post(
+                                s"/api/games/$slug/plays",
+                                Body.fromString(StartPlayRequest(mode = GameMode.MultipleChoice).toJson),
+                              )
+            started        <- runRoutes(GameRoutes.routes, withCsrf(withSession(startRequest, session)))
+            startedRaw     <- body(started)
+            playId          = startedRaw.fromJson[PlayStarted].map(_.playId).getOrElse(0L)
+            prompt         <- runRoutes(
+                                GameRoutes.routes,
+                                withSession(Request.get(s"/api/games/plays/$playId/prompt"), session),
+                              )
+            promptRaw      <- body(prompt)
+            results        <- runRoutes(
+                                GameRoutes.routes,
+                                withSession(Request.get(s"/api/games/plays/$playId/results"), session),
+                              )
+            resultsRaw     <- body(results)
+          } yield assertTrue(
+            started.status == Status.Created,
+            // The request body's enum went out through zio-json; the endpoint read it through zio-schema.
+            startedRaw.fromJson[PlayStarted].map(_.maxScore) == Right(1),
+            prompt.status == Status.Ok,
+            promptRaw.fromJson[GamePrompt].map(_.wordText) == Right(Some("der Hund")),
+            promptRaw.fromJson[GamePrompt].map(_.options) == Right(List("kutya")),
+            results.status == Status.Ok,
+            // And back the other way: zio-schema wrote it, zio-json is reading it.
+            resultsRaw.contains("\"MultipleChoice\""),
+            resultsRaw.fromJson[GameResults].map(_.variant.mode) == Right(GameMode.MultipleChoice),
+          )
+        }
       ),
       suite("guest")(
         test("minting a guest answers 201, a session cookie, and a user with no address") {

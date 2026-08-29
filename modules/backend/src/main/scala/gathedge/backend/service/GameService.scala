@@ -2,7 +2,17 @@ package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
 import gathedge.backend.db.GroupRepository
-import gathedge.shared.domain.{AnswerOutcome, GameScoring, GroupRef, Tag, Word, WordLanguage, WordPreference}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  GameMode,
+  GameScoring,
+  Gender,
+  GroupRef,
+  Tag,
+  Word,
+  WordLanguage,
+  WordPreference,
+}
 import gathedge.shared.dto.{
   AllGamePage,
   AllGameSummary,
@@ -100,10 +110,11 @@ trait GameService {
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
 
   /** Starts a fresh attempt at `slug` under the given variant. `swapDirection` plays the game's `targetLanguage` ->
-    * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference` are this
-    * play's own settings, snapshotted onto its `game_plays` row — see the design doc. Fails
-    * [[GameFailure.ValidationError]] for an out-of-range `wordLimit`, [[GameFailure.NoEligibleWords]] if the resolved
-    * direction's pool is empty right now.
+    * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference`/`mode`
+    * are this play's own settings, snapshotted onto its `game_plays` row — see the design doc. `mode` also decides the
+    * play's `maxScore`, since a clicked answer is worth less than a typed one. Fails [[GameFailure.ValidationError]]
+    * for an out-of-range `wordLimit`, [[GameFailure.NoEligibleWords]] if the resolved direction's pool is empty right
+    * now.
     */
   def startPlay(
     slug: String,
@@ -112,6 +123,7 @@ trait GameService {
     wordLimit: Option[Int] = None,
     includeDefiniteArticles: Boolean = true,
     wordPreference: WordPreference = WordPreference.All,
+    mode: GameMode = GameMode.Typing,
   ): IO[GameFailure, PlayStarted]
 
   /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
@@ -126,15 +138,18 @@ trait GameService {
     wordPreference: WordPreference,
   ): IO[GameFailure, List[GameSetupWord]]
 
-  /** The next unanswered word in `playId`, or `{finished: true}` once every eligible word has been answered.
-    * [[GameFailure.NotOwner]] if `playId` does not belong to `requesterUserId`.
+  /** The next unanswered word in `playId`, or `{finished: true}` once every eligible word has been answered. A
+    * [[GameMode.MultipleChoice]] play also gets that word's clickable options. [[GameFailure.NotOwner]] if `playId`
+    * does not belong to `requesterUserId`.
     */
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt]
 
   /** Scores `answerText` against `wordId`'s expected translation — looked up server-side, never trusting a
     * client-supplied translation id — and records it. When `wordId` has more than one marked translation in the game's
-    * tags, `answerText` is scored against each and the best-scoring one wins. Answers with acknowledgement only: never
-    * the score or whether it was correct, so a player is never shown correctness mid-game.
+    * tags, `answerText` is scored against each and the best-scoring one wins. A clicked option arrives here as the
+    * option's own text, so the same path grades both modes; only the rule differs (`GameScoring.scoreFor`). Answers
+    * with acknowledgement only: never the score or whether it was correct, so a player is never shown correctness
+    * mid-game.
     */
   def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit]
 
@@ -254,9 +269,10 @@ object GameService {
     wordLimit: Option[Int] = None,
     includeDefiniteArticles: Boolean = true,
     wordPreference: WordPreference = WordPreference.All,
+    mode: GameMode = GameMode.Typing,
   ): ZIO[GameService, GameFailure, PlayStarted] = {
     ZIO.serviceWithZIO[GameService](
-      _.startPlay(slug, playerUserId, swapDirection, wordLimit, includeDefiniteArticles, wordPreference)
+      _.startPlay(slug, playerUserId, swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode)
     )
   }
 
@@ -748,6 +764,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     wordLimit: Option[Int] = None,
     includeDefiniteArticles: Boolean = true,
     wordPreference: WordPreference = WordPreference.All,
+    mode: GameMode = GameMode.Typing,
   ): IO[GameFailure, PlayStarted] = {
     for {
       game                            <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
@@ -762,7 +779,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       sampled                         <- sampleWordPool(game.id, playerUserId, resolvedSource, resolvedTarget, pool, validLimit, wordPreference)
       now                             <- Clock.currentTime(TimeUnit.MILLISECONDS)
       wordCount                        = sampled.size
-      maxScore                         = wordCount * GameScoring.maxPointsPerWord
+      maxScore                         = wordCount * GameScoring.pointsPerWord(mode)
       row                             <- repo
                                            .insertPlay(
                                              GamePlayRow(
@@ -779,6 +796,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                                                wordLimit = validLimit,
                                                includeDefiniteArticles = includeDefiniteArticles,
                                                wordPreference = WordPreference.code(wordPreference),
+                                               mode = GameMode.code(mode),
                                              ),
                                              sampled,
                                            )
@@ -828,19 +846,120 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                         ZIO.succeed(GamePrompt(finished = true))
                       case choices =>
                         for {
-                          index      <- Random.nextIntBounded(choices.size)
-                          (wordId, _) = choices(index)
-                          wordRows   <- repo.wordsByIds(List(wordId)).orDie
-                          text        =
+                          index                  <- Random.nextIntBounded(choices.size)
+                          (wordId, translationId) = choices(index)
+                          wordRows               <- repo.wordsByIds(List(wordId)).orDie
+                          text                    =
                             wordRows.headOption.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
+                          options                <- modeOf(play) match {
+                                                      case GameMode.Typing         =>
+                                                        ZIO.succeed(Nil)
+                                                      case GameMode.MultipleChoice =>
+                                                        optionsFor(play, wordId, translationId)
+                                                    }
                         } yield GamePrompt(
                           finished = false,
                           wordId = Some(wordId),
                           wordText = Some(text),
                           position = Some(answeredIds.size + 1),
+                          options = options,
                         )
                     }
     } yield prompt
+  }
+
+  /** How many buttons a [[GameMode.MultipleChoice]] prompt shows at most: the accepted translation plus three
+    * distractors. Fewer is a legal prompt — a thin word pool is answered with two or three buttons rather than with
+    * words the game does not teach.
+    */
+  private val optionCount = 4
+
+  /** How an option is compared for uniqueness and for exclusion — the same trim/case-fold `GameScoring` grades by, so
+    * two options can never be one click apart from the same answer.
+    */
+  private def optionKey(text: String): String = text.trim.toLowerCase
+
+  /** The clickable options for one [[GameMode.MultipleChoice]] prompt: `translationId`'s text, plus up to three
+    * distractors, shuffled.
+    *
+    * Distractors come from the game's own material only, in two groups. The pool group is every other target word
+    * eligible for this game in the play's direction — read live rather than from the play's own sampled set, so a
+    * four-word play still gets real alternatives. The confusable group is what `word_forms` links to those words (a
+    * plural, a declined case, the lemma of a form) plus, for a German answer shown with its article, the same noun
+    * under another article — `der Hund` beside `die Hunde`. One confusable is drawn first when one exists, so the
+    * harder distinction shows up whenever the material offers it; the rest of the slots are filled from the pool, then
+    * topped up from whatever is left.
+    *
+    * Every accepted translation of the prompt word is excluded: a distractor that would also be graded correct is not a
+    * wrong answer.
+    */
+  private def optionsFor(play: GamePlayRow, wordId: Long, translationId: Long): UIO[List[String]] = {
+    for {
+      pairs        <- repo.eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage).orDie
+      acceptedIds   = (translationId :: pairs.collect { case (w, t) if w == wordId => t }).distinct
+      poolIds       = pairs.map(_._2).distinct
+      poolWords    <- repo.wordsByIds(poolIds).orDie
+      relatedWords <- repo.relatedWords(poolIds).orDie
+      correctRow    = poolWords.find(_.id == translationId)
+      siblings     <- genderSiblingsOf(play, correctRow)
+      correct       = correctRow.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
+      excluded      = (correct :: poolWords.filter(row => acceptedIds.contains(row.id)).map { row =>
+                        wordText(row, play.includeDefiniteArticles)
+                      }).map(optionKey).toSet
+      poolTexts     = poolWords
+                        .filterNot(row => acceptedIds.contains(row.id))
+                        .map(row => wordText(row, play.includeDefiniteArticles))
+      confusables   = (relatedWords.filter(_.language == play.targetLanguage) ++ siblings)
+                        .filterNot(row => acceptedIds.contains(row.id))
+                        .map(row => wordText(row, play.includeDefiniteArticles)) ++ articleVariantsOf(play, correctRow)
+      shuffledPool <- Random.shuffle(poolTexts)
+      shuffledElse <- Random.shuffle(confusables)
+      distractors   = (shuffledElse.take(1) ++ shuffledPool ++ shuffledElse.drop(1))
+                        .filterNot(text => excluded.contains(optionKey(text)))
+                        .distinctBy(optionKey)
+                        .take(optionCount - 1)
+      options      <- Random.shuffle(correct :: distractors)
+    } yield options
+  }
+
+  /** The other `words` rows spelled like the accepted answer — `der See` when the answer is `die See`. Only for a
+    * German answer shown with its article: without the article the two are the same string, which would be no
+    * distractor at all. Reads by text rather than by id because gender is part of a word's identity, so the siblings
+    * are separate rows.
+    */
+  private def genderSiblingsOf(play: GamePlayRow, correctRow: Option[WordRow]): UIO[List[WordRow]] = {
+    val germanNoun = correctRow.filter { row =>
+      play.includeDefiniteArticles && play.targetLanguage == WordLanguage.code(WordLanguage.De) && row.gender.nonEmpty
+    }
+    germanNoun match {
+      case None      =>
+        ZIO.succeed(Nil)
+      case Some(row) =>
+        repo.wordsByTexts(play.targetLanguage, List(row.text)).orDie.map(_.filter(_.id != row.id))
+    }
+  }
+
+  /** The accepted answer under each of the other two articles — `die Hund`, `das Hund` for `der Hund`. The last-resort
+    * confusable, used when the dictionary holds no real sibling or form to offer: the article is the half of a German
+    * noun a learner has to memorise, so a prompt whose only distinction is the article is still the right question.
+    * Never produced for anything but a German noun shown with its article.
+    */
+  private def articleVariantsOf(play: GamePlayRow, correctRow: Option[WordRow]): List[String] = {
+    correctRow.toList.flatMap { row =>
+      if (play.includeDefiniteArticles && play.targetLanguage == WordLanguage.code(WordLanguage.De)) {
+        Gender.fromColumn(row.gender).toList.flatMap { own =>
+          Gender.all.filterNot(_ == own).map(gender => Gender.article(gender) + " " + row.text)
+        }
+      } else
+        Nil
+    }
+  }
+
+  /** `play`'s stored mode, falling back to [[GameMode.Typing]] for anything unrecognised — the same lenient read
+    * [[variantOf]] gives every other stored code.
+    */
+  private def modeOf(play: GamePlayRow): GameMode = {
+    GameMode.fromString(play.mode).getOrElse(GameMode.Typing)
   }
 
   /** `wordId`'s translation ids eligible under `play`'s own resolved direction — every marked pair, not just the one
@@ -863,11 +982,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       candidateIds    <- candidateTranslationIds(play, wordId, translationId)
       candidateWords  <- repo.wordsByIds(candidateIds).orDie
       textById         = candidateWords.map(row => row.id -> wordText(row, play.includeDefiniteArticles)).toMap
-      scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> GameScoring.score(text, answerText)))
+      scoreOne         = GameScoring.scoreFor(modeOf(play))
+      scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> scoreOne(text, answerText)))
       (bestId, scored) = {
         scoredById
           .maxByOption(_._2.points)
-          .getOrElse(translationId -> GameScoring.score(textById.getOrElse(translationId, ""), answerText))
+          .getOrElse(translationId -> scoreOne(textById.getOrElse(translationId, ""), answerText))
       }
       now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
       answeredSoFar   <- repo.answersOf(playId).orDie
@@ -931,6 +1051,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       wordLimit = play.wordLimit,
       includeDefiniteArticles = play.includeDefiniteArticles,
       wordPreference = WordPreference.fromString(play.wordPreference).getOrElse(WordPreference.All),
+      mode = modeOf(play),
     )
   }
 

@@ -182,7 +182,15 @@ object GameRoutes {
       handler { (slug: String, body: StartPlayRequest) =>
         userId.flatMap(id => {
           GameService
-            .startPlay(slug, id, body.swapDirection, body.wordLimit, body.includeDefiniteArticles, body.wordPreference)
+            .startPlay(
+              slug,
+              id,
+              body.swapDirection,
+              body.wordLimit,
+              body.includeDefiniteArticles,
+              body.wordPreference,
+              body.mode,
+            )
             .mapError(ApiFailures.gameStartPlay)
         })
       }

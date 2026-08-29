@@ -2,6 +2,7 @@ package gathedge.shared.api
 
 import gathedge.shared.domain.{
   AnswerOutcome,
+  GameMode,
   Gender,
   Group,
   GroupRef,
@@ -144,6 +145,7 @@ object ApiSchemas {
   given Schema[Gender]         = DeriveSchema.gen[Gender]
   given Schema[AnswerOutcome]  = DeriveSchema.gen[AnswerOutcome]
   given Schema[WordPreference] = DeriveSchema.gen[WordPreference]
+  given Schema[GameMode]       = DeriveSchema.gen[GameMode]
   given Schema[GroupRole]      = DeriveSchema.gen[GroupRole]
 
   given Schema[User]     = DeriveSchema.gen[User]

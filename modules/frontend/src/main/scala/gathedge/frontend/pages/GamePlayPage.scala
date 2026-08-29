@@ -7,7 +7,7 @@ import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, GameAnswersTable, GameHeader, GuestBanner}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{Gender, WordLanguage}
+import gathedge.shared.domain.{GameMode, Gender, WordLanguage}
 import gathedge.shared.dto.{GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -58,8 +58,13 @@ private class GamePlayPage(slug: String, playId: Long) {
 
   private val errorVar: Var[Option[String]] = Var(None)
 
-  private val nextBus      = new EventBus[Unit]()
-  private val submitBus    = new EventBus[Unit]()
+  private val nextBus = new EventBus[Unit]()
+
+  /** The answer being sent, whatever produced it: the typed form's submit, or a clicked option in a
+    * [[GameMode.MultipleChoice]] play. Carrying the text itself rather than a bare tick is what lets one stream serve
+    * both — a click has its answer in hand and never touches [[answerTextVar]].
+    */
+  private val submitBus    = new EventBus[String]()
   private val resultsBus   = new EventBus[Unit]()
   private val playAgainBus = new EventBus[Unit]()
 
@@ -149,7 +154,7 @@ private class GamePlayPage(slug: String, playId: Long) {
   private def submitStream: EventStream[Either[ApiError, Unit]] = {
     submitBus.events
       .filterWith(submittingVar.signal.not)
-      .map(_ => (promptVar.now().flatMap(_.wordId), answerTextVar.now().trim))
+      .map(answer => (promptVar.now().flatMap(_.wordId), answer.trim))
       .collect { case (Some(wordId), text) if text.nonEmpty => (wordId, text) }
       .flatMapSwitch { case (wordId, text) =>
         submittingVar.set(true)
@@ -173,7 +178,46 @@ private class GamePlayPage(slug: String, playId: Long) {
   }
 
   private def renderPrompt(prompt: GamePrompt, playState: PlayHandoff): HtmlElement = {
-    val answerInput = input(
+    div(
+      p(
+        cls  := "text-sm opacity-70",
+        I18n.t(UiKeys.gameInstanceProgress, prompt.position.getOrElse(0), playState.wordCount),
+      ),
+      h2(cls := "text-xl font-semibold my-2", prompt.wordText.getOrElse("")),
+      playState.variant.mode match {
+        case GameMode.Typing         =>
+          renderTypedAnswer(playState)
+        case GameMode.MultipleChoice =>
+          renderChoices(prompt)
+      },
+    )
+  }
+
+  /** The clicked half of the loop: one button per option, in the order the server shuffled them. There are at most four
+    * and sometimes fewer — see `GameService.optionsFor` — so nothing here assumes a count. A click sends the option's
+    * own text through [[submitBus]], which is exactly what a typed answer sends, so the server grades both the same
+    * way.
+    */
+  private def renderChoices(prompt: GamePrompt): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceChooseLabel)),
+      prompt.options.map(option => renderChoice(option)),
+    )
+  }
+
+  private def renderChoice(option: String): HtmlElement = {
+    button(
+      cls := "btn btn-outline justify-start",
+      typ := "button",
+      disabled <-- submittingVar.signal,
+      option,
+      onClick.mapTo(option) --> submitBus.writer,
+    )
+  }
+
+  private def renderTypedAnswer(playState: PlayHandoff): HtmlElement = {
+    val answerInput        = input(
       cls         := "input input-sm w-full",
       placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
       controlled(value <-- answerTextVar.signal, onInput.mapToValue --> answerTextVar.writer),
@@ -181,28 +225,21 @@ private class GamePlayPage(slug: String, playId: Long) {
       // focusing on mount both auto-focuses on first load and re-focuses on every new word.
       onMountFocus,
     )
-    div(
-      p(
-        cls        := "text-sm opacity-70",
-        I18n.t(UiKeys.gameInstanceProgress, prompt.position.getOrElse(0), playState.wordCount),
+    form(
+      cls        := "flex flex-wrap items-end gap-2",
+      noValidate := true,
+      onSubmit.preventDefault.map(_ => answerTextVar.now()) --> submitBus.writer,
+      label(
+        cls := "form-control grow",
+        span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
+        if (showGenderPicker(playState.variant)) renderGenderPicker(answerInput) else emptyNode,
+        answerInput,
       ),
-      h2(cls       := "text-xl font-semibold my-2", prompt.wordText.getOrElse("")),
-      form(
-        cls        := "flex flex-wrap items-end gap-2",
-        noValidate := true,
-        onSubmit.preventDefault.mapToUnit --> submitBus.writer,
-        label(
-          cls := "form-control grow",
-          span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-          if (showGenderPicker(playState.variant)) renderGenderPicker(answerInput) else emptyNode,
-          answerInput,
-        ),
-        button(
-          cls := "btn btn-sm btn-primary",
-          typ := "submit",
-          disabled <-- submittingVar.signal,
-          I18n.t(UiKeys.gameInstanceSubmit),
-        ),
+      button(
+        cls := "btn btn-sm btn-primary",
+        typ := "submit",
+        disabled <-- submittingVar.signal,
+        I18n.t(UiKeys.gameInstanceSubmit),
       ),
     )
   }
@@ -211,7 +248,7 @@ private class GamePlayPage(slug: String, playId: Long) {
     * direction lookup is needed here the way `GameInstancePage.startBus`'s handler needs one at `startPlay` time.
     */
   private def showGenderPicker(variant: GameVariantDto): Boolean = {
-    variant.includeDefiniteArticles && variant.targetLanguage == WordLanguage.De
+    variant.mode == GameMode.Typing && variant.includeDefiniteArticles && variant.targetLanguage == WordLanguage.De
   }
 
   /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `BulkUploadDialog`'s

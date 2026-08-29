@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{User, WordLanguage, WordPreference}
+import gathedge.shared.domain.{GameMode, User, WordLanguage, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -57,6 +57,11 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     * only. See the design doc's "no dropdowns, just an arrow" direction control.
     */
   private val swapDirectionVar = Var(false)
+
+  /** How this play asks its questions — typed, or one of four to click. A play-time choice like every other control on
+    * this card; the game itself is the same either way.
+    */
+  private val gameModeVar = Var[GameMode](GameMode.Typing)
 
   /** Mutually exclusive with [[wordLimitTextVar]], the same pattern `GameSetupPage` used before this control moved
     * here. Defaults to `true`: "use every eligible word".
@@ -197,13 +202,14 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           wordLimitSignal,
           includeArticlesVar.signal,
           wordPreferenceVar.signal,
+          gameModeVar.signal,
         )
-        .flatMapSwitch { case (swap, limit, articles, preference) =>
-          asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference))
-            .map(_.map(started => (started, swap, limit, articles, preference)))
+        .flatMapSwitch { case (swap, limit, articles, preference, mode) =>
+          asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference, mode))
+            .map(_.map(started => (started, swap, limit, articles, preference, mode)))
         } -->
-        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], Boolean, WordPreference)]] {
-          case Right((started, swap, limit, articles, preference)) =>
+        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], Boolean, WordPreference, GameMode)]] {
+          case Right((started, swap, limit, articles, preference, mode)) =>
             // Only reachable once `renderStart`'s button exists, which itself only renders inside `renderGameCard` —
             // `gameVar` is always loaded by the time `startBus` can fire, same assumption `renderGameCard` makes.
             val game       = gameVar
@@ -211,10 +217,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
               .getOrElse(throw new IllegalStateException("startBus fired before the game finished loading"))
             val (src, tgt) =
               if (swap) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
-            val variant    = GameVariantDto(src, tgt, limit, articles, preference)
+            val variant    = GameVariantDto(src, tgt, limit, articles, preference, mode)
             PendingPlay.set(started.playId, PlayHandoff(game.name, started.wordCount, variant))
             AppRouter.router.pushState(Page.GamePlay(slug, started.playId))
-          case Left(err)                                           =>
+          case Left(err)                                                 =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
       previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
@@ -331,6 +337,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     div(
       cls := "flex flex-col gap-4",
       renderDirectionSwap(),
+      renderModeControl(),
       renderWordLimitControls(),
       renderIncludeArticlesControl(),
       renderPreferenceControl(),
@@ -434,6 +441,28 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           )
         )
       }
+    )
+  }
+
+  /** The play-mode picker, built like [[renderPreferenceControl]]: a `<select>` whose option values are the stored
+    * `GameMode` codes and whose labels are the only translated half, per `Labels`' "translate labels, never values"
+    * rule.
+    */
+  private def renderModeControl(): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceModeLabel)),
+      select(
+        cls    := "select select-sm w-full max-w-xs",
+        option(value := "typing", I18n.t(UiKeys.gameInstanceModeTyping)),
+        option(value := "multipleChoice", I18n.t(UiKeys.gameInstanceModeMultipleChoice)),
+        controlled(
+          value <-- gameModeVar.signal.map(GameMode.code),
+          onChange.mapToValue --> gameModeVar.writer.contramap[String](code =>
+            GameMode.fromString(code).getOrElse(GameMode.Typing)
+          ),
+        ),
+      ),
     )
   }
 

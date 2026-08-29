@@ -243,7 +243,9 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // sampling, not a hard filter — see the design doc), so the preview's own count stays at the pool size (4)
   // regardless of which preference is picked; `renderPreviewList` never lists individual words, only the count.
   // The one place the "unplayed" narrowing is actually observable is the sampled prompt itself, below.
-  await guestPage.locator('select').selectOption('unplayed');
+  // Two selects share this card now (the play mode and the word preference), so this one is picked by an
+  // option only it carries.
+  await guestPage.locator('select').filter({ hasText: 'All words' }).selectOption('unplayed');
   await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
@@ -318,4 +320,50 @@ test("the owner's results listing shows all three plays as distinct rows", async
   await expect(page.locator('.modal-box table tbody tr')).toHaveCount(1);
   await expect(page.locator('.modal-box.max-w-2xl')).toContainText("German → Hungarian · Words I haven't played");
   await page.getByRole('button', { name: 'Close' }).click();
+});
+
+test('a stranger plays the same link by clicking instead of typing', async ({ browser }) => {
+  // The multiple-choice mode: same quiz, same picker, no typing at all. A fresh context so this is another
+  // stranger, with its own (empty) answer history — nothing here depends on the plays above.
+  test.setTimeout(60000);
+
+  const clickContext = await browser.newContext();
+  const clickPage = await clickContext.newPage();
+  await clickPage.goto(gameUrl);
+
+  // The mode control is part of the play-time picker, not the setup screen — the game itself is unchanged.
+  await expect(clickPage.getByText('How to answer')).toBeVisible();
+  await clickPage.locator('select').filter({ hasText: 'Pick from four' }).selectOption('multipleChoice');
+  await clickPage.getByRole('button', { name: 'Start' }).click();
+  await expect(clickPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
+
+  // Nothing to type: the answer input and its Submit button are replaced by the options themselves.
+  await expect(clickPage.getByText('Pick the translation')).toBeVisible();
+  await expect(clickPage.getByPlaceholder('Type the translation')).toHaveCount(0);
+  await expect(clickPage.getByRole('button', { name: 'Submit' })).toHaveCount(0);
+
+  const heading = clickPage.locator('h2.text-xl.font-semibold');
+  for (let i = 0; i < words.length; i++) {
+    const promptText = (await heading.textContent())?.trim() ?? '';
+    const match = words.find((w) => w.term === promptText);
+    expect(match, `unexpected quiz prompt: "${promptText}"`).toBeTruthy();
+
+    // Four eligible words, so every prompt has the answer plus the other three as distractors — all of them
+    // words this quiz teaches (GameService.optionsFor draws from the game's own pool first).
+    const options = clickPage.locator('button.btn-outline');
+    await expect(options).toHaveCount(4);
+    await options.filter({ hasText: match!.hu }).click();
+
+    if (i < words.length - 1) {
+      await expect(heading).not.toHaveText(promptText);
+    } else {
+      await expect(clickPage.getByText('Quiz complete')).toBeVisible();
+    }
+  }
+
+  // One point a word clicked, against two typed — four words, so four out of four.
+  await expect(clickPage.getByText('Score: 4 / 4')).toBeVisible();
+  await expect(clickPage.getByText('German → Hungarian · All words · Pick from four')).toBeVisible();
+
+  await clickContext.close();
 });

@@ -1,0 +1,12 @@
+-- How a play asks its questions: the original typed loop, or the click-one-of-four loop this migration
+-- makes room for. A play-time choice like every other column V14 moved onto this table, so it lives here
+-- and not on `games` — the same quiz is playable both ways, and which way it was played is a property of
+-- the attempt.
+--
+-- 'typing' is the default, and what every play written before this migration actually was, so no backfill
+-- is needed. A constant default keeps this a plain `ADD COLUMN` on both dialects, the same shape
+-- `word_preference` used in V14 rather than the table rebuild a defaultless NOT NULL would force on SQLite.
+--
+-- The value is `GameMode.code` — 'typing' | 'multipleChoice' — read back leniently by
+-- `GameService.variantOf`, which falls back to typing for anything it does not recognise.
+ALTER TABLE game_plays ADD COLUMN mode VARCHAR(16) NOT NULL DEFAULT 'typing';

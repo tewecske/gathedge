@@ -1,8 +1,16 @@
 package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
-import gathedge.backend.db.{GameRepository, GroupRepository, TextSearch, UserRepository, WordRepository, WordRow}
-import gathedge.shared.domain.{AnswerOutcome, Gender, PartOfSpeech, WordLanguage, WordPreference}
+import gathedge.backend.db.{
+  GameRepository,
+  GroupRepository,
+  TextSearch,
+  UserRepository,
+  WordFormRow,
+  WordRepository,
+  WordRow,
+}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, WordLanguage, WordPreference}
 import gathedge.shared.dto.AllGameSort
 import zio._
 import zio.test._
@@ -941,6 +949,119 @@ object GameServiceSpec extends ZIOSpecDefault {
           res3.answers.map(_.outcome).toSet == Set(AnswerOutcome.Correct),
           res3.answers.flatMap(_.expectedTexts).toSet == Set("tag"),
           res3.answers.map(_.wordText).toSet == Set("nap", "napszak", "datum"),
+        )
+      },
+      test("a clicked play is worth one point a word, and its prompts carry the options") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "click", WordLanguage.De, WordLanguage.Hu, 6)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+          index    = prompt.wordText.get.stripPrefix("click-source-").toInt
+        } yield assertTrue(
+          started.wordCount == 6,
+          started.maxScore == 6,
+          prompt.options.size == 4,
+          prompt.options.contains(s"click-target-$index"),
+          prompt.options.distinct == prompt.options,
+        )
+      },
+      test("a typed play carries no options at all") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "typed", WordLanguage.De, WordLanguage.Hu, 6)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+        } yield assertTrue(prompt.options.isEmpty)
+      },
+      test("clicking the right option scores, clicking a near-miss does not") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "near", WordLanguage.De, WordLanguage.Hu, 1)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          missed  <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          promptA <- GameService.nextPrompt(missed.playId, owner)
+          _       <- GameService.submitAnswer(missed.playId, promptA.wordId.get, "near-target-0x", owner)
+          resA    <- GameService.getResults(missed.playId, owner)
+          hit     <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          promptB <- GameService.nextPrompt(hit.playId, owner)
+          _       <- GameService.submitAnswer(hit.playId, promptB.wordId.get, "near-target-0", owner)
+          resB    <- GameService.getResults(hit.playId, owner)
+        } yield assertTrue(
+          // One edit away is a typo when typed; clicked, it is simply the wrong button.
+          resA.answers.head.outcome == AnswerOutcome.Wrong,
+          resA.score == 0,
+          resB.answers.head.outcome == AnswerOutcome.Correct,
+          resB.score == 1,
+          resB.maxScore == 1,
+        )
+      },
+      test("a thin pool answers with fewer options rather than words the game does not teach") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "thin", WordLanguage.De, WordLanguage.Hu, 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+        } yield assertTrue(
+          prompt.options.size == 2,
+          prompt.options.forall(option => option.startsWith("thin-target-")),
+        )
+      },
+      test("a second accepted translation is never offered as a distractor") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "both", WordLanguage.De, WordLanguage.Hu, 3)
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "both-source-0"))
+          other   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "both-target-other"))
+          _       <- markPair(tagId, source, other)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          prompts <- ZIO.foreach(0 until 3)(_ => GameService.nextPrompt(started.playId, owner))
+          forWord0 = prompts.filter(_.wordText.contains("both-source-0"))
+        } yield assertTrue(
+          forWord0.nonEmpty,
+          // Both "both-target-0" and "both-target-other" would be graded correct, so at most one of them
+          // can be on screen -- the accepted one. Neither may show up as somebody else's distractor either.
+          forWord0.forall(prompt => !prompt.options.contains("both-target-other")),
+          prompts.forall(prompt => prompt.options.count(_.startsWith("both-target-")) >= 1),
+        )
+      },
+      test("a German answer offers its own forms and its other articles") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "hunde", "hunde", 0L)
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kutya"))
+          lemma   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Der)))
+          plural  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hunde", gender = Some(Gender.Die)))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, lemma.id, 0L)
+          _       <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, plural.id, "plural", 0L)))
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          started <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+        } yield assertTrue(
+          prompt.wordText.contains("kutya"),
+          prompt.options.contains("der Hund"),
+          prompt.options.contains("die Hunde"),
+          // The pool holds nothing else, so the remaining slots are the same noun under its other articles.
+          prompt.options.size == 4,
+          prompt.options.forall(option => option.endsWith(" Hund") || option.endsWith(" Hunde")),
+        )
+      },
+      test("the mode a play ran under is on its variant") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "variant", WordLanguage.De, WordLanguage.Hu, 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          clicked <- GameService.startPlay(created.slug, owner, mode = GameMode.MultipleChoice)
+          typed   <- GameService.startPlay(created.slug, owner)
+          resC    <- GameService.getResults(clicked.playId, owner)
+          resT    <- GameService.getResults(typed.playId, owner)
+        } yield assertTrue(
+          resC.variant.mode == GameMode.MultipleChoice,
+          resT.variant.mode == GameMode.Typing,
         )
       },
     ).provide(layer)
