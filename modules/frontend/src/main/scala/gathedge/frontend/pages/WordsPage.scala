@@ -372,6 +372,11 @@ private class WordsPage(
       renderTranslationFilter(),
       renderMainOnlyToggle(),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
+      child.maybe <-- signedInSignal
+        .combineWith(filterTagSignal)
+        .map { case (signedIn, tagId) => signedIn && tagId.isDefined }
+        .distinct
+        .map(Option.when(_)(renderRecentInTag())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
       child.maybe <-- querySignal
         .map(_.filterOnly != WordQuery.default)
@@ -471,10 +476,47 @@ private class WordsPage(
           // showed a listing that *was* narrowed under a control that said "all tags".
           value <-- collect.selectedTagValue(filterTagSignal),
           onChange.mapToValue --> Observer[String] { raw =>
-            change(_.reset(_.copy(tagId = raw.toLongOption)))
+            val tagId = raw.toLongOption
+            // Going back to "all tags" takes the ordering with it: `WordSort.added` is the tick's timestamp inside one
+            // tag, so with no tag there is nothing for it to read, and leaving it in the URL would order the listing
+            // by nothing under a button that is no longer on screen.
+            change(_.reset(query => {
+              val sort = if (tagId.isEmpty && query.sort.column.contains(WordSort.added)) {
+                SortHeader.Sort.unsorted
+              } else {
+                query.sort
+              }
+              query.copy(tagId = tagId, sort = sort)
+            }))
           },
         ),
       ),
+    )
+  }
+
+  /** Orders the listing by the tick that filed each word under the narrowed tag, newest first.
+    *
+    * A button rather than a `SortHeader`, because there is no column on screen for it to head: what it orders by is
+    * `word_tags.created_at`, which the table never shows. Two states, not the headers' three — "newest first" is the
+    * only direction anybody asks for after an import, and the way back is the listing's own order.
+    *
+    * Shown only while [[renderTagFilter]] holds a tag. Asked for without one the server keeps the default order, so
+    * this is the control saying what the request can actually do, not a rule the server relies on.
+    */
+  private def renderRecentInTag(): HtmlElement = {
+    val activeSignal = sortSignal.map(_.column.contains(WordSort.added)).distinct
+
+    button(
+      typ := "button",
+      cls := "btn btn-sm",
+      cls("btn-soft") <-- activeSignal.map(!_),
+      cls("btn-active") <-- activeSignal,
+      aria.pressed <-- activeSignal.map(_.toString),
+      I18n.t(UiKeys.wordsSortRecentInTag),
+      onClick.compose(_.sample(activeSignal)) --> Observer[Boolean] { active =>
+        val sort = if (active) SortHeader.Sort.unsorted else SortHeader.Sort.descending(WordSort.added)
+        change(_.reset(_.copy(sort = sort)))
+      },
     )
   }
 

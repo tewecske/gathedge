@@ -4,7 +4,8 @@ import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.listing.WordQuery
-import gathedge.shared.domain.{TranslationFilter, WordLanguage}
+import gathedge.frontend.state.AppState
+import gathedge.shared.domain.{Locale, Theme, TranslationFilter, User, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -85,6 +86,26 @@ object WordsPageSpec extends ZIOSpecDefault {
     container.querySelector("input[type=search]").asInstanceOf[dom.html.Input]
   }
 
+  /** Runs `body` with a session in place, since two of this page's controls exist only for an account. `AppState` is a
+    * global, so the session is cleared again whatever happens.
+    */
+  private def signedIn[A](body: => A): A = {
+    AppState.setUser(
+      User(
+        id = 1L,
+        email = Some("reader@example.com"),
+        isAdmin = false,
+        theme = Theme.Light,
+        locale = Locale.En,
+        createdAt = "2026-01-01T00:00:00Z",
+        emailVerified = true,
+        isGuest = false,
+      )
+    )
+    try body
+    finally AppState.clearUser()
+  }
+
   private def selects(container: dom.Element): List[dom.html.Select] = {
     container.querySelectorAll("select").toList.map(_.asInstanceOf[dom.html.Select])
   }
@@ -152,6 +173,20 @@ object WordsPageSpec extends ZIOSpecDefault {
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.
           !text.contains(UiKeys.wordsOnlyMine),
+        )
+      },
+      // The button orders by the tick that filed each word under the narrowed tag, so it has nothing to order by
+      // until the tag filter holds one.
+      test("the newest-in-tag button appears only once a tag narrows the listing") {
+        val withoutTag = signedIn(withPage(WordQuery())((container, _) => container.textContent))
+        val withTag    = signedIn(withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent))
+        val visitor    = withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent)
+
+        assertTrue(
+          !withoutTag.contains(UiKeys.wordsSortRecentInTag),
+          withTag.contains(UiKeys.wordsSortRecentInTag),
+          // It is half of the tag machinery, so it stays with the tag filter: absent with no session.
+          !visitor.contains(UiKeys.wordsSortRecentInTag),
         )
       },
       // Every request fails under jsdom, which is the same shape as a listing that matched nothing.

@@ -267,11 +267,16 @@ final case class BulkUploadConfirmResponse(addedCount: Int) derives JsonCodec
   * `rank` is corpus frequency, which is also the listing's own order — commonest first, since that is the useful thing
   * to be shown when a search matches a hundred words. Translations are absent for the reason the audit trail's target
   * is: they are a list rendered into one cell, and no `ORDER BY` produces them.
+  *
+  * `added` is the odd one out: not a column of `words` at all, but the moment the word was ticked into a tag
+  * (`word_tags.created_at`). It answers "what landed in this tag recently", which is what a reader wants after an
+  * import, and it means nothing without a `tag` — asked for without one, the listing keeps its own order.
   */
 object WordSort {
-  val text: String = "text"
-  val pos: String  = "pos"
-  val rank: String = "rank"
+  val text: String  = "text"
+  val pos: String   = "pos"
+  val rank: String  = "rank"
+  val added: String = "added"
 
-  val all: List[String] = List(text, pos, rank)
+  val all: List[String] = List(text, pos, rank, added)
 }

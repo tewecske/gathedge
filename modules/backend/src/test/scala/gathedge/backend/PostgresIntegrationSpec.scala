@@ -42,7 +42,8 @@ import gathedge.backend.service.{
   SessionReaper,
   WordService,
 }
-import gathedge.shared.dto.Paging
+import gathedge.shared.domain.TranslationFilter
+import gathedge.shared.dto.{Paging, WordSort}
 import zio._
 import zio.test._
 
@@ -510,6 +511,52 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // Untagging the word takes its pairs in that tag with it, both ways round, and leaves the translation filed.
           swept.isEmpty,
           left.map(_.wordId) == List(fork.id),
+        )
+      },
+      // The "newest in tag" ordering is the one listing shape that joins `word_tags` and orders by a column outside
+      // `words`, so it is the one whose rendered SQL SQLite would accept whatever Postgres made of it.
+      test("newest in tag orders the listing by the tick on the real dialect") {
+        for {
+          reader <- AuthService.createGuest(Some("10.9.2.9")).map(_._1)
+          tag    <- WordService.createTag("pgrecent", reader.id).map(_.tag)
+          first  <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Pgerste", "pgerste", "noun", "die", 1, "user", Some(reader.id), 0L, "pgerste")
+                    )
+          second <-
+            WordRepository.ensureWord(
+              WordRow(0L, "de", "Pgzweite", "pgzweite", "noun", "die", 2, "user", Some(reader.id), 0L, "pgzweite")
+            )
+          _      <- WordRepository.tagWord(first.id, tag.id, 1_000L)
+          _      <- WordRepository.tagWord(second.id, tag.id, 2_000L)
+          newest <- WordRepository.listPage(
+                      offset = 0,
+                      limit = 20,
+                      language = Some("de"),
+                      search = None,
+                      partOfSpeech = None,
+                      tagId = Some(tag.id),
+                      taggedBy = None,
+                      translationFilter = TranslationFilter.All,
+                      targetLanguage = "hu",
+                      mainOnly = false,
+                      sort = Some(WordSort.added),
+                      descending = true,
+                    )
+          count  <- WordRepository.countMatching(
+                      language = Some("de"),
+                      search = None,
+                      partOfSpeech = None,
+                      tagId = Some(tag.id),
+                      taggedBy = None,
+                      translationFilter = TranslationFilter.All,
+                      targetLanguage = "hu",
+                      mainOnly = false,
+                    )
+        } yield assertTrue(
+          // The later tick first, which is the opposite of the rank order the two words carry.
+          newest.map(_.text) == List("Pgzweite", "Pgerste"),
+          // The join matches each word once, so the page holds the rows the count counted.
+          count == 2L,
         )
       },
       test("the reaper's sweep runs, and takes only the guests with nothing on them") {

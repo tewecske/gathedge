@@ -640,20 +640,36 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     *
     * That default is what makes a two-letter search useful — a hundred matches with the everyday word at the top — and
     * it is why `frequency_rank` carries a large sentinel rather than NULL for the words nobody has ranked.
+    *
+    * `WordSort.added` is the one value that orders by something outside `words` — the tick that filed the word under
+    * the narrowed tag — so it needs `tagId`, and without one it falls back to that same default rather than failing,
+    * the way an unrecognized sort does.
     */
   private def ordered(
     query: DynamicQuery[WordRow],
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long],
   ): DynamicQuery[WordRow] = {
-    sort match {
-      case Some(WordSort.text) =>
+    (sort, tagId) match {
+      case (Some(WordSort.added), Some(tag)) =>
+        // A join, not the correlated `.nonEmpty` the filters use: an `ORDER BY` needs the link row itself, not the
+        // answer to whether it exists. It is a join at the top level rather than inside a `filterOpt` closure, which
+        // is the shape Quill's Dynamic Query refuses (see `hasTranslationInto`). `word_tags` is
+        // UNIQUE(word_id, tag_id) and this narrows to one tag, so it matches each word at most once — the page holds
+        // the same rows `countMatching` counted, in a different order.
+        query
+          .join(quote(wordTags.filter(link => link.tagId == lift(tag))))
+          .on((word, link) => quote(word.id == link.wordId))
+          .sortBy(_._2.createdAt)(using ordering(descending))
+          .map(_._1)
+      case (Some(WordSort.text), _)          =>
         query.sortBy(_.textNorm)(using ordering(descending))
-      case Some(WordSort.pos)  =>
+      case (Some(WordSort.pos), _)           =>
         query.sortBy(_.partOfSpeech)(using ordering(descending))
-      case Some(WordSort.rank) =>
+      case (Some(WordSort.rank), _)          =>
         query.sortBy(_.frequencyRank)(using ordering(descending))
-      case _                   =>
+      case _                                 =>
         query.sortBy(word => (word.frequencyRank, word.textNorm))(using Ord.asc)
     }
   }
@@ -676,6 +692,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly),
       sort,
       descending,
+      tagId,
     ).drop(offset).take(limit)
     // The search term is a fragment of somebody's vocabulary and stays out of the message, like an address.
     logged(run(ctx.run(page))) { rows =>

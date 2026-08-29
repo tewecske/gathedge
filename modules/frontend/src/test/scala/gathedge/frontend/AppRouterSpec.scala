@@ -153,6 +153,14 @@ object AppRouterSpec extends ZIOSpecDefault {
           // open a list of words.
           AppRouter.router.pageForRelativeUrl(s"$prefix/words?lang=xx").contains(Page.Words()),
           AppRouter.router.pageForRelativeUrl(s"$prefix/words?tag=nonsense").contains(Page.Words()),
+          // "Newest in tag" is a sort value like any other on the wire, so it round trips with its tag.
+          AppRouter.router
+            .relativeUrlForPage(
+              Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.added), tagId = Some(4L)))
+            ) == s"$prefix/words?sort=added&dir=desc&tag=4",
+          AppRouter.router
+            .pageForRelativeUrl(s"$prefix/words?sort=added&dir=desc&tag=4")
+            .contains(Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.added), tagId = Some(4L)))),
         )
       },
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the

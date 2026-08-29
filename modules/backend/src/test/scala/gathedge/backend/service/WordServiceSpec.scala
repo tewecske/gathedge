@@ -177,6 +177,30 @@ object WordServiceSpec extends ZIOSpecDefault {
     )
   }
 
+  /** [[list]] with an explicit ordering — the sort parameters are the only thing the tests using it vary. */
+  private def listSorted(
+    sort: String,
+    descending: Boolean,
+    tagId: Option[Long] = None,
+    reader: Option[Long] = None,
+  ) = {
+    WordService.list(
+      page = Paging.firstPage,
+      pageSize = 20,
+      language = Some(WordLanguage.De),
+      search = None,
+      partOfSpeech = None,
+      tagId = tagId,
+      mine = false,
+      target = WordLanguage.Hu,
+      translationFilter = TranslationFilter.All,
+      mainOnly = false,
+      sort = Some(sort),
+      descending = descending,
+      reader = reader,
+    )
+  }
+
   private def coreSpec = {
     suite("core")(
       test("a search is a prefix of the word, commonest first, and carries its translations") {
@@ -741,6 +765,29 @@ object WordServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           unknown.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
           byText.items.map(_.word.text).headOption.contains("Haus"),
+        )
+      },
+      test("newest in tag orders by the tick, not by the word, and only while a tag narrows the listing") {
+        for {
+          _      <- seed
+          tag    <- createTag("lesson1", 1L)
+          haus   <- list(search = Some("haus")).map(_.items.head.word)
+          haufen <- list(search = Some("hauf")).map(_.items.head.word)
+          _      <- WordService.tagWord(haus.id, tag.id, 1L)
+          // Two ticks a minute apart: with both at the same instant the order under test would be incidental.
+          _      <- TestClock.adjust(1.minute)
+          _      <- WordService.tagWord(haufen.id, tag.id, 1L)
+          newest <- listSorted(WordSort.added, descending = true, tagId = Some(tag.id), reader = Some(1L))
+          oldest <- listSorted(WordSort.added, descending = false, tagId = Some(tag.id), reader = Some(1L))
+          noTag  <- listSorted(WordSort.added, descending = true, tagId = None, reader = Some(1L))
+        } yield assertTrue(
+          // `Haufen` is rank 900 and `Haus` rank 1, so this is the opposite of the listing's own order.
+          newest.items.map(_.word.text) == List("Haufen", "Haus"),
+          oldest.items.map(_.word.text) == List("Haus", "Haufen"),
+          // The join matches each word once: the page holds the rows the count counted.
+          newest.total == 2L,
+          // Nothing to order by without a tag, so the listing keeps commonest-first rather than failing.
+          noTag.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
         )
       },
       test("mainOnly drops a word that is itself a form of another word") {
