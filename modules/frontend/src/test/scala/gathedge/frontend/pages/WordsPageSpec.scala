@@ -177,16 +177,16 @@ object WordsPageSpec extends ZIOSpecDefault {
       },
       // The button orders by the tick that filed each word under the narrowed tag, so it has nothing to order by
       // until the tag filter holds one.
-      test("the newest-in-tag button appears only once a tag narrows the listing") {
+      test("the in-tag order button appears only once a tag narrows the listing") {
         val withoutTag = signedIn(withPage(WordQuery())((container, _) => container.textContent))
         val withTag    = signedIn(withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent))
         val visitor    = withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent)
 
         assertTrue(
-          !withoutTag.contains(UiKeys.wordsSortRecentInTag),
-          withTag.contains(UiKeys.wordsSortRecentInTag),
+          !withoutTag.contains(UiKeys.wordsSortAddedToTag),
+          withTag.contains(UiKeys.wordsSortAddedToTag),
           // It is half of the tag machinery, so it stays with the tag filter: absent with no session.
-          !visitor.contains(UiKeys.wordsSortRecentInTag),
+          !visitor.contains(UiKeys.wordsSortAddedToTag),
         )
       },
       // Every request fails under jsdom, which is the same shape as a listing that matched nothing.

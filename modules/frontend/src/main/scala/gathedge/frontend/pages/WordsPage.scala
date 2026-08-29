@@ -376,7 +376,7 @@ private class WordsPage(
         .combineWith(filterTagSignal)
         .map { case (signedIn, tagId) => signedIn && tagId.isDefined }
         .distinct
-        .map(Option.when(_)(renderRecentInTag())),
+        .map(Option.when(_)(renderTagOrderToggle())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
       child.maybe <-- querySignal
         .map(_.filterOnly != WordQuery.default)
@@ -494,29 +494,34 @@ private class WordsPage(
     )
   }
 
-  /** Orders the listing by the tick that filed each word under the narrowed tag, newest first.
+  /** Orders the listing by the tick that filed each word under the narrowed tag.
     *
     * A button rather than a `SortHeader`, because there is no column on screen for it to head: what it orders by is
-    * `word_tags.created_at`, which the table never shows. Two states, not the headers' three — "newest first" is the
-    * only direction anybody asks for after an import, and the way back is the listing's own order.
+    * `word_tags.created_at`, which the table never shows. The three states are the headers' own, cycled the other way
+    * round — newest first, then oldest, then back to the listing's own order — since after an import the newest is what
+    * the reader came for. The label names what it orders by and the glyph says which way, exactly as a column heading
+    * does.
     *
     * Shown only while [[renderTagFilter]] holds a tag. Asked for without one the server keeps the default order, so
     * this is the control saying what the request can actually do, not a rule the server relies on.
     */
-  private def renderRecentInTag(): HtmlElement = {
-    val activeSignal = sortSignal.map(_.column.contains(WordSort.added)).distinct
+  private def renderTagOrderToggle(): HtmlElement = {
+    val directionSignal = sortSignal.map(_.directionOf(WordSort.added)).distinct
 
     button(
       typ := "button",
       cls := "btn btn-sm",
-      cls("btn-soft") <-- activeSignal.map(!_),
-      cls("btn-active") <-- activeSignal,
-      aria.pressed <-- activeSignal.map(_.toString),
-      I18n.t(UiKeys.wordsSortRecentInTag),
-      onClick.compose(_.sample(activeSignal)) --> Observer[Boolean] { active =>
-        val sort = if (active) SortHeader.Sort.unsorted else SortHeader.Sort.descending(WordSort.added)
-        change(_.reset(_.copy(sort = sort)))
-      },
+      cls("btn-soft") <-- directionSignal.map(_.isEmpty),
+      cls("btn-active") <-- directionSignal.map(_.isDefined),
+      I18n.t(UiKeys.wordsSortAddedToTag),
+      span(
+        cls := "text-xs",
+        // Dimmed while it is merely offering to order, the way an unsorted column heading is.
+        cls("opacity-40") <-- directionSignal.map(_.isEmpty),
+        text <-- directionSignal.map(SortHeader.glyph),
+      ),
+      onClick.compose(_.sample(sortSignal).map(SortHeader.nextDescendingFirst(_, WordSort.added))) -->
+        Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort)))),
     )
   }
 

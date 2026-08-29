@@ -49,8 +49,25 @@ object SortHeader {
     }
   }
 
-  /** What the glyph says: which way this column is ordered, or that it can be. */
-  private def glyph(direction: Option[Boolean]): String = {
+  /** The same three states, cycled the other way round: off, descending, ascending, off. For a control whose useful
+    * direction is the descending one — "newest first" — where starting ascending would make the first click the one
+    * nobody wants.
+    */
+  def nextDescendingFirst(current: Sort, column: String): Sort = {
+    current.column match {
+      case Some(`column`) if current.descending =>
+        Sort.ascending(column)
+      case Some(`column`)                       =>
+        Sort.unsorted
+      case _                                    =>
+        Sort.descending(column)
+    }
+  }
+
+  /** What the glyph says: which way this column is ordered, or that it can be. Public because a listing can offer an
+    * ordering that heads no column — see `WordsPage.renderTagOrderToggle` — and it has to say the same thing there.
+    */
+  def glyph(direction: Option[Boolean]): String = {
     direction match {
       case Some(true)  =>
         "▼"

@@ -504,7 +504,7 @@
   "ui.words.pairHint": "Click a translation to tag the word with it.",
   "ui.words.filterTagLabel": "Filter by tag",
   "ui.words.filterTagAny": "All tags",
-  "ui.words.sortRecentInTag": "Newest in tag",
+  "ui.words.sortAddedToTag": "Added to tag",
   "ui.words.resetFilters": "Reset filters",
   "ui.words.tagNew": "New tag",
   "ui.words.tagNewPlaceholder": "lesson1",

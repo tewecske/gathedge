@@ -1,6 +1,6 @@
 package gathedge.frontend.components
 
-import gathedge.shared.dto.{SortDirection, UserSort}
+import gathedge.shared.dto.{SortDirection, UserSort, WordSort}
 import zio.test._
 
 /** The three-state cycle a column heading walks through, and what each state asks the server for.
@@ -31,6 +31,22 @@ object SortHeaderSpec extends ZIOSpecDefault {
         assertTrue(
           SortHeader.next(Sort.descending(UserSort.email), UserSort.created) == Sort.ascending(UserSort.created),
           SortHeader.next(Sort.ascending(UserSort.email), UserSort.created) == Sort.ascending(UserSort.created),
+        )
+      },
+      // The vocabulary's "added to tag" button walks the same three states the other way round: after an import the
+      // newest tick is what the reader came for, so it is the first click rather than the second.
+      test("the descending-first cycle starts descending, then ascending, then off") {
+        val first  = SortHeader.nextDescendingFirst(Sort.unsorted, WordSort.added)
+        val second = SortHeader.nextDescendingFirst(first, WordSort.added)
+        val third  = SortHeader.nextDescendingFirst(second, WordSort.added)
+
+        assertTrue(
+          first == Sort.descending(WordSort.added),
+          second == Sort.ascending(WordSort.added),
+          third == Sort.unsorted,
+          // Coming from another column it still starts at its own first state, like `next`.
+          SortHeader.nextDescendingFirst(Sort.ascending(WordSort.text), WordSort.added) ==
+            Sort.descending(WordSort.added),
         )
       },
       test("a column reports its own direction and nothing about the others") {

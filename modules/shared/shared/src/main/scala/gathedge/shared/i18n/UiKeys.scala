@@ -619,10 +619,11 @@ object UiKeys {
   val wordsFilterTagLabel: String = key("ui.words.filterTagLabel")
   val wordsFilterTagAny: String   = key("ui.words.filterTagAny")
 
-  /** Orders the listing by the tick that filed each word under the narrowed tag, newest first — see `dto.WordSort`.
-    * Shown only while the filter above holds a tag, since it is the only thing it can order by.
+  /** Names what the listing's three-state order button orders by: the tick that filed each word under the narrowed tag
+    * — see `dto.WordSort`. Which way round is the button's glyph, as it is on a column heading. Shown only while the
+    * filter above holds a tag, since it is the only thing it can order by.
     */
-  val wordsSortRecentInTag: String = key("ui.words.sortRecentInTag")
+  val wordsSortAddedToTag: String = key("ui.words.sortAddedToTag")
 
   /** Clears every filter above back to its default, remembered per browser — shown only once a filter differs from it.
     * See `listing.WordQuery.filterOnly`/`.storedFilter`.
