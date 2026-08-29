@@ -3,7 +3,7 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import gathedge.shared.domain.TranslationFilter
+import gathedge.shared.domain.{LanguageProfile, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.WordSort
 import zio.*
 
@@ -550,7 +550,18 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  private val leadingGermanArticle = "^(?:der|die|das)\\s+".r
+  /** Every article form of every language this app teaches, longest first so `"los"` is not shadowed by a shorter form
+    * that happens to be a prefix of it — none are today, but the ordering costs nothing and stays correct if one ever
+    * is. Built once from [[LanguageProfile]] rather than naming an article here, so a new language's articles are
+    * stripped by the search box with no change to this file.
+    */
+  private val leadingArticle = {
+    val forms = WordLanguage.all
+      .flatMap(language => LanguageProfile.of(language).articleForms.keys)
+      .distinct
+      .sortBy(-_.length)
+    if (forms.isEmpty) None else Some(("^(?:" + forms.mkString("|") + ")\\s+").r)
+  }
 
   /** The prefix pattern behind the search box, or `None` when it is empty.
     *
@@ -558,11 +569,13 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     * answers. Text is stored lowercased and accent-folded in `textSearch`, so lowercasing and folding the needle the
     * same way is the whole of the case- and accent-insensitivity, with no `lower()` for the two dialects to disagree
     * about — the rule `UserRepository.emailPattern` follows. This means "hau" finds "häuser" and "o" finds "ő". A
-    * leading "der"/"die"/"das" is stripped first, since `textSearch` holds only the noun, not its gender article.
+    * leading article is stripped first, since `textSearch` holds only the noun, not its gender article — stripping
+    * every language's articles rather than only the listing's own costs nothing and keeps this independent of whichever
+    * `language` filter the caller passed.
     */
   private def searchPattern(search: Option[String]): Option[String] = {
     search
-      .map(needle => leadingGermanArticle.replaceFirstIn(needle.trim.toLowerCase, ""))
+      .map(needle => leadingArticle.fold(needle.trim.toLowerCase)(_.replaceFirstIn(needle.trim.toLowerCase, "")))
       .map(needle => TextSearch.fold(needle))
       .filter(_.nonEmpty)
       .map(needle => s"$needle%")

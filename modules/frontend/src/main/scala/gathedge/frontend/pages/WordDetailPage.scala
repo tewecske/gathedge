@@ -4,10 +4,19 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, WordCollect}
+import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, GuestBanner, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{Gender, GrammarCategory, GrammarTag, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{
+  Gender,
+  GrammarCategory,
+  GrammarTag,
+  LanguageProfile,
+  PartOfSpeech,
+  Tag,
+  Word,
+  WordLanguage,
+}
 import gathedge.shared.dto.{NewTranslation, TaggedPair, TranslationEntry, WordDetail, WordFormEntry, WordFormRef}
 import gathedge.shared.i18n.UiKeys
 
@@ -225,7 +234,7 @@ private class WordDetailPage(id: Long) {
         WordApiClient.addTranslation(
           id,
           // The part of speech is left to the server, which takes the source word's: a noun translates to a noun.
-          NewTranslation(language, text, None, genderVar.now().filter(_ => language == WordLanguage.De)),
+          NewTranslation(language, text, None, genderVar.now().filter(_ => LanguageProfile.of(language).hasGenders)),
         )
       }
   }
@@ -394,9 +403,13 @@ private class WordDetailPage(id: Long) {
             ),
           ),
         ),
-        // Only a German noun takes an article, so the control appears only for one.
+        // Only a noun in a gendered language takes an article, so the control appears only for one.
         child.maybe <--
-          languageVar.signal.map(language => Option.when(language.contains(WordLanguage.De))(renderGender())),
+          languageVar.signal.map(language => {
+            language
+              .filter(LanguageProfile.of(_).hasGenders)
+              .map(l => ArticleSelect.render(LanguageProfile.of(l), genderVar))
+          }),
         label(
           cls := "form-control grow",
           span(cls      := "label-text text-xs", I18n.t(UiKeys.wordsAddTranslation)),
@@ -416,19 +429,4 @@ private class WordDetailPage(id: Long) {
     )
   }
 
-  private def renderGender(): HtmlElement = {
-    label(
-      cls := "form-control",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddGender)),
-      select(
-        cls    := "select select-sm",
-        option(value := "", I18n.t(UiKeys.wordsAddGenderNone)),
-        Gender.all.map(gender => option(value := Gender.article(gender), Gender.article(gender))),
-        controlled(
-          value <-- genderVar.signal.map(Gender.toColumn),
-          onChange.mapToValue --> Observer[String](article => genderVar.set(Gender.fromColumn(article))),
-        ),
-      ),
-    )
-  }
 }

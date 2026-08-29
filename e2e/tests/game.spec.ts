@@ -151,7 +151,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   const articlesRow = guestPage.locator('label', { hasText: 'Include definite articles' });
   await expect(articlesRow).toBeVisible();
-  await expect(articlesRow).toContainText('Show "der"/"die"/"das" with German nouns in the quiz');
+  await expect(articlesRow).toContainText('Show the definite article with a gendered noun in the quiz');
 
   await expect(guestPage.getByText('Which words')).toBeVisible();
   await expect(guestPage.locator('select option', { hasText: 'All words' })).toHaveCount(1);

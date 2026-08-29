@@ -7,6 +7,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
 import gathedge.frontend.components.{
   Alert,
   AppShell,
+  ArticleSelect,
   BulkUploadDialog,
   GuestBanner,
   Labels,
@@ -18,7 +19,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{Gender, PartOfSpeech, TranslationFilter, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
@@ -607,7 +608,7 @@ private class WordsPage(
     newWordBus.events.withCurrentValueOf(querySignal).flatMapSwitch { case (text, query) =>
       val pos          = newWordPosVar.now()
       val gender       = {
-        if (query.language == WordLanguage.De && pos == PartOfSpeech.Noun)
+        if (LanguageProfile.of(query.language).hasGenders && pos == PartOfSpeech.Noun)
           newWordGenderVar.now()
         else
           None
@@ -619,8 +620,8 @@ private class WordsPage(
             language,
             typed,
             None,
-            // Only a German noun takes an article; the server drops one given for anything else.
-            newWordTransGenderVar.now().filter(_ => language == WordLanguage.De),
+            // Only a noun in a gendered language takes an article; the server drops one given for anything else.
+            newWordTransGenderVar.now().filter(_ => LanguageProfile.of(language).hasGenders),
           )
         )
       })
@@ -668,14 +669,14 @@ private class WordsPage(
               ),
             ),
           ),
-          // Only a German noun takes an article.
+          // Only a noun in a gendered language takes an article.
           child.maybe <--
             querySignal
               .map(_.language)
               .combineWith(newWordPosVar.signal)
               .map { case (language, pos) =>
-                Option.when(language == WordLanguage.De && pos == PartOfSpeech.Noun)(
-                  renderGenderSelect(newWordGenderVar)
+                Option.when(LanguageProfile.of(language).hasGenders && pos == PartOfSpeech.Noun)(
+                  ArticleSelect.render(LanguageProfile.of(language), newWordGenderVar)
                 )
               },
           // One box per other language rather than one for whichever the listing is showing: a word typed here is
@@ -706,11 +707,11 @@ private class WordsPage(
       span(cls := "label-text text-xs", Labels.language(language)),
       div(
         cls    := "flex items-end gap-2",
-        // A German translation carries its article for the same reason a German headword does: it is part of the word.
+        // A gendered translation carries its article for the same reason a gendered headword does: it is part of the word.
         child.maybe <--
           newWordPosVar.signal.map(pos => {
-            Option.when(language == WordLanguage.De && pos == PartOfSpeech.Noun)(
-              renderGenderSelect(newWordTransGenderVar)
+            Option.when(LanguageProfile.of(language).hasGenders && pos == PartOfSpeech.Noun)(
+              ArticleSelect.render(LanguageProfile.of(language), newWordTransGenderVar)
             )
           }),
         input(
@@ -720,23 +721,6 @@ private class WordsPage(
             value <-- newWordTransVars(language).signal,
             onInput.mapToValue --> newWordTransVars(language).writer,
           ),
-        ),
-      ),
-    )
-  }
-
-  private def renderGenderSelect(target: Var[Option[Gender]]): HtmlElement = {
-    label(
-      cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddGender)),
-      select(
-        cls    := "select select-sm w-24",
-        option(value := "", I18n.t(UiKeys.wordsAddGenderNone)),
-        // The article itself is the value *and* the label: `der` is part of the word being learned, not copy.
-        Gender.all.map(gender => option(value := Gender.article(gender), Gender.article(gender))),
-        controlled(
-          value <-- target.signal.map(Gender.toColumn),
-          onChange.mapToValue --> Observer[String](article => target.set(Gender.fromColumn(article))),
         ),
       ),
     )

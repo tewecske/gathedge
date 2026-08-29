@@ -80,10 +80,10 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         val teller = WiktextractParser.parse(plateLine).word
         assertTrue(
           haus.map(_.text).contains("Haus"),
-          haus.flatMap(_.gender).contains(Gender.Das),
+          haus.flatMap(_.gender).contains(Gender.Neuter),
           haus.map(_.partOfSpeech).contains(PartOfSpeech.Noun),
           haus.map(_.language).contains(WordLanguage.De),
-          teller.flatMap(_.gender).contains(Gender.Der),
+          teller.flatMap(_.gender).contains(Gender.Masculine),
         )
       },
       test("inflected forms and affixes are not vocabulary") {
@@ -99,7 +99,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           entry.word.map(_.text).contains("house"),
           // French is in the line and dropped: the parser keeps only the three languages this application holds.
           entry.pairs.map(_.target.text).toSet == Set("Haus", "ház"),
-          german.flatMap(_.target.gender).contains(Gender.Das),
+          german.flatMap(_.target.gender).contains(Gender.Neuter),
           // The target takes the headword's part of speech: Wiktionary does not repeat it per row.
           german.map(_.target.partOfSpeech).contains(PartOfSpeech.Noun),
           german.flatMap(_.sense).contains("building"),
@@ -192,9 +192,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       test("a form's translation is inferred through its lemma's own translation, matched on relation") {
         val house    = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
         val houses   = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
-        val haus     = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val haus     = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
         val haeuser  = ParsedWord(WordLanguage.De, "Häuser", PartOfSpeech.Noun, None)
-        val teller   = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Der))
+        val teller   = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Masculine))
         val pairs    = List(WiktextractParser.ParsedPair(house, haus, Some("building")))
         val forms    = List(
           ParsedForm(house, houses, "plural"),
@@ -210,7 +210,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       test("formPairs finds nothing when a relation is not shared, or a lemma has no pair") {
         val house  = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
         val houses = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
-        val haus   = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val haus   = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
         val hauses = ParsedWord(WordLanguage.De, "Hauses", PartOfSpeech.Noun, None)
         val pairs  = List(WiktextractParser.ParsedPair(house, haus, None))
         val forms  = List(ParsedForm(house, houses, "plural"), ParsedForm(haus, hauses, "genitive"))
@@ -237,9 +237,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       test("select keeps a lemma's forms only when the lemma itself survives, by rank or as a pair partner") {
         val house     = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
         val houses    = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
-        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
         val haeuser   = ParsedWord(WordLanguage.De, "Häuser", PartOfSpeech.Noun, None)
-        val teller    = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Der))
+        val teller    = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Masculine))
         val tellers   = ParsedWord(WordLanguage.De, "Tellers", PartOfSpeech.Noun, None)
         val collected = DictionaryImport.Collected(
           words = Map(house -> 1, haus -> 999999999, teller -> 999999999),
@@ -282,7 +282,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           !collected.forms.exists(
             _.relation.split(",").exists(Set("nonstandard", "obsolete", "alternative", "archaic").contains)
           ),
-          seeEntries == Set(Gender.Der, Gender.Die),
+          seeEntries == Set(Gender.Masculine, Gender.Feminine),
           // Every pair is stated from English, since that is the only direction any source has.
           collected.pairs.forall(_.source.language == WordLanguage.En),
           DictionaryImport.pivot(collected.pairs).nonEmpty,
@@ -328,10 +328,10 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       test("words differing only in case are one row, and the commonest reading wins") {
         val grammy    = ParsedWord(WordLanguage.En, "Grammy", PartOfSpeech.Noun, None)
         val grammyLc  = ParsedWord(WordLanguage.En, "grammy", PartOfSpeech.Noun, None)
-        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das))
+        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
         // Same spelling, different article: two words, and the dedupe must not touch them.
-        val seeLake   = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Der))
-        val seeSea    = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Die))
+        val seeLake   = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Masculine))
+        val seeSea    = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Feminine))
         val deduped   = DictionaryImport.dedupeByKey(
           List((grammyLc, 17940), (grammy, 17940), (haus, 12), (seeLake, 900), (seeSea, 901))
         )
@@ -351,7 +351,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       test("dedupeHomographs keeps only the gendered noun, and drops an untranslated Other twin") {
         val english        = ParsedWord(WordLanguage.En, "woman", PartOfSpeech.Noun, None)
         val frauGenderless = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, None)
-        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Die))
+        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Feminine))
         val frauOther      = ParsedWord(WordLanguage.De, "frau", PartOfSpeech.Other, None)
         val collected      = DictionaryImport.Collected(
           words = Map(english -> 1, frauGenderless -> 1, frauGendered -> 1, frauOther -> 1),
@@ -371,7 +371,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       },
       test("dedupeHomographs merges the genderless twin's forms onto the gendered survivor instead of dropping them") {
         val frauGenderless = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, None)
-        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Die))
+        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Feminine))
         val frauen         = ParsedWord(WordLanguage.De, "Frauen", PartOfSpeech.Noun, None)
         val deduped        = DictionaryImport.dedupeHomographs(
           DictionaryImport.Collected(
@@ -387,7 +387,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       },
       test("dedupeHomographs leaves an Other entry alone when it has its own translation, or nothing else translates") {
         val english         = ParsedWord(WordLanguage.En, "man", PartOfSpeech.Noun, None)
-        val mannNoun        = ParsedWord(WordLanguage.De, "Mann", PartOfSpeech.Noun, Some(Gender.Der))
+        val mannNoun        = ParsedWord(WordLanguage.De, "Mann", PartOfSpeech.Noun, Some(Gender.Masculine))
         val manOther        = ParsedWord(WordLanguage.De, "man", PartOfSpeech.Other, None)
         val translatedOther = DictionaryImport.dedupeHomographs(
           DictionaryImport.Collected(
@@ -408,8 +408,8 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         )
       },
       test("dedupeHomographs never touches der/die See -- gender, not case, decides identity") {
-        val seeLake = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Der))
-        val seeSea  = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Die))
+        val seeLake = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Masculine))
+        val seeSea  = ParsedWord(WordLanguage.De, "See", PartOfSpeech.Noun, Some(Gender.Feminine))
         val deduped = DictionaryImport.dedupeHomographs(
           DictionaryImport.Collected(words = Map(seeLake -> 1, seeSea -> 1), pairs = Nil, forms = Nil)
         )

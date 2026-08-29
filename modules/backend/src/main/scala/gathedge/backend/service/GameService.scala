@@ -8,6 +8,7 @@ import gathedge.shared.domain.{
   GameScoring,
   Gender,
   GroupRef,
+  LanguageProfile,
   Tag,
   Word,
   WordLanguage,
@@ -381,7 +382,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     * prompt, a scored answer, or a results row.
     */
   private def wordText(row: WordRow, includeDefiniteArticles: Boolean): String = {
-    if (includeDefiniteArticles) Word.displayText(row.text, row.gender) else row.text
+    if (includeDefiniteArticles) Word.displayText(row.language, row.text, row.gender) else row.text
   }
 
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]] = {
@@ -556,7 +557,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                        .orDie
       wordIds      = (pairs.map(_._1) ++ pairs.map(_._2)).distinct
       words       <- repo.wordsByIds(wordIds).orDie
-      textById     = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+      textById     = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
       translations = pairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield translations.toList
       .flatMap { case (wordId, texts) => textById.get(wordId).map(text => GameSetupWord(wordId, text, texts)) }
@@ -824,7 +825,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       pool                             = dedupeToOnePerWord(rawPairs)
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
       words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
-      textById                         = words.map(w => w.id -> Word.displayText(w.text, w.gender)).toMap
+      textById                         = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
       sortedPool                       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
       ordered                          = preferenceOrderedStable(sortedPool, stats, wordPreference)
       translationsById                 =
@@ -922,16 +923,17 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     } yield options
   }
 
-  /** The other `words` rows spelled like the accepted answer — `der See` when the answer is `die See`. Only for a
-    * German answer shown with its article: without the article the two are the same string, which would be no
-    * distractor at all. Reads by text rather than by id because gender is part of a word's identity, so the siblings
-    * are separate rows.
+  /** The other `words` rows spelled like the accepted answer — `der See` when the answer is `die See`. Only for an
+    * answer shown with its article, in a language that has gender: without the article the two are the same string,
+    * which would be no distractor at all. Reads by text rather than by id because gender is part of a word's identity,
+    * so the siblings are separate rows.
     */
   private def genderSiblingsOf(play: GamePlayRow, correctRow: Option[WordRow]): UIO[List[WordRow]] = {
-    val germanNoun = correctRow.filter { row =>
-      play.includeDefiniteArticles && play.targetLanguage == WordLanguage.code(WordLanguage.De) && row.gender.nonEmpty
+    val targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En)
+    val genderedNoun   = correctRow.filter { row =>
+      play.includeDefiniteArticles && LanguageProfile.of(targetLanguage).hasGenders && row.gender.nonEmpty
     }
-    germanNoun match {
+    genderedNoun match {
       case None      =>
         ZIO.succeed(Nil)
       case Some(row) =>
@@ -939,16 +941,18 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     }
   }
 
-  /** The accepted answer under each of the other two articles — `die Hund`, `das Hund` for `der Hund`. The last-resort
-    * confusable, used when the dictionary holds no real sibling or form to offer: the article is the half of a German
-    * noun a learner has to memorise, so a prompt whose only distinction is the article is still the right question.
-    * Never produced for anything but a German noun shown with its article.
+  /** The accepted answer under each of its language's other articles — `die Hund`, `das Hund` for `der Hund`; `la
+    * perro` for `el perro`. The last-resort confusable, used when the dictionary holds no real sibling or form to
+    * offer: the article is the half of a gendered noun a learner has to memorise, so a prompt whose only distinction is
+    * the article is still the right question. Never produced for anything but a gendered noun shown with its article.
     */
   private def articleVariantsOf(play: GamePlayRow, correctRow: Option[WordRow]): List[String] = {
     correctRow.toList.flatMap { row =>
-      if (play.includeDefiniteArticles && play.targetLanguage == WordLanguage.code(WordLanguage.De)) {
+      val targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En)
+      val profile        = LanguageProfile.of(targetLanguage)
+      if (play.includeDefiniteArticles && profile.hasGenders) {
         Gender.fromColumn(row.gender).toList.flatMap { own =>
-          Gender.all.filterNot(_ == own).map(gender => Gender.article(gender) + " " + row.text)
+          profile.genders.filterNot(_ == own).flatMap(profile.article).map(article => article + " " + row.text)
         }
       } else
         Nil

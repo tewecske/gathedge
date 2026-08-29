@@ -1,6 +1,6 @@
 package gathedge.backend.tools
 
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, WordLanguage}
 import zio.json.*
 
 /** Turns one line of a wiktextract dump into the words and translations this application stores.
@@ -126,23 +126,28 @@ object WiktextractParser {
 
   def partOfSpeechOf(pos: String): PartOfSpeech = posByName.getOrElse(pos.toLowerCase, PartOfSpeech.Other)
 
-  /** The article a German noun takes, from the entry's own tags. Read only for German nouns: an English noun tagged
-    * `masculine` (they exist, for ships and countries) would otherwise become a second, unfindable copy of itself.
+  /** The gender a noun takes, from the entry's own tags. Read only for a noun in a language that has gender at all: an
+    * English noun tagged `masculine` (they exist, for ships and countries) would otherwise become a second, unfindable
+    * copy of itself.
     *
     * Most entries state it on the entry itself; some (`Apfelsaft`, no top-level `tags` at all) state it only on a
     * sense. [[wordOf]] passes both, entry tags first, so an entry-level tag still wins when both are present.
+    *
+    * Every language this app teaches with gender uses the same three wiktextract tag strings, so one map covers them
+    * all; a noun-class label this map has never seen (`common-gender`, `masculine-personal`, …) yields no gender rather
+    * than a guess.
     */
   def genderOf(language: WordLanguage, pos: PartOfSpeech, tags: List[String]): Option[Gender] = {
-    if (language != WordLanguage.De || pos != PartOfSpeech.Noun)
+    if (!LanguageProfile.of(language).hasGenders || pos != PartOfSpeech.Noun)
       None
     else {
       tags.map(_.toLowerCase).collectFirst {
         case "masculine" =>
-          Gender.Der
+          Gender.Masculine
         case "feminine"  =>
-          Gender.Die
+          Gender.Feminine
         case "neuter"    =>
-          Gender.Das
+          Gender.Neuter
       }
     }
   }

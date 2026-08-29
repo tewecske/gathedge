@@ -13,12 +13,12 @@
 # covers (~1000 of them), one fat JSON object per entry — etymology, IPA, audio references,
 # inflection tables, sense examples, categories — plus a separate entry per inflected form. That is
 # 22.9 GB uncompressed, 2.6 GB gzipped, of which the six fields WiktextractParser reads for English,
-# German and Hungarian are a few per cent.
+# German, Spanish and Hungarian are a few per cent.
 #
 # None of it belongs on a server. DictionaryImport's --export mode turns a dump into a flat TSV of
 # just the words, pairs, and word forms (plurals, verb tenses, declension/case tables) that survived
-# the frequency cut; most of the file's size is forms, since German and Hungarian words can carry
-# dozens of them each regardless of --limit. That file is what gets shipped, and `--seed <path>` on
+# the frequency cut; most of the file's size is forms, since German, Spanish and Hungarian words can
+# carry dozens of them each regardless of --limit. That file is what gets shipped, and `--seed <path>` on
 # the server loads it. So this script is the dev-machine half: fetch the inputs, run the export, and
 # print the two commands that move the result across.
 #
@@ -45,7 +45,7 @@ readonly DEFAULT_DUMP="data/dictionary/raw-wiktextract-data.jsonl.gz"
 # are fetched rather than left to chance.
 readonly FREQ_DIR="data/frequency"
 readonly FREQ_BASE="https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
-readonly FREQ_LANGS=(en de hu)
+readonly FREQ_LANGS=(en de es hu)
 
 readonly MAIN_CLASS="gathedge.backend.tools.DictionaryImport"
 

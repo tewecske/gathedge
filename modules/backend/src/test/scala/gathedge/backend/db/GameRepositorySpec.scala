@@ -112,9 +112,9 @@ object GameRepositorySpec extends ZIOSpecDefault {
       },
       test("relatedWords answers both directions of word_forms, and nothing unlinked") {
         for {
-          lemma     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hund", Some(Gender.Der)))
-          plural    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hunde", Some(Gender.Die)))
-          unlinked  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Katze", Some(Gender.Die)))
+          lemma     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hund", Some(Gender.Masculine)))
+          plural    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Hunde", Some(Gender.Feminine)))
+          unlinked  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "related-Katze", Some(Gender.Feminine)))
           _         <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, plural.id, "plural", 0L)))
           fromLemma <- GameRepository.relatedWords(List(lemma.id))
           fromForm  <- GameRepository.relatedWords(List(plural.id))
@@ -129,15 +129,15 @@ object GameRepositorySpec extends ZIOSpecDefault {
       },
       test("wordsByTexts answers every gendered spelling of a word, in that language only") {
         for {
-          der     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Der)))
-          die     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Die)))
+          der     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Masculine)))
+          die     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "texts-See", Some(Gender.Feminine)))
           _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "texts-See"))
           german  <- GameRepository.wordsByTexts("de", List("texts-See"))
           missing <- GameRepository.wordsByTexts("de", List("texts-nothing"))
           none    <- GameRepository.wordsByTexts("de", Nil)
         } yield assertTrue(
           german.map(_.id).toSet == Set(der.id, die.id),
-          german.map(_.gender).toSet == Set("der", "die"),
+          german.map(_.gender).toSet == Set("masculine", "feminine"),
           missing.isEmpty,
           none.isEmpty,
         )

@@ -7,16 +7,21 @@ import zio.json.*
   * Deliberately not [[Locale]]: that enum is the set of languages the *interface* is translated into, and German is not
   * one of them. A page rendered in Hungarian teaching German vocabulary needs both vocabularies at once, so conflating
   * them would make adding a fourth study language a translation project.
+  *
+  * Everything a language does *grammatically* — whether it has genders, which article each takes, whether its nouns are
+  * capitalized — lives in [[LanguageProfile]] rather than in a `match` on this enum. Adding a language is a case here
+  * plus an entry there.
   */
 enum WordLanguage derives JsonCodec, CanEqual {
   case En,
     De,
+    Es,
     Hu
 }
 
 object WordLanguage {
 
-  val all: List[WordLanguage] = List(En, De, Hu)
+  val all: List[WordLanguage] = List(En, De, Es, Hu)
 
   /** Lower-case ISO 639-1 form: what `words.language` stores and what a query parameter carries. Written out rather
     * than derived from `toString`, so renaming a case cannot silently orphan every stored row — the rule
@@ -28,6 +33,8 @@ object WordLanguage {
         "en"
       case De =>
         "de"
+      case Es =>
+        "es"
       case Hu =>
         "hu"
     }
@@ -39,6 +46,8 @@ object WordLanguage {
         Some(En)
       case "de" =>
         Some(De)
+      case "es" =>
+        Some(Es)
       case "hu" =>
         Some(Hu)
       case _    =>
@@ -125,55 +134,75 @@ object TranslationFilter {
   }
 }
 
-/** The definite article a German noun takes, which is the half of the word a learner actually has to memorise.
+/** The grammatical gender of a noun — the half of the word a learner actually has to memorise.
   *
-  * Only German nouns carry one. It is part of a word's identity, so `der See` (the lake) and `die See` (the sea) are
-  * two entries rather than one ambiguous row.
+  * This names the gender, never the article: `der` is what German does with [[Masculine]] and `el` is what Spanish
+  * does, and both belong to [[LanguageProfile]]. Which of these cases a language actually uses is likewise the
+  * profile's answer, not this enum's — [[all]] is the union across every language and is the wrong list to render a
+  * picker from.
+  *
+  * Gender is part of a word's identity, so `der See` (the lake) and `die See` (the sea) are two entries rather than one
+  * ambiguous row.
   */
 enum Gender derives JsonCodec, CanEqual {
-  case Der,
-    Die,
-    Das
+  case Masculine,
+    Feminine,
+    Neuter
 }
 
 object Gender {
 
-  val all: List[Gender] = List(Der, Die, Das)
+  /** Every gender any supported language has. A per-language list is `LanguageProfile.of(language).genders`. */
+  val all: List[Gender] = List(Masculine, Feminine, Neuter)
 
-  /** The article itself, which is also what `words.gender` stores. The column is `NOT NULL` with `''` for "no gender",
-    * rather than nullable: a NULL counts as distinct in a UNIQUE index on both dialects, which would let the same word
-    * be inserted twice.
+  /** What `words.gender` stores. Written out rather than derived from `toString`, the same rule [[WordLanguage.code]]
+    * follows: renaming a case must not silently orphan every stored row.
+    *
+    * The column is `NOT NULL` with `''` for "no gender", rather than nullable: a NULL counts as distinct in a UNIQUE
+    * index on both dialects, which would let the same word be inserted twice.
     */
-  def article(gender: Gender): String = {
+  def code(gender: Gender): String = {
     gender match {
-      case Der =>
-        "der"
-      case Die =>
-        "die"
-      case Das =>
-        "das"
+      case Masculine =>
+        "masculine"
+      case Feminine  =>
+        "feminine"
+      case Neuter    =>
+        "neuter"
     }
   }
 
   def fromString(value: String): Option[Gender] = {
-    all.find(gender => article(gender) == value.toLowerCase)
+    all.find(gender => code(gender) == value.toLowerCase)
   }
 
-  /** How the column is read: `''` is no gender at all, anything unrecognised likewise. */
+  /** How the column is read: `''` is no gender at all, anything unrecognised likewise.
+    *
+    * The three German articles are accepted as well, since that is what the column held before genders were named and
+    * what a seed file exported before then still carries. Nothing writes them any more.
+    */
   def fromColumn(value: String): Option[Gender] = {
-    if (value.isEmpty)
-      None
-    else
-      fromString(value)
+    value.toLowerCase match {
+      case ""    =>
+        None
+      case "der" =>
+        Some(Masculine)
+      case "die" =>
+        Some(Feminine)
+      case "das" =>
+        Some(Neuter)
+      case other =>
+        fromString(other)
+    }
   }
 
   /** How the column is written. */
   def toColumn(gender: Option[Gender]): String = {
-    gender.map(article).getOrElse("")
+    gender.map(code).getOrElse("")
   }
 
   extension (gender: Gender) {
-    def word: String = article(gender)
+    def wireCode: String = code(gender)
   }
 }
 
@@ -193,17 +222,19 @@ final case class Word(
 
 object Word {
 
-  /** How a word is written on screen: a German noun with its article, anything else as it stands. Takes the raw text
-    * and the raw `gender` column value directly, for callers holding a DB row (e.g. `WordRow`) rather than a full
-    * [[Word]] — the game feature is the first of these, needing no other field to show or score a word.
+  /** How a word is written on screen: a gendered noun with the article its language gives that gender, anything else as
+    * it stands. Takes the raw `language`, `text` and `gender` column values directly, for callers holding a DB row
+    * (e.g. `WordRow`) rather than a full [[Word]] — the game feature is the first of these, needing no other field to
+    * show or score a word.
     */
-  def displayText(text: String, genderColumn: String): String = {
-    Gender.fromColumn(genderColumn).map(gender => Gender.article(gender) + " " + text).getOrElse(text)
+  def displayText(languageColumn: String, text: String, genderColumn: String): String = {
+    val language = WordLanguage.fromString(languageColumn).getOrElse(WordLanguage.En)
+    LanguageProfile.of(language).display(text, Gender.fromColumn(genderColumn))
   }
 
-  /** How a word is written on screen: a German noun with its article, anything else as it stands. */
+  /** How a word is written on screen: a gendered noun with its article, anything else as it stands. */
   def display(word: Word): String = {
-    displayText(word.text, Gender.toColumn(word.gender))
+    LanguageProfile.of(word.language).display(word.text, word.gender)
   }
 
   extension (word: Word) {

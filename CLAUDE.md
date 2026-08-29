@@ -260,9 +260,11 @@ The first feature: shared dictionary of English, German, Hungarian words, plus t
 
 Three load-bearing columns:
 
-- **`gender` is part of a word's identity** (`der See` and `die See` are two rows). `NOT NULL` with `''` for "not gendered".
+- **`gender` is part of a word's identity** (`der See` and `die See` are two rows). `NOT NULL` with `''` for "not gendered". The column stores the gender itself (`masculine`/`feminine`/`neuter`), not an article.
 - **`frequency_rank` is `NOT NULL` with a large sentinel.**
 - **Search is a prefix match on `text_norm`** (`LIKE 'hau%'`), lowercased on write.
+
+**`LanguageProfile` (`shared/domain/LanguageProfile.scala`) is the only place an article literal may appear.** It maps each `WordLanguage` to the genders it has, the article each takes, the article forms its parser recognises, and whether its nouns capitalize. Every display, strip, or picker goes through it — a fifth language is a profile entry, not a grep for `WordLanguage.De`.
 
 **Translation edges are stored in both directions.** `origin` is `dictionary`, `user`, or `pivot`.
 

@@ -47,6 +47,7 @@ object ImageOcr {
     language match {
       case WordLanguage.En => "eng"
       case WordLanguage.De => "deu"
+      case WordLanguage.Es => "spa"
       case WordLanguage.Hu => "hun"
     }
   }

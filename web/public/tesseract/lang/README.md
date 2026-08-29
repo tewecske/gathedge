@@ -1,6 +1,6 @@
 # Tesseract trained data
 
-`eng.traineddata.gz`, `deu.traineddata.gz`, `hun.traineddata.gz` — the OCR language models
+`eng.traineddata.gz`, `deu.traineddata.gz`, `spa.traineddata.gz`, `hun.traineddata.gz` — the OCR language models
 [`ImageOcr`](../../../../modules/frontend/src/main/scala/gathedge/frontend/ocr/ImageOcr.scala) loads for the
 bulk-upload image input, one per [`WordLanguage`](../../../../modules/shared/shared/src/main/scala/gathedge/shared/domain/Word.scala).
 
@@ -19,4 +19,4 @@ the same source `tesseract.js` itself falls back to when no `langPath` is config
 
 To refresh or add a language, re-download from
 `https://cdn.jsdelivr.net/npm/@tesseract.js-data/<lang>/4.0.0_best_int/<lang>.traineddata.gz`, where `<lang>` is the
-ISO 639-2/T code `WordLanguage`'s `code` mapping in `ImageOcr` uses (`eng`, `deu`, `hun`).
+ISO 639-2/T code `WordLanguage`'s `code` mapping in `ImageOcr` uses (`eng`, `deu`, `spa`, `hun`).

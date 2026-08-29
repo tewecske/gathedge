@@ -13,7 +13,7 @@ import zio.test._
 object WordCollectSpec extends ZIOSpecDefault {
 
   private val summary = WordSummary(
-    word = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Das)),
+    word = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter)),
     translations = List(TranslationOption(2L, "ház"), TranslationOption(3L, "otthon")),
     tagIds = List(10L, 11L),
     pairs = List(TaggedPair(10L, 2L), TaggedPair(11L, 3L)),

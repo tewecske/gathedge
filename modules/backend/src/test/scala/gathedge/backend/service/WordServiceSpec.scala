@@ -117,9 +117,11 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def seed: RIO[WordRepository, Unit] = {
     for {
-      haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das), rank = 1))
+      haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter), rank = 1))
       haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház", rank = 1))
-      hau  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haufen", gender = Some(Gender.Der), rank = 900))
+      hau  <- WordRepository.ensureWord(
+                dictionaryWord(WordLanguage.De, "Haufen", gender = Some(Gender.Masculine), rank = 900)
+              )
       _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "hauen", pos = PartOfSpeech.Verb, rank = 500))
       _    <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
       _     = hau
@@ -131,7 +133,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     */
   private def seedTranslations: RIO[WordRepository, List[Long]] = {
     for {
-      haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das), rank = 1))
+      haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter), rank = 1))
       ids  <- ZIO.foreach(List("otthon" -> 2, "lakás" -> 3, "hajlék" -> 4)) { case (text, rank) =>
                 for {
                   word <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, text, rank = rank))
@@ -229,11 +231,11 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("the translation filter narrows to words with a translation, in the target language or in any") {
         for {
-          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           hauen  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "hauen", pos = PartOfSpeech.Verb))
           hit    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
-          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haufen", gender = Some(Gender.Der)))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haufen", gender = Some(Gender.Masculine)))
           _      <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
           // Into English, not the Hungarian target: satisfies "any language" but not "the target language".
           _      <- WordRepository.insertTranslationPair(hauen.id, hit.id, WordService.dictionaryOrigin, None, 0L)
@@ -248,13 +250,13 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("a German noun keeps its article, and two words differing only by it are two words") {
         for {
-          lake <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Der)))
-          sea  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Die)))
+          lake <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Masculine)))
+          sea  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Feminine)))
           page <- list(search = Some("see"))
         } yield assertTrue(
           lake.id != sea.id,
           page.total == 2L,
-          page.items.flatMap(_.word.gender).toSet == Set(Gender.Der, Gender.Die),
+          page.items.flatMap(_.word.gender).toSet == Set(Gender.Masculine, Gender.Feminine),
         )
       },
       test("adding a word that already exists answers the existing one, with everybody's translations on it") {
@@ -266,7 +268,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                         WordLanguage.De,
                         "Haus",
                         PartOfSpeech.Noun,
-                        Some(Gender.Das),
+                        Some(Gender.Neuter),
                         List(NewTranslation(WordLanguage.Hu, "otthon", None, None)),
                         Nil,
                       ),
@@ -655,7 +657,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                         WordLanguage.De,
                         "Brot",
                         PartOfSpeech.Noun,
-                        Some(Gender.Das),
+                        Some(Gender.Neuter),
                         List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
                         List(tag.id),
                       ),
@@ -681,7 +683,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                           WordLanguage.De,
                           "Häuser",
                           PartOfSpeech.Noun,
-                          Some(Gender.Das),
+                          Some(Gender.Neuter),
                           Nil,
                           Nil,
                           mainWordId = Some(haus.id),
@@ -694,7 +696,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                           WordLanguage.De,
                           "Häuser",
                           PartOfSpeech.Noun,
-                          Some(Gender.Das),
+                          Some(Gender.Neuter),
                           Nil,
                           Nil,
                           mainWordId = Some(haus.id),
@@ -799,7 +801,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                           WordLanguage.De,
                           "Häuser",
                           PartOfSpeech.Noun,
-                          Some(Gender.Das),
+                          Some(Gender.Neuter),
                           Nil,
                           Nil,
                           mainWordId = Some(haus.id),
@@ -926,7 +928,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                               WordLanguage.De,
                               "Haus",
                               PartOfSpeech.Noun,
-                              Some(Gender.Das),
+                              Some(Gender.Neuter),
                               List(
                                 NewTranslation(WordLanguage.Hu, "otthon", None, None),
                                 NewTranslation(WordLanguage.Hu, "lakás", None, None),
@@ -956,7 +958,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                             WordLanguage.De,
                             "Haus",
                             PartOfSpeech.Noun,
-                            Some(Gender.Das),
+                            Some(Gender.Neuter),
                             List(NewTranslation(WordLanguage.Hu, "otthon", None, None)),
                             List(tag.id),
                           ),
@@ -987,7 +989,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                         WordLanguage.De,
                         "Haus",
                         PartOfSpeech.Noun,
-                        Some(Gender.Das),
+                        Some(Gender.Neuter),
                         List(NewTranslation(WordLanguage.Hu, "ház", None, None)),
                         List(tag1.id, tag2.id),
                       ),
@@ -1008,7 +1010,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     suite("bulk upload")(
       test("a matched word carries whether it has a translation in any language, not only the counterpart") {
         for {
-          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           hit     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
           // Into English, not the requested (Hungarian) counterpart.
           _       <- WordRepository.insertTranslationPair(haus.id, hit.id, WordService.dictionaryOrigin, None, 0L)
@@ -1052,7 +1054,9 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", rank = 1))
           gendered <-
-            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", gender = Some(Gender.Die), rank = 2))
+            WordRepository.ensureWord(
+              dictionaryWord(WordLanguage.De, "Bitte", gender = Some(Gender.Feminine), rank = 2)
+            )
           _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Other, rank = 3))
           adverb   <-
             WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Adverb, rank = 4))
@@ -1234,7 +1238,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           // German nouns are always capitalized; the target side (no article, not a noun) is left as typed.
           dePage.items.map(_.word.text) == List("Zzztisch"),
-          dePage.items.head.word.gender.contains(Gender.Der),
+          dePage.items.head.word.gender.contains(Gender.Masculine),
         )
       },
       test("a standalone German word with an article is created capitalized") {
@@ -1247,7 +1251,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           added == 1,
           page.items.map(_.word.text) == List("Zzzblume"),
-          page.items.head.word.gender.contains(Gender.Die),
+          page.items.head.word.gender.contains(Gender.Feminine),
         )
       },
       test("a standalone word is created and tagged with no translation link") {
@@ -1464,7 +1468,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("creates a tag and records both-direction pairs for existing words") {
         for {
           _     <- seed
-          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Das)))
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
           tag   <- createTagWithPairs(
                      "lesson1",
@@ -1508,7 +1512,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                      "lesson1",
                      List(
                        TagPairInput(
-                         TagPairWord.New(WordLanguage.De, "Hund", PartOfSpeech.Noun, Some(Gender.Der)),
+                         TagPairWord.New(WordLanguage.De, "Hund", PartOfSpeech.Noun, Some(Gender.Masculine)),
                          TagPairWord.New(WordLanguage.Hu, "kutya", PartOfSpeech.Noun, None),
                        )
                      ),
@@ -1518,7 +1522,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                      WordLanguage.code(WordLanguage.De),
                      "hund",
                      PartOfSpeech.code(PartOfSpeech.Noun),
-                     Gender.toColumn(Some(Gender.Der)),
+                     Gender.toColumn(Some(Gender.Masculine)),
                    )
         } yield assertTrue(
           tag.name == "lesson1",
@@ -1533,7 +1537,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                         "lesson1",
                         List(
                           TagPairInput(
-                            TagPairWord.New(WordLanguage.De, "Katze", PartOfSpeech.Noun, Some(Gender.Die)),
+                            TagPairWord.New(WordLanguage.De, "Katze", PartOfSpeech.Noun, Some(Gender.Feminine)),
                             TagPairWord.New(WordLanguage.Hu, "macska", PartOfSpeech.Noun, None),
                           ),
                           TagPairInput(TagPairWord.Existing(9999L), TagPairWord.Existing(9999L)),
@@ -1545,7 +1549,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                       WordLanguage.code(WordLanguage.De),
                       "katze",
                       PartOfSpeech.code(PartOfSpeech.Noun),
-                      Gender.toColumn(Some(Gender.Die)),
+                      Gender.toColumn(Some(Gender.Feminine)),
                     )
           macska <- WordRepository.findWord(
                       WordLanguage.code(WordLanguage.Hu),

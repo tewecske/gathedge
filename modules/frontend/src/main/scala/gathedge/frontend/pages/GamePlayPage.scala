@@ -4,10 +4,10 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, GameAnswersTable, GameHeader, GuestBanner}
+import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, GuestBanner}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{GameMode, Gender, WordLanguage}
+import gathedge.shared.domain.{GameMode, LanguageProfile}
 import gathedge.shared.dto.{GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -232,7 +232,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       label(
         cls := "form-control grow",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-        if (showGenderPicker(playState.variant)) renderGenderPicker(answerInput) else emptyNode,
+        if (showGenderPicker(playState.variant)) renderGenderPicker(playState.variant, answerInput) else emptyNode,
         answerInput,
       ),
       button(
@@ -248,44 +248,20 @@ private class GamePlayPage(slug: String, playId: Long) {
     * direction lookup is needed here the way `GameInstancePage.startBus`'s handler needs one at `startPlay` time.
     */
   private def showGenderPicker(variant: GameVariantDto): Boolean = {
-    variant.mode == GameMode.Typing && variant.includeDefiniteArticles && variant.targetLanguage == WordLanguage.De
+    variant.mode == GameMode.Typing && variant.includeDefiniteArticles && LanguageProfile
+      .of(variant.targetLanguage)
+      .hasGenders
   }
 
-  /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `BulkUploadDialog`'s
-    * `renderLanguageRadio` pattern — one click sets the article prefix instead of typing it. Picking one replaces any
-    * article already at the front of [[answerTextVar]] and refocuses `answerInput` so the player can keep typing the
-    * word straight after it.
-    */
-  private def renderGenderPicker(answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
+  private def renderGenderPicker(
+    variant: GameVariantDto,
+    answerInput: ReactiveHtmlElement[dom.html.Input],
+  ): HtmlElement = {
+    val language = variant.targetLanguage
     div(
-      cls := "join mb-1",
-      Gender.all.map(gender => renderGenderRadio(gender, answerInput)),
+      cls := "mb-1",
+      ArticlePicker.render("answer-gender", LanguageProfile.of(language), answerTextVar, () => answerInput.ref.focus()),
     )
-  }
-
-  private def renderGenderRadio(gender: Gender, answerInput: ReactiveHtmlElement[dom.html.Input]): HtmlElement = {
-    val article        = Gender.article(gender)
-    input(
-      typ        := "radio",
-      cls        := "join-item btn btn-xs",
-      nameAttr   := "answer-gender",
-      aria.label := article,
-      controlled(
-        checked <-- answerTextVar.signal.map(_.toLowerCase.startsWith(article + " ")),
-        onClick.mapToUnit --> Observer[Unit] { _ =>
-          answerTextVar.set(s"$article ${stripArticle(answerTextVar.now())}")
-          answerInput.ref.focus()
-        },
-      ),
-    )
-  }
-
-  /** Drops a leading `der `/`die `/`das ` from a typed or picked answer, so picking a different article replaces the
-    * old one instead of stacking in front of it.
-    */
-  private def stripArticle(text: String): String = {
-    val lower = text.toLowerCase
-    Gender.all.map(Gender.article).find(a => lower.startsWith(a + " ")).fold(text)(a => text.drop(a.length + 1))
   }
 
   private def renderFinished(): HtmlElement = {

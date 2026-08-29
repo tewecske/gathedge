@@ -563,7 +563,7 @@ object GameServiceSpec extends ZIOSpecDefault {
         for {
           owner   <- newUser()
           tag     <- WordRepository.insertTag(owner, "genderedSource", "genderedSource", 0L)
-          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Der)))
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
           target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
           _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
@@ -611,7 +611,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner       <- newUser()
           tag         <- WordRepository.insertTag(owner, "genderedTarget", "genderedTarget", 0L)
           source      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
-          target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Der)))
+          target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
           _           <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
           // Hungarian -> German: the *expected* answer is now the gendered German word.
           created     <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
@@ -638,7 +638,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner          <- newUser()
           tag            <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L)
           source         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "szekreny"))
-          target         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Der)))
+          target         <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Masculine)))
           _              <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
           created        <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
           default        <- GameService.startPlay(created.slug, owner)
@@ -1034,8 +1035,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner   <- newUser()
           tag     <- WordRepository.insertTag(owner, "hunde", "hunde", 0L)
           source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kutya"))
-          lemma   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Der)))
-          plural  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hunde", gender = Some(Gender.Die)))
+          lemma   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          plural  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hunde", gender = Some(Gender.Feminine)))
           _       <- WordRepository.pairTranslation(source.id, tag.id, lemma.id, 0L)
           _       <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, plural.id, "plural", 0L)))
           created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))

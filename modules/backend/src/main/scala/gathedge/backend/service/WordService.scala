@@ -13,7 +13,17 @@ import gathedge.backend.db.{
   WordTranslationRow,
 }
 import gathedge.backend.security.SecurityLog
-import gathedge.shared.domain.{Gender, GrammarTag, GroupRef, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
+import gathedge.shared.domain.{
+  Gender,
+  GrammarTag,
+  GroupRef,
+  LanguageProfile,
+  PartOfSpeech,
+  Tag,
+  TranslationFilter,
+  Word,
+  WordLanguage,
+}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
@@ -375,9 +385,10 @@ object WordService {
   val userSource       = "user"
   val dictionarySource = "dictionary"
 
-  /** Origins a translation edge can have. `pivot` is a German–Hungarian pair inferred through a shared English sense
-    * rather than asserted anywhere; `form` is a form-to-form pair inferred through its lemmas' own translation (a
-    * plural paired with a plural because the singulars translate each other) — both marked so a screen can say so.
+  /** Origins a translation edge can have. `pivot` is a non-English pair (German–Hungarian, German–Spanish, …) inferred
+    * through a shared English sense rather than asserted anywhere; `form` is a form-to-form pair inferred through its
+    * lemmas' own translation (a plural paired with a plural because the singulars translate each other) — both marked
+    * so a screen can say so.
     */
   val dictionaryOrigin = "dictionary"
   val pivotOrigin      = "pivot"
@@ -716,8 +727,8 @@ final case class WordServiceLive(
 
   /** Turns a typed word into the row it identifies, creating it if the dictionary has never heard of it.
     *
-    * Gender is only kept for German nouns: an English noun with an article attached would be a second, unfindable copy
-    * of the same word.
+    * Gender is only kept for a noun in a language that has gender at all: an English noun with an article attached
+    * would be a second, unfindable copy of the same word.
     */
   private def ensure(
     language: WordLanguage,
@@ -728,7 +739,7 @@ final case class WordServiceLive(
   ): IO[WordFailure, WordRow] = {
     val trimmed    = text.trim
     val keptGender = {
-      if (language == WordLanguage.De && partOfSpeech == PartOfSpeech.Noun)
+      if (LanguageProfile.of(language).hasGenders && partOfSpeech == PartOfSpeech.Noun)
         gender
       else
         None
@@ -1223,53 +1234,77 @@ final case class WordServiceLive(
     */
   private val bulkUploadTokenPattern = """\p{L}[\p{L}'’-]*""".r
 
-  /** Same as [[bulkUploadTokenPattern]], but a leading `der`/`die`/`das` immediately before a word is consumed together
-    * with it as one token — the merged alternative comes first so `findAllIn` prefers it over matching the article
-    * alone. Used only when German is one of the upload's two declared languages (see [[bulkUploadPreview]]), since
-    * "die" and "das" are ordinary English/other-language words otherwise.
+  /** Every article form either of an upload's two declared languages recognises, for [[tokenize]]'s regex and
+    * [[dedupeArticledVariants]]'s redisplay — built from [[LanguageProfile]] rather than naming an article here, so a
+    * third gendered language merges into an upload's token scan with no change to this file.
     */
-  private val bulkUploadGermanTokenPattern =
-    """(?i)\b(?:der|die|das)\b\s+\p{L}[\p{L}'’-]*|\p{L}[\p{L}'’-]*""".r
+  private def articleForms(languages: List[WordLanguage]): Set[String] = {
+    languages.flatMap(language => LanguageProfile.of(language).articleForms.keys).toSet
+  }
 
-  private def tokenize(content: String, mergeGermanArticles: Boolean): List[String] = {
-    val pattern = if (mergeGermanArticles) bulkUploadGermanTokenPattern else bulkUploadTokenPattern
+  /** Same as [[bulkUploadTokenPattern]], but a leading article immediately before a word is consumed together with it
+    * as one token — the merged alternative comes first so `findAllIn` prefers it over matching the article alone. Built
+    * only from `forms` actually in play for this upload (see [[bulkUploadPreview]]), since "die" and "el" are ordinary
+    * English/other-language words otherwise.
+    */
+  private def bulkUploadArticledTokenPattern(forms: Set[String]) = {
+    val alternation = forms.toList.sortBy(-_.length).mkString("|")
+    ("""(?i)\b(?:""" + alternation + """)\b\s+\p{L}[\p{L}'’-]*|\p{L}[\p{L}'’-]*""").r
+  }
+
+  private def tokenize(content: String, languages: List[WordLanguage]): List[String] = {
+    val forms   = articleForms(languages)
+    val pattern = if (forms.isEmpty) bulkUploadTokenPattern else bulkUploadArticledTokenPattern(forms)
     pattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
   }
 
-  /** Splits a token's leading `der`/`die`/`das` off, answering the bare word and the gender it names — what
-    * [[matchTokens]] looks the word up by, and what [[confirmManualPair]]/[[confirmStandaloneWord]] create it with. A
-    * token with no such prefix (or a lone article with nothing after it) passes through unchanged.
+  /** Splits a token's leading article off in `language`'s own terms, answering the bare word and the gender it names —
+    * what [[matchTokens]] looks the word up by, and what [[confirmManualPair]]/[[confirmStandaloneWord]] create it
+    * with. A token with no such prefix (or a lone article with nothing after it) passes through unchanged. A thin
+    * wrapper over [[LanguageProfile.strip]], kept as its own name since every call site already reads as "strip the
+    * article".
     */
-  private def stripArticle(token: String): (String, Option[Gender]) = {
-    token.trim.split("\\s+", 2) match {
-      case Array(article, rest) if Gender.fromString(article).isDefined => (rest, Gender.fromString(article))
-      case _                                                            => (token, None)
+  private def stripArticle(token: String, language: WordLanguage): (String, Option[Gender]) = {
+    LanguageProfile.of(language).strip(token)
+  }
+
+  /** Collapses tokens that share a bare word into one, so a reader who typed both `"Hund"` and `"der Hund"` in the same
+    * upload sees one leftover entry, not two. Which of `languages` the article belongs to is not yet known at this
+    * point — an upload's leftovers are unmatched against *both* declared languages' dictionaries — so the article
+    * actually typed is kept verbatim for display rather than reconstructed from a gender, and capitalization follows
+    * whichever language claims that article. Order-preserving by each group's first occurrence, since [[tokenize]]'s
+    * own dedup is.
+    */
+  private def dedupeArticledVariants(tokens: List[String], languages: List[WordLanguage]): List[String] = {
+    val forms = articleForms(languages)
+
+    def split(token: String): (String, Option[String]) = {
+      if (forms.isEmpty)
+        (token, None)
+      else {
+        token.trim.split("\\s+", 2) match {
+          case Array(article, rest) if forms.contains(article.toLowerCase) => (rest, Some(article.toLowerCase))
+          case _                                                           => (token, None)
+        }
+      }
     }
-  }
 
-  /** German nouns are always capitalized; every other word from an upload stays as typed/lowercased. Applied only at
-    * word creation ([[confirmManualPair]]/[[confirmStandaloneWord]]), never at [[matchTokens]]'s lookup key, since
-    * `textNorm` is the lowercase form regardless of a word's display casing.
-    */
-  private def capitalizeGermanNoun(text: String, gender: Option[Gender]): String = {
-    if (gender.isDefined) text.capitalize else text
-  }
+    def capitalizes(article: String): Boolean = {
+      languages.exists(language => {
+        val profile = LanguageProfile.of(language)
+        profile.capitalizesNouns && profile.articleForms.contains(article)
+      })
+    }
 
-  /** Collapses tokens that share a bare word (see [[stripArticle]]) into one, so a reader who typed both `"Hund"` and
-    * `"der Hund"` in the same upload sees one leftover entry, not two. If any variant carried an article, that marks
-    * the word a noun: the merged entry is shown articled and capitalized, the same convention [[capitalizeGermanNoun]]
-    * applies at word creation. Order-preserving by each group's first occurrence, since [[tokenize]]'s own dedup is.
-    */
-  private def dedupeGermanVariants(tokens: List[String]): List[String] = {
     tokens
-      .map(token => token -> stripArticle(token))
+      .map(token => token -> split(token))
       .groupBy { case (_, (bare, _)) => bare }
       .toList
       .sortBy { case (_, group) => tokens.indexOf(group.head._1) }
       .map { case (bare, group) =>
-        group.collectFirst { case (_, (_, Some(gender))) => gender } match {
-          case Some(gender) => Gender.article(gender) + " " + bare.capitalize
-          case None         => bare
+        group.collectFirst { case (_, (_, Some(article))) => article } match {
+          case Some(article) => article + " " + (if (capitalizes(article)) bare.capitalize else bare)
+          case None          => bare
         }
       }
   }
@@ -1322,7 +1357,7 @@ final case class WordServiceLive(
     * in the unmatched remainder, so a reader still sees `"der tisch"` rather than a bare `"tisch"`.
     */
   private def matchTokens(language: WordLanguage, tokens: List[String]): UIO[(List[WordRow], List[String])] = {
-    val keyed = tokens.map(token => token -> stripArticle(token)._1)
+    val keyed = tokens.map(token => token -> stripArticle(token, language)._1)
     repo.findWordsByKeys(WordLanguage.code(language), keyed.map(_._2)).orDie.map { existing =>
       val matchedNorms = existing.map(_.textNorm).toSet
       (existing, keyed.collect { case (display, bare) if !matchedNorms.contains(bare) => display })
@@ -1339,7 +1374,7 @@ final case class WordServiceLive(
     */
   private def suggestionsFor(language: WordLanguage, tokens: List[String]): UIO[Map[String, List[(WordRow, Int)]]] = {
     val keyed = tokens
-      .map(token => token -> stripArticle(token)._1)
+      .map(token => token -> stripArticle(token, language)._1)
       .filter { case (_, bare) => bare.length >= WordService.minSuggestionTokenLength }
       .take(WordService.maxSuggestionTokens)
     if (keyed.isEmpty) {
@@ -1394,14 +1429,13 @@ final case class WordServiceLive(
       _                             <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
                                          ZIO.fail(invalidFile)
                                        )
-      mergeGermanArticles            = sourceLanguage == WordLanguage.De || targetLanguage == WordLanguage.De
-      tokens                         = tokenize(trimmed, mergeGermanArticles)
+      tokens                         = tokenize(trimmed, List(sourceLanguage, targetLanguage))
       sourceMatched                 <- matchTokens(sourceLanguage, tokens)
       (sourceMatches, remaining1)    = sourceMatched
       targetMatched                 <- matchTokens(targetLanguage, remaining1)
       (targetMatches, remaining2Raw) = targetMatched
       matchedIds                     = (sourceMatches.map(_.id) ++ targetMatches.map(_.id)).toSet
-      remaining2                     = dedupeGermanVariants(remaining2Raw)
+      remaining2                     = dedupeArticledVariants(remaining2Raw, List(sourceLanguage, targetLanguage))
       sourceSuggested0              <- suggestionsFor(sourceLanguage, remaining2)
       sourceSuggested                = sourceSuggested0.view
                                          .mapValues(_.filterNot { case (row, _) => matchedIds.contains(row.id) })
@@ -1482,10 +1516,10 @@ final case class WordServiceLive(
 
   /** Creates both sides of a manually paired word if the dictionary does not have them yet, links them as a translation
     * (unless the caller already has, e.g. confirming the same upload twice), and tags and marks both — by reusing
-    * [[ensure]]/[[linkOrExisting]]/[[pairInTag]] exactly as [[create]] does for a single typed word. Whichever side is
-    * German has its leading article stripped (see [[stripArticle]]) and created as a noun carrying that gender; the
-    * other side is created exactly as typed. Leniently answers no ids for a pair either side of which fails validation,
-    * the same way a bad token in the old single-shot upload was dropped rather than failing the batch.
+    * [[ensure]]/[[linkOrExisting]]/[[pairInTag]] exactly as [[create]] does for a single typed word. Whichever side's
+    * language has genders has its leading article stripped (see [[stripArticle]]) and created as a noun carrying that
+    * gender; the other side is created exactly as typed. Leniently answers no ids for a pair either side of which fails
+    * validation, the same way a bad token in the old single-shot upload was dropped rather than failing the batch.
     */
   private def confirmManualPair(
     pair: BulkUploadManualPair,
@@ -1494,12 +1528,10 @@ final case class WordServiceLive(
     targetLanguage: WordLanguage,
     userId: Long,
   ): UIO[List[Long]] = {
-    val (sourceStripped, sourceGender) =
-      if (sourceLanguage == WordLanguage.De) stripArticle(pair.sourceText) else (pair.sourceText, None)
-    val (targetStripped, targetGender) =
-      if (targetLanguage == WordLanguage.De) stripArticle(pair.targetText) else (pair.targetText, None)
-    val sourceText                     = capitalizeGermanNoun(sourceStripped, sourceGender)
-    val targetText                     = capitalizeGermanNoun(targetStripped, targetGender)
+    val (sourceStripped, sourceGender) = stripArticle(pair.sourceText, sourceLanguage)
+    val (targetStripped, targetGender) = stripArticle(pair.targetText, targetLanguage)
+    val sourceText                     = LanguageProfile.of(sourceLanguage).capitalize(sourceStripped, sourceGender)
+    val targetText                     = LanguageProfile.of(targetLanguage).capitalize(targetStripped, targetGender)
     val sourcePos                      = if (sourceGender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
     val targetPos                      = if (targetGender.isDefined) Some(PartOfSpeech.Noun) else None
     (for {
@@ -1511,12 +1543,12 @@ final case class WordServiceLive(
   }
 
   /** Creates an unmatched token the reader assigned a language to but never paired with a translation, and tags it — no
-    * translation link, unlike [[confirmManualPair]]. German gets the same article-stripping/noun-gender treatment.
-    * Leniently answers no ids on validation failure, the same as [[confirmManualPair]].
+    * translation link, unlike [[confirmManualPair]]. A language with genders gets the same article-stripping/noun-
+    * gender treatment. Leniently answers no ids on validation failure, the same as [[confirmManualPair]].
     */
   private def confirmStandaloneWord(word: BulkUploadManualWord, tagId: Long, userId: Long): UIO[List[Long]] = {
-    val (stripped, gender) = if (word.language == WordLanguage.De) stripArticle(word.text) else (word.text, None)
-    val text               = capitalizeGermanNoun(stripped, gender)
+    val (stripped, gender) = stripArticle(word.text, word.language)
+    val text               = LanguageProfile.of(word.language).capitalize(stripped, gender)
     val pos                = if (gender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
     (for {
       row <- ensure(word.language, text, pos, gender, userId)

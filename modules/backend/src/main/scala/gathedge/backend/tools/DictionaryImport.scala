@@ -25,8 +25,8 @@ import javax.sql.DataSource
 
 import WiktextractParser.{ParsedForm, ParsedPair, ParsedWord}
 
-/** Loads the shared dictionary: English, German and Hungarian words with their parts of speech, German gender, and the
-  * translations between them.
+/** Loads the shared dictionary: English, German, Spanish and Hungarian words with their parts of speech, gender where
+  * the language has one, and the translations between them.
   *
   * Run it, rather than a migration: a migration is schema, and this is a few hundred thousand rows of somebody else's
   * data that a deployment may want more or less of. It is idempotent, so a second run against a populated database
@@ -106,7 +106,7 @@ object DictionaryImport extends ZIOAppDefault {
         case "--languages" :: value :: tail                     =>
           val parsed = value.split(',').toList.flatMap(code => WordLanguage.fromString(code.trim))
           if (parsed.isEmpty)
-            Left(s"--languages needs codes out of en,de,hu; got '$value'")
+            Left(s"--languages needs codes out of en,de,es,hu; got '$value'")
           else
             loop(tail, options.copy(languages = parsed.toSet))
         case "--include-alt-of" :: tail                         =>
@@ -236,7 +236,8 @@ object DictionaryImport extends ZIOAppDefault {
   private val pivotablePos: Set[PartOfSpeech] =
     Set(PartOfSpeech.Noun, PartOfSpeech.Verb, PartOfSpeech.Adjective, PartOfSpeech.Adverb)
 
-  /** German ↔ Hungarian, which no free source states directly.
+  /** Every non-English study language, pairwise, on senses no free source states directly (German ↔ Hungarian, German ↔
+    * Spanish, Spanish ↔ Hungarian, and so on for any language this app later adds).
     *
     * Both sides come out of the *English* entry that names them, so two translations of the same English sense are
     * translations of each other. It is an inference rather than an assertion, which is why the rows are marked `pivot`:
@@ -251,12 +252,15 @@ object DictionaryImport extends ZIOAppDefault {
       .groupBy(pair => (pair.source.key, pair.sense.map(_.trim.toLowerCase)))
 
     bySense.values.toList.flatMap { group =>
-      val german    = group.map(_.target).filter(_.language == WordLanguage.De).distinct
-      val hungarian = group.map(_.target).filter(_.language == WordLanguage.Hu).distinct
+      val byLanguage = group.map(_.target).distinct.filterNot(_.language == WordLanguage.En).groupBy(_.language)
+      // Sorted by wire code for determinism -- `storePairs` writes both directions regardless, so this only fixes
+      // which direction a test (or a diff of `--export`'s output) sees.
+      val languages  = byLanguage.keys.toList.sortBy(WordLanguage.code)
       for {
-        de <- german
-        hu <- hungarian
-      } yield ParsedPair(de, hu, group.headOption.flatMap(_.sense))
+        (langA, langB) <- languages.zipWithIndex.flatMap { case (langA, i) => languages.drop(i + 1).map(langA -> _) }
+        a              <- byLanguage(langA)
+        b              <- byLanguage(langB)
+      } yield ParsedPair(a, b, group.headOption.flatMap(_.sense))
     }
   }
 

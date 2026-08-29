@@ -144,7 +144,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                               "Hund",
                               "hund",
                               PartOfSpeech.code(PartOfSpeech.Noun),
-                              Gender.toColumn(Some(Gender.Der)),
+                              Gender.toColumn(Some(Gender.Masculine)),
                               1,
                               "dictionary",
                               None,
@@ -583,7 +583,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                              WordLanguage.De,
                              "Haus",
                              PartOfSpeech.Noun,
-                             Some(Gender.Das),
+                             Some(Gender.Neuter),
                              List(NewTranslation(WordLanguage.Hu, "ház", None, None)),
                              Nil,
                            ).toJson
@@ -599,7 +599,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             // zio-schema wrote the enums; zio-json is reading them. That the two agree is the point of this spec.
             raw.contains("\"De\""),
             raw.contains("\"Noun\""),
-            raw.contains("\"Das\""),
+            raw.contains("\"Neuter\""),
             raw.fromJson[WordDetail].map(_.word.text) == Right("Haus"),
             raw.fromJson[WordDetail].map(_.translations.map(_.word.text)) == Right(List("ház")),
             listed.status == Status.Ok,
@@ -658,7 +658,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                                WordLanguage.De,
                                "Brot",
                                PartOfSpeech.Noun,
-                               Some(Gender.Das),
+                               Some(Gender.Neuter),
                                List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
                                Nil,
                              ).toJson

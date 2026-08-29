@@ -857,6 +857,7 @@ object UiKeys {
 
   val languageEn: String = key(languagePrefix + "en")
   val languageDe: String = key(languagePrefix + "de")
+  val languageEs: String = key(languagePrefix + "es")
   val languageHu: String = key(languagePrefix + "hu")
 
   /** The parts of speech, spelled out rather than assembled from the wire code the way the two prefixes above are —

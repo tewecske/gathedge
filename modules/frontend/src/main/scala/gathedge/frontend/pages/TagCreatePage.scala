@@ -4,10 +4,10 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels, WordCollect}
+import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
-import gathedge.shared.domain.{Gender, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{CreateTagWithPairsRequest, TagPairInput, TagPairWord, TranslationEntry, WordPage}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -27,8 +27,9 @@ import org.scalajs.dom
   * part-of-speech select beside the input, since nothing else can say what it is; a new target word inherits the
   * pair's, and the pairs table below corrects either afterwards.
   *
-  * For a German input a der/die/das picker sits in front of it and the picked article becomes part of the typed text,
-  * exactly like the game's answer input. An article means a gender, and a gender means a noun.
+  * For a gendered-language input an article picker sits in front of it (der/die/das for German, el/la for Spanish) and
+  * the picked article becomes part of the typed text, exactly like the game's answer input. An article means a gender,
+  * and a gender means a noun.
   */
 object TagCreatePage {
   def render(): HtmlElement = AppShell.render(Page.TagCreate, new TagCreatePage().render())
@@ -98,17 +99,20 @@ class TagCreatePage {
 
   private val targetListboxId = TagCreatePage.nextListboxId()
 
-  /** The der/die/das picker in front of the source input, offered only while no source word is committed. Once one is,
-    * the input holds that word's own display text and an article clicked here would change what is shown without
-    * changing what will be written.
+  /** The gendered-language article picker in front of the source input, offered only while no source word is committed
+    * and the source language actually has genders. Once a word is committed, the input holds that word's own display
+    * text and an article clicked here would change what is shown without changing what will be written.
+    * `Some(language)` rather than a bare `Boolean` so the render site knows which language's articles to offer.
     */
-  private val showSourceGenderSignal: Signal[Boolean] = sourceLangVar.signal
+  private val showSourceGenderSignal: Signal[Option[WordLanguage]] = sourceLangVar.signal
     .combineWith(pendingSourceVar.signal)
-    .map { case (language, pending) => language == WordLanguage.De && pending.isEmpty }
+    .map { case (language, pending) =>
+      Option.when(LanguageProfile.of(language).hasGenders && pending.isEmpty)(language)
+    }
     .distinct
 
-  private val showTargetGenderSignal: Signal[Boolean] = targetLangVar.signal
-    .map(_ == WordLanguage.De)
+  private val showTargetGenderSignal: Signal[Option[WordLanguage]] = targetLangVar.signal
+    .map(language => Option.when(LanguageProfile.of(language).hasGenders)(language))
     .distinct
 
   /** Present exactly when the committed source is a word the dictionary does not have — the one case where nothing but
@@ -251,7 +255,9 @@ class TagCreatePage {
           div(
             cls    := "flex items-center gap-1",
             child.maybe <-- showSourceGenderSignal.map(
-              Option.when(_)(renderGenderPicker("source-gender", srcQueryVar, () => focusSource()))
+              _.map(language =>
+                ArticlePicker.render("source-gender", LanguageProfile.of(language), srcQueryVar, () => focusSource())
+              )
             ),
             div(cls := "relative flex-1", srcInput, child.maybe <-- srcDropdown),
           ),
@@ -263,7 +269,9 @@ class TagCreatePage {
           div(
             cls    := "flex items-center gap-1",
             child.maybe <-- showTargetGenderSignal.map(
-              Option.when(_)(renderGenderPicker("target-gender", tgtQueryVar, () => focusTarget()))
+              _.map(language =>
+                ArticlePicker.render("target-gender", LanguageProfile.of(language), tgtQueryVar, () => focusTarget())
+              )
             ),
             div(cls := "flex-1", tgtInput),
           ),
@@ -626,31 +634,21 @@ class TagCreatePage {
     Var.set(tgtQueryVar -> "", tgtKnownVar -> Nil, tgtLiveVar -> Nil, tgtHighlightVar -> -1)
   }
 
-  /** A leading `der `/`die `/`das ` from a German input, dropped for searching and for the stored word text — the
-    * dictionary stores the noun alone and keeps the article as the gender column, exactly like `GamePlayPage`'s.
-    */
-  private def stripArticle(text: String): String = {
-    val lower = text.toLowerCase
-    Gender.all.map(Gender.article).find(a => lower.startsWith(a + " ")).fold(text)(a => text.drop(a.length + 1))
-  }
-
-  /** The text to search and store for a German input: the article is not part of the word. */
+  /** The text to search and store for a gendered-language input: the article is not part of the word. */
   private def searchQuery(language: WordLanguage, raw: String): String = {
-    val stripped = if (language == WordLanguage.De) stripArticle(raw) else raw
-    stripped.trim
+    LanguageProfile.of(language).strip(raw)._1.trim
   }
 
-  /** A German noun's gender, read out of the article the reader picked into the input. No part-of-speech test in front
-    * of it any more: an article in the box '''is''' a gender, and a gender is what makes the word a noun.
+  /** A gendered noun's gender, read out of the article the reader picked into the input. No part-of-speech test in
+    * front of it any more: an article in the box is a gender, and a gender is what makes the word a noun.
     */
   private def genderOf(raw: String, language: WordLanguage): Option[Gender] = {
-    if (language != WordLanguage.De) None
-    else Gender.fromString(raw.trim.toLowerCase.split("\\s+").headOption.getOrElse(""))
+    LanguageProfile.of(language).strip(raw)._2
   }
 
   private def displayNew(text: String, language: WordLanguage, gender: Option[Gender]): String = {
-    if (language == WordLanguage.De) gender.map(g => Gender.article(g) + " " + text.capitalize).getOrElse(text)
-    else text
+    val profile = LanguageProfile.of(language)
+    profile.display(profile.capitalize(text, gender), gender)
   }
 
   // `focusTarget` / `focusSource` move the caret between the two inputs. The timeout lets Laminar flush the
@@ -756,32 +754,6 @@ class TagCreatePage {
           onChange.mapToValue --> Observer[String](changePendingPos),
         ),
       ),
-    )
-  }
-
-  /** A daisyUI `join` of btn-styled radio inputs for the German article, mirroring `GamePlayPage`'s `answer-gender`
-    * picker: one click sets the article prefix instead of typing it. Picking one replaces any article already at the
-    * front of the input and refocuses it so the reader can keep typing the word straight after it.
-    */
-  private def renderGenderPicker(groupName: String, textVar: Var[String], refocus: () => Unit): HtmlElement = {
-    div(
-      cls := "join",
-      Gender.all.map { gender =>
-        val article        = Gender.article(gender)
-        input(
-          typ        := "radio",
-          cls        := "join-item btn btn-xs",
-          nameAttr   := groupName,
-          aria.label := article,
-          controlled(
-            checked <-- textVar.signal.map(_.toLowerCase.startsWith(article + " ")),
-            onClick.mapToUnit --> Observer[Unit] { _ =>
-              textVar.set(s"$article ${stripArticle(textVar.now())}")
-              refocus()
-            },
-          ),
-        )
-      },
     )
   }
 

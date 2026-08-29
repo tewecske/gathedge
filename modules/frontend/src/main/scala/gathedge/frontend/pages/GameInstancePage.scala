@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, GuestBanner, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{GameMode, User, WordLanguage, WordPreference}
+import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -78,11 +78,13 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val includeArticlesVar = Var(true)
 
-  /** Whether *either* resolved direction of the current pair involves German — the swap arrow flips which language is
-    * source, but German-either-way is symmetric, so this does not need to depend on [[swapDirectionVar]].
+  /** Whether *either* resolved direction of the current pair has gendered nouns — the swap arrow flips which language
+    * is source, but gendered-either-way is symmetric, so this does not need to depend on [[swapDirectionVar]].
     */
   private val germanInvolvedSignal: Signal[Boolean] = {
-    gameVar.signal.map(_.exists(g => g.sourceLanguage == WordLanguage.De || g.targetLanguage == WordLanguage.De))
+    gameVar.signal.map(
+      _.exists(g => LanguageProfile.of(g.sourceLanguage).hasGenders || LanguageProfile.of(g.targetLanguage).hasGenders)
+    )
   }
 
   private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
