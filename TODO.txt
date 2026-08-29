@@ -6,8 +6,9 @@ big project: llm image to text
 
 big project: new tag creation screen with focus on ease of use
 
+big project: add spanish language
 
-new game mode, show one word and show 4 translate options, all the game creation settings are the same, only the gameplay is different because the user doesn't have to type, only click on the correct word. for the 4 options use words from the tags assigned to the game, or word forms/main word of the games
+new game mode, show one word and show 4 translate options, all the game creation settings are the same, only the gameplay is different because the user doesn't have to type, only click on the correct word. for the 4 options use words from the tags assigned to the game, or word forms/main word of the games, for german nouns also can include different articles, for example "der Hund" and "die Hunde"
 
 
 in game plural words should be shown specially or marked somehow
@@ -26,5 +27,4 @@ remove unnecessary dependencies because the frontend build is too large
 CVE check for all dependencies and update to latest versions
 
 bugs:
-[ ] on the admin / users / user detail, I see a play history block at the bottom of the page, and it's titled "My play history", why is it there? If I requested it, it's still doesn't seem right. Remove it and add a button to the user list "Play history" and that should bring the admin to a new page which looks like the users play history page
 

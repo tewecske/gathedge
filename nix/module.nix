@@ -357,7 +357,7 @@ in
         stamp=$(date +%Y-%m-%d)
         dump="/tmp/gathedge-$stamp.sql.gz"
 
-        ${config.services.postgresql.package}/bin/pg_dump --no-psqlrc --clean --if-exists --format=plain \
+        ${config.services.postgresql.package}/bin/pg_dump --clean --if-exists --format=plain \
           | ${pkgs.gzip}/bin/gzip -9 > "$dump"
 
         ${pkgs.rclone}/bin/rclone --config "$CREDENTIALS_DIRECTORY/rclone" \
