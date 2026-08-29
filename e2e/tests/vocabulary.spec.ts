@@ -167,8 +167,8 @@ test('a tag files words under a name, and the filter is a separate control', asy
   const tagId = await collect.inputValue();
 
   await page.locator('input[type=search]').fill('brot');
-  await page.locator('tr', { hasText: 'das Brot' }).getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(page.locator('tr', { hasText: 'das Brot' }).getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await wordRow(page, 'das Brot').getByRole('button', { name: /my vocabulary/ }).click();
+  await expect(wordRow(page, 'das Brot').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
 
   // Narrowing to the tag is the other control, and it is the half that reaches the URL.
   await page.locator('input[type=search]').fill('');
@@ -177,7 +177,7 @@ test('a tag files words under a name, and the filter is a separate control', asy
   await expect(page).not.toHaveURL(/[?&]q=/);
   await page.getByLabel('Filter by tag').selectOption(tagId);
   await expect(page).toHaveURL(/[?&]tag=\d+/);
-  await expect(page.locator('tr', { hasText: 'das Brot' })).toBeVisible();
+  await expect(wordRow(page, 'das Brot')).toBeVisible();
 
   // The whole listing state is in the address, so this is a link somebody could have been sent.
   await page.goto(page.url());
@@ -185,7 +185,7 @@ test('a tag files words under a name, and the filter is a separate control', asy
   // query is still the default one is made *against* the default, and takes the filter out with it.
   await expect(page.getByLabel('Filter by tag')).toHaveValue(tagId);
   await page.getByText('Only my words').click();
-  await expect(page.locator('tr', { hasText: 'das Brot' })).toBeVisible();
+  await expect(wordRow(page, 'das Brot')).toBeVisible();
 });
 
 // A chip is the second thing a click on this row can do: the tick says "I am learning this word", a chip
@@ -246,8 +246,11 @@ test('a word the dictionary does not have can be added, with its article', async
 // The detail page is the only place a word gains a translation in a language the listing was not showing,
 // so it is the one that has to be findable: a named form, and the missing language shown as missing.
 test('the detail page adds a translation in the language still missing', async () => {
+  // One group per language the word is not, each shown even when empty. Scope by the group's own
+  // language badge: with three other languages, "No translations yet" stands in more than one group.
+  const englishGroup = page.locator('.badge', { hasText: 'English' }).locator('..');
   // The word from the previous test, still open.
-  await expect(page.getByText('No translations yet')).toBeVisible();
+  await expect(englishGroup.getByText('No translations yet')).toBeVisible();
 
   const form = page.locator('form', { hasText: 'Translation' });
   await form.getByLabel('Translation language').selectOption('en');
@@ -255,7 +258,7 @@ test('the detail page adds a translation in the language still missing', async (
   await form.getByRole('button', { name: 'Add' }).click();
 
   await expect(page.getByText('plum')).toBeVisible();
-  await expect(page.getByText('No translations yet')).toHaveCount(0);
+  await expect(englishGroup.getByText('No translations yet')).toHaveCount(0);
   // And the form is still there, on the same word, for whatever is added next.
   await expect(page.getByRole('heading', { name: 'Add a translation' })).toBeVisible();
 });
