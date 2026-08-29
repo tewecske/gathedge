@@ -7,8 +7,11 @@ Feature summary for branch `feat/tag-creation-page`.
 A screen where a signed-in reader builds a tag as an **ordered list of bilingual pairs** and saves the
 tag and every pair in one request. The old path was create-an-empty-tag first, then file pairs into it
 one by one. The new screen turns that into a single authoring flow: type a source word, pick it from
-the dictionary, and the target input offers its known translations. Pick one and the pair lands in a
-list below while the loop restarts.
+the dictionary, and its known translations appear under the target input as chips. Pick one and the
+pair lands in a list below while the loop restarts.
+
+**The source word is the only thing the reader starts with.** Picking it from the dictionary *sets*
+the pair's part of speech, rather than a part of speech being chosen first and filtering the search.
 
 Two sides of a pair may be **words the dictionary does not have yet**. The page types them out, and the
 server creates them on the fly.
@@ -17,19 +20,48 @@ server creates them on the fly.
 
 - `TagCreatePage`, routed at `/tags/new`, listed in `AppShell` navigation, named `TagCreate` in
   `AppRouter`.
-- A single joined part-of-speech radio selector sits above the inputs and applies to any word not in
-  the dictionary, so typing a long list stays fast — no per-word popup. It also filters the live
-  autocomplete searches.
-- For a German noun, a der/die/das picker sits in front of the German input, exactly like the game's
-  answer input. The picked article becomes part of the typed text (the input keeps "das Haus"); the
-  search and the new-word creation strip it again, and the article sets the noun's gender.
-- Both inputs autocomplete against the dictionary. The dropdown shows at most 5 matches, ranks
-  exact > prefix > form-vs-lemma, marks existing words "in dictionary", and offers the typed text as a
-  "new" word when nothing matches. Arrow keys move the highlight, Enter/Tab accept.
+- **The caret starts in the name field**, the one thing named once rather than per pair, and Enter
+  hands it to the source input and the pair loop it never leaves again. Tab is left alone: what
+  follows the name is the language pair, decided once and before any typing.
+- **The source autocomplete is narrowed by nothing but the text.** Every dictionary match comes back
+  and each row carries a part-of-speech badge — which is what tells `der See` from `die See`, and
+  `laufen` the verb from `Laufen` the noun. It is a vertical menu, because each row shows two facts.
+- **Picking a source word settles the pair's part of speech**, and that part of speech then narrows
+  the live target search, strictly: a translation the dictionary filed under another one is added as
+  a new word instead.
+- **The chosen word's known translations show as chips** under the target input, at most 5, from
+  `WordApiClient.get(id)` — the listing's own `WordSummary.translations` is capped at 3 by
+  `WordService.translationsPerRow`. They are showing before anything is typed, which is the point.
+- **Focus never leaves the target input.** The chips are `tabindex="-1"` buttons inside a `listbox`,
+  named to a screen reader through `aria-activedescendant`. Arrow keys (either axis) move the
+  highlight, Enter/Tab accepts, Escape empties the candidates so the next Tab leaves the field.
+  Typing a letter narrows to the live search with no keystroke lost and no mode to leave.
+- **A word the dictionary does not have** is the last completion. Committing one as the *source*
+  raises an inline part-of-speech select beside the input, defaulting to noun; a new *target* word
+  inherits the pair's. Either is corrected afterwards in the pairs table.
+- For a German input a der/die/das picker sits in front of it, exactly like the game's answer input.
+  The picked article becomes part of the typed text (the input keeps "das Haus"); the search and the
+  new-word creation strip it again. **An article is a gender, and a gender is a noun** — there is no
+  part-of-speech test in front of the picker any more. It is hidden on the source side once a word is
+  committed, where it could only change what is shown and not what is written.
+- **A pair the list already holds is refused**, with a warning naming it, and the inputs reset so the
+  loop carries on. Two pairs are the same one when their two displayed sides and their part of speech
+  match, case-folded — the displayed text rather than the `TagPairWord` refs, since a word picked from
+  the dictionary and the same word typed past an autocomplete that had not answered yet are an
+  `Existing` and a `New` ref that read identically on screen. `WordRepository.linkPair` would not have
+  written the duplicate twice (each of its four rows is inserted only if absent), but the pair would
+  have stood in the table twice, been removable a row at a time, and counted twice against the
+  projected pair quota.
+- **A saved tag lands on the listing showing itself.** `TagCreatePage.landingQuery` narrows `Page.Words`
+  to the new tag id and points it the way the tag was written (source language, target language), and
+  the collect tag is stored as the new tag *before* the navigation — `WordsPage`'s `WordCollect` reads
+  `storedCollectTag` once, as it is constructed. The tag id is also what keeps the arrival from being
+  bare, so `WordsPage` does not override it with the filter this browser remembers.
 - The pairs table lists every committed pair with a per-pair part-of-speech selector and a visible
   remove button. Languages are locked once the first pair is committed. The swap button only moves
   focus back to the filled input while a pair is half-typed, so swapping never clears work.
-- An empty target input presses Enter/Tab to return to the source input, not to save.
+- An empty target input with nothing on offer presses Enter/Tab to return to the source input, not to
+  save.
 
 ## The write
 
@@ -86,9 +118,10 @@ The tag-creation request also differs from `createTag` + `selectPair` per pair i
 ## i18n
 
 New `ui.tags.*` keys in `UiKeys` and in both `messages.{en,hu}.json`: `create`, `name`,
-`namePlaceholder`, `sourcePlaceholder`, `targetPlaceholder`, `pairs`, `partOfSpeech`, `inDictionary`,
-`newWord`, `removePair`, `emptyPairs`, `saved`. `create` is the nav label as well as the page heading.
-`MessagesSpec` enforces both languages.
+`namePlaceholder`, `sourcePlaceholder`, `targetPlaceholder`, `pairs`, `partOfSpeech`, `translations`,
+`newWord`, `removePair`, `duplicatePair`, `emptyPairs`, `saved`. `create` is the nav label as well as the page heading.
+`partOfSpeech` names three things at once: the autocomplete badge, the inline select and the pairs
+table's column. `MessagesSpec` enforces both languages.
 
 ## Tests
 
@@ -97,5 +130,8 @@ New `ui.tags.*` keys in `UiKeys` and in both `messages.{en,hu}.json`: `create`, 
   on the fly and paired both ways; a `New` word earlier in the list is not created when a later pair
   is `NotFound` (the two-pass regression).
 - `TagCreatePageSpec` (jsdom): renders the heading/name/pairs/save furniture, offers both word inputs,
-  and renders the 5-position part-of-speech selector.
+  asks for no part of speech before a word has been typed, offers the der/die/das picker for a German
+  input whatever the part of speech, refuses a pair the list already holds, and starts the caret in
+  the name field, handing it to the source word on Enter. `landingQuery` is pinned as its own case:
+  all three narrowings set, nothing else carried, and never `WordQuery.default`.
 - `OpenApiSpec`: pins the `with-pairs` path and its failures.

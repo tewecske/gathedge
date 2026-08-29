@@ -885,21 +885,23 @@ object UiKeys {
   /** Heading above the two columns of pairs the reader has assembled so far. */
   val tagsPairs: String = key("ui.tags.pairs")
 
-  /** Grammar of a word the reader types that is not in the dictionary: one shared selector above the inputs, not a
-    * per-word popup.
+  /** Grammar of a word. Names the autocomplete row's badge, the inline selector beside a word the dictionary does not
+    * have, and the pairs table's column.
     */
   val tagsPartOfSpeech: String = key("ui.tags.partOfSpeech")
 
-  /** Marked on an autocomplete row whose word is already in the dictionary — the normal case, since this page adds
-    * existing words to a tag rather than creating them.
-    */
-  val tagsInDictionary: String = key("ui.tags.inDictionary")
+  /** Accessible name of the row of chips offering the source word's known translations. */
+  val tagsTranslations: String = key("ui.tags.translations")
 
   /** Marked on the autocomplete row that creates the typed text as a brand-new word. */
   val tagsNewWord: String = key("ui.tags.newWord")
 
   /** Accessible label for a pair's remove button. */
   val tagsRemovePair: String = key("ui.tags.removePair")
+
+  /** Why a pair the reader just completed did not appear: the list already holds it. `{0}` and `{1}` are its two sides.
+    */
+  val tagsDuplicatePair: String = key("ui.tags.duplicatePair")
 
   /** Save is blocked until the reader has added at least one pair; `{0}` is the tag name. */
   val tagsEmptyPairs: String = key("ui.tags.emptyPairs")
