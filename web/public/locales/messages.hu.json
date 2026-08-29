@@ -595,6 +595,8 @@
   "ui.tags.targetPlaceholder": "Írj be egy {0} szót",
   "ui.tags.pairs": "Párok",
   "ui.tags.partOfSpeech": "Szófaj",
+  "ui.tags.inDictionary": "a szótárban",
+  "ui.tags.newWord": "új",
   "ui.tags.removePair": "Pár eltávolítása",
   "ui.tags.emptyPairs": "Adj hozzá legalább egy párt mentés előtt: {0}.",
   "ui.tags.saved": "A(z) {0} címke mentve.",
@@ -826,7 +828,5 @@
   "ui.groups.memberCount.one": "{0} tag",
   "ui.groups.memberCount.other": "{0} tag",
   "ui.groups.tagCount.one": "{0} címke",
-  "ui.groups.tagCount.other": "{0} címke",
-  "ui.tags.inDictionary": "a szótárban",
-  "ui.tags.newWord": "új"
+  "ui.groups.tagCount.other": "{0} címke"
 }

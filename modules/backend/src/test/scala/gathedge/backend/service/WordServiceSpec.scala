@@ -1479,6 +1479,41 @@ object WordServiceSpec extends ZIOSpecDefault {
           found.exists(_.text == "Hund"),
         )
       },
+      test("a New word earlier in the list is not created when a later pair is NotFound") {
+        for {
+          result <- WordService
+                      .createTagWithPairs(
+                        "lesson1",
+                        List(
+                          TagPairInput(
+                            TagPairWord.New(WordLanguage.De, "Katze", PartOfSpeech.Noun, Some(Gender.Die)),
+                            TagPairWord.New(WordLanguage.Hu, "macska", PartOfSpeech.Noun, None),
+                          ),
+                          TagPairInput(TagPairWord.Existing(9999L), TagPairWord.Existing(9999L)),
+                        ),
+                        1L,
+                      )
+                      .either
+          katze  <- WordRepository.findWord(
+                      WordLanguage.code(WordLanguage.De),
+                      "katze",
+                      PartOfSpeech.code(PartOfSpeech.Noun),
+                      Gender.toColumn(Some(Gender.Die)),
+                    )
+          macska <- WordRepository.findWord(
+                      WordLanguage.code(WordLanguage.Hu),
+                      "macska",
+                      PartOfSpeech.code(PartOfSpeech.Noun),
+                      Gender.toColumn(None),
+                    )
+          tags   <- WordRepository.countTagsOwnedBy(1L)
+        } yield assertTrue(
+          result == Left(WordFailure.NotFound),
+          katze.isEmpty,
+          macska.isEmpty,
+          tags == 0L,
+        )
+      },
     ).provide(layer)
   }
 

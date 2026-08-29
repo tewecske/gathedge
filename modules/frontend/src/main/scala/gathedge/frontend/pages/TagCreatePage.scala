@@ -34,7 +34,7 @@ private final case class CommittedPair(
 /** One row of an autocomplete dropdown: a word already in the dictionary, or the typed text as a word to create. */
 private sealed trait Completion
 private final case class DictionaryCompletion(word: Word) extends Completion
-private final case class NewCompletion(text: String) extends Completion
+private final case class NewCompletion(text: String)      extends Completion
 
 class TagCreatePage {
 
@@ -180,7 +180,7 @@ class TagCreatePage {
           cls := "flex flex-col gap-2",
           span(cls := "text-sm font-semibold", child.text <-- sourceLangVar.signal.map(Labels.language)),
           div(
-            cls := "flex items-center gap-1",
+            cls    := "flex items-center gap-1",
             child.maybe <-- showSourceGenderSignal.map(
               Option.when(_)(renderGenderPicker("source-gender", srcQueryVar, () => focusSource()))
             ),
@@ -191,7 +191,7 @@ class TagCreatePage {
           cls := "flex flex-col gap-2",
           span(cls := "text-sm font-semibold", child.text <-- targetLangVar.signal.map(Labels.language)),
           div(
-            cls := "flex items-center gap-1",
+            cls    := "flex items-center gap-1",
             child.maybe <-- showTargetGenderSignal.map(
               Option.when(_)(renderGenderPicker("target-gender", tgtQueryVar, () => focusTarget()))
             ),
@@ -287,10 +287,10 @@ class TagCreatePage {
 
   private def handleSourceKey(ev: dom.KeyboardEvent): Unit = {
     ev.key match {
-      case "Enter" =>
+      case "Enter"     =>
         ev.preventDefault()
         if (pendingSourceVar.now().isEmpty) acceptSourceFromKeyboard()
-      case "Tab" =>
+      case "Tab"       =>
         // With a suggestion to pick, Tab accepts it; otherwise let the focus move on.
         if (pendingSourceVar.now().isEmpty && sourceCompletions().nonEmpty) {
           ev.preventDefault()
@@ -299,22 +299,22 @@ class TagCreatePage {
       case "ArrowDown" =>
         ev.preventDefault()
         srcHighlightVar.update(h => Math.min(h + 1, sourceCompletions().size - 1))
-      case "ArrowUp" =>
+      case "ArrowUp"   =>
         ev.preventDefault()
         srcHighlightVar.update(h => if (h <= 0) 0 else h - 1)
-      case "Escape" =>
+      case "Escape"    =>
         srcResultsVar.set(Nil)
-      case _ =>
+      case _           =>
         ()
     }
   }
 
   private def handleTargetKey(ev: dom.KeyboardEvent): Unit = {
     ev.key match {
-      case "Enter" =>
+      case "Enter"     =>
         ev.preventDefault()
         acceptTargetFromKeyboard()
-      case "Tab" =>
+      case "Tab"       =>
         if (targetCompletions().nonEmpty) {
           ev.preventDefault()
           acceptTargetFromKeyboard()
@@ -322,12 +322,12 @@ class TagCreatePage {
       case "ArrowDown" =>
         ev.preventDefault()
         tgtHighlightVar.update(h => Math.min(h + 1, targetCompletions().size - 1))
-      case "ArrowUp" =>
+      case "ArrowUp"   =>
         ev.preventDefault()
         tgtHighlightVar.update(h => if (h <= 0) 0 else h - 1)
-      case "Escape" =>
+      case "Escape"    =>
         tgtLiveVar.set(Nil)
-      case _ =>
+      case _           =>
         ()
     }
   }
@@ -356,11 +356,13 @@ class TagCreatePage {
     */
   private def completions(words: List[Word], search: String): List[Completion] = {
     val low    = search.toLowerCase
-    val ranked = words.zipWithIndex.sortBy { case (word, i) =>
-      val text = word.text.toLowerCase
-      val rank = if (text == low) 0 else if (text.startsWith(low)) 1 else 2
-      (rank, i)
-    }.map(_._1)
+    val ranked = words.zipWithIndex
+      .sortBy { case (word, i) =>
+        val text = word.text.toLowerCase
+        val rank = if (text == low) 0 else if (text.startsWith(low)) 1 else 2
+        (rank, i)
+      }
+      .map(_._1)
     // The dropdown shows at most five dictionary words; the exact match is always rank 0, so it is never pushed out.
     val top    = ranked.take(5)
     val exact  = top.exists(w => w.text.equalsIgnoreCase(search))
@@ -471,7 +473,8 @@ class TagCreatePage {
     )
   }
 
-  /** The reader edited the committed source word, so the pending target no longer matches it: drop it and start over. */
+  /** The reader edited the committed source word, so the pending target no longer matches it: drop it and start over.
+    */
   private def clearPending(): Unit = {
     pendingSourceVar.set(None)
     Var.set(tgtQueryVar -> "", tgtKnownVar -> Nil, tgtLiveVar -> Nil, tgtHighlightVar -> -1)
@@ -525,7 +528,7 @@ class TagCreatePage {
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
-        cls      := "select select-sm w-28",
+        cls    := "select select-sm w-28",
         disabled <-- pairsVar.signal.map(_.nonEmpty),
         WordLanguage.all.map(l => option(value := WordLanguage.code(l), Labels.language(l))),
         controlled(
@@ -546,7 +549,7 @@ class TagCreatePage {
         typ        := "button",
         cls        := "btn btn-ghost btn-sm btn-square",
         aria.label := I18n.t(UiKeys.wordsSwapLanguages),
-        disabled   <-- pairsVar.signal.map(_.nonEmpty),
+        disabled <-- pairsVar.signal.map(_.nonEmpty),
         swapMark(),
         onClick.mapToUnit --> Observer[Unit] { _ =>
           // Once a pair is in the table the language pair is locked (see `languageSelect`); the disabled state also
@@ -598,14 +601,14 @@ class TagCreatePage {
       cls := "flex items-center gap-2 flex-wrap",
       span(cls := "label-text text-xs", I18n.t(UiKeys.tagsPartOfSpeech)),
       div(
-        cls := "join",
+        cls    := "join",
         PartOfSpeech.all.map { pos =>
           input(
-            typ         := "radio",
-            nameAttr    := "pos-selector",
-            cls         := "btn btn-sm join-item",
-            aria.label  := Labels.partOfSpeech(pos),
-            checked     <-- posVar.signal.map(_ == pos),
+            typ        := "radio",
+            nameAttr   := "pos-selector",
+            cls        := "btn btn-sm join-item",
+            aria.label := Labels.partOfSpeech(pos),
+            checked <-- posVar.signal.map(_ == pos),
             onClick.mapToUnit --> Observer[Unit](_ => posVar.set(pos)),
           )
         },
@@ -621,7 +624,7 @@ class TagCreatePage {
     div(
       cls := "join",
       Gender.all.map { gender =>
-        val article = Gender.article(gender)
+        val article        = Gender.article(gender)
         input(
           typ        := "radio",
           cls        := "join-item btn btn-xs",
@@ -724,18 +727,20 @@ class TagCreatePage {
     */
   private def changePairPos(id: Long, code: String): Unit = {
     val pos = PartOfSpeech.fromString(code).getOrElse(PartOfSpeech.Other)
-    pairsVar.update(list => list.map { pair =>
-      if (pair.id != id) pair
-      else {
-        val source = withNewPos(pair.source, pos)
-        val target = withNewPos(pair.target, pos)
-        pair.copy(
-          pos = pos,
-          source = source.map(_._1).getOrElse(pair.source),
-          target = target.map(_._1).getOrElse(pair.target),
-          sourceText = source.map(_._2).getOrElse(pair.sourceText),
-          targetText = target.map(_._2).getOrElse(pair.targetText),
-        )
+    pairsVar.update(list => {
+      list.map { pair =>
+        if (pair.id != id) pair
+        else {
+          val source = withNewPos(pair.source, pos)
+          val target = withNewPos(pair.target, pos)
+          pair.copy(
+            pos = pos,
+            source = source.map(_._1).getOrElse(pair.source),
+            target = target.map(_._1).getOrElse(pair.target),
+            sourceText = source.map(_._2).getOrElse(pair.sourceText),
+            targetText = target.map(_._2).getOrElse(pair.targetText),
+          )
+        }
       }
     })
   }
@@ -747,12 +752,13 @@ class TagCreatePage {
     ref match {
       case TagPairWord.New(language, text, _, gender) =>
         val updated = TagPairWord.New(language, text, pos, gender)
-        val display =
+        val display = {
           if (language == WordLanguage.De && pos == PartOfSpeech.Noun)
             gender.map(g => Gender.article(g) + " " + text.capitalize).getOrElse(text)
           else text
+        }
         Some((updated, display))
-      case _: TagPairWord.Existing =>
+      case _: TagPairWord.Existing                    =>
         None
     }
   }

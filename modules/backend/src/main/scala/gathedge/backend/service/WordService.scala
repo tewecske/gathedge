@@ -136,8 +136,8 @@ trait WordService {
     *
     * `DuplicateTag`/`TagQuotaExceeded`/`PairQuotaExceeded` follow [[createTag]]/[[copyTag]]'s own rules; `NotFound` is
     * a `TagPairWord.Existing` naming no word. Both quotas are checked before anything is written, and every word on
-    * either side is resolved (a missing `Existing` id, or a `New` word created) before the tag row itself is inserted,
-    * so a request that fails does so having written nothing.
+    * either side is checked — an `Existing` id resolved, a `New` word's text validated — before the first `New` word is
+    * created, so a request that fails does so having written nothing.
     */
   def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse]
 
@@ -989,8 +989,10 @@ final case class WordServiceLive(
     } yield TagResponse(toTag(row, 0L, ownedByMe = true, editableByMe = true), warning)
   }
 
-  /** [[createTagWithPairs]]'s write: both quotas checked, every word resolved, and only then the tag row and its pairs.
-    * A missing `Existing` id or a `New` word that fails validation therefore surfaces before any tag is written.
+  /** [[createTagWithPairs]]'s write: name, both quotas, and every word on either side are checked first; only then is
+    * anything created. The two passes are the point — a `New` word is a write, so checking pair two's `Existing` id
+    * while pair one's new word was already in the dictionary would leave that word behind on a request that answered
+    * 404.
     */
   def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse] = {
     for {
@@ -1000,26 +1002,53 @@ final case class WordServiceLive(
       tagWarning     <- tagQuota(ownedTags, 1)
       ownedPairs     <- repo.countPairsOwnedBy(userId).orDie
       pairWarning    <- pairQuota(ownedPairs, pairs.size * 2)
-      resolved       <- ZIO.foreach(pairs)(resolvePair(_, userId))
+      checked        <- ZIO.foreach(pairs)(checkPair)
+      resolved       <- ZIO.foreach(checked)(createPair(_, userId))
       now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
       tagRow         <- repo.createTagWithPairs(userId, valid, normal, now, resolved).orDie
       wordCount       = resolved.flatMap { case (s, t) => List(s, t) }.toSet.size
     } yield TagResponse(toTag(tagRow, wordCount.toLong, ownedByMe = true), tagWarning.orElse(pairWarning))
   }
 
-  /** Resolves one pair's two sides to word ids, failing before any write if an `Existing` side names no word. */
-  private def resolvePair(pair: TagPairInput, userId: Long): IO[WordFailure, (Long, Long)] = {
+  /** One side of a pair that is known to be writable but is not written yet: `Left` is the id of a word that exists,
+    * `Right` is a new word whose text has already validated.
+    */
+  private type CheckedWord = Either[Long, TagPairWord.New]
+
+  /** Both sides of one pair, checked and not yet written. */
+  private def checkPair(pair: TagPairInput): IO[WordFailure, (CheckedWord, CheckedWord)] = {
     for {
-      sourceId <- resolveWord(pair.source, userId)
-      targetId <- resolveWord(pair.target, userId)
+      source <- checkWord(pair.source)
+      target <- checkWord(pair.target)
+    } yield (source, target)
+  }
+
+  /** Every way one side can fail, decided without writing: an `Existing` side must name a real word, a `New` side must
+    * carry text [[ensure]] would accept.
+    */
+  private def checkWord(ref: TagPairWord): IO[WordFailure, CheckedWord] = {
+    ref match {
+      case TagPairWord.Existing(id) =>
+        repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound).map(row => Left(row.id))
+      case word: TagPairWord.New    =>
+        ZIO
+          .fromEither(Validation.validateWordText(word.text.trim))
+          .mapError(error => WordFailure.ValidationError(Map("text" -> error)))
+          .as(Right(word))
+    }
+  }
+
+  private def createPair(pair: (CheckedWord, CheckedWord), userId: Long): IO[WordFailure, (Long, Long)] = {
+    for {
+      sourceId <- createWord(pair._1, userId)
+      targetId <- createWord(pair._2, userId)
     } yield (sourceId, targetId)
   }
 
-  private def resolveWord(ref: TagPairWord, userId: Long): IO[WordFailure, Long] = {
-    ref match {
-      case TagPairWord.Existing(id)                              => repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound).map(_.id)
-      case TagPairWord.New(language, text, partOfSpeech, gender) =>
-        ensure(language, text, partOfSpeech, gender, userId).map(_.id)
+  private def createWord(checked: CheckedWord, userId: Long): IO[WordFailure, Long] = {
+    checked match {
+      case Left(id)    => ZIO.succeed(id)
+      case Right(word) => ensure(word.language, word.text, word.partOfSpeech, word.gender, userId).map(_.id)
     }
   }
 

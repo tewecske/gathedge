@@ -1,6 +1,6 @@
 # Tag-creation page
 
-Feature summary for branch `feat/tag-creation-page` (commit `58892d4`).
+Feature summary for branch `feat/tag-creation-page`.
 
 ## What this is
 
@@ -15,8 +15,8 @@ server creates them on the fly.
 
 ## The page
 
-- `modules/frontend/src/main/scala/gathedge/frontend/pages/TagCreatePage.scala` (~760 lines), routed at
-  `/tags/new`, listed in `AppShell` navigation, named `TagCreate` in `AppRouter`.
+- `TagCreatePage`, routed at `/tags/new`, listed in `AppShell` navigation, named `TagCreate` in
+  `AppRouter`.
 - A single joined part-of-speech radio selector sits above the inputs and applies to any word not in
   the dictionary, so typing a long list stays fast — no per-word popup. It also filters the live
   autocomplete searches.
@@ -33,22 +33,26 @@ server creates them on the fly.
 
 ## The write
 
-`POST /api/tags/with-pairs`, declared once in
-`modules/shared/shared/src/main/scala/gathedge/shared/api/WordEndpoints.scala`, body
+`POST /api/tags/with-pairs`, declared once in `WordEndpoints`, body
 `CreateTagWithPairsRequest(name, pairs: List[TagPairInput])`, each side a
 `TagPairWord.Existing(id)` or `TagPairWord.New(language, text, partOfSpeech, gender)`.
 Answers `201 TagResponse` (`tag`, `warning`).
 
-The service (`WordService.createTagWithPairs`) does, in order:
+`WordService.createTagWithPairs` does, in order:
 
 1. Validates and normalises the name (same rules as `createTag`: 400 for blank/over-width/reserved,
    case-insensitive 409 for a duplicate).
 2. Checks the tag quota and the pair quota **together, before any write** — a request that would cross
    a hard threshold writes nothing, so no half-built tag is left behind. Soft crossings succeed with a
-   warning.
-3. Resolves every pair to word ids: `Existing` must name a real word (404 otherwise), `New` is created
-   on the fly (and fails validation before any write).
-4. Writes the tag and all its pairs as **one unit of work**.
+   warning; the tag warning wins over the pair warning when both fire.
+3. **Checks** every pair's two sides without writing (`checkPair`/`checkWord`): an `Existing` side must
+   name a real word (404 otherwise), a `New` side's text must validate (400 otherwise).
+4. Only then **creates** what is missing (`createPair`/`createWord`) and writes the tag and all its
+   pairs as **one unit of work**.
+
+Steps 3 and 4 are two passes on purpose. A `New` word is itself a write, so resolving pair one's new
+word before discovering pair two's dead `Existing` id would leave that word in the dictionary behind a
+request that answered 404.
 
 ### The atomic write
 
@@ -61,9 +65,9 @@ plus both directed pair rows per pair). This was a real bug, not a formality:
 - On Postgres the pair rows' `word_tags.tag_id` foreign key could not see the just-inserted tag, so
   every request answered 500 (`word_tags_tag_id_fkey`).
 - SQLite enforces no foreign keys, so the whole suite passed regardless — exactly the Postgres-only
-  trap `AGENTS.md` warns about.
+  trap `CLAUDE.md` warns about.
 - The fix folds the tag and its pairs into one transaction, matching how `copyTag` already worked, and
-  adds `tagCreationSpec` to `WordServiceSpec` (68 tests pass on SQLite).
+  adds `tagCreationSpec` to `WordServiceSpec`.
 
 The tag-creation request also differs from `createTag` + `selectPair` per pair in that a pair needs no
 `word_translations` edge: the reader may pair any two words they chose.
@@ -72,7 +76,7 @@ The tag-creation request also differs from `createTag` + `selectPair` per pair i
 
 | Status | `error.key` | Means |
 | --- | --- | --- |
-| 400 | — | codec/name error |
+| 400 | — | codec/name error, or a `New` side whose text fails validation |
 | 401 | — | no session |
 | 404 | — | `Existing` side names no word |
 | 409 | `words.tagExists` | account already has the name (case-insensitive) |
@@ -81,31 +85,17 @@ The tag-creation request also differs from `createTag` + `selectPair` per pair i
 
 ## i18n
 
-New `ui.tags.*` keys in `UiKeys.scala` and in both `messages.{en,hu}.json`:
-`sourcePlaceholder`, `targetPlaceholder`, `pairs`, `partOfSpeech`, `inDictionary`, `newWord`,
-`removePair`, `emptyPairs`, `saved`. `MessagesSpec` enforces both languages.
+New `ui.tags.*` keys in `UiKeys` and in both `messages.{en,hu}.json`: `create`, `name`,
+`namePlaceholder`, `sourcePlaceholder`, `targetPlaceholder`, `pairs`, `partOfSpeech`, `inDictionary`,
+`newWord`, `removePair`, `emptyPairs`, `saved`. `create` is the nav label as well as the page heading.
+`MessagesSpec` enforces both languages.
 
 ## Tests
 
 - `WordServiceSpec.tagCreationSpec`: existing words create a tag with both-direction pairs; a missing
   `Existing` id is 404 and writes nothing; a duplicate name is `DuplicateTag`; `New` words are created
-  on the fly and paired both ways.
+  on the fly and paired both ways; a `New` word earlier in the list is not created when a later pair
+  is `NotFound` (the two-pass regression).
 - `TagCreatePageSpec` (jsdom): renders the heading/name/pairs/save furniture, offers both word inputs,
   and renders the 5-position part-of-speech selector.
 - `OpenApiSpec`: pins the `with-pairs` path and its failures.
-
-## Files
-
-| File | Change |
-| --- | --- |
-| `shared/api/WordEndpoints.scala` | new endpoint |
-| `shared/api/ApiSchemas.scala` | schema row |
-| `shared/dto/WordDto.scala` | `TagPairWord`, `TagPairInput`, `CreateTagWithPairsRequest` |
-| `backend/db/WordRepository.scala` | atomic `createTagWithPairs` + `linkPair` |
-| `backend/service/WordService.scala` | `createTagWithPairs` + `resolvePair`/`resolveWord` |
-| `backend/http/WordRoutes.scala` | derived route |
-| `frontend/pages/TagCreatePage.scala` | the page |
-| `frontend/pages/TagCreatePageSpec.scala` | page furniture tests |
-| `frontend/AppRouter.scala`, `frontend/App.scala`, `frontend/components/AppShell.scala` | routing + nav |
-| `frontend/api/WordApiClient.scala` | client call |
-| `shared/i18n/UiKeys.scala` + `web/public/locales/*.json` | copy |

@@ -595,6 +595,8 @@
   "ui.tags.targetPlaceholder": "Type a {0} word",
   "ui.tags.pairs": "Pairs",
   "ui.tags.partOfSpeech": "Part of speech",
+  "ui.tags.inDictionary": "in dictionary",
+  "ui.tags.newWord": "new",
   "ui.tags.removePair": "Remove pair",
   "ui.tags.emptyPairs": "Add at least one pair before saving {0}.",
   "ui.tags.saved": "Tag {0} saved.",
@@ -826,7 +828,5 @@
   "ui.groups.memberCount.one": "{0} member",
   "ui.groups.memberCount.other": "{0} members",
   "ui.groups.tagCount.one": "{0} tag",
-  "ui.groups.tagCount.other": "{0} tags",
-  "ui.tags.inDictionary": "in dictionary",
-  "ui.tags.newWord": "new"
+  "ui.groups.tagCount.other": "{0} tags"
 }
