@@ -72,6 +72,9 @@ object App {
   /** Same hand-off trick as [[latestGameSlug]], for the `AdminUserPlays` signal renderer below. */
   private var latestAdminUserPlaysId: Long = 0L
 
+  /** Same hand-off trick as [[latestGameSlug]], for the `SharedPlayerHistory` signal renderer below. */
+  private var latestSharedPlayerHistoryId: Long = 0L
+
   /** The *only* user-derived facts that change which page element is built. Deliberately not the whole `User`: a theme
     * toggle (or any other profile write) must not tear down and rebuild the mounted page, discarding its `Var`s,
     * in-flight requests and half-typed form input. Everything else user-dependent is read reactively by
@@ -176,6 +179,14 @@ object App {
           latestAdminUserPlaysId = page.id
           page.query
       }(query => AdminUserPlaysPage.render(latestAdminUserPlaysId, query, onAdminUserPlaysQuery))
+      // One sharer's play history, for a viewer they have granted access to: the same listing as the admin one above,
+      // and the same path-param + query shape. Auth is enforced by the redirect observer, not here, the same as
+      // `GameResults` — `gate.loaded` is the only precondition; the share itself is checked server-side.
+      .collectSignalPF[MyPlayQuery] {
+        case (gate, page: Page.SharedPlayerHistory) if gate.loaded =>
+          latestSharedPlayerHistoryId = page.sharerUserId
+          page.query
+      }(query => SharedPlayerHistoryPage.render(latestSharedPlayerHistoryId, query, onSharedPlayerHistoryQuery))
       // The cross-game history carries its listing state in the URL like the admin listings, so every keystroke in its
       // filter box is a new `Page` — it needs a signal renderer for the same reason they do. Auth is enforced by the
       // redirect observer, not here, the same as `GameResults` above: `gate.loaded` is the only precondition.
@@ -321,6 +332,23 @@ object App {
     }
   }
 
+  /** Same rule as [[onAdminUserPlaysQuery]], keyed to [[latestSharedPlayerHistoryId]]: a query change for a *different*
+    * sharer's history must never be treated as a refinement of this one.
+    */
+  private val onSharedPlayerHistoryQuery: Observer[MyPlayQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.SharedPlayerHistory(id, previous) if id == latestSharedPlayerHistoryId =>
+            query.refines(previous)
+          case _                                                                           =>
+            false
+        }
+      }
+      navigate(Page.SharedPlayerHistory(latestSharedPlayerHistoryId, query), replace = refinesSearch)
+    }
+  }
+
   /** Settles the language once the account is known. [[LocaleSync]] holds the rule and does the storing and the
     * navigating; the one thing it cannot do is talk to the API, so the write-back lives here where there is an owner to
     * subscribe with.
@@ -392,8 +420,9 @@ object App {
         MyPlayHistoryPage.render(Val(query), onMyPlaysQuery)
       case Page.SharedProgress                            =>
         SharedProgressPage.render()
-      case Page.SharedPlayerHistory(sharerUserId)         =>
-        SharedPlayerHistoryPage.render(sharerUserId)
+      // Reached only before the session has loaded; the signal renderer above answers otherwise.
+      case Page.SharedPlayerHistory(sharerUserId, query)  =>
+        SharedPlayerHistoryPage.render(sharerUserId, Val(query), onSharedPlayerHistoryQuery)
       case Page.GameInstance(slug)                        =>
         GameInstancePage.render(slug, generateQr)
       // No signal renderer needed here, unlike `GameInstance`/`GameResults` above: this page is reached only after

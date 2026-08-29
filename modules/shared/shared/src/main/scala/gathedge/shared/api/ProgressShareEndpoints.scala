@@ -1,6 +1,6 @@
 package gathedge.shared.api
 
-import gathedge.shared.dto.{MyPlayPage, RedeemShareRequest, SharedViewer, SharedWithMe, ShareCodeResponse}
+import gathedge.shared.dto.{GameResults, MyPlayPage, RedeemShareRequest, SharedViewer, SharedWithMe, ShareCodeResponse}
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
@@ -20,12 +20,14 @@ object ProgressShareEndpoints {
 
   private val sharerUserId = PathCodec.long("sharerUserId")
   private val viewerUserId = PathCodec.long("viewerUserId")
+  private val playId       = PathCodec.long("playId")
 
   private val gameIdQuery   = HttpCodec.query[Long]("gameId").optional
   private val pageQuery     = HttpCodec.query[Int]("page").optional
   private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional
   private val sortQuery     = HttpCodec.query[String]("sort").optional
   private val dirQuery      = HttpCodec.query[String]("dir").optional
+  private val searchQuery   = HttpCodec.query[String]("q").optional
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
@@ -63,8 +65,9 @@ object ProgressShareEndpoints {
       .outFailure(failure.unauthorized)
   }
 
-  /** One page of `sharerUserId`'s plays across every game, for a viewer the sharer has granted access to. 403 covers a
-    * caller with no share from `sharerUserId`.
+  /** One page of `sharerUserId`'s plays across every game, for a viewer the sharer has granted access to. `q` narrows
+    * to games whose name contains it, a case-insensitive substring, the same as `AdminEndpoints.userPlays`. 403 covers
+    * a caller with no share from `sharerUserId`.
     */
   val sharerPlays = {
     Endpoint(Method.GET / "api" / "progress-shares" / sharerUserId / "plays")
@@ -73,9 +76,21 @@ object ProgressShareEndpoints {
       .query(pageSizeQuery)
       .query(sortQuery)
       .query(dirQuery)
+      .query(searchQuery)
       .withCodecError
       .out[MyPlayPage]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden)
+  }
+
+  /** One of `sharerUserId`'s plays, with its score and full answer history — the share-scoped counterpart of
+    * `AdminEndpoints.userPlayResults`, and of `GameEndpoints.results`, which is owner-only. 403 covers a caller with no
+    * share from `sharerUserId`; `playId` must belong to `sharerUserId`, else 404, which is what stops a viewer reading
+    * a play id belonging to somebody else.
+    */
+  val sharerPlayResults = {
+    Endpoint(Method.GET / "api" / "progress-shares" / sharerUserId / "plays" / playId / "results").withCodecError
+      .out[GameResults]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
   /** Revokes one viewer's access to the caller's game history. Idempotent — revoking a viewer with no share answers the
@@ -87,5 +102,6 @@ object ProgressShareEndpoints {
       .outFailure(failure.unauthorized)
   }
 
-  val all: List[Endpoint[?, ?, ?, ?, ?]] = List(code, redeem, viewers, sharedWithMe, sharerPlays, revokeViewer)
+  val all: List[Endpoint[?, ?, ?, ?, ?]] =
+    List(code, redeem, viewers, sharedWithMe, sharerPlays, sharerPlayResults, revokeViewer)
 }

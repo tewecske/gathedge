@@ -6,12 +6,12 @@ import gathedge.frontend.i18n.I18n
 import gathedge.shared.dto.MyPlaySummary
 import gathedge.shared.i18n.UiKeys
 
-/** A read-only page of cross-game plays — `dto.MyPlayPage`'s rows — shared by `SharedPlayerHistoryPage` and the admin
-  * games tab. Every row links to the game itself, which is always public (`GameEndpoints.get`).
+/** A read-only page of cross-game plays — `dto.MyPlayPage`'s rows — used by the admin games tab. Every row links to the
+  * game itself, which is always public (`GameEndpoints.get`).
   *
-  * `MyPlayHistoryPage` used to render through this too, with per-row "view" and "play again" actions; it now renders
-  * its own sortable, paged table (built to `GameResultsPage`'s shape) and owns those actions itself. What is left here
-  * is the plain table the two observer-less callers need.
+  * `MyPlayHistoryPage` and `SharedPlayerHistoryPage` used to render through this too, with per-row "view" and "play
+  * again" actions; the first now renders its own sortable, paged table and the second renders `PlayHistoryListing`,
+  * both owning those actions themselves. What is left here is the plain table an observer-less caller needs.
   */
 object PlayHistoryTable {
 

@@ -14,6 +14,13 @@ object ProgressShareRoutes {
 
   private def userId: URIO[User, Long] = ZIO.service[User].map(_.id)
 
+  /** An empty `q=` is the filter box after the viewer has cleared it, which is not a filter — the same rule
+    * `AdminRoutes` applies to the administrator's copy of this listing.
+    */
+  private def searchTerm(requested: Option[String]): Option[String] = {
+    requested.map(_.trim).filter(_.nonEmpty)
+  }
+
   private val codeRoute = {
     ProgressShareEndpoints.code.implementHandler(
       handler((_: Unit) => userId.flatMap(ProgressShareService.issueCode).map(ShareCodeResponse.apply))
@@ -50,6 +57,7 @@ object ProgressShareRoutes {
           pageSize: Option[Int],
           sort: Option[String],
           dir: Option[String],
+          q: Option[String],
         ) =>
           userId.flatMap { viewerId =>
             ProgressShareService.requireShareAccess(viewerId, sharerUserId).mapError(ApiFailures.progressShareAccess) *>
@@ -60,8 +68,23 @@ object ProgressShareRoutes {
                 Paging.boundedPageSize(pageSize),
                 sort,
                 SortDirection.isDescending(dir),
+                searchTerm(q),
               )
           }
+      }
+    )
+  }
+
+  /** One of the sharer's plays in full. Two checks, not one: the share itself, and `resultsForPlayer`'s own "this play
+    * belongs to that account" rule — the second is what stops a viewer walking play ids that are not the sharer's.
+    */
+  private val sharerPlayResultsRoute = {
+    ProgressShareEndpoints.sharerPlayResults.implementHandler(
+      handler { (sharerUserId: Long, playId: Long) =>
+        userId.flatMap { viewerId =>
+          ProgressShareService.requireShareAccess(viewerId, sharerUserId).mapError(ApiFailures.progressShareAccess) *>
+            GameService.resultsForPlayer(playId, sharerUserId).mapError(ApiFailures.game)
+        }
       }
     )
   }
@@ -79,6 +102,7 @@ object ProgressShareRoutes {
       viewersRoute,
       sharedWithMeRoute,
       sharerPlaysRoute,
+      sharerPlayResultsRoute,
       revokeViewerRoute,
     ) @@ RouteSupport.authenticated @@ RouteSupport.csrf
   }

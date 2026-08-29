@@ -282,6 +282,30 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.deserialize(AppRouter.serialize(Page.AdminUserPlays(3))) == Page.AdminUserPlays(3),
         )
       },
+      // Same shape again, for the viewer's copy of that listing — one sharer's play history.
+      test("a shared player history carries both the sharer id and its query through the URL") {
+        val filtered = Page.SharedPlayerHistory(
+          7,
+          MyPlayQuery(page = 3, sort = SortHeader.Sort.ascending(GamePlaySort.wordCount), search = "quiz"),
+        )
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          url.startsWith(s"$prefix/games/shared/7?"),
+          url.contains("page=3"),
+          url.contains(s"sort=${GamePlaySort.wordCount}"),
+          url.contains("dir=asc"),
+          url.contains("q=quiz"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          AppRouter.deserialize(AppRouter.serialize(filtered)) == filtered,
+          AppRouter.router
+            .pageForRelativeUrl(AppRouter.router.relativeUrlForPage(Page.SharedPlayerHistory(7)))
+            .contains(Page.SharedPlayerHistory(7)),
+          AppRouter.deserialize(AppRouter.serialize(Page.SharedPlayerHistory(7))) == Page.SharedPlayerHistory(7),
+          // The two-part tag an older build wrote still reaches that sharer's default view.
+          AppRouter.deserialize("SharedPlayerHistory:7") == Page.SharedPlayerHistory(7),
+        )
+      },
     )
   }
 }

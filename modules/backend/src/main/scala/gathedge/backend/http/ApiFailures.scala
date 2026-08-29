@@ -284,7 +284,8 @@ object ApiFailures {
       case GameFailure.NotFound =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
       case _                    =>
-        // Unreachable through this mapping: getBySlug only ever raises NotFound. Mapped anyway to keep the match total.
+        // Unreachable through this mapping: getBySlug and resultsForPlayer only ever raise NotFound. Mapped anyway to
+        // keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
     }
   }

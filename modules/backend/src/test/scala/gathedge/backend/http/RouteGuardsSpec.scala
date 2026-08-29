@@ -12,6 +12,7 @@ import gathedge.backend.db.{
   MetricsRepository,
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
+  ProgressShareRepository,
   SessionRepository,
   UsageEventRepository,
   UserRepository,
@@ -27,6 +28,7 @@ import gathedge.backend.service.{
   GameService,
   GameWordList,
   OAuthClients,
+  ProgressShareService,
   RateLimiter,
   SystemService,
   UsageStatsService,
@@ -55,7 +57,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
         LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
         UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test ++ GameRepository.test ++
-        GroupRepository.test
+        GroupRepository.test ++ ProgressShareRepository.test
     )
   }
 
@@ -68,7 +70,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
         GameWordList.live ++ TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live ++ GameService.live) >+>
+    base >+> (AuthService.live ++ AuditTrail.live ++ GameService.live ++ ProgressShareService.live) >+>
       (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
   }
 
@@ -79,6 +81,11 @@ object RouteGuardsSpec extends ZIOSpecDefault {
 
   private def signUp(email: String): ZIO[AuthService, Nothing, String] = {
     orDieWithFailure(AuthService.signup(email, "password123")).map(_._2.get)
+  }
+
+  /** The account id as well as the session — the progress-share cases below need both sides by id. */
+  private def signUpFull(email: String): ZIO[AuthService, Nothing, (Long, String)] = {
+    orDieWithFailure(AuthService.signup(email, "password123")).map(pair => (pair._1.id, pair._2.get))
   }
 
   private def adminSession(email: String): ZIO[AuthService & AdminService, Nothing, String] = {
@@ -128,6 +135,27 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         for {
           response <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me"), "not-a-real-session"))
         } yield assertTrue(response.status == Status.Unauthorized)
+      },
+      // The share-scoped play detail is the one route carrying two checks in sequence: the share itself, then
+      // `resultsForPlayer`'s own "this play belongs to that account" rule. Both have to answer, and with different
+      // statuses, or a viewer could walk play ids that are not the sharer's.
+      test("a shared play's results are forbidden to a caller holding no share") {
+        for {
+          (sharer, _)     <- signUpFull("share-sharer@example.com")
+          strangerSession <- signUp("share-stranger@example.com")
+          request          = withSession(Request.get(s"/api/progress-shares/$sharer/plays/1/results"), strangerSession)
+          response        <- runRoutes(ProgressShareRoutes.routes, request)
+        } yield assertTrue(response.status == Status.Forbidden)
+      },
+      test("a viewer holding a share still gets Not Found for a play that is not the sharer's") {
+        for {
+          (sharer, _)       <- signUpFull("share-sharer2@example.com")
+          (viewer, session) <- signUpFull("share-viewer2@example.com")
+          code              <- ProgressShareService.issueCode(sharer)
+          _                 <- orDieWithFailure(ProgressShareService.redeem(viewer, code))
+          request            = withSession(Request.get(s"/api/progress-shares/$sharer/plays/9999/results"), session)
+          response          <- runRoutes(ProgressShareRoutes.routes, request)
+        } yield assertTrue(response.status == Status.NotFound)
       },
       test("an admin route denies a signed-in non-admin") {
         for {

@@ -137,6 +137,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/progress-shares/viewers",
               "/api/progress-shares/shared-with-me",
               "/api/progress-shares/{sharerUserId}/plays",
+              "/api/progress-shares/{sharerUserId}/plays/{playId}/results",
               "/api/progress-shares/viewers/{viewerUserId}",
               "/api/groups",
               "/api/groups/{groupId}",
@@ -382,6 +383,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Forbidden covers a caller with no share from the requested sharer.
               ("GET", "/api/progress-shares/{sharerUserId}/plays")                        ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden),
+              // The detail modal's call: Forbidden for a caller with no share, NotFound for a play id that is not the
+              // sharer's — the second is what stops a viewer walking play ids.
+              ("GET", "/api/progress-shares/{sharerUserId}/plays/{playId}/results")       ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               // Idempotent: revoking a viewer with no share answers the same 204 as one that had one, so its only
               // failure is the aspect's 401.
               ("DELETE", "/api/progress-shares/viewers/{viewerUserId}")                   -> Set(NoContent, Unauthorized),
@@ -431,7 +436,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 253,
+          declared == 257,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -451,6 +456,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `ProgressShareService.requireShareAccess`'s own refusal: the caller holds no grant from the
               // requested sharer.
               ("GET", "/api/progress-shares/{sharerUserId}/plays"),
+              ("GET", "/api/progress-shares/{sharerUserId}/plays/{playId}/results"),
               // `GroupService`'s own admin/membership/ownership refusals — not being an admin of the group
               // (rename/regenerate/setMemberRole/removeMember), not a member of it or not owning the tag (attachTag),
               // or being neither the tag's owner nor an admin of its group (detachTag).

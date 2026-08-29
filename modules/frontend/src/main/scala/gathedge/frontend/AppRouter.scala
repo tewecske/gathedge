@@ -76,10 +76,13 @@ object Page {
     */
   case object SharedProgress extends Page
 
-  /** One sharer's play history, for a viewer that sharer has granted access to — reuses [[MyPlays]]'s table, gated
-    * server-side by `ProgressShareService.requireShareAccess`.
+  /** One sharer's play history, for a viewer that sharer has granted access to — the same listing [[AdminUserPlays]]
+    * shows, gated server-side by `ProgressShareService.requireShareAccess` instead of by `adminOnly`. It carries its
+    * whole listing state in the URL for the same reason [[AdminUserPlays]] does — see
+    * [[gathedge.frontend.listing.MyPlayQuery]] (reused verbatim: cross-game, `search` is the game name) and the route
+    * below.
     */
-  final case class SharedPlayerHistory(sharerUserId: Long) extends Page
+  final case class SharedPlayerHistory(sharerUserId: Long, query: MyPlayQuery = MyPlayQuery.default) extends Page
 
   /** Where "Forgot your password?" on the sign-in form leads. Signed-out only, like sign-in and sign-up. */
   case object ForgotPassword extends Page
@@ -222,18 +225,23 @@ object AppRouter {
     */
   private val basePath = CurrentLocale.prefix
 
-  private val signInRoute              = Route.static(SignIn, root / "sign-in", basePath)
-  private val signUpRoute              = Route.static(SignUp, root / "sign-up", basePath)
-  private val aboutRoute               = Route.static(About, root / "about", basePath)
-  private val settingsRoute            = Route.static(Settings, root / "settings", basePath)
-  private val tagCreateRoute           = Route.static(TagCreate, root / "tags" / "new", basePath)
-  private val gamesRoute               = Route.static(Games, root, basePath)
-  private val gameSetupRoute           = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
-  private val sharedProgressRoute      = Route.static(SharedProgress, root / "games" / "shared", basePath)
-  private val sharedPlayerHistoryRoute = Route(
-    encode = (p: SharedPlayerHistory) => p.sharerUserId,
-    decode = (id: Long) => SharedPlayerHistory(id),
-    pattern = root / "games" / "shared" / segment[Long],
+  private val signInRoute         = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute         = Route.static(SignUp, root / "sign-up", basePath)
+  private val aboutRoute          = Route.static(About, root / "about", basePath)
+  private val settingsRoute       = Route.static(Settings, root / "settings", basePath)
+  private val tagCreateRoute      = Route.static(TagCreate, root / "tags" / "new", basePath)
+  private val gamesRoute          = Route.static(Games, root, basePath)
+  private val gameSetupRoute      = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
+  private val sharedProgressRoute = Route.static(SharedProgress, root / "games" / "shared", basePath)
+
+  /** One sharer's play history — a path segment *and* a query, so it uses `withQuery` rather than the "two routes,
+    * query first" trick, the same as [[gameResultsRoute]] and [[adminUserPlaysRoute]] and for the same reason (see
+    * `gameResultsRoute`'s doc comment).
+    */
+  private val sharedPlayerHistoryRoute = Route.withQuery[SharedPlayerHistory, Long, MyPlayQuery](
+    encode = (p: SharedPlayerHistory) => PatternArgs(p.sharerUserId, p.query),
+    decode = (args: PatternArgs[Long, MyPlayQuery]) => SharedPlayerHistory(args.path, args.params),
+    pattern = (root / "games" / "shared" / segment[Long]) ? MyPlayQuery.params,
     basePath = basePath,
   )
   private val gameInstanceRoute        = Route(
@@ -396,75 +404,75 @@ object AppRouter {
   // file calls either of them.
   private[frontend] def serialize(page: Page): String = {
     page match {
-      case SignIn                    =>
+      case SignIn                         =>
         "SignIn"
-      case SignUp                    =>
+      case SignUp                         =>
         "SignUp"
-      case About                     =>
+      case About                          =>
         "About"
-      case Settings                  =>
+      case Settings                       =>
         "Settings"
-      case TagCreate                 =>
+      case TagCreate                      =>
         "TagCreate"
-      case Games                     =>
+      case Games                          =>
         "Games"
-      case GameSetup                 =>
+      case GameSetup                      =>
         "GameSetup"
-      case AllGames(query)           =>
+      case AllGames(query)                =>
         "AllGames:" + AllGameQuery.params.createParamsString(query)
-      case MyPlays(query)            =>
+      case MyPlays(query)                 =>
         "MyPlays:" + MyPlayQuery.params.createParamsString(query)
-      case SharedProgress            =>
+      case SharedProgress                 =>
         "SharedProgress"
-      case SharedPlayerHistory(id)   =>
-        s"SharedPlayerHistory:$id"
-      case GameInstance(slug)        =>
+      case SharedPlayerHistory(id, query) =>
+        s"SharedPlayerHistory:$id:" + MyPlayQuery.params.createParamsString(query)
+      case GameInstance(slug)             =>
         s"GameInstance:$slug"
-      case GamePlay(slug, playId)    =>
+      case GamePlay(slug, playId)         =>
         s"GamePlay:$slug:$playId"
-      case GameResults(slug, query)  =>
+      case GameResults(slug, query)       =>
         s"GameResults:$slug:" + GamePlayQuery.params.createParamsString(query)
-      case VerifyEmail(token)        =>
+      case VerifyEmail(token)             =>
         s"VerifyEmail:$token"
-      case CheckInbox                =>
+      case CheckInbox                     =>
         "CheckInbox"
-      case ForgotPassword            =>
+      case ForgotPassword                 =>
         "ForgotPassword"
-      case ResetPassword(token)      =>
+      case ResetPassword(token)           =>
         s"ResetPassword:$token"
-      case Admin(query)              =>
+      case Admin(query)                   =>
         "Admin:" + UserQuery.params.createParamsString(query)
-      case AdminUserDetail(id)       =>
+      case AdminUserDetail(id)            =>
         s"AdminUserDetail:$id"
-      case AdminUserPlays(id, query) =>
+      case AdminUserPlays(id, query)      =>
         s"AdminUserPlays:$id:" + MyPlayQuery.params.createParamsString(query)
-      case Words(query)              =>
+      case Words(query)                   =>
         "Words:" + WordQuery.params.createParamsString(query)
-      case WordDetail(id)            =>
+      case WordDetail(id)                 =>
         s"WordDetail:$id"
-      case AdminAudit(query)         =>
+      case AdminAudit(query)              =>
         "AdminAudit:" + AuditQuery.params.createParamsString(query)
-      case AdminSystem               =>
+      case AdminSystem                    =>
         "AdminSystem"
-      case AdminUsage                =>
+      case AdminUsage                     =>
         "AdminUsage"
-      case AdminWordForms            =>
+      case AdminWordForms                 =>
         "AdminWordForms"
-      case AdminRateLimits           =>
+      case AdminRateLimits                =>
         "AdminRateLimits"
-      case Groups                    =>
+      case Groups                         =>
         "Groups"
-      case GroupDetail(id)           =>
+      case GroupDetail(id)                =>
         s"GroupDetail:$id"
-      case GroupJoin(code)           =>
+      case GroupJoin(code)                =>
         s"GroupJoin:$code"
-      case TagDetail(id)             =>
+      case TagDetail(id)                  =>
         s"TagDetail:$id"
-      case Tags                      =>
+      case Tags                           =>
         "Tags"
-      case Forbidden                 =>
+      case Forbidden                      =>
         "Forbidden"
-      case NotFound                  =>
+      case NotFound                       =>
         "NotFound"
     }
   }
@@ -517,7 +525,24 @@ object AppRouter {
         .map(query => MyPlays(query))
         .getOrElse(MyPlays())
     } else if (tag.startsWith("SharedPlayerHistory:")) {
-      withId(tag, "SharedPlayerHistory:")(SharedPlayerHistory.apply)
+      // Same shape as the `AdminUserPlays:` branch below, including the two-part tag an older build wrote: a corrupt
+      // id is `NotFound`, an unreadable query falls back to that sharer's default play-history view.
+      val rest = tag.stripPrefix("SharedPlayerHistory:")
+      val sep  = rest.indexOf(':')
+      if (sep < 0) {
+        rest.toLongOption.map(id => SharedPlayerHistory(id)).getOrElse(NotFound)
+      } else {
+        rest
+          .substring(0, sep)
+          .toLongOption
+          .map { id =>
+            MyPlayQuery.params
+              .matchQueryString(rest.substring(sep + 1))
+              .map(query => SharedPlayerHistory(id, query))
+              .getOrElse(SharedPlayerHistory(id))
+          }
+          .getOrElse(NotFound)
+      }
     } else if (tag.startsWith("ResetPassword:")) {
       ResetPassword(tag.stripPrefix("ResetPassword:"))
     } else if (tag.startsWith("WordDetail:")) {

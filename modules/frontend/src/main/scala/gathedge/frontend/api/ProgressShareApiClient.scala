@@ -2,7 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.ProgressShareEndpoints
-import gathedge.shared.dto.{MyPlayPage, RedeemShareRequest, SharedViewer, SharedWithMe, ShareCodeResponse}
+import gathedge.shared.dto.{GameResults, MyPlayPage, RedeemShareRequest, SharedViewer, SharedWithMe, ShareCodeResponse}
 
 import EndpointClient.{executor, run}
 
@@ -38,8 +38,14 @@ object ProgressShareApiClient {
     pageSize: Option[Int] = None,
     sort: Option[String] = None,
     dir: Option[String] = None,
+    search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    run(executor(ProgressShareEndpoints.sharerPlays(sharerUserId, gameId, page, pageSize, sort, dir)))
+    run(executor(ProgressShareEndpoints.sharerPlays(sharerUserId, gameId, page, pageSize, sort, dir, search)))
+  }
+
+  /** One of the sharer's plays in full — the share-scoped counterpart of `AdminApiClient.userPlayResults`. */
+  def sharerPlayResults(sharerUserId: Long, playId: Long): EventStream[Either[ApiError, GameResults]] = {
+    run(executor(ProgressShareEndpoints.sharerPlayResults(sharerUserId, playId)))
   }
 
   def revokeViewer(viewerUserId: Long): EventStream[Either[ApiError, Unit]] = {
