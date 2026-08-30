@@ -188,11 +188,16 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
   *
   * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUploadPreview]]
   * tokenizes it and matches whatever it finds in each language, writing nothing.
+  *
+  * `fuzzyMatching` asks the server to also offer near-miss corrections for tokens that matched nothing exactly — worth
+  * it for text a camera read (OCR), pointless noise for a `.txt` file or a paste, which are exact. Default `true` so an
+  * older client keeps the old behaviour.
   */
 final case class BulkUploadPreviewRequest(
   content: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
+  fuzzyMatching: Boolean = true,
 ) derives JsonCodec
 
 /** One word [[gathedge.backend.service.WordService.bulkUploadPreview]] found already in the dictionary, plus whichever
@@ -202,9 +207,23 @@ final case class BulkUploadPreviewRequest(
   * `hasAnyTranslation` is wider than `translations.nonEmpty`: it is true the moment the dictionary has recorded the
   * word in '''any''' language, even one neither declared language names, which is what the reader's "any language"
   * filter narrows to.
+  *
+  * `translationInImport` marks a source-language match whose dictionary translation into the target language was
+  * '''also''' one of the imported tokens. That target word is then dropped from [[BulkUploadPreviewResponse.matched]]
+  * rather than shown a second time on its own, and this match carries an "exact" badge instead. Always `false` for a
+  * [[BulkUploadSuggestion.candidate]].
+  *
+  * `exactTranslationWordId` names that imported translation (a [[TranslationOption.wordId]]) when `translationInImport`
+  * is true, so the browser marks the pair the upload already confirmed rather than defaulting to the first option.
+  * `translations` is also ordered to put it first.
   */
-final case class BulkUploadMatch(word: Word, translations: List[TranslationOption], hasAnyTranslation: Boolean)
-    derives JsonCodec
+final case class BulkUploadMatch(
+  word: Word,
+  translations: List[TranslationOption],
+  hasAnyTranslation: Boolean,
+  translationInImport: Boolean = false,
+  exactTranslationWordId: Option[Long] = None,
+) derives JsonCodec
 
 /** A dictionary word within [[gathedge.backend.service.WordService.maxSuggestionDistance]] edits of `token`, offered
   * because [[gathedge.backend.service.WordService.bulkUploadPreview]] found it in neither declared language exactly —

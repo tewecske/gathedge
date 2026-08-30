@@ -1023,7 +1023,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         )
       },
       test(
-        "preview matches the source language first, offers only known cross-language translations, and writes nothing"
+        "preview matches the source language first, drops a translation that was itself imported, and writes nothing"
       ) {
         for {
           _           <- seed
@@ -1034,18 +1034,48 @@ object WordServiceSpec extends ZIOSpecDefault {
           wordsAfter  <- ZIO.serviceWithZIO[WordRepository](_.countWords)
           tagsAfter   <- WordRepository.countTagsOwnedBy(1L)
           haus         = preview.matched.find(_.word.text == "Haus")
-          haz          = preview.matched.find(_.word.text == "ház")
         } yield assertTrue(
-          // "Haus" and "ház" are already in the dictionary in their own language; "brandneu" is in neither.
-          preview.matched.map(_.word.text).toSet == Set("Haus", "ház"),
+          // "Haus" and "ház" are a linked pair and both were imported: "Haus" is kept and badged, "ház" is not shown
+          // again on its own. "brandneu" is in neither language.
+          preview.matched.map(_.word.text) == List("Haus"),
+          haus.exists(_.translationInImport),
           preview.unmatched == List("brandneu"),
-          // Each matched word's only translation shown is the one the dictionary already links it to, rendered with
-          // its article since "Haus" is a German neuter noun.
+          // The translation the dictionary already links to "Haus", rendered with its article since "Haus" is a
+          // German neuter noun.
           haus.exists(_.translations.map(_.text) == List("ház")),
-          haz.exists(_.translations.map(_.text) == List("das Haus")),
           // A preview is a read: nothing new was written beyond the tag the test itself created.
           wordsAfter == wordsBefore,
           tagsAfter == tagsBefore,
+        )
+      },
+      test("the matched list follows the order the words were written, interleaving the two languages") {
+        for {
+          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hello", pos = PartOfSpeech.Other))
+          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "world"))
+          tag     <- createTag("upload", 1L)
+          // "Haus" is the target language and sits between two source-language words; the review list keeps that order
+          // rather than grouping every source match ahead of every target match.
+          preview <- WordService.bulkUploadPreview(tag.id, "hello Haus world", WordLanguage.En, WordLanguage.De, 1L)
+        } yield assertTrue(preview.matched.map(_.word.text) == List("hello", "Haus", "world"))
+      },
+      test(
+        "a word whose dictionary translation was also imported shows once, badged, with the translation row dropped"
+      ) {
+        for {
+          dog     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+          perro   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "perro", gender = Some(Gender.Masculine)))
+          _       <- WordRepository.insertTranslationPair(dog.id, perro.id, WordService.dictionaryOrigin, None, 0L)
+          tag     <- createTag("upload", 1L)
+          preview <- WordService.bulkUploadPreview(tag.id, "perro dog", WordLanguage.En, WordLanguage.Es, 1L)
+          dogMatch = preview.matched.find(_.word.text == "dog")
+        } yield assertTrue(
+          // "perro" is not shown on its own — it is the dictionary translation of "dog", which was also imported.
+          preview.matched.map(_.word.text) == List("dog"),
+          dogMatch.exists(_.translationInImport),
+          dogMatch.exists(_.exactTranslationWordId.contains(perro.id)),
+          dogMatch.exists(_.translations.map(_.text) == List("el perro")),
         )
       },
       test(

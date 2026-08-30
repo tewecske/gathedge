@@ -207,6 +207,7 @@ trait WordService {
     content: String,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
+    fuzzyMatching: Boolean,
     userId: Long,
   ): IO[BulkUploadFailure, BulkUploadPreviewResponse]
 
@@ -348,8 +349,12 @@ object WordService {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
     userId: Long,
-  ): ZIO[WordService, BulkUploadFailure, BulkUploadPreviewResponse] =
-    ZIO.serviceWithZIO[WordService](_.bulkUploadPreview(tagId, content, sourceLanguage, targetLanguage, userId))
+    fuzzyMatching: Boolean = true,
+  ): ZIO[WordService, BulkUploadFailure, BulkUploadPreviewResponse] = {
+    ZIO.serviceWithZIO[WordService](
+      _.bulkUploadPreview(tagId, content, sourceLanguage, targetLanguage, fuzzyMatching, userId)
+    )
+  }
 
   def bulkUploadConfirm(
     tagId: Long,
@@ -1419,6 +1424,7 @@ final case class WordServiceLive(
     content: String,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
+    fuzzyMatching: Boolean,
     userId: Long,
   ): IO[BulkUploadFailure, BulkUploadPreviewResponse] = {
     val invalidFile =
@@ -1436,13 +1442,17 @@ final case class WordServiceLive(
       (targetMatches, remaining2Raw) = targetMatched
       matchedIds                     = (sourceMatches.map(_.id) ++ targetMatches.map(_.id)).toSet
       remaining2                     = dedupeArticledVariants(remaining2Raw, List(sourceLanguage, targetLanguage))
-      sourceSuggested0              <- suggestionsFor(sourceLanguage, remaining2)
+      // Near-miss corrections are only worth computing for text a camera read. A `.txt` file or a paste is exact, so
+      // the client sends `fuzzyMatching = false` and every unmatched token stays in `unmatched`.
+      sourceSuggested0              <- if (fuzzyMatching) suggestionsFor(sourceLanguage, remaining2)
+                                       else ZIO.succeed(Map.empty[String, List[(WordRow, Int)]])
       sourceSuggested                = sourceSuggested0.view
                                          .mapValues(_.filterNot { case (row, _) => matchedIds.contains(row.id) })
                                          .filter { case (_, cs) => cs.nonEmpty }
                                          .toMap
       remaining3                     = remaining2.filterNot(sourceSuggested.contains)
-      targetSuggested0              <- suggestionsFor(targetLanguage, remaining3)
+      targetSuggested0              <- if (fuzzyMatching) suggestionsFor(targetLanguage, remaining3)
+                                       else ZIO.succeed(Map.empty[String, List[(WordRow, Int)]])
       targetSuggested                = targetSuggested0.view
                                          .mapValues(_.filterNot { case (row, _) => matchedIds.contains(row.id) })
                                          .filter { case (_, cs) => cs.nonEmpty }
@@ -1459,23 +1469,62 @@ final case class WordServiceLive(
       candidateIds                   =
         (matchedIds ++ sourceSuggestionIds ++ targetSuggestionIds).toList
       anyTranslationIds             <- repo.wordIdsWithAnyTranslation(candidateIds).orDie
+      // A source match whose dictionary translation into the target language was itself an imported token: badge it
+      // "exact" and drop that standalone target row, so a reader who typed both a word and its translation sees one
+      // row, not two. Compared by word id, so it is blind to how each side renders its article.
+      importedTargetIds              = targetMatches.map(_.id).toSet
+      // For each source match, the id of its dictionary translation that was itself an imported token, if any. This is
+      // both the "exact" test and what the browser marks — it never has to guess from list order.
+      exactTranslationBySource       = sourceMatches.flatMap { row =>
+                                         sourceTranslations
+                                           .getOrElse(row.id, Nil)
+                                           .find(t => importedTargetIds.contains(t.wordId))
+                                           .map(t => row.id -> t.wordId)
+                                       }.toMap
+      dupTargetIds                   = exactTranslationBySource.values.toSet
+      targetMatchesDeduped           = targetMatches.filterNot(row => dupTargetIds.contains(row.id))
+      // Also put that translation at the head of its match's list, so it reads first as well as being pre-selected.
+      sourceTranslationsOrdered      = sourceTranslations.map { case (wordId, options) =>
+                                         wordId -> options.sortBy(option => !importedTargetIds.contains(option.wordId))
+                                       }
       buildMatch                     = { (row: WordRow, translationMap: Map[Long, List[TranslationOption]]) =>
-        BulkUploadMatch(toDomain(row), translationMap.getOrElse(row.id, Nil), anyTranslationIds.contains(row.id))
+        BulkUploadMatch(
+          toDomain(row),
+          translationMap.getOrElse(row.id, Nil),
+          anyTranslationIds.contains(row.id),
+          exactTranslationBySource.contains(row.id),
+          exactTranslationBySource.get(row.id),
+        )
+      }
+      // First appearance in the uploaded text, stripping the article in the row's own language — `textNorm` never
+      // carries one. A token matched in the source language never re-matches in the target, so every row maps to a
+      // distinct token, and interleaving the two sides by this index restores the reader's own order.
+      tokenPos                       = { (row: WordRow, language: WordLanguage) =>
+        tokens.indexWhere(token => stripArticle(token, language)._1 == row.textNorm)
       }
       matched                        = {
-        collapseHomonyms(sourceMatches, sourceTranslations).map(row => buildMatch(row, sourceTranslations)) ++
-          collapseHomonyms(targetMatches, targetTranslations).map(row => buildMatch(row, targetTranslations))
+        val sourceOrdered = {
+          collapseHomonyms(sourceMatches, sourceTranslationsOrdered)
+            .map(row => buildMatch(row, sourceTranslationsOrdered) -> tokenPos(row, sourceLanguage))
+        }
+        val targetOrdered = {
+          collapseHomonyms(targetMatchesDeduped, targetTranslations)
+            .map(row => buildMatch(row, targetTranslations) -> tokenPos(row, targetLanguage))
+        }
+        (sourceOrdered ++ targetOrdered).sortBy(_._2).map(_._1)
       }
       suggestions                    = {
-        sourceSuggested.toList.flatMap { case (token, candidates) =>
-          candidates.map { case (row, distance) =>
-            BulkUploadSuggestion(token, buildMatch(row, sourceSuggestionTranslations), distance)
-          }
-        } ++
-          targetSuggested.toList.flatMap { case (token, candidates) =>
+        sourceSuggested.toList.sortBy { case (token, _) => remaining2.indexOf(token) }.flatMap {
+          case (token, candidates) =>
             candidates.map { case (row, distance) =>
-              BulkUploadSuggestion(token, buildMatch(row, targetSuggestionTranslations), distance)
+              BulkUploadSuggestion(token, buildMatch(row, sourceSuggestionTranslations), distance)
             }
+        } ++
+          targetSuggested.toList.sortBy { case (token, _) => remaining3.indexOf(token) }.flatMap {
+            case (token, candidates) =>
+              candidates.map { case (row, distance) =>
+                BulkUploadSuggestion(token, buildMatch(row, targetSuggestionTranslations), distance)
+              }
           }
       }
     } yield BulkUploadPreviewResponse(matched, suggestions, unmatched)

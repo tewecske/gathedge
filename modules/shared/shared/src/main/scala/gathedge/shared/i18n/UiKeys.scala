@@ -713,29 +713,20 @@ object UiKeys {
 
   val wordsBulkUploadMatchedHeading: String   = key("ui.words.bulkUpload.matchedHeading")
   val wordsBulkUploadAcceptAll: String        = key("ui.words.bulkUpload.acceptAll")
+  val wordsBulkUploadAcceptExact: String      = key("ui.words.bulkUpload.acceptExact")
   val wordsBulkUploadDeclineAll: String       = key("ui.words.bulkUpload.declineAll")
   val wordsBulkUploadNoTranslation: String    = key("ui.words.bulkUpload.noTranslation")
   val wordsBulkUploadUnmatchedHeading: String = key("ui.words.bulkUpload.unmatchedHeading")
   val wordsBulkUploadLanguageSkip: String     = key("ui.words.bulkUpload.languageSkip")
   val wordsBulkUploadNext: String             = key("ui.words.bulkUpload.next")
 
-  /** The matched list's two subgroups — a word with a known translation is one click away from done; a word with none
-    * needs a look before the reader accepts it.
-    */
-  val wordsBulkUploadMatchedWithTranslationHeading: String    =
-    key("ui.words.bulkUpload.matchedWithTranslationHeading")
-  val wordsBulkUploadMatchedWithoutTranslationHeading: String =
-    key("ui.words.bulkUpload.matchedWithoutTranslationHeading")
-  val wordsBulkUploadAcceptAllWithTranslation: String         = key("ui.words.bulkUpload.acceptAllWithTranslation")
-  val wordsBulkUploadDeclineAllWithTranslation: String        = key("ui.words.bulkUpload.declineAllWithTranslation")
-  val wordsBulkUploadAcceptAllWithoutTranslation: String      = key("ui.words.bulkUpload.acceptAllWithoutTranslation")
-  val wordsBulkUploadDeclineAllWithoutTranslation: String     = key("ui.words.bulkUpload.declineAllWithoutTranslation")
+  /** Accepts every match that already carries a translation — one click away from done, unlike a match with none. */
+  val wordsBulkUploadAcceptAllWithTranslation: String = key("ui.words.bulkUpload.acceptAllWithTranslation")
 
-  /** Badges on a matched row: the word itself always came from the upload; a translation next to it came from the
-    * dictionary and may never have appeared in the uploaded file at all.
+  /** Badge on a matched row whose dictionary translation was also one of the imported tokens: the pair is confirmed by
+    * the upload itself, and the translation is not shown again as its own row.
     */
-  val wordsBulkUploadFromUpload: String     = key("ui.words.bulkUpload.fromUpload")
-  val wordsBulkUploadFromDictionary: String = key("ui.words.bulkUpload.fromDictionary")
+  val wordsBulkUploadExactBadge: String = key("ui.words.bulkUpload.exactBadge")
 
   /** The suggestions list: a dictionary word close enough to an OCR-misread token to guess at, shown separately from an
     * exact match and never opt-out-accepted the way a match is — see `BulkUploadDialog.renderSuggestionsSection`. `{0}`

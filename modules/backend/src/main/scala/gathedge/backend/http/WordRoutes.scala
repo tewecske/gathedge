@@ -206,7 +206,7 @@ object WordRoutes {
       handler { (tagId: Long, body: BulkUploadPreviewRequest) =>
         userId.flatMap(id => {
           WordService
-            .bulkUploadPreview(tagId, body.content, body.sourceLanguage, body.targetLanguage, id)
+            .bulkUploadPreview(tagId, body.content, body.sourceLanguage, body.targetLanguage, id, body.fuzzyMatching)
             .mapError(ApiFailures.bulkUpload)
         })
       }

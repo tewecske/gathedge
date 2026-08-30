@@ -136,6 +136,11 @@ final class BulkUploadDialog(
     */
   private val pasteTextVar = Var("")
 
+  /** Whether this upload's text came from OCR rather than a `.txt` file or a paste. Only an OCR upload asks the server
+    * for near-miss corrections — see `BulkUploadPreviewRequest.fuzzyMatching`.
+    */
+  private val fromImageVar = Var(false)
+
   private def isBusySignal: Signal[Boolean] = {
     phaseSignal.map {
       case Phase.Recognizing | Phase.Uploading | Phase.Processing | Phase.Confirming => true
@@ -171,6 +176,7 @@ final class BulkUploadDialog(
       pendingPickVar         -> None,
       tagIdVar               -> None,
       pasteTextVar           -> "",
+      fromImageVar           -> false,
       translationFilterVar   -> TranslationFilter.All,
     )
   }
@@ -194,6 +200,7 @@ final class BulkUploadDialog(
       pendingPickVar         -> None,
       tagIdVar               -> None,
       pasteTextVar           -> "",
+      fromImageVar           -> false,
       translationFilterVar   -> TranslationFilter.All,
     )
   }
@@ -202,6 +209,7 @@ final class BulkUploadDialog(
   private def close(): Unit = openVar.set(false)
 
   private def handleFile(file: dom.File): Unit = {
+    fromImageVar.set(false)
     if (file.size > BulkUploadDialog.maxBytes) {
       phaseVar.set(Phase.Failed(I18n.t(UiKeys.wordsBulkUploadSizeError)))
     } else {
@@ -235,6 +243,7 @@ final class BulkUploadDialog(
     * there, it looks exactly like a paste.
     */
   private def handleImage(file: dom.File): Unit = {
+    fromImageVar.set(true)
     Var.set(phaseVar -> Phase.Recognizing, progressVar -> 0)
     recognizeImage(file, sourceLanguageVar.now(), targetLanguageVar.now(), pct => progressVar.set((pct * 100).toInt))
       .onComplete {
@@ -277,7 +286,14 @@ final class BulkUploadDialog(
       Var.set(xhrVar -> None, progressVar -> 0, phaseVar -> Phase.Failed(I18n.t(MessageKeys.requestFailed)))
     }
     xhrVar.set(Some(xhr))
-    xhr.send(BulkUploadPreviewRequest(content, sourceLanguageVar.now(), targetLanguageVar.now()).toJson)
+    xhr.send(
+      BulkUploadPreviewRequest(
+        content,
+        sourceLanguageVar.now(),
+        targetLanguageVar.now(),
+        fuzzyMatching = fromImageVar.now(),
+      ).toJson
+    )
   }
 
   private def handlePreviewSuccess(body: String): Unit = {
@@ -285,16 +301,18 @@ final class BulkUploadDialog(
       case Right(response) =>
         Var.set(
           previewVar             -> Some(response),
-          // Accepting everything a preview found is the ordinary case; "decline all" is the one click for the
-          // exception.
-          acceptedVar            -> response.matched.map(_.word.id).toSet,
-          // Defaulting to the first dictionary translation is the ordinary case; the reader picks a different one
-          // only when a match has more than one. A suggestion's candidate is seeded the same way, so a pre-picked
-          // translation is ready the moment the reader accepts one — but unlike a match, a suggestion is never added
-          // to `acceptedVar` here: it is a guess, opt-in rather than opt-out-accepted.
+          // Only the exact matches — a word and its translation both imported and both an exact dictionary hit — are
+          // accepted by default. Every other match is opt-in, through "Accept all" or a per-row tick.
+          acceptedVar            -> response.matched.filter(_.translationInImport).map(_.word.id).toSet,
+          // An "exact" match names the translation the upload itself confirmed; otherwise default to the first
+          // dictionary translation, which the reader changes only when a match has more than one. A suggestion's
+          // candidate is seeded the same way, so a pre-picked translation is ready the moment the reader accepts one —
+          // but unlike a match, a suggestion is never added to `acceptedVar` here: it is a guess, opt-in rather than
+          // opt-out-accepted.
           selectedTranslationVar -> (
             response.matched.collect {
-              case m if m.translations.nonEmpty => m.word.id -> m.translations.head.wordId
+              case m if m.translations.nonEmpty =>
+                m.word.id -> m.exactTranslationWordId.getOrElse(m.translations.head.wordId)
             } ++ response.suggestions.collect {
               case s if s.candidate.translations.nonEmpty => s.candidate.word.id -> s.candidate.translations.head.wordId
             }
@@ -401,7 +419,7 @@ final class BulkUploadDialog(
       cls := "modal",
       cls("modal-open") <-- openVar.signal,
       div(
-        cls   := "modal-box w-full max-w-2xl",
+        cls   := "modal-box w-full max-w-2xl max-h-[85dvh] overflow-y-auto",
         h3(cls := "font-bold text-lg", I18n.t(UiKeys.wordsBulkUploadTitle)),
         p(cls  := "text-sm opacity-70 py-2", I18n.t(UiKeys.wordsBulkUploadHint)),
         child.maybe <-- showFileInputSignal.map(Option.when(_)(renderFileInput())),
@@ -474,7 +492,10 @@ final class BulkUploadDialog(
           typ := "button",
           disabled <-- isBusySignal.combineWithFn(pasteTextVar.signal)((busy, text) => busy || text.trim.isEmpty),
           I18n.t(UiKeys.wordsBulkUploadPasteButton),
-          onClick.mapToUnit --> Observer[Unit](_ => handleText(pasteTextVar.now())),
+          onClick.mapToUnit --> Observer[Unit] { _ =>
+            fromImageVar.set(false)
+            handleText(pasteTextVar.now())
+          },
         ),
       ),
     )
@@ -603,19 +624,23 @@ final class BulkUploadDialog(
   }
 
   private def renderReviewMatched(preview: BulkUploadPreviewResponse): HtmlElement = {
-    val matchedIds = preview.matched.map(_.word.id).toSet
     div(
-      Option.when(preview.matched.nonEmpty)(renderMatchedControls(matchedIds)),
       Option.when(preview.matched.nonEmpty)(renderTranslationFilter()),
-      child <-- translationFilterVar.signal.map(filter => renderMatchedGroups(filterMatches(preview.matched, filter))),
+      child <-- translationFilterVar.signal.map { filter =>
+        val matches = filterMatches(preview.matched, filter)
+        div(
+          Option.when(matches.nonEmpty)(renderMatchedControls(matches)),
+          Option.when(matches.nonEmpty)(renderMatchedList(matches)),
+        )
+      },
       Option.when(preview.suggestions.nonEmpty)(renderSuggestionsSection(preview.suggestions)),
       Option.when(preview.unmatched.nonEmpty)(renderUnmatchedSection(preview.unmatched)),
     )
   }
 
-  /** [[translationFilterVar]] applied to a preview's matched list — `All` is every row, `HasTarget` is the same rows
-    * [[renderMatchedGroups]]'s own "with translation" subgroup would show, and `HasAny` is wider still: a word may
-    * carry no translation into the two declared languages and still have one into a third.
+  /** [[translationFilterVar]] applied to a preview's matched list — `All` is every row, `HasTarget` keeps only rows
+    * carrying a translation into the counterpart language, and `HasAny` is wider still: a word may carry no translation
+    * into the two declared languages and still have one into a third.
     */
   private def filterMatches(matched: List[BulkUploadMatch], filter: TranslationFilter): List[BulkUploadMatch] = {
     filter match {
@@ -628,26 +653,13 @@ final class BulkUploadDialog(
     }
   }
 
-  /** The matched list's two subgroups, over whatever [[filterMatches]] left standing. */
-  private def renderMatchedGroups(matched: List[BulkUploadMatch]): HtmlElement = {
-    val (withTranslation, withoutTranslation) = matched.partition(_.translations.nonEmpty)
+  /** One scroll list for every match, translation or none — the reader works through it top to bottom in import order.
+    * Fills most of the viewport (the modal box caps at 85dvh and scrolls, so this stays on screen).
+    */
+  private def renderMatchedList(matches: List[BulkUploadMatch]): HtmlElement = {
     div(
-      Option.when(withTranslation.nonEmpty)(
-        renderMatchedSubgroup(
-          UiKeys.wordsBulkUploadMatchedWithTranslationHeading,
-          withTranslation,
-          UiKeys.wordsBulkUploadAcceptAllWithTranslation,
-          UiKeys.wordsBulkUploadDeclineAllWithTranslation,
-        )
-      ),
-      Option.when(withoutTranslation.nonEmpty)(
-        renderMatchedSubgroup(
-          UiKeys.wordsBulkUploadMatchedWithoutTranslationHeading,
-          withoutTranslation,
-          UiKeys.wordsBulkUploadAcceptAllWithoutTranslation,
-          UiKeys.wordsBulkUploadDeclineAllWithoutTranslation,
-        )
-      ),
+      cls := "max-h-[55dvh] overflow-y-auto border border-base-300 rounded p-2 mt-1 flex flex-col gap-1",
+      matches.map(renderMatchedRow),
     )
   }
 
@@ -701,9 +713,11 @@ final class BulkUploadDialog(
         ),
       ),
       div(
+        cls := "min-w-0 flex-1",
         div(
           cls   := "flex items-center gap-1 flex-wrap",
           span(cls := "font-medium text-sm", Word.display(s.candidate.word)),
+          span(cls := "badge badge-ghost badge-xs", Labels.partOfSpeech(s.candidate.word.partOfSpeech)),
           span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadSuggestionBadge)),
         ),
         div(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadSuggestionOcrLabel, s.token)),
@@ -715,72 +729,54 @@ final class BulkUploadDialog(
     )
   }
 
-  /** The whole matched list's Accept all / Decline all — every subgroup and both language columns at once. */
-  private def renderMatchedControls(matchedIds: Set[Long]): HtmlElement = {
+  /** The combined matched list's heading and selection buttons, scoped to whatever the translation filter left
+    * standing: accept the exact matches, accept every match that carries a translation, accept all, decline all. All
+    * additive against the current selection (rather than replacing it), so a row hidden by the filter keeps its state.
+    */
+  private def renderMatchedControls(matches: List[BulkUploadMatch]): HtmlElement = {
+    val ids                = matches.map(_.word.id).toSet
+    val exactIds           = matches.filter(_.translationInImport).map(_.word.id).toSet
+    val withTranslationIds = matches.filter(_.translations.nonEmpty).map(_.word.id).toSet
     div(
-      cls := "flex items-center justify-between mt-3",
+      cls := "flex items-center justify-between mt-3 gap-2 flex-wrap",
       h4(cls := "font-semibold text-sm", I18n.t(UiKeys.wordsBulkUploadMatchedHeading)),
       div(
-        cls  := "flex gap-2",
+        cls  := "flex gap-2 flex-wrap",
+        Option.when(exactIds.nonEmpty)(
+          button(
+            cls := "btn btn-xs",
+            typ := "button",
+            I18n.t(UiKeys.wordsBulkUploadAcceptExact),
+            onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ ++ exactIds)),
+          )
+        ),
+        Option.when(withTranslationIds.nonEmpty && withTranslationIds != ids)(
+          button(
+            cls := "btn btn-xs",
+            typ := "button",
+            I18n.t(UiKeys.wordsBulkUploadAcceptAllWithTranslation),
+            onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ ++ withTranslationIds)),
+          )
+        ),
         button(
           cls := "btn btn-xs",
           typ := "button",
           I18n.t(UiKeys.wordsBulkUploadAcceptAll),
-          onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.set(matchedIds)),
+          onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ ++ ids)),
         ),
         button(
           cls := "btn btn-xs",
           typ := "button",
           I18n.t(UiKeys.wordsBulkUploadDeclineAll),
-          onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.set(Set.empty)),
+          onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ -- ids)),
         ),
       ),
     )
   }
 
-  /** One matched subgroup — "with translation" or "without" — its own Accept all / Decline all scoped to just its ids.
-    * Source- and target-language words sit in one list together, each row carrying its own language badge, rather than
-    * two side-by-side columns: a match already shows its translation inline, so splitting by language added a second
-    * axis a reader had to scan without adding information.
-    */
-  private def renderMatchedSubgroup(
-    headingKey: String,
-    matches: List[BulkUploadMatch],
-    acceptKey: String,
-    declineKey: String,
-  ): HtmlElement = {
-    val ids = matches.map(_.word.id).toSet
-    div(
-      cls := "mt-3",
-      div(
-        cls := "flex items-center justify-between",
-        h5(cls := "font-semibold text-xs opacity-70", I18n.t(headingKey)),
-        div(
-          cls  := "flex gap-2",
-          button(
-            cls := "btn btn-xs",
-            typ := "button",
-            I18n.t(acceptKey),
-            onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ ++ ids)),
-          ),
-          button(
-            cls := "btn btn-xs",
-            typ := "button",
-            I18n.t(declineKey),
-            onClick.mapToUnit --> Observer[Unit](_ => acceptedVar.update(_ -- ids)),
-          ),
-        ),
-      ),
-      div(
-        cls := "max-h-48 overflow-y-auto border border-base-300 rounded p-2 mt-1 flex flex-col gap-1",
-        matches.map(renderMatchedRow),
-      ),
-    )
-  }
-
-  /** The word itself always came from the uploaded file — that is what a match is. Its translations came from the
-    * dictionary and may never have appeared in the upload at all, so each carries its own badge saying so. The language
-    * badge tells source- and target-language rows apart now that they share one list.
+  /** The language badge tells source- and target-language rows apart now that they share one list; the part-of-speech
+    * badge disambiguates two rows that share a spelling. An "exact" badge, next to the word, marks a pair the upload
+    * itself confirmed.
     */
   private def renderMatchedRow(m: BulkUploadMatch): HtmlElement = {
     label(
@@ -796,11 +792,15 @@ final class BulkUploadDialog(
         ),
       ),
       div(
+        cls := "min-w-0 flex-1",
         div(
           cls := "flex items-center gap-1 flex-wrap",
           span(cls := "font-medium text-sm", Word.display(m.word)),
+          if (m.translationInImport)
+            span(cls := "badge badge-success badge-xs", I18n.t(UiKeys.wordsBulkUploadExactBadge))
+          else emptyNode,
           span(cls := "badge badge-ghost badge-xs", Labels.language(m.word.language)),
-          span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromUpload)),
+          span(cls := "badge badge-ghost badge-xs", Labels.partOfSpeech(m.word.partOfSpeech)),
         ),
         if (m.translations.isEmpty)
           span(cls := "text-xs opacity-70", I18n.t(UiKeys.wordsBulkUploadNoTranslation))
@@ -811,29 +811,25 @@ final class BulkUploadDialog(
   }
 
   /** A match's dictionary translations, all shown but only one selectable — `bulkUploadConfirm` marks
-    * [[selectedTranslationVar]]'s entry for this word, never every option listed here. One option needs no radio (it is
-    * already the seeded selection); more than one gets a `join` of radio buttons the same style [[renderLanguageRadio]]
-    * uses, so picking the right match is one click.
+    * [[selectedTranslationVar]]'s entry for this word, never every option listed here. Rendered as a wrapping row of
+    * btn-styled radio buttons whether there is one option or many, so the two cases read alike and a word with many
+    * translations wraps down the modal rather than overflowing its width.
     */
   private def renderTranslationChoices(wordId: Long, translations: List[TranslationOption]): HtmlElement = {
     div(
-      cls := "flex items-center gap-1 flex-wrap mt-0.5",
-      span(cls := "text-xs opacity-70", "→"),
-      if (translations.sizeIs > 1) {
-        div(
-          cls := "join",
-          translations.map(t => renderTranslationRadio(wordId, t)),
-        )
-      } else
-        span(cls := "text-xs opacity-70", translations.head.text),
-      span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.wordsBulkUploadFromDictionary)),
+      cls := "flex items-start gap-1 flex-wrap mt-0.5",
+      span(cls := "text-xs opacity-70 mt-1", "→"),
+      div(
+        cls    := "flex flex-wrap gap-1",
+        translations.map(t => renderTranslationRadio(wordId, t)),
+      ),
     )
   }
 
   private def renderTranslationRadio(wordId: Long, translation: TranslationOption): HtmlElement = {
     input(
       typ        := "radio",
-      cls        := "join-item btn btn-xs",
+      cls        := "btn btn-xs",
       nameAttr   := s"bulk-upload-translation-$wordId",
       aria.label := translation.text,
       controlled(
