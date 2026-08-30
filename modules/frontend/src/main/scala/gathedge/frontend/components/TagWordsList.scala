@@ -48,13 +48,18 @@ object TagWordsList {
     }
   }
 
-  /** One row: the source word, plus its marked accepted translation(s) so the player can study the pool before playing
-    * — see `GameSetupWord.translations`. Plain comma-joined text, not `WordCollect.renderChip`: that chip toggles a
-    * mark against the *collect* tag, which has no place on this read-only preview.
+  /** One row: the source word with its part of speech (two rows spelled alike are two different words), plus its marked
+    * accepted translation(s) so the player can study the pool before playing — see `GameSetupWord.translations`. Plain
+    * comma-joined text, not `WordCollect.renderChip`: that chip toggles a mark against the *collect* tag, which has no
+    * place on this read-only preview.
     */
   private def renderRow(word: GameSetupWord): HtmlElement = {
     tr(
-      td(cls := "text-sm", word.text),
+      td(
+        cls  := "text-sm",
+        div(word.text),
+        word.partOfSpeech.map(pos => div(cls := "text-xs opacity-60", Labels.partOfSpeech(pos))),
+      ),
       td(cls := "text-xs opacity-60", word.translations.mkString(", ")),
     )
   }

@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.{AnswerOutcome, GameMode, WordLanguage, WordPreference}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, PartOfSpeech, WordLanguage, WordPreference}
 import zio.json.*
 
 /** What `POST /api/games` needs: the language pair and tags a base game is built from. Nothing here ever changes after
@@ -28,8 +28,18 @@ final case class RenameGameRequest(name: String) derives JsonCodec
   * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row
   * per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated it
   * (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
+  *
+  * `partOfSpeech` is what tells two rows spelled alike apart — `words` is unique on
+  * `(language, text_norm, part_of_speech, gender)`, so a noun and a verb written the same way are two separate study
+  * rows. `None` only for a stored code a newer build no longer recognises, the same lenient read `GameService.modeOf`
+  * gives every other stored code.
   */
-final case class GameSetupWord(wordId: Long, text: String, translations: List[String] = Nil) derives JsonCodec
+final case class GameSetupWord(
+  wordId: Long,
+  text: String,
+  translations: List[String] = Nil,
+  partOfSpeech: Option[PartOfSpeech] = None,
+) derives JsonCodec
 
 /** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. */
 final case class GameDetail(
@@ -85,6 +95,10 @@ final case class PlayStarted(playId: Long, wordCount: Int, maxScore: Int) derive
   * shuffled buttons — the accepted translation plus up to three distractors, never more than four in total and
   * sometimes fewer, since a thin word pool is answered with fewer choices rather than invented ones. See
   * `GameService.optionsFor`.
+  *
+  * `partOfSpeech` is absent exactly when `finished` is true, like the three fields above it, and `None` besides only
+  * for a stored code a newer build no longer recognises. It is shown beside the prompt because a noun and a verb
+  * written the same way are two separate `words` rows, so the spelling alone does not say which one is being asked.
   */
 final case class GamePrompt(
   finished: Boolean,
@@ -92,6 +106,7 @@ final case class GamePrompt(
   wordText: Option[String] = None,
   position: Option[Int] = None,
   options: List[String] = Nil,
+  partOfSpeech: Option[PartOfSpeech] = None,
 ) derives JsonCodec
 
 final case class SubmitAnswerRequest(wordId: Long, answerText: String) derives JsonCodec
@@ -100,12 +115,16 @@ final case class SubmitAnswerRequest(wordId: Long, answerText: String) derives J
   * for this word in the play's direction — more than one when the word is marked to several translations, or sits under
   * more than one of the game's tags — sorted for a stable render. Never empty: the translation actually scored against
   * is always in it.
+  *
+  * `partOfSpeech` is the asked word's, carried for the same reason [[GamePrompt]] carries it: a results row spelled
+  * like another one is only readable with it. `None` for a stored code a newer build no longer recognises.
   */
 final case class GameAnswerResult(
   wordText: String,
   expectedTexts: List[String],
   givenText: String,
   outcome: AnswerOutcome,
+  partOfSpeech: Option[PartOfSpeech] = None,
 ) derives JsonCodec
 
 /** `GET /api/games/plays/{playId}/results`'s answer: the finished play's score, full answer history, and the variant it

@@ -9,6 +9,7 @@ import gathedge.shared.domain.{
   Gender,
   GroupRef,
   LanguageProfile,
+  PartOfSpeech,
   Tag,
   Word,
   WordLanguage,
@@ -385,6 +386,15 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     if (includeDefiniteArticles) Word.displayText(row.language, row.text, row.gender) else row.text
   }
 
+  /** A row's stored part of speech, `None` for a code this build does not recognise — the same lenient read [[modeOf]]
+    * gives every other stored code. Shown beside a prompt, a results row and a study-list row because `words` is unique
+    * on `(language, text_norm, part_of_speech, gender)`: a noun and a verb written the same way are two separate rows,
+    * and the spelling alone does not say which one is being asked.
+    */
+  private def posOf(row: WordRow): Option[PartOfSpeech] = {
+    PartOfSpeech.fromString(row.partOfSpeech)
+  }
+
   def eligibleTags(sourceLanguage: WordLanguage, targetLanguage: WordLanguage, viewerId: Long): UIO[List[Tag]] = {
     repo
       .eligibleTags(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
@@ -558,9 +568,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       wordIds      = (pairs.map(_._1) ++ pairs.map(_._2)).distinct
       words       <- repo.wordsByIds(wordIds).orDie
       textById     = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      posById      = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
       translations = pairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield translations.toList
-      .flatMap { case (wordId, texts) => textById.get(wordId).map(text => GameSetupWord(wordId, text, texts)) }
+      .flatMap { case (wordId, texts) =>
+        textById.get(wordId).map(text => GameSetupWord(wordId, text, texts, posById.get(wordId)))
+      }
       .sortBy(_.text)
   }
 
@@ -619,18 +632,6 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     */
   private def dedupeToOnePerWord(pairs: List[(Long, Long)]): List[(Long, Long)] = {
     pairs.groupBy(_._1).view.mapValues(_.map(_._2).min).toList
-  }
-
-  /** Dedupes `(word_id, translation_word_id)` pairs so no two source words share a `translation_word_id` — the lowest
-    * `word_id` on a tie. Two different source words that translate to the same target word are ambiguous to grade
-    * against each other, so [[sampleWordPool]] applies this only when it is about to draw a *limited* subset — an
-    * unrestricted ("all words") play keeps every source word, collisions included, per TODO.txt's "unless all words is
-    * selected" rule.
-    */
-  private def dedupeSameTarget(pairs: List[(Long, Long)]): List[(Long, Long)] = {
-    pairs.groupBy(_._2).view.mapValues(_.map(_._1).min).toList.map { case (translationId, wordId) =>
-      (wordId, translationId)
-    }
   }
 
   /** `(word_id, translation_word_id)` pairs eligible for `gameId` in the `sourceLanguage` -> `targetLanguage`
@@ -722,11 +723,14 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     }
   }
 
-  /** `pool` itself when `limit` is absent or no smaller than the pool. Otherwise [[dedupeSameTarget]]'s collision-free
-    * subset, `limit`'s first [[preferenceOrdered]] words of it — for [[WordPreference.Unplayed]]/
-    * [[WordPreference.MostMistakes]] this is the "fill from the preferred subset, then top up from the rest" rule the
-    * design doc describes; for [[WordPreference.All]] it is a uniform random sample, exactly as before this feature
-    * existed. `pool` itself may still be smaller than `n` after deduping — `.take` just yields fewer words then.
+  /** `pool` itself when `limit` is absent or no smaller than the pool. Otherwise `limit`'s first [[preferenceOrdered]]
+    * words of it — for [[WordPreference.Unplayed]]/[[WordPreference.MostMistakes]] this is the "fill from the preferred
+    * subset, then top up from the rest" rule the design doc describes; for [[WordPreference.All]] it is a uniform
+    * random sample.
+    *
+    * Two source words that translate to the same target word are both kept: a limited play draws from exactly the pool
+    * an "all words" play does. They are not ambiguous to grade — [[submitAnswer]] scores each prompt against its own
+    * word's accepted translations — so there is nothing to guard against.
     */
   private def sampleWordPool(
     gameId: Long,
@@ -741,7 +745,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       case Some(n) if n < pool.size =>
         for {
           stats   <- wordStats(gameId, Some(playerUserId), sourceLanguage, targetLanguage)
-          ordered <- preferenceOrdered(dedupeSameTarget(pool), stats, preference)
+          ordered <- preferenceOrdered(pool, stats, preference)
         } yield ordered.take(n)
       case _                        =>
         ZIO.succeed(pool)
@@ -826,12 +830,15 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
       words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
       textById                         = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      posById                          = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
       sortedPool                       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
       ordered                          = preferenceOrderedStable(sortedPool, stats, wordPreference)
       translationsById                 =
         rawPairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield ordered.flatMap { case (wordId, _) =>
-      textById.get(wordId).map(text => GameSetupWord(wordId, text, translationsById.getOrElse(wordId, Nil)))
+      textById
+        .get(wordId)
+        .map(text => GameSetupWord(wordId, text, translationsById.getOrElse(wordId, Nil), posById.get(wordId)))
     }
   }
 
@@ -850,8 +857,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                           index                  <- Random.nextIntBounded(choices.size)
                           (wordId, translationId) = choices(index)
                           wordRows               <- repo.wordsByIds(List(wordId)).orDie
+                          wordRow                 = wordRows.headOption
                           text                    =
-                            wordRows.headOption.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
+                            wordRow.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
                           options                <- modeOf(play) match {
                                                       case GameMode.Typing         =>
                                                         ZIO.succeed(Nil)
@@ -864,6 +872,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                           wordText = Some(text),
                           position = Some(answeredIds.size + 1),
                           options = options,
+                          partOfSpeech = wordRow.flatMap(posOf),
                         )
                     }
     } yield prompt
@@ -1034,12 +1043,14 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       allIds        = answers.flatMap(a => a.wordId :: expectedIds.getOrElse(a.id, Nil)).distinct
       words        <- repo.wordsByIds(allIds).orDie
       textOf        = words.map(w => w.id -> wordText(w, play.includeDefiniteArticles)).toMap
+      posOfWord     = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
     } yield answers.map { a =>
       GameAnswerResult(
         wordText = textOf.getOrElse(a.wordId, ""),
         expectedTexts = expectedIds.getOrElse(a.id, Nil).flatMap(textOf.get).distinct.sorted,
         givenText = a.userAnswer,
         outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
+        partOfSpeech = posOfWord.get(a.wordId),
       )
     }
   }

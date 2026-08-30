@@ -35,10 +35,17 @@ object GameAnswersTable {
     )
   }
 
+  /** The word cell carries the part of speech under the word: `words` is unique on
+    * `(language, text_norm, part_of_speech, gender)`, so two rows spelled alike are two different words, and a history
+    * listing two rows reading `run` is only readable with it.
+    */
   private def renderRow(answer: GameAnswerResult): HtmlElement = {
     tr(
       cls := "hover",
-      td(answer.wordText),
+      td(
+        div(answer.wordText),
+        answer.partOfSpeech.map(pos => div(cls := "text-xs opacity-60", Labels.partOfSpeech(pos))),
+      ),
       td(answer.expectedTexts.mkString(", ")),
       td(answer.givenText),
       td(renderOutcomeBadge(answer.outcome)),

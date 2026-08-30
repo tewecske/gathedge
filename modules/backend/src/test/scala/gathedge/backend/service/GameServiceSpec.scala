@@ -40,13 +40,14 @@ object GameServiceSpec extends ZIOSpecDefault {
     text: String,
     rank: Int = 1,
     gender: Option[Gender] = None,
+    partOfSpeech: PartOfSpeech = PartOfSpeech.Noun,
   ): WordRow = {
     WordRow(
       id = 0L,
       language = WordLanguage.code(language),
       text = text,
       textNorm = text.toLowerCase,
-      partOfSpeech = PartOfSpeech.code(PartOfSpeech.Noun),
+      partOfSpeech = PartOfSpeech.code(partOfSpeech),
       gender = Gender.toColumn(gender),
       frequencyRank = rank,
       source = WordService.dictionarySource,
@@ -96,20 +97,21 @@ object GameServiceSpec extends ZIOSpecDefault {
     } yield tag.id
   }
 
-  /** A tag owned by `ownerId` carrying two marked pairs whose source words differ but whose target word is the same
-    * (`$name-target`) — the ambiguous collision [[GameServiceLive.dedupeSameTarget]] guards a limited play against.
-    * Sources are `$name-source-0`/`$name-source-1`.
+  /** A tag owned by `ownerId` carrying `count` marked pairs whose source words differ but whose target word is the same
+    * (`$name-target`) — the collision a play draws through untouched, limited or not. Sources are
+    * `$name-source-0`..`$name-source-${count - 1}`.
     */
   private def eligibleTagWithCollidingTarget(
     ownerId: Long,
     name: String,
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
+    count: Int = 2,
   ): RIO[WordRepository, Long] = {
     for {
       tag    <- WordRepository.insertTag(ownerId, name, name, 0L)
       target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target"))
-      _      <- ZIO.foreachDiscard(0 until 2) { i =>
+      _      <- ZIO.foreachDiscard(0 until count) { i =>
                   for {
                     source <- WordRepository.ensureWord(dictionaryWord(sourceLanguage, s"$name-source-$i"))
                     _      <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -389,13 +391,15 @@ object GameServiceSpec extends ZIOSpecDefault {
           started <- GameService.startPlay(created.slug, owner)
         } yield assertTrue(started.wordCount == 4, started.maxScore == 8)
       },
-      test("a limited play never draws two source words that share the same target translation") {
+      test("a limited play still draws source words that share the same target translation") {
         for {
           owner   <- newUser()
-          tagId   <- eligibleTagWithCollidingTarget(owner, "collision", WordLanguage.De, WordLanguage.Hu)
+          // Three sources, one shared target: a play limited to two must draw two of them, not collapse the pool to
+          // the single collision-free pair it once did.
+          tagId   <- eligibleTagWithCollidingTarget(owner, "collision", WordLanguage.De, WordLanguage.Hu, count = 3)
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          started <- GameService.startPlay(created.slug, owner, wordLimit = Some(1))
-        } yield assertTrue(started.wordCount == 1)
+          started <- GameService.startPlay(created.slug, owner, wordLimit = Some(2))
+        } yield assertTrue(started.wordCount == 2)
       },
       test("a game with no word limit still asks source words that share a target translation") {
         for {
@@ -604,6 +608,40 @@ object GameServiceSpec extends ZIOSpecDefault {
           results.answers.head.expectedTexts == List("multi-target-1", "multi-target-2"),
           results2.answers.head.outcome == AnswerOutcome.Correct,
           results2.answers.head.expectedTexts == List("multi-target-1", "multi-target-2"),
+        )
+      },
+      test("two words spelled alike are asked separately, each carrying its own part of speech") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "homonym", "homonym", 0L)
+          // `words` is unique on (language, text_norm, part_of_speech, gender), so these are two rows, not one.
+          noun    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "lauf"))
+          verb    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "lauf", partOfSpeech = PartOfSpeech.Verb))
+          nounHu  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "futas"))
+          verbHu  <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "fuss", partOfSpeech = PartOfSpeech.Verb))
+          _       <- markPair(tag.id, noun, nounHu)
+          _       <- markPair(tag.id, verb, verbHu)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          preview <- GameService.playSetupPreview(created.slug, Some(owner), swapDirection = false, WordPreference.All)
+          started <- GameService.startPlay(created.slug, owner)
+          prompt1 <- GameService.nextPrompt(started.playId, owner)
+          _       <- GameService.submitAnswer(started.playId, prompt1.wordId.get, "futas", owner)
+          prompt2 <- GameService.nextPrompt(started.playId, owner)
+          _       <- GameService.submitAnswer(started.playId, prompt2.wordId.get, "fuss", owner)
+          results <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          started.wordCount == 2,
+          prompt1.wordText.contains("lauf"),
+          prompt2.wordText.contains("lauf"),
+          // The spelling is the same in both prompts; the part of speech is the only thing telling them apart.
+          Set(prompt1.partOfSpeech, prompt2.partOfSpeech) == Set(Some(PartOfSpeech.Noun), Some(PartOfSpeech.Verb)),
+          results.answers.map(_.wordText).toSet == Set("lauf"),
+          results.answers.flatMap(_.partOfSpeech).toSet == Set(PartOfSpeech.Noun, PartOfSpeech.Verb),
+          // The study list the setup screen shows carries it too.
+          preview.map(_.text).toSet == Set("lauf"),
+          preview.flatMap(_.partOfSpeech).toSet == Set(PartOfSpeech.Noun, PartOfSpeech.Verb),
         )
       },
       test("a gendered expected answer requires its article to score as correct") {

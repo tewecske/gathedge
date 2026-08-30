@@ -8,8 +8,15 @@ big project: new tag creation screen with focus on ease of use
 
 big project: add spanish language
 
-new game mode, show one word and show 4 translate options, all the game creation settings are the same, only the gameplay is different because the user doesn't have to type, only click on the correct word. for the 4 options use words from the tags assigned to the game, or word forms/main word of the games, for german nouns also can include different articles, for example "der Hund" and "die Hunde"
+kaikkai
 
+is there gender for the english words in the wiktionary database?
+
+game number of words join group radio selector All, 10 words, 20 words, custom number, validate it's lower than all words
+
+in game instance start, instead of "Words I haven't played" option, it should be "Words I played the least"
+
+extract to a new component the input field from new tag page which autocompletes in the given language, and the selected word can be used for whatever needed
 
 in game plural words should be shown specially or marked somehow
 go back to previous word in game?

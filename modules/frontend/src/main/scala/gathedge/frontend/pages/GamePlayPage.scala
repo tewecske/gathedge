@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, GuestBanner}
+import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, LanguageProfile}
@@ -183,7 +183,13 @@ private class GamePlayPage(slug: String, playId: Long) {
         cls  := "text-sm opacity-70",
         I18n.t(UiKeys.gameInstanceProgress, prompt.position.getOrElse(0), playState.wordCount),
       ),
-      h2(cls := "text-xl font-semibold my-2", prompt.wordText.getOrElse("")),
+      h2(cls := "text-xl font-semibold mt-2 mb-1", prompt.wordText.getOrElse("")),
+      // Deliberately a sibling of the heading, not a child of it: `e2e/tests/game.spec.ts` reads the heading's own
+      // text and compares it to the asked word verbatim, and a label inside it would be part of that text.
+      p(
+        cls  := "text-xs opacity-60 mb-2",
+        prompt.partOfSpeech.map(Labels.partOfSpeech).getOrElse(""),
+      ),
       playState.variant.mode match {
         case GameMode.Typing         =>
           renderTypedAnswer(playState)
