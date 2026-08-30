@@ -1,0 +1,158 @@
+name: security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1" # Monday 04:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-fs:
+    name: Trivy filesystem scan (npm, Dockerfile)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy scan -> SARIF
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          trivy-config: trivy.yaml
+          scanners: vuln,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      - name: Trivy scan -> fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          trivy-config: trivy.yaml
+          scanners: vuln,misconfig
+          format: table
+          exit-code: "1"
+
+  trivy-image:
+    name: Trivy container image scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            target: backend
+          - name: web
+            target: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --target ${{ matrix.target }} -t gathedge-${{ matrix.name }}:scan .
+
+      - name: Trivy scan -> SARIF
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: gathedge-${{ matrix.name }}:scan
+          trivy-config: trivy.yaml
+          format: sarif
+          output: trivy-image-${{ matrix.name }}.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-${{ matrix.name }}.sarif
+          category: trivy-image-${{ matrix.name }}
+
+      - name: Trivy scan -> fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: gathedge-${{ matrix.name }}:scan
+          trivy-config: trivy.yaml
+          format: table
+          exit-code: "1"
+
+  trivy-image-postgres:
+    name: Trivy scan of postgres base image
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy scan -> SARIF
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: postgres:16-alpine
+          trivy-config: trivy.yaml
+          format: sarif
+          output: trivy-postgres.sarif
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-postgres.sarif
+          category: trivy-image-postgres
+      - name: Trivy scan -> fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: image
+          image-ref: postgres:16-alpine
+          trivy-config: trivy.yaml
+          format: table
+          exit-code: "1"
+
+  sbt-dependency-submission:
+    name: Submit sbt dependency graph
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+      - uses: sbt/setup-sbt@v1.5.8
+      - uses: scalacenter/sbt-dependency-submission@v3.2.3
+
+  dependency-review:
+    name: Dependency review (PR)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

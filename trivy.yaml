@@ -1,0 +1,21 @@
+# Shared Trivy config: used by scripts/cve-scan.sh and .github/workflows/security.yml
+# so local and CI runs report the same findings.
+severity:
+  - HIGH
+  - CRITICAL
+
+vulnerability:
+  ignore-unfixed: true
+
+# Root and e2e package.json are 100% devDependencies; without this their
+# lockfiles are skipped entirely.
+pkg:
+  include-dev-deps: true
+
+scan:
+  skip-dirs:
+    - "**/target"
+    - "**/node_modules"
+    - .git
+    - e2e/test-results
+    - e2e/playwright-report

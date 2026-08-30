@@ -50,6 +50,19 @@ npm --prefix e2e test
 sbt scalafmtAll
 ```
 
+**Security scanning** (CVE / known vulnerabilities)
+```
+./scripts/cve-scan.sh            # npm lockfiles + Dockerfile + staged backend JARs
+./scripts/cve-scan.sh --images   # also scan the container images (slow)
+```
+One engine, Trivy, no API key. `trivy.yaml` holds the shared policy (HIGH/CRITICAL, fixed
+only); `.trivyignore` records accepted findings. The same scan runs in
+`.github/workflows/security.yml` on every push and PR, plus a weekly image scan; results
+go to the repo's **Security** tab. `.github/dependabot.yml` adds security-update PRs for
+npm, Docker, and Actions. Scala deps get alerts through the `sbt-dependency-submission`
+job (Dependabot has no sbt ecosystem). Keep the Trivy action version and any tool pins in
+step across the workflow and the script.
+
 **Deployment**
 ```
 cp .env.example .env         # COMPOSE_PROFILES=db in it bundles Postgres

@@ -1,0 +1,6 @@
+# Triaged / accepted findings. One advisory id per line.
+# Optional expiry: append `exp:2026-12-31` so the entry stops hiding the finding
+# after that date. Keep a one-line reason above each id.
+#
+# Example:
+# CVE-2021-44228 accepted: not reachable, log4j not on classpath  exp:2026-06-30
