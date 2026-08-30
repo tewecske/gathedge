@@ -134,6 +134,28 @@ nix_system() {
   nix eval --impure --raw --expr builtins.currentSystem
 }
 
+# Rewrite nix/scala.nix's depsSha256. Pass a real "sha256-..." string, or the word "fake" for the
+# lib.fakeSha256 sentinel. Matches the current value whether quoted or the bare sentinel.
+set_deps_hash() {
+  local value="$1" repl
+  if [ "$value" = fake ]; then repl='lib.fakeSha256'; else repl="\"$value\""; fi
+  sed -i -E "s|depsSha256 = [^;]+;|depsSha256 = $repl;|" "$REPO_ROOT/nix/scala.nix"
+}
+
+# The `got: sha256-...` value Nix prints on a fixed-output hash mismatch, or empty.
+harvested_got() {
+  grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' "$1" | head -1 \
+    | grep -oE 'sha256-[A-Za-z0-9+/=]+' || true
+}
+
+# The release gate's two-package build. Args: <logbase> <system>. Output paths land in
+# "<logbase>.out", the log in "<logbase>".
+build_packages() {
+  local log="$1" system="$2"
+  nix build "$REPO_ROOT#packages.$system.backend" "$REPO_ROOT#packages.$system.web" \
+    --no-link --print-out-paths >"$log.out" 2>"$log"
+}
+
 # The newest release marker, or empty if none exists yet.
 last_release_tag() {
   git -C "$REPO_ROOT" tag --list 'released/*' --sort=-creatordate | head -1
@@ -382,23 +404,51 @@ prepare_mode() {
     ok "npmDepsHash = $npm_hash"
   fi
 
-  # --- Build, and repair depsSha256 from the mismatch if it is wrong ---
+  # --- Build, repairing a stale depsSha256 from the mismatch it produces -------------------------
+  #
+  # A stale hash self-heals only if Nix actually *builds* the dependency derivation and prints its
+  # `got:` line. It will not when a store path with the stale hash still exists locally: a
+  # fixed-output derivation is content-addressed, so Nix reuses that path unbuilt, and the offline
+  # build phase then dies fetching the now-missing jars ("UnknownHostException") with no `got:`
+  # anywhere. lib.fakeSha256 has no such path by construction. So: prime the hash with it whenever
+  # drift is already known, and fall back to priming-then-retry if a build fails with nothing to
+  # harvest. Either way the resolve is forced and the `got:` line appears.
   head1 "Building"
-  local system out_paths log
+  local system out_paths log deps_primed=no
   system="$(nix_system)"
   log="$(mktemp)"
-  if ! nix build "$REPO_ROOT#packages.$system.backend" "$REPO_ROOT#packages.$system.web" \
-    --no-link --print-out-paths >"$log.out" 2>"$log"; then
+
+  if [ "$deps_drift" = yes ] || [ "$force" = yes ]; then
+    set_deps_hash fake
+    deps_primed=yes
+    say "  primed depsSha256 = lib.fakeSha256 to force a re-resolve (${deps_reason:-forced})"
+  fi
+
+  if ! build_packages "$log" "$system"; then
     local got
-    got="$(grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' "$log" | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+' || true)"
+    got="$(harvested_got "$log")"
+    if [ -z "$got" ] && [ "$deps_primed" = no ]; then
+      warn "build failed with no hash to harvest — a stale dependency path is being reused; forcing a re-resolve"
+      set_deps_hash fake
+      deps_primed=yes
+      build_packages "$log" "$system" || true
+      got="$(harvested_got "$log")"
+    fi
     if [ -n "$got" ]; then
       warn "depsSha256 was stale; writing $got and rebuilding"
-      sed -i -E "s|depsSha256 = \"[^\"]*\";|depsSha256 = \"$got\";|" "$REPO_ROOT/nix/scala.nix"
-      nix build "$REPO_ROOT#packages.$system.backend" "$REPO_ROOT#packages.$system.web" \
-        --no-link --print-out-paths >"$log.out" 2>"$log" \
-        || { sed 's/^/    /' "$log" >&2; die "build failed after refreshing depsSha256"; }
+      set_deps_hash "$got"
+      build_packages "$log" "$system" \
+        || { sed 's/^/    /' "$log" >&2; die "build still fails after refreshing depsSha256 to $got"; }
     else
       sed 's/^/    /' "$log" >&2
+      say ""
+      say "  Could not self-heal. depsSha256 in nix/scala.nix is wrong and no 'got:' line was"
+      say "  produced to correct it from. Recover by hand:"
+      say ""
+      say "    sed -i -E 's|depsSha256 = [^;]+;|depsSha256 = lib.fakeSha256;|' nix/scala.nix"
+      say "    nix build .#backend 2>&1 | grep 'got:'      # copy the sha256-... it prints"
+      say "    sed -i -E 's|depsSha256 = [^;]+;|depsSha256 = \"PASTE_IT_HERE\";|' nix/scala.nix"
+      say "    ./scripts/release.sh                        # rerun"
       die "build failed"
     fi
   fi
