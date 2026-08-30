@@ -67,21 +67,30 @@ test('another account imports that file and gets the tag, its word and its mark'
   await page.goto('/en/tags');
   await page.getByRole('button', { name: 'Import' }).click();
 
-  const modal = page.locator('.modal-box');
+  // Scoped by the dialog's own heading: the shell also mounts a hidden guest "sign in" confirm
+  // `.modal-box`, and its copy ("…leaves this device's words behind…") would otherwise collide
+  // with a bare `/word/` match here.
+  const modal = page.locator('.modal-box').filter({ hasText: 'Import tags' });
   await modal.locator('input[type=file]').setInputFiles({
     name: 'tags.json',
     mimeType: 'application/json',
     buffer: Buffer.from(exported),
   });
-  await expect(modal.getByText(/word/)).toBeVisible();
+  await expect(modal.getByText(/\d+ marked translations?/)).toBeVisible();
   await modal.getByRole('button', { name: 'Import' }).click();
   await expect(modal.getByText(new RegExp(`xfer${unique}.*created`))).toBeVisible();
   await modal.getByRole('button', { name: 'Done' }).click();
 
-  await expect(page.getByRole('link', { name: `xfer${unique}` })).toBeVisible();
+  const tagLink = page.getByRole('link', { name: `xfer${unique}` });
+  await expect(tagLink).toBeVisible();
+  // The tag id, read off its own detail link. The words-page "Filter by tag" control lists every
+  // account's tags (tags are world-visible), so the export test's own same-named tag is in there
+  // too — this account's imported copy has to be picked by id, not by the shared name.
+  const importedTagId = (await tagLink.getAttribute('href'))?.match(/\/tags\/(\d+)/)?.[1];
+  expect(importedTagId).toBeTruthy();
 
-  await page.goto(`/en/words?q=hau&tag=`);
-  await page.getByLabel('Filter by tag').selectOption({ label: `xfer${unique}` });
+  await page.goto(`/en/words?q=hau&tag=${importedTagId}`);
+  await expect(page.getByLabel('Filter by tag')).toHaveValue(importedTagId!);
   await expect(wordRow(page, 'das Haus').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
   await expect(wordRow(page, 'das Haus').getByRole('button', { name: /^ház / })).toHaveAttribute('aria-pressed', 'true');
 

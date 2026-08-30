@@ -7,6 +7,8 @@ import { defineConfig, devices } from '@playwright/test';
 //   npm --prefix web run dev
 export default defineConfig({
   testDir: './tests',
+  // A single reachability check for that stack — one clear error instead of 11 opaque timeouts.
+  globalSetup: './global-setup.ts',
   fullyParallel: false,
   retries: 0,
   reporter: 'list',

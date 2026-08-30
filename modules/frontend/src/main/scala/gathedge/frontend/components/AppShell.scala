@@ -89,7 +89,12 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       cls := "min-h-screen flex flex-col bg-base-200",
       renderNavbar(),
       child.maybe <-- codeVar.signal.map(_.map(renderCodePanel)),
-      renderSignInConfirmModal(),
+      // Guests only: this is the "sign in abandons this device's words" confirmation, and its trigger
+      // (the account menu's "Sign in" item) exists only for a guest. Mounting it for every account
+      // left a hidden `.modal-box` in the DOM on every page.
+      child.maybe <-- currentUserSignal.map { user =>
+        Option.when(user.exists(_.isGuest))(renderSignInConfirmModal())
+      },
       renderContent(),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
