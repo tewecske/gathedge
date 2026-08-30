@@ -15,6 +15,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   SetGenderRequest,
   SortDirection,
+  TagImportRequest,
 }
 import zio.*
 import zio.http.*
@@ -178,6 +179,26 @@ object WordRoutes {
     )
   }
 
+  private val exportTagRoute = {
+    WordEndpoints.exportTag.implementHandler(
+      handler((tagId: Long) => userId.flatMap(_ => WordService.exportTag(tagId).mapError(ApiFailures.word)))
+    )
+  }
+
+  private val exportOwnedTagsRoute = {
+    WordEndpoints.exportOwnedTags.implementHandler(
+      handler((_: Unit) => userId.flatMap(WordService.exportOwnedTags))
+    )
+  }
+
+  private val importTagsRoute = {
+    WordEndpoints.importTags.implementHandler(
+      handler { (body: TagImportRequest) =>
+        userId.flatMap(id => WordService.importTags(body.file, body.resolutions, id).mapError(ApiFailures.tagImport))
+      }
+    )
+  }
+
   private val tagWordRoute = {
     WordEndpoints.tagWord.implementHandler(
       handler { (wordId: Long, tagId: Long) =>
@@ -260,6 +281,9 @@ object WordRoutes {
       renameTagRoute,
       deleteTagRoute,
       copyTagRoute,
+      exportTagRoute,
+      exportOwnedTagsRoute,
+      importTagsRoute,
       createTagWithPairsRoute,
       tagWordRoute,
       untagWordRoute,

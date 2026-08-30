@@ -13,6 +13,9 @@ import gathedge.shared.dto.{
   PairSelectionResponse,
   RenameTagRequest,
   SetGenderRequest,
+  TagExportFile,
+  TagImportRequest,
+  TagImportResponse,
   TagResponse,
   WordDetail,
   WordPage,
@@ -238,6 +241,41 @@ object WordEndpoints {
   /** Puts a tag on a word — the one-click action the listing is built around, which is why it is idempotent: clicking a
     * row that is already tagged is not a conflict, it is nothing to do.
     */
+  /** The whole of one tag as a portable JSON file — its name, every word it holds, and every practice pair marked in it
+    * — so it can be rebuilt in another instance of the application ([[importTags]]), the cross-database counterpart of
+    * [[copyTag]]. Any tag is exportable, whoever owns it, since tag contents are visible to everyone; 404 is a tag id
+    * that names nothing.
+    */
+  val exportTag = {
+    Endpoint(Method.GET / "api" / "tags" / tagId / "export").withCodecError
+      .out[TagExportFile]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Every tag the caller owns, in one [[TagExportFile]] — an account-wide backup. `{tagId}` in [[exportTag]] is a
+    * `Long`, so the literal `export` segment here never collides with it.
+    */
+  val exportOwnedTags = {
+    Endpoint(Method.GET / "api" / "tags" / "export")
+      .out[TagExportFile]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** Rebuilds the tags in a [[TagExportFile]] under the caller's account: words are matched by identity and created in
+    * this dictionary when missing, memberships and practice pairs are written, and both quotas are checked up front the
+    * way [[copyTag]] checks them. 409 is either a quota hard limit (`error.key` `words.tagQuotaExceeded` /
+    * `words.pairQuotaExceeded`) or a tag whose name the caller already owns and has not yet said what to do about
+    * (`words.tagImportConflict`); the client re-submits with a per-name choice in `resolutions`. 429 is
+    * [[bulkUploadPreview]]'s rate-limit budget, shared because one call can create many rows.
+    */
+  val importTags = {
+    Endpoint(Method.POST / "api" / "tags" / "import")
+      .in[TagImportRequest]
+      .withCodecError
+      .out[TagImportResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict, failure.tooManyRequests)
+  }
+
   val tagWord = {
     Endpoint(Method.PUT / "api" / "words" / wordId / "tags" / tagId).withCodecError
       .outCodec(noContent)
@@ -336,6 +374,9 @@ object WordEndpoints {
       renameTag,
       deleteTag,
       copyTag,
+      exportTag,
+      exportOwnedTags,
+      importTags,
       tagWord,
       untagWord,
       selectPair,

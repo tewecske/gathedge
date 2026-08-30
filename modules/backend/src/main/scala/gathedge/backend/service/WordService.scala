@@ -33,6 +33,14 @@ import gathedge.shared.dto.{
   BulkUploadSuggestion,
   CreateWordRequest,
   NewTranslation,
+  TagExportEntry,
+  TagExportFile,
+  TagExportTag,
+  TagExportWord,
+  TagImportChoice,
+  TagImportRequest,
+  TagImportResponse,
+  TagImportResult,
   TagPairInput,
   TagPairWord,
   PairSelectionResponse,
@@ -99,6 +107,25 @@ enum BulkUploadFailure {
 
   /** The upload's own text, not one of `content`'s words: empty, or over [[WordService.maxBulkUploadBytes]]. */
   case ValidationError(fieldErrors: Map[String, MessageRef])
+  case RateLimited
+}
+
+/** [[WordService.importTags]]'s failure surface. Mirrors [[BulkUploadFailure]] (it shares that endpoint's 429 budget)
+  * and adds [[NameConflict]] for the "you already have a tag by that name, and have not said what to do about it" case
+  * the import flow re-submits past. `TagQuotaExceeded`/`PairQuotaExceeded` reuse [[WordFailure]]'s own wording via
+  * `ApiFailures`.
+  */
+enum TagImportFailure {
+
+  /** One or more tags in the file have names the account already owns and `resolutions` did not cover. Carries the
+    * clashing names for the message.
+    */
+  case NameConflict(names: List[String])
+
+  /** The file itself is unusable — wrong version, or a name that fails validation. */
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+  case TagQuotaExceeded(limit: Int)
+  case PairQuotaExceeded(limit: Int)
   case RateLimited
 }
 
@@ -249,6 +276,28 @@ trait WordService {
     standaloneWords: List[BulkUploadManualWord],
     userId: Long,
   ): IO[BulkUploadFailure, Int]
+
+  /** The whole of one tag as a portable [[gathedge.shared.dto.TagExportFile]] — its name, the words it holds, and the
+    * practice pairs marked in it — so it can be rebuilt elsewhere with [[importTags]]. Any tag is exportable, whoever
+    * owns it; `TagNotFound` is an id that names nothing.
+    */
+  def exportTag(tagId: Long): IO[WordFailure, TagExportFile]
+
+  /** Every tag `userId` owns, in one file. */
+  def exportOwnedTags(userId: Long): UIO[TagExportFile]
+
+  /** Rebuilds the tags in `file` under `userId`'s account: each word is matched by identity and created in this
+    * dictionary when missing, memberships and practice pairs are written, and both quotas are checked before any write
+    * the way [[copyTag]] checks them. `NameConflict` is a tag whose name the caller already owns with no matching entry
+    * in `resolutions` — the caller re-submits with a per-name [[gathedge.shared.dto.TagImportChoice]].
+    * `ValidationError` is a file that is not version [[gathedge.shared.dto.TagExportFile.currentVersion]], or a rename
+    * to an invalid name. Shares [[bulkUploadPreview]]'s rate-limit budget, since one call can create many rows.
+    */
+  def importTags(
+    file: TagExportFile,
+    resolutions: Map[String, TagImportChoice],
+    userId: Long,
+  ): IO[TagImportFailure, TagImportResponse]
 }
 
 object WordService {
@@ -401,6 +450,37 @@ object WordService {
       )
     )
   }
+
+  /** How one tag in an import file will be applied: created new (possibly under a renamed name), or merged into a tag
+    * the caller already owns.
+    */
+  enum ImportPlan {
+    case Create(newName: String, tag: TagExportTag)
+    case Merge(existing: TagRow, tag: TagExportTag)
+
+    def fileTag: TagExportTag = this match {
+      case Create(_, t) => t
+      case Merge(_, t)  => t
+    }
+
+    def created: Boolean = this match {
+      case Create(_, _) => true
+      case Merge(_, _)  => false
+    }
+  }
+
+  def exportTag(tagId: Long): ZIO[WordService, WordFailure, TagExportFile] =
+    ZIO.serviceWithZIO[WordService](_.exportTag(tagId))
+
+  def exportOwnedTags(userId: Long): URIO[WordService, TagExportFile] =
+    ZIO.serviceWithZIO[WordService](_.exportOwnedTags(userId))
+
+  def importTags(
+    file: TagExportFile,
+    resolutions: Map[String, TagImportChoice],
+    userId: Long,
+  ): ZIO[WordService, TagImportFailure, TagImportResponse] =
+    ZIO.serviceWithZIO[WordService](_.importTags(file, resolutions, userId))
 
   val live: URLayer[WordRepository & GroupRepository & AppConfig & RateLimiter, WordService] = {
     ZLayer.fromFunction((repo: WordRepository, groupRepo: GroupRepository, config: AppConfig, limiter: RateLimiter) =>
@@ -1700,5 +1780,246 @@ final case class WordServiceLive(
       manual     <- ZIO.foreach(manualPairs.distinct)(confirmManualPair(_, tagId, sourceLanguage, targetLanguage, userId))
       standalone <- ZIO.foreach(standaloneWords.distinct)(confirmStandaloneWord(_, tagId, userId))
     } yield (accepted.flatten ++ manual.flatten ++ standalone.flatten).distinct.size
+  }
+
+  // -- Tag export / import -----------------------------------------------------------------------
+
+  private def exportWord(row: WordRow): TagExportWord = {
+    val w = toDomain(row)
+    TagExportWord(w.language, w.text, w.partOfSpeech, w.gender)
+  }
+
+  /** One tag's name, its words, and the translations marked in it — the unit both [[exportTag]] and [[exportOwnedTags]]
+    * build. Entries are ordered by the word's own identity so two exports of the same tag are byte-identical.
+    */
+  private def buildTagExport(tag: TagRow): Task[TagExportTag] = {
+    for {
+      members     <- repo.wordsInTag(tag.id)
+      pairs       <- repo.pairsInTag(tag.id)
+      targets     <- repo.findWordsByIds(pairs.map(_.translationWordId).distinct)
+      targetById   = targets.map(row => row.id -> row).toMap
+      markedByWord = pairs
+                       .groupBy(_.wordId)
+                       .view
+                       .mapValues(_.flatMap(pair => targetById.get(pair.translationWordId)))
+                       .toMap
+    } yield {
+      val entries = members
+        .sortBy(row => (row.language, row.textNorm, row.partOfSpeech, row.gender))
+        .map(row => {
+          val marked = markedByWord
+            .getOrElse(row.id, Nil)
+            .sortBy(t => (t.language, t.textNorm, t.partOfSpeech, t.gender))
+            .map(exportWord)
+          TagExportEntry(exportWord(row), marked)
+        })
+      TagExportTag(tag.name, entries)
+    }
+  }
+
+  def exportTag(tagId: Long): IO[WordFailure, TagExportFile] = {
+    for {
+      tag  <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      body <- buildTagExport(tag).orDie
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+    } yield TagExportFile(TagExportFile.currentVersion, now, List(body))
+  }
+
+  def exportOwnedTags(userId: Long): UIO[TagExportFile] = {
+    for {
+      rows   <- repo.listTags(userId).orDie
+      owned   = rows.collect { case (tag, _, true) => tag }.sortBy(_.nameNorm)
+      bodies <- ZIO.foreach(owned)(tag => buildTagExport(tag).orDie)
+      now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
+    } yield TagExportFile(TagExportFile.currentVersion, now, bodies)
+  }
+
+  /** Any [[ensure]]/[[linkOrExisting]] failure during an import is a bad word inside the file — reshaped to this enum's
+    * own validation case so the whole request answers 400 with field errors.
+    */
+  private def importValidation(failure: WordFailure): TagImportFailure = {
+    failure match {
+      case WordFailure.ValidationError(fieldErrors) => TagImportFailure.ValidationError(fieldErrors)
+      case _                                        => TagImportFailure.ValidationError(Map.empty)
+    }
+  }
+
+  private def importQuota(failure: WordFailure): TagImportFailure = {
+    failure match {
+      case WordFailure.TagQuotaExceeded(limit)  => TagImportFailure.TagQuotaExceeded(limit)
+      case WordFailure.PairQuotaExceeded(limit) => TagImportFailure.PairQuotaExceeded(limit)
+      case other                                => importValidation(other)
+    }
+  }
+
+  /** Shares [[bulkUploadGuard]]'s rate-limit budget: an import, like an upload, can create an unbounded batch of rows
+    * from one request.
+    */
+  private def importGuard(userId: Long): IO[TagImportFailure, Unit] = {
+    val rateLimitKey = RateLimitKey.wordUpload(userId)
+    for {
+      blocked <- limiter.isBlocked(rateLimitKey)
+      _       <- ZIO.when(blocked) {
+                   SecurityLog.warn(s"Rate limit exceeded on tag import for user $userId") *>
+                     ZIO.fail(TagImportFailure.RateLimited)
+                 }
+      _       <- limiter.recordFailure(rateLimitKey)
+    } yield ()
+  }
+
+  /** `ensure`'s own rule for which gender it would actually store, mirrored here so the pre-check lookup uses the same
+    * key.
+    */
+  private def importKeptGender(word: TagExportWord): Option[Gender] = {
+    if (LanguageProfile.of(word.language).hasGenders && word.partOfSpeech == PartOfSpeech.Noun)
+      word.gender
+    else
+      None
+  }
+
+  /** The word row a file entry names, and whether this import had to create it. */
+  private def resolveImportWord(word: TagExportWord, userId: Long): IO[TagImportFailure, (WordRow, Boolean)] = {
+    val text = word.text.trim
+    repo
+      .findWord(
+        WordLanguage.code(word.language),
+        text.toLowerCase,
+        PartOfSpeech.code(word.partOfSpeech),
+        Gender.toColumn(importKeptGender(word)),
+      )
+      .orDie
+      .flatMap {
+        case Some(row) => ZIO.succeed((row, false))
+        case None      =>
+          ensure(word.language, text, word.partOfSpeech, word.gender, userId)
+            .mapError(importValidation)
+            .map(row => (row, true))
+      }
+  }
+
+  private def importMark(
+    member: WordRow,
+    target: TagExportWord,
+    tagId: Long,
+    userId: Long,
+  ): IO[TagImportFailure, Unit] = {
+    val translation = NewTranslation(target.language, target.text.trim, Some(target.partOfSpeech), target.gender)
+    (for {
+      linked        <- linkOrExisting(member, translation, userId)
+      (targetRow, _) = linked
+      _             <- pairInTag(member.id, tagId, targetRow.id)
+    } yield ()).mapError(importValidation)
+  }
+
+  def importTags(
+    file: TagExportFile,
+    resolutions: Map[String, TagImportChoice],
+    userId: Long,
+  ): IO[TagImportFailure, TagImportResponse] = {
+    val badFile = TagImportFailure.ValidationError(Map("file" -> MessageRef(MessageKeys.wordTagImportInvalidFile)))
+    for {
+      _            <- importGuard(userId)
+      _            <- ZIO.when(file.version != TagExportFile.currentVersion)(ZIO.fail(badFile))
+      ownedRows    <- repo.listTags(userId).orDie
+      ownedByNorm   = ownedRows.collect { case (tag, _, true) => tag.nameNorm -> tag }.toMap
+      // Decide each file tag: rename target, merge target, or a plain new tag. A clashing name with no entry in
+      // `resolutions` is what the caller re-submits past.
+      clashes       = file.tags
+                        .map(ft => Tag.normalize(ft.name))
+                        .filter(norm => ownedByNorm.contains(norm) && !resolutions.contains(norm))
+                        .distinct
+      _            <- ZIO.when(clashes.nonEmpty) {
+                        ZIO.fail(
+                          TagImportFailure.NameConflict(
+                            file.tags.map(_.name).filter(n => clashes.contains(Tag.normalize(n))).distinct
+                          )
+                        )
+                      }
+      plans        <- ZIO.foreach(file.tags)(planFor(_, ownedByNorm, resolutions))
+      _            <- rejectCollidingNewNames(plans, ownedByNorm)
+      newTags       = plans.count(_.created)
+      pairRows      = file.tags.flatMap(_.entries).flatMap(_.marked).size * 2
+      ownedTags    <- repo.countTagsOwnedBy(userId).orDie
+      ownedPairs   <- repo.countPairsOwnedBy(userId).orDie
+      _            <- tagQuota(ownedTags, newTags.toLong).mapError(importQuota)
+      _            <- pairQuota(ownedPairs, pairRows.toLong).mapError(importQuota)
+      distinctWords = file.tags.flatMap(_.entries).flatMap(entry => entry.word :: entry.marked).distinct
+      resolved     <- ZIO.foreach(distinctWords)(word => resolveImportWord(word, userId).map(word -> _)).map(_.toMap)
+      now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      results      <- ZIO.foreach(plans)(plan => applyPlan(plan, resolved, now, userId))
+    } yield TagImportResponse(results)
+  }
+
+  private def planFor(
+    fileTag: TagExportTag,
+    ownedByNorm: Map[String, TagRow],
+    resolutions: Map[String, TagImportChoice],
+  ): IO[TagImportFailure, WordService.ImportPlan] = {
+    val norm = Tag.normalize(fileTag.name)
+    ownedByNorm.get(norm) match {
+      case None           =>
+        ZIO.succeed(WordService.ImportPlan.Create(fileTag.name, fileTag))
+      case Some(existing) =>
+        resolutions.get(norm) match {
+          case Some(TagImportChoice.Merge)           => ZIO.succeed(WordService.ImportPlan.Merge(existing, fileTag))
+          case Some(TagImportChoice.Rename(newName)) =>
+            ZIO
+              .fromEither(Validation.validateTagName(newName))
+              .mapBoth(
+                err => TagImportFailure.ValidationError(Map("name" -> err)),
+                _ => WordService.ImportPlan.Create(newName, fileTag),
+              )
+          case None                                  =>
+            // Covered by the `clashes` check above; kept total.
+            ZIO.fail(TagImportFailure.NameConflict(List(fileTag.name)))
+        }
+    }
+  }
+
+  /** A rename target (or a plain new tag whose name a *rename* elsewhere also chose) must not land on a name the
+    * account already owns, nor on another new tag in the same import.
+    */
+  private def rejectCollidingNewNames(
+    plans: List[WordService.ImportPlan],
+    ownedByNorm: Map[String, TagRow],
+  ): IO[TagImportFailure, Unit] = {
+    val newNames = plans.collect { case WordService.ImportPlan.Create(name, _) => name }
+    val norms    = newNames.map(Tag.normalize)
+    val ownedHit = newNames.filter(name => ownedByNorm.contains(Tag.normalize(name)))
+    val dupHit   = norms.diff(norms.distinct)
+    val bad      = (ownedHit ++ newNames.filter(name => dupHit.contains(Tag.normalize(name)))).distinct
+    ZIO.when(bad.nonEmpty)(ZIO.fail(TagImportFailure.NameConflict(bad))).unit
+  }
+
+  private def applyPlan(
+    plan: WordService.ImportPlan,
+    resolved: Map[TagExportWord, (WordRow, Boolean)],
+    now: Long,
+    userId: Long,
+  ): IO[TagImportFailure, TagImportResult] = {
+    val fileTag = plan.fileTag
+    for {
+      tagRow <- plan match {
+                  case WordService.ImportPlan.Merge(existing, _) => ZIO.succeed(existing)
+                  case WordService.ImportPlan.Create(name, _)    =>
+                    repo.insertTag(userId, name, Tag.normalize(name), now).orDie
+                }
+      _      <- ZIO.foreachDiscard(fileTag.entries)(entry => {
+                  val (memberRow, _) = resolved(entry.word)
+                  repo.tagWord(memberRow.id, tagRow.id, now).orDie *>
+                    ZIO.foreachDiscard(entry.marked)(mark => importMark(memberRow, mark, tagRow.id, userId))
+                })
+    } yield {
+      val words   = fileTag.entries.map(_.word).distinct
+      val newDict =
+        fileTag.entries.flatMap(entry => entry.word :: entry.marked).distinct.count(word => resolved(word)._2)
+      TagImportResult(
+        tagRow.name,
+        created = plan.created,
+        wordsAdded = words.size,
+        pairsAdded = fileTag.entries.flatMap(_.marked).size,
+        newDictionaryWords = newDict,
+      )
+    }
   }
 }

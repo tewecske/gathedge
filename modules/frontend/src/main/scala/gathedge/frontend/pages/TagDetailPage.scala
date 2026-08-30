@@ -5,8 +5,10 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.util.Download
 import gathedge.shared.domain.{Tag, WordLanguage}
-import gathedge.shared.dto.{GameSetupWord, TagResponse}
+import gathedge.shared.dto.{GameSetupWord, TagExportFile, TagResponse}
+import zio.json._
 import gathedge.shared.i18n.UiKeys
 
 /** A standalone, read-only view of one tag's words and marked translations — the same `TagWordsList` table
@@ -39,6 +41,7 @@ private class TagDetailPage(tagId: Long) {
   private val errorVar: Var[Option[String]] = Var(None)
 
   private val reloadBus = new EventBus[Unit]()
+  private val exportBus = new EventBus[Unit]()
 
   private val inlineRename = new InlineRename[TagResponse](name => WordApiClient.renameTag(tagId, name))
 
@@ -82,6 +85,15 @@ private class TagDetailPage(tagId: Long) {
             "input text-xl",
             deleteIcon(),
           ),
+          div(
+            cls   := "mt-2",
+            button(
+              cls := "btn btn-sm",
+              typ := "button",
+              I18n.t(UiKeys.tagsExportButton),
+              onClick.mapToUnit --> exportBus.writer,
+            ),
+          ),
           child.maybe <-- tagVar.signal.map(_.map(renderMeta)),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
           div(
@@ -101,6 +113,14 @@ private class TagDetailPage(tagId: Long) {
             errorVar.set(Some(err.message))
         },
       inlineRename.bindings(onSaved = Observer[TagResponse](response => tagVar.set(Some(response.tag)))),
+      exportBus.events.flatMapSwitch(_ => WordApiClient.exportTag(tagId)) -->
+        Observer[Either[ApiError, TagExportFile]] {
+          case Right(file) =>
+            val name = tagVar.now().map(_.name).getOrElse("tag")
+            Download.text(s"${Download.slug(name)}.tag.json", file.toJson)
+          case Left(err)   =>
+            errorVar.set(Some(err.message))
+        },
       deleteBus.events.flatMapSwitch(_ => WordApiClient.deleteTag(tagId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>

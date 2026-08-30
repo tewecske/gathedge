@@ -6,6 +6,11 @@ import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordReposi
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
+  TagExportEntry,
+  TagExportFile,
+  TagExportTag,
+  TagExportWord,
+  TagImportChoice,
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
   CreateWordRequest,
@@ -1674,6 +1679,135 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  private def tagTransferSpec = {
+    suite("tag export / import")(
+      test("export then import rebuilds the tag under another account, words, marks and all") {
+        for {
+          _        <- seed
+          tag      <- createTag("lesson1", 1L)
+          page     <- list(search = Some("haus"), reader = Some(1L))
+          word      = page.items.head.word
+          haz       = page.items.head.translations.head.wordId
+          _        <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          file     <- WordService.exportTag(tag.id)
+          response <- WordService.importTags(file, Map.empty, 2L)
+          tags     <- WordService.listTags(2L)
+          copied    = tags.find(_.name == "lesson1")
+          pairRows <- WordRepository.countPairsOwnedBy(2L)
+        } yield assertTrue(
+          file.version == TagExportFile.currentVersion,
+          file.tags.head.entries.exists(_.marked.nonEmpty),
+          response.results.map(_.tagName) == List("lesson1"),
+          response.results.head.created,
+          copied.exists(_.ownedByMe),
+          copied.exists(_.wordCount == 2L),
+          pairRows == 2L,
+        )
+      },
+      test("a word the target dictionary lacks is created on import") {
+        val file = TagExportFile(
+          TagExportFile.currentVersion,
+          0L,
+          List(
+            TagExportTag(
+              "birds",
+              List(
+                TagExportEntry(
+                  TagExportWord(WordLanguage.De, "Vogel", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                  List(TagExportWord(WordLanguage.En, "bird", PartOfSpeech.Noun, None)),
+                )
+              ),
+            )
+          ),
+        )
+        for {
+          response <- WordService.importTags(file, Map.empty, 3L)
+          vogel    <- WordRepository.findWord(
+                        WordLanguage.code(WordLanguage.De),
+                        "vogel",
+                        PartOfSpeech.code(PartOfSpeech.Noun),
+                        Gender.toColumn(Some(Gender.Masculine)),
+                      )
+        } yield assertTrue(
+          vogel.isDefined,
+          response.results.head.newDictionaryWords == 2,
+          response.results.head.pairsAdded == 1,
+        )
+      },
+      test("a name the importer already owns, with no resolution, is a conflict naming it") {
+        val file = TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("dup", Nil)))
+        for {
+          _        <- createTag("dup", 4L)
+          conflict <- WordService.importTags(file, Map.empty, 4L).either
+        } yield assertTrue(conflict == Left(TagImportFailure.NameConflict(List("dup"))))
+      },
+      test("Merge folds the file's words into the existing tag; Rename makes a new one") {
+        for {
+          _           <- seed
+          haus        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          existing    <- createTag("m1", 5L)
+          _           <- WordService.tagWord(haus.id, existing.id, 5L)
+          fileMerge    = TagExportFile(
+                           TagExportFile.currentVersion,
+                           0L,
+                           List(
+                             TagExportTag(
+                               "m1",
+                               List(
+                                 TagExportEntry(
+                                   TagExportWord(WordLanguage.De, "Haufen", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                                   Nil,
+                                 )
+                               ),
+                             )
+                           ),
+                         )
+          merged      <- WordService.importTags(fileMerge, Map("m1" -> TagImportChoice.Merge), 5L)
+          afterMerge  <- WordService.listTags(5L)
+          renamed     <- WordService.importTags(
+                           TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("m1", Nil))),
+                           Map("m1" -> TagImportChoice.Rename("m1 copy")),
+                           5L,
+                         )
+          afterRename <- WordService.listTags(5L)
+        } yield assertTrue(
+          !merged.results.head.created,
+          afterMerge.find(_.name == "m1").exists(_.wordCount == 2L),
+          renamed.results.head.created,
+          renamed.results.head.tagName == "m1 copy",
+          afterRename.exists(_.name == "m1 copy"),
+          afterRename.count(t => t.name == "m1" || t.name == "m1 copy") == 2,
+        )
+      },
+      test("a file that is not the current version is refused, and writes nothing") {
+        val file = TagExportFile(TagExportFile.currentVersion + 1, 0L, List(TagExportTag("v", Nil)))
+        for {
+          result <- WordService.importTags(file, Map.empty, 6L).either
+          tags   <- WordService.listTags(6L)
+        } yield assertTrue(
+          result.isLeft,
+          result.left.forall(_.isInstanceOf[TagImportFailure.ValidationError]),
+          !tags.exists(_.name == "v"),
+        )
+      },
+      test("an import that would cross the hard tag quota is refused with nothing written") {
+        val file = TagExportFile(
+          TagExportFile.currentVersion,
+          0L,
+          List(TagExportTag("q1", Nil), TagExportTag("q2", Nil), TagExportTag("q3", Nil)),
+        )
+        for {
+          _      <- WordService.createTag("keep", 7L)
+          result <- WordService.importTags(file, Map.empty, 7L).either
+          tags   <- WordService.listTags(7L)
+        } yield assertTrue(
+          result == Left(TagImportFailure.TagQuotaExceeded(2)),
+          tags.count(_.ownedByMe) == 1,
+        )
+      }.provide(layerWithQuotas(tagsSoft = 1, tagsHard = 2, pairsSoft = 1000, pairsHard = 1000)),
+    ).provide(layer)
+  }
+
   def spec = {
     suite("WordService (SQLite)")(
       coreSpec,
@@ -1683,6 +1817,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       bulkUploadSpec,
       suggestionsSpec,
       wordFormsSpec,
+      tagTransferSpec,
     ) @@ TestAspect.timeout(60.seconds)
   }
 }

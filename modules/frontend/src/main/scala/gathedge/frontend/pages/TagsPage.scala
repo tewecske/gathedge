@@ -3,10 +3,13 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell}
+import gathedge.frontend.components.{Alert, AppShell, TagImportDialog}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.util.Download
 import gathedge.shared.domain.{GroupRef, Tag}
+import gathedge.shared.dto.TagExportFile
 import gathedge.shared.i18n.UiKeys
+import zio.json._
 
 /** Every tag the caller may edit — their own, plus any tag a group they belong to has opened to them — the same set
   * `WordCollect.mineOptions` offers a tick or a chip, laid out here as a table instead of a dropdown. Reached from the
@@ -25,7 +28,10 @@ private class TagsPage {
 
   private val errorVar: Var[Option[String]] = Var(None)
 
-  private val reloadBus = new EventBus[Unit]()
+  private val reloadBus    = new EventBus[Unit]()
+  private val exportAllBus = new EventBus[Unit]()
+
+  private val importDialog = new TagImportDialog(onImported = Observer[Unit](_ => reloadBus.emit(())))
 
   /** One section of the table: a heading (`None` for the reader's own, un-grouped tags) and the tags under it, already
     * sorted the way [[WordCollect.mineOptions]] sorts its `<optgroup>`s.
@@ -50,14 +56,35 @@ private class TagsPage {
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          h1(cls := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
+          div(
+            cls := "flex flex-wrap items-center justify-between gap-2",
+            h1(cls := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
+            div(
+              cls  := "flex gap-2",
+              button(
+                cls := "btn btn-sm",
+                typ := "button",
+                I18n.t(UiKeys.tagsExportAllButton),
+                onClick.mapToUnit --> exportAllBus.writer,
+              ),
+              importDialog.renderButton(),
+            ),
+          ),
           renderList(),
         ),
       ),
+      importDialog.renderModal(),
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) -->
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>
             tagsVar.set(tags)
+          case Left(err)   =>
+            errorVar.set(Some(err.message))
+        },
+      exportAllBus.events.flatMapSwitch(_ => WordApiClient.exportOwnedTags) -->
+        Observer[Either[ApiError, TagExportFile]] {
+          case Right(file) =>
+            Download.text("my-tags.json", file.toJson)
           case Left(err)   =>
             errorVar.set(Some(err.message))
         },

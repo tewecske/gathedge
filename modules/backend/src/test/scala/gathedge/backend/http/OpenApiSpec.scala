@@ -93,6 +93,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/copy",
+              "/api/tags/{tagId}/export",
+              "/api/tags/export",
+              "/api/tags/import",
               "/api/tags/with-pairs",
               "/api/games",
               "/api/games/setup",
@@ -276,6 +279,14 @@ object OpenApiSpec extends ZIOSpecDefault {
               // is written, so a blocked copy leaves nothing behind.
               ("POST", "/api/tags/{tagId}/copy")                                          ->
                 Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              // Any tag is exportable, whoever owns it; 404 is an id that names nothing.
+              ("GET", "/api/tags/{tagId}/export")                                         -> Set(Ok, BadRequest, Unauthorized, NotFound),
+              // An account-wide backup: no input, so only the aspect's 401.
+              ("GET", "/api/tags/export")                                                 -> Set(Ok, Unauthorized),
+              // Rebuilds tags from a file: 409 is a quota hard limit or a name the caller already owns with no
+              // resolution given; 429 is shared with the bulk-upload budget, since one call can create many rows.
+              ("POST", "/api/tags/import")                                                ->
+                Set(Ok, BadRequest, Unauthorized, Conflict, TooManyRequests),
               // Setup takes no input the codec can fail to decode (both query parameters are read leniently, the
               // same as the vocabulary listing's `lang`/`target`), so its only failure is the aspect's 401.
               ("GET", "/api/games/setup")                                                 -> Set(Ok, Unauthorized),
@@ -439,7 +450,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 257,
+          declared == 269,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -486,6 +497,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/guest/claim"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/preview"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm"),
+              ("POST", "/api/tags/import"),
               ("POST", "/api/groups/join"),
               ("POST", "/api/progress-shares/redeem"),
             ),

@@ -94,6 +94,14 @@ import gathedge.shared.dto.{
   SetGenderRequest,
   SetMemberRoleRequest,
   SetPasswordRequest,
+  TagExportEntry,
+  TagExportFile,
+  TagExportTag,
+  TagExportWord,
+  TagImportChoice,
+  TagImportRequest,
+  TagImportResponse,
+  TagImportResult,
   SharedViewer,
   SharedWithMe,
   ShareCodeResponse,
@@ -199,6 +207,15 @@ object ApiSchemas {
   given Schema[BulkUploadSelectedTranslation] = DeriveSchema.gen[BulkUploadSelectedTranslation]
   given Schema[BulkUploadConfirmRequest]      = DeriveSchema.gen[BulkUploadConfirmRequest]
   given Schema[BulkUploadConfirmResponse]     = DeriveSchema.gen[BulkUploadConfirmResponse]
+
+  given Schema[TagExportWord]     = DeriveSchema.gen[TagExportWord]
+  given Schema[TagExportEntry]    = DeriveSchema.gen[TagExportEntry]
+  given Schema[TagExportTag]      = DeriveSchema.gen[TagExportTag]
+  given Schema[TagExportFile]     = DeriveSchema.gen[TagExportFile]
+  given Schema[TagImportChoice]   = DeriveSchema.gen[TagImportChoice]
+  given Schema[TagImportRequest]  = DeriveSchema.gen[TagImportRequest]
+  given Schema[TagImportResult]   = DeriveSchema.gen[TagImportResult]
+  given Schema[TagImportResponse] = DeriveSchema.gen[TagImportResponse]
 
   given Schema[CreateUserRequest] = DeriveSchema.gen[CreateUserRequest]
   given Schema[UpdateUserRequest] = DeriveSchema.gen[UpdateUserRequest]

@@ -1018,6 +1018,34 @@ object UiKeys {
   val tagsListColWords: String = key("ui.tagsList.colWords")
   val tagsListEmpty: String    = key("ui.tagsList.empty")
 
+  // -- Tag export / import -----------------------------------------------------------------------
+  // Export writes a tag (or every owned tag) to a JSON file; import rebuilds it here. `TagImportDialog`, plus a button
+  // on `TagDetailPage` and two on `TagsPage`.
+
+  val tagsExportButton: String    = key("ui.tags.export.button")
+  val tagsExportAllButton: String = key("ui.tags.export.allButton")
+
+  val tagsImportButton: String     = key("ui.tags.import.button")
+  val tagsImportTitle: String      = key("ui.tags.import.title")
+  val tagsImportChooseFile: String = key("ui.tags.import.chooseFile")
+  val tagsImportBadFile: String    = key("ui.tags.import.badFile")
+
+  /** The parsed file at a glance, before the reader commits: `{0}` tags, `{1}` words, `{2}` marked translations. */
+  val tagsImportSummaryTags: String  = pluralKey("ui.tags.import.summaryTags")
+  val tagsImportSummaryWords: String = pluralKey("ui.tags.import.summaryWords")
+  val tagsImportSummaryMarks: String = pluralKey("ui.tags.import.summaryMarks")
+
+  val tagsImportConflictIntro: String = key("ui.tags.import.conflictIntro")
+  val tagsImportMerge: String         = key("ui.tags.import.merge")
+  val tagsImportRename: String        = key("ui.tags.import.rename")
+  val tagsImportNewName: String       = key("ui.tags.import.newName")
+  val tagsImportSubmit: String        = key("ui.tags.import.submit")
+  val tagsImportDone: String          = key("ui.tags.import.done")
+
+  /** One line of the result panel: `{0}` words added to a tag that was `{1}` (its name). Two keys, one per outcome. */
+  val tagsImportResultCreated: String = pluralKey("ui.tags.import.resultCreated")
+  val tagsImportResultMerged: String  = pluralKey("ui.tags.import.resultMerged")
+
   // -- Game setup ----------------------------------------------------------------------------------
 
   val gameSetupTitle: String                = key("ui.gameSetup.title")

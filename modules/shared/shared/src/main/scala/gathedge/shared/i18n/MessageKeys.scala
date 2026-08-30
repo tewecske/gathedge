@@ -117,6 +117,16 @@ object MessageKeys {
     */
   val wordBulkUploadInvalidFile: String = key("words.bulkUploadInvalidFile")
 
+  /** The uploaded tag-export file could not be read as one — not valid JSON, or not version
+    * [[gathedge.shared.dto.TagExportFile.currentVersion]], or otherwise malformed.
+    */
+  val wordTagImportInvalidFile: String = key("words.tagImportInvalidFile")
+
+  /** One or more tags in an import file have names the account already owns, and the request did not say what to do
+    * about them. Takes the comma-joined list of clashing names as `{0}`.
+    */
+  val wordTagImportConflict: String = key("words.tagImportConflict")
+
   // -- Usage quotas ------------------------------------------------------------------------------
   // Two independent per-account caps (`AppConfig.quotas`): how many tags one account may own, and
   // how many `word_tag_pairs` rows it may own summed across every tag it holds. Each has a soft

@@ -198,6 +198,19 @@ trait WordRepository {
     */
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]]
 
+  /** Every word that carries `tagId`, whoever tagged it — the membership half of a tag export. Order is not
+    * significant; the exporter sorts.
+    */
+  def wordsInTag(tagId: Long): Task[List[WordRow]]
+
+  /** Every `word_tag_pairs` row of one tag — the marked-translation half of a tag export. The list form of
+    * [[countPairsInTag]].
+    */
+  def pairsInTag(tagId: Long): Task[List[WordTagPairRow]]
+
+  /** The word rows for a set of ids, in one query — used to resolve a tag's practice-pair targets for export. */
+  def findWordsByIds(ids: List[Long]): Task[List[WordRow]]
+
   // -- Practice pairs ---------------------------------------------------------------------------
 
   /** Marks `translationWordId` as a practice answer for `wordId` inside `tagId`, as one unit of work: both words gain
@@ -448,6 +461,15 @@ object WordRepository {
 
   def tagsOfWord(userId: Long, wordId: Long): RIO[WordRepository, List[TagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagsOfWord(userId, wordId))
+
+  def wordsInTag(tagId: Long): RIO[WordRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.wordsInTag(tagId))
+
+  def pairsInTag(tagId: Long): RIO[WordRepository, List[WordTagPairRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.pairsInTag(tagId))
+
+  def findWordsByIds(ids: List[Long]): RIO[WordRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.findWordsByIds(ids))
 
   def pairTranslation(
     wordId: Long,
@@ -1037,6 +1059,27 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       })
     }
     logged(run(ctx.run(q)))(rows => s"tags.ofWord user=$userId word=$wordId rows=${rows.size}")
+  }
+
+  def wordsInTag(tagId: Long): Task[List[WordRow]] = {
+    val q = quote(
+      words.filter(word => wordTags.filter(link => link.tagId == lift(tagId) && link.wordId == word.id).nonEmpty)
+    )
+    logged(run(ctx.run(q)))(rows => s"words.inTag tag=$tagId rows=${rows.size}")
+  }
+
+  def pairsInTag(tagId: Long): Task[List[WordTagPairRow]] = {
+    val q = quote(wordTagPairs.filter(_.tagId == lift(tagId)))
+    logged(run(ctx.run(q)))(rows => s"wordTagPairs.inTag tag=$tagId rows=${rows.size}")
+  }
+
+  def findWordsByIds(ids: List[Long]): Task[List[WordRow]] = {
+    if (ids.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote(words.filter(word => liftQuery(ids).contains(word.id)))
+      logged(run(ctx.run(q)))(rows => s"words.byIds n=${ids.size} rows=${rows.size}")
+    }
   }
 
   // -- Practice pairs ---------------------------------------------------------------------------

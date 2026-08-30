@@ -11,6 +11,7 @@ import gathedge.backend.service.{
   GuestCodeFailure,
   GuestMintFailure,
   ProgressShareFailure,
+  TagImportFailure,
   WordFailure,
 }
 import gathedge.shared.api.ApiFailure
@@ -266,6 +267,33 @@ object ApiFailures {
           MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
           s"You've reached the maximum of $limit practice pairs for your account",
         )
+    }
+  }
+
+  def tagImport(
+    failure: TagImportFailure
+  ): ApiFailure.BadRequest | ApiFailure.Conflict | ApiFailure.TooManyRequests = {
+    failure match {
+      case TagImportFailure.NameConflict(names)          =>
+        val joined = names.mkString(", ")
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTagImportConflict, List(joined)),
+          s"You already have tags named: $joined",
+        )
+      case TagImportFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case TagImportFailure.TagQuotaExceeded(limit)      =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTagQuotaExceeded, List(limit.toString)),
+          s"You've reached the maximum of $limit tags for your account",
+        )
+      case TagImportFailure.PairQuotaExceeded(limit)     =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
+          s"You've reached the maximum of $limit practice pairs for your account",
+        )
+      case TagImportFailure.RateLimited                  =>
+        rateLimited
     }
   }
 

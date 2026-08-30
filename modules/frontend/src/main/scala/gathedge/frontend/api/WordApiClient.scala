@@ -17,6 +17,10 @@ import gathedge.shared.dto.{
   PairSelectionResponse,
   RenameTagRequest,
   SetGenderRequest,
+  TagExportFile,
+  TagImportChoice,
+  TagImportRequest,
+  TagImportResponse,
   TagResponse,
   WordDetail,
   WordPage,
@@ -116,6 +120,27 @@ object WordApiClient {
     */
   def copyTag(tagId: Long): EventStream[Either[ApiError, TagResponse]] = {
     run(executor(WordEndpoints.copyTag(tagId)))
+  }
+
+  /** The whole of one tag as a portable file — for `Download`. Any tag, whoever owns it. */
+  def exportTag(tagId: Long): EventStream[Either[ApiError, TagExportFile]] = {
+    run(executor(WordEndpoints.exportTag(tagId)))
+  }
+
+  /** Every tag the caller owns, in one file. */
+  def exportOwnedTags: EventStream[Either[ApiError, TagExportFile]] = {
+    run(executor(WordEndpoints.exportOwnedTags(())))
+  }
+
+  /** Rebuilds the tags in `file` under the caller's account. `resolutions` decides what to do about each tag whose name
+    * the caller already owns (keyed by the normalized name); an empty map means "there are no clashes", which the
+    * dialog checks for before it ever calls this.
+    */
+  def importTags(
+    file: TagExportFile,
+    resolutions: Map[String, TagImportChoice],
+  ): EventStream[Either[ApiError, TagImportResponse]] = {
+    run(executor(WordEndpoints.importTags(TagImportRequest(file, resolutions))))
   }
 
   /** Idempotent, which is what lets the listing's row toggle fire on every click without tracking what is in flight. */
