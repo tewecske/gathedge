@@ -293,6 +293,10 @@ object WiktextractParser {
       sense     <- entry.senses.getOrElse(Nil)
       tags       = sense.tags.getOrElse(Nil)
       if tags.exists(tag => markerTags.contains(tag.toLowerCase))
+      // Same rule as `isUsableForm`: a form-of page tagged nonstandard/obsolete/alternative/archaic is a
+      // spelling variant, not a grammatical fact worth teaching. `error-*` is deliberately not filtered here
+      // -- this path is how a form wiktextract's own table logic could not classify still gets imported.
+      if !tags.exists(tag => nonStandardFormTags.contains(tag.toLowerCase))
       relation   = tags.filterNot(tag => markerTags.contains(tag.toLowerCase))
       if relation.nonEmpty
       lemmaRow  <- sense.form_of.getOrElse(Nil) ++ sense.alt_of.getOrElse(Nil)

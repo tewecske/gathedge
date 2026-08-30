@@ -171,6 +171,25 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           !forms.exists(_.form.text == "Exempel"),
         )
       },
+      test("a form-of page's own sense tags are filtered the same way: an archaic reading is not a form") {
+        // `dünkt`'s own page states it is an archaic third-person present of `dünken`. The lemma's `forms[]`
+        // array would drop this row; the form-of page must drop it too, or the archaic spelling slips in.
+        val archaicPage = {
+          """{"word":"deuchte","lang_code":"de","lang":"German","pos":"verb",""" +
+            """"senses":[{"glosses":["archaic form of dünkte"],""" +
+            """"tags":["form-of","archaic","indicative","past","third-person","singular"],""" +
+            """"form_of":[{"word":"dünkte"}]}]}"""
+        }
+        val plainPage   = {
+          """{"word":"gedünkt","lang_code":"de","lang":"German","pos":"verb",""" +
+            """"senses":[{"glosses":["past participle of dünken"],""" +
+            """"tags":["form-of","participle","past"],"form_of":[{"word":"dünken"}]}]}"""
+        }
+        assertTrue(
+          WiktextractParser.parse(archaicPage).forms.isEmpty,
+          WiktextractParser.parse(plainPage).forms.map(_.form.text) == List("gedünkt"),
+        )
+      },
       test(
         "a German conjugation table's auxiliary-verb note is not imported as a form: it would make 'haben'/'sein' a " +
           "form of nearly every German verb"
@@ -263,30 +282,61 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       },
       // The committed sample is data, and a line of it going malformed would be discovered by a developer with an
       // empty search box rather than by a test. This reads the real file.
-      test("the committed seed file parses, and holds both halves of der/die See") {
-        val lines      = {
-          val source = Source.fromFile("data/dictionary/seed.tsv", StandardCharsets.UTF_8.name)
-          try source.getLines().toList
-          finally source.close()
+      //
+      // `data/` is gitignored: the seed is a dev-machine artifact from scripts/build-dictionary-seed.sh, so the
+      // test no-ops where the file is absent (a fresh clone, CI). Every check reduces the decoded structure to a
+      // scalar or a five-item sample BEFORE `assertTrue` sees it -- `collected.forms` alone is ~2M entries, and
+      // letting zio-test pretty-print it on a failure is an OutOfMemoryError, not a diff.
+      //
+      // Which words survive depends on the `--limit` the seed was built with, so this keys its homograph check
+      // on `Tag` -- `der Tag` (day) is among the commonest German nouns and present at any limit, and the dump
+      // also carries the neuter `das Tag` (a mine's surface level). Same spelling, two genders, two rows: the
+      // dedupe must keep both, the same guarantee the synthetic `der`/`die See` test above makes.
+      test("the committed seed file parses, and keeps a gender homograph split") {
+        val path = java.nio.file.Path.of("data/dictionary/seed.tsv")
+        if (!java.nio.file.Files.exists(path)) {
+          assertCompletes
+        } else {
+          val lines                             = {
+            val source = Source.fromFile(path.toFile, StandardCharsets.UTF_8.name)
+            try source.getLines().toList
+            finally source.close()
+          }
+          val collected                         = DictionaryImport.SeedFormat.decode(lines)
+          val german                            = collected.words.keySet.filter(_.language == WordLanguage.De)
+          val tagGenders                        = german.filter(_.text == "Tag").flatMap(_.gender)
+          val wordCount                         = collected.words.size
+          val pairCount                         = collected.pairs.size
+          val formCount                         = collected.forms.size
+          def sampleForms(p: String => Boolean) = {
+            collected.forms.iterator
+              .filter(_.relation.split(",").exists(p))
+              .map(f => s"${f.lemma.text} -> ${f.form.text} (${f.relation})")
+              .take(5)
+              .toList
+          }
+          val errorForms                        = sampleForms(_.startsWith("error-"))
+          val badSpelling                       = sampleForms(Set("nonstandard", "obsolete", "alternative", "archaic"))
+          val foreignPairs                      = collected.pairs.iterator
+            .filterNot(_.source.language == WordLanguage.En)
+            .map(p => s"${p.source.language} ${p.source.text}")
+            .take(5)
+            .toList
+          val pivotCount                        = DictionaryImport.pivot(collected.pairs).size
+          assertTrue(
+            wordCount > 100,
+            pairCount > 100,
+            formCount > 100,
+            // wiktextract's own "could not classify this cell" marker never survives the import.
+            errorForms == Nil,
+            // Nor does a nonstandard/obsolete/alternative-spelling/archaic form.
+            badSpelling == Nil,
+            tagGenders == Set(Gender.Masculine, Gender.Neuter),
+            // Every pair is stated from English, since that is the only direction any source has.
+            foreignPairs == Nil,
+            pivotCount > 0,
+          )
         }
-        val collected  = DictionaryImport.SeedFormat.decode(lines)
-        val german     = collected.words.keySet.filter(_.language == WordLanguage.De)
-        val seeEntries = german.filter(_.text == "See").flatMap(_.gender)
-        assertTrue(
-          collected.words.size > 100,
-          collected.pairs.size > 100,
-          collected.forms.size > 100,
-          // wiktextract's own "could not classify this cell" marker never survives the import.
-          !collected.forms.exists(_.relation.split(",").exists(_.startsWith("error-"))),
-          // Nor does a nonstandard/obsolete/alternative-spelling/archaic form.
-          !collected.forms.exists(
-            _.relation.split(",").exists(Set("nonstandard", "obsolete", "alternative", "archaic").contains)
-          ),
-          seeEntries == Set(Gender.Masculine, Gender.Feminine),
-          // Every pair is stated from English, since that is the only direction any source has.
-          collected.pairs.forall(_.source.language == WordLanguage.En),
-          DictionaryImport.pivot(collected.pairs).nonEmpty,
-        )
       },
       test("the seed format round-trips") {
         val pairs     = WiktextractParser.parse(houseLine).pairs
