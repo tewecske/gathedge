@@ -32,6 +32,7 @@ import gathedge.backend.http.{
 }
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
+import gathedge.backend.telemetry.Telemetry
 import gathedge.backend.service.{
   AdminSeeder,
   AdminService,
@@ -73,7 +74,12 @@ object Main extends ZIOAppDefault {
     }
     // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and one of this API's URLs carries a
     // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
-    RouteSupport.handleFailures(combined) @@ RouteSupport.requestLogging @@ RouteSupport.usageTracking
+    //
+    // `serverSpan` is attached last, so it wraps the others: the HTTP server span is the parent, in the finished
+    // trace, of the log line, the usage row, the handler, and every SQL span the OpenTelemetry Java agent opens
+    // underneath. See `telemetry.Telemetry`.
+    RouteSupport.handleFailures(combined) @@
+      RouteSupport.requestLogging @@ RouteSupport.usageTracking @@ RouteSupport.serverSpan
   }
 
   private val program = {
@@ -136,6 +142,7 @@ object Main extends ZIOAppDefault {
     SystemService.live,
     UsageTracker.live,
     UsageStatsService.live,
+    Telemetry.live,
     Server.customized,
     ZLayer(
       ZIO.serviceWith[AppConfig](cfg => {

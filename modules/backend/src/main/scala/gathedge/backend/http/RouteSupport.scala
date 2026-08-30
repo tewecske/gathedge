@@ -5,10 +5,16 @@ import gathedge.backend.security.{SecurityLog, SessionAuth}
 import gathedge.backend.service.{AuthService, UsageTracker}
 import gathedge.shared.domain.{Locale, User}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
+import io.opentelemetry.api.trace.{Span, SpanKind, StatusCode}
 import zio.*
 import zio.http.*
+import zio.telemetry.opentelemetry.context.IncomingContextCarrier
+import zio.telemetry.opentelemetry.tracing.Tracing
+import zio.telemetry.opentelemetry.tracing.propagation.TraceContextPropagator
 
 import java.time.Instant
+
+import scala.collection.mutable
 
 import JsonSupport.*
 
@@ -155,6 +161,68 @@ object RouteSupport {
     request.path.segments
       .map(segment => if (numericSegment.matches(segment)) "{id}" else segment)
       .mkString("/", "/", "")
+  }
+
+  /** The OpenTelemetry server span's name: the HTTP method and the aggregable route, and never the query string.
+    *
+    * The same rule [[loggableUrl]] and [[normalizeRoute]] follow — a span attribute is read as easily as a log line, so
+    * the OAuth `?code=` and the admin filter values stay out of it. Ids collapse to `{id}` so the tracing backend
+    * groups one entry per endpoint instead of one per row.
+    */
+  private[http] def spanName(request: Request): String = {
+    s"${request.method} ${normalizeRoute(request)}"
+  }
+
+  /** Reads inbound W3C `traceparent`/`tracestate` off the request, so a trace begun by a caller or an upstream proxy
+    * continues here rather than starting again. Header names are lowercased because the carrier lookup is
+    * case-sensitive and zio-http preserves the sent casing.
+    */
+  private def incomingCarrier(request: Request): IncomingContextCarrier[mutable.Map[String, String]] = {
+    val headers = mutable.Map.empty[String, String]
+    request.headers.foreach(header => headers.update(header.headerName.toLowerCase, header.renderedValue))
+    IncomingContextCarrier.default(headers)
+  }
+
+  /** Wraps every request in a `SpanKind.SERVER` span — the parent, in the finished trace, of the request log line, the
+    * usage row, the handler, and every SQL span the OpenTelemetry Java agent opens beneath it. `Main` attaches it
+    * outermost.
+    *
+    * Built like [[requestLogging]], with `interceptHandlerStateful` carrying the open span from before the handler to
+    * after it, because — as the note there says — the handler cannot be called directly across the `Scope` its response
+    * body may still hold. The span is opened with `extractSpanUnsafe` (which also makes it the current context) and
+    * closed by the `finalize` effect once the response is known.
+    *
+    * The SQL spans nest under this one only when the Java agent is present. `telemetry.Telemetry` uses a
+    * `ThreadLocal`-backed context so the agent and this code share one "current span"; the agent then carries that
+    * context onto the blocking pool where Quill runs JDBC. With no agent the tracer is a no-op and this is all free.
+    */
+  val serverSpan: HandlerAspect[Tracing, Unit] = {
+    HandlerAspect.interceptHandlerStateful(
+      Handler.fromFunctionZIO[Request] { (request: Request) =>
+        ZIO.serviceWithZIO[Tracing] { tracing =>
+          tracing
+            .extractSpanUnsafe(
+              TraceContextPropagator.default,
+              incomingCarrier(request),
+              spanName(request),
+              SpanKind.SERVER,
+            )
+            .map { case (span, finalizeSpan) => ((span, finalizeSpan), (request, ())) }
+        }
+      }
+    )(
+      Handler.fromFunctionZIO[((Span, zio.UIO[Any]), Response)] { case ((span, finalizeSpan), response) =>
+        ZIO
+          .succeed {
+            span.setAttribute("http.response.status_code", response.status.code.toLong)
+            if (response.status.code >= 500) {
+              val _ = span.setStatus(StatusCode.ERROR)
+            }
+          }
+          .zipRight(finalizeSpan)
+          .as(response)
+      }
+    )
   }
 
   /** One log line per request, replacing `Middleware.requestLogging()`.

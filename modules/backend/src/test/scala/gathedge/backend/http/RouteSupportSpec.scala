@@ -28,7 +28,7 @@ object RouteSupportSpec extends ZIOSpecDefault {
     forwardedFor.fold(base)(value => base.addHeader("X-Forwarded-For", value))
   }
 
-  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, normalizeSuite, localeSuite)
+  def spec = suite("RouteSupport")(addressSuite, keySuite, logSuite, normalizeSuite, spanNameSuite, localeSuite)
 
   /** The request log used to write the whole URL, query string included, and the OAuth callback carries an
     * authorization code in one. That code reached `logs/backend.log` and `docker logs` on every callback.
@@ -73,6 +73,26 @@ object RouteSupportSpec extends ZIOSpecDefault {
       test("the query string plays no part, same as loggableUrl") {
         val request = getWithQuery("/api/admin/users/42?q=someone")
         assertTrue(RouteSupport.normalizeRoute(request) == "/api/admin/users/{id}")
+      },
+    )
+  }
+
+  /** The OpenTelemetry server span's name. It has to stay as scrubbed as the request log and the usage row: a span
+    * attribute is as readable as a log line, and one of this API's query strings carries an OAuth code. So the name is
+    * the method plus the `{id}`-collapsed route, and never the query string.
+    */
+  private val spanNameSuite = {
+    suite("spanName")(
+      test("it is the method and the aggregable route") {
+        assertTrue(
+          RouteSupport.spanName(Request.get("/api/words/7")) == "GET /api/words/{id}",
+          RouteSupport.spanName(Request.post("/api/tags", Body.empty)) == "POST /api/tags",
+        )
+      },
+      test("the query string plays no part, same as loggableUrl") {
+        val request = getWithQuery("/api/auth/google/callback?code=4%2F0AY0e-secret&state=abc123")
+        val name    = RouteSupport.spanName(request)
+        assertTrue(name == "GET /api/auth/google/callback", !name.contains("secret"), !name.contains("abc123"))
       },
     )
   }

@@ -75,10 +75,17 @@ WORKDIR /app
 COPY --from=backend-build /opt/backend/ /app/
 COPY docker/logback.xml /app/logback.xml
 
+# OpenTelemetry Java agent. It is the source of the per-SQL-statement spans, the HikariCP pool
+# metrics and the JVM metrics; the app itself only adds the HTTP server span. It is inert unless
+# `-javaagent:/app/opentelemetry-javaagent.jar` is on JAVA_OPTS (docker-compose sets it), so an
+# image run without that flag behaves exactly as before. Pinned; bump deliberately.
+ADD --chmod=644 https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.31.1/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
+
 USER app
 EXPOSE 8080
 
-# The launcher script forwards -D arguments to the JVM. JAVA_OPTS (e.g. -Xmx512m) is honoured too.
+# The launcher script forwards -D arguments to the JVM. JAVA_OPTS (e.g. -Xmx512m, or the
+# -javaagent flag that turns on OpenTelemetry) is honoured too.
 ENTRYPOINT ["/app/bin/backend", "-Dlogback.configurationFile=/app/logback.xml"]
 
 # ---------------------------------------------------------------------------------------------

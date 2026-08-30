@@ -176,6 +176,19 @@ Config (`AppConfig`) is HOCON with `${?ENV_VAR}` overrides. `.env.example` docum
 
 The server is wired with `Server.customized` (a `Server.Config` and a `NettyConfig`), both derived from `AppConfig`.
 
+### Observability
+
+OpenTelemetry, exported as OTLP. Two halves:
+
+- **The HTTP server span** is ours: `RouteSupport.serverSpan`, a `HandlerAspect` built like `requestLogging`, attached last in `Main.allRoutes` so it is the parent of the log line, the usage row, the handler, and the SQL spans below. `telemetry.Telemetry` is the only wiring (`OpenTelemetry.global` + `contextJVM` + `tracing`).
+- **Per-SQL-statement spans, plus JVM and HikariCP-pool metrics**, come from the OpenTelemetry Java agent. No app code, no Quill change. The agent is inert unless `OTEL_JAVAAGENT_ENABLED=true`. Two ways it reaches the JVM: the `Dockerfile` `ADD`s it into the backend image (`docker compose`), and `build.sbt` resolves it into the `OtelAgent` ivy config and puts `-javaagent:` on `reStart / javaOptions` when the env toggle is set (`~backend/reStart`, `npm run dev`). One version, kept in step across both.
+
+`contextJVM` (a `ThreadLocal` context store, not a `FiberRef`) is deliberate: it is what lets an agent-made JDBC span nest under our span. The agent then propagates that context onto the blocking pool where Quill runs. Without the agent (`sbt test`, or dev with the toggle off) the tracer is a no-op, so nothing extra is needed or resolved.
+
+**A span name or attribute is as readable as a log line.** `spanName` is the method plus the `{id}`-collapsed route and never the query string — the same rule `loggableUrl`/`normalizeRoute` follow for the OAuth `?code=`. The agent's SQL sanitiser (on by default) reduces `db.statement` literals to `?`; bind values are never captured. OTLP goes to a collector on the compose network; nothing new is published.
+
+Local drill-down: `docker compose -f docker-compose.yml -f docker-compose.observability.yml up` (Jaeger, traces only) for the all-in-Docker stack, or `docker compose -f docker-compose.observability.yml up -d jaeger` alongside `npm run dev`. `docker-compose.observability.yml` publishes Jaeger's OTLP ports (4317/4318) so a host-run backend reaches them at the agent's own default endpoint. Percentiles/time-series and production: a separately installed SigNoz (or any OTLP backend) via `OTEL_EXPORTER_OTLP_ENDPOINT`, with `OTEL_METRICS_EXPORTER=otlp` (Jaeger rejects metrics, so the default is `none`).
+
 ### Paged, sorted, filtered listings
 
 `GET /api/admin/users` and `GET /api/admin/audit` are paged, ordered, and narrowed **by the database**, answering `{items, total}`.

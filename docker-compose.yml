@@ -57,7 +57,21 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_START_TLS: ${SMTP_START_TLS:-true}
       NETTY_MAX_THREADS: ${NETTY_MAX_THREADS:-0}
-      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75}
+      # The OpenTelemetry Java agent is baked into the image but inert until
+      # OTEL_JAVAAGENT_ENABLED=true. It is the source of the per-SQL-statement spans and the
+      # HikariCP/JVM metrics; the app adds only the HTTP server span. Turn it on together with an
+      # OTLP backend: a local Jaeger (docker compose -f docker-compose.yml -f
+      # docker-compose.observability.yml up), a self-hosted SigNoz, or a hosted endpoint. The
+      # backend publishes nothing new either way.
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75 -javaagent:/app/opentelemetry-javaagent.jar}
+      OTEL_JAVAAGENT_ENABLED: ${OTEL_JAVAAGENT_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-gathedge-backend}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
 
   # Bundled database, enabled by the `db` profile (COMPOSE_PROFILES=db in .env, which .env.example
   # ships). Drop that profile and point DB_URL at an existing server to use Postgres you already run.

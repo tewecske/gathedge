@@ -1,0 +1,35 @@
+# Local OpenTelemetry backend for the request/SQL drill-down. Opt-in, never part of a bare `up`.
+#
+# Whole stack in Docker:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
+#   OTEL_JAVAAGENT_ENABLED=true   in .env   (turns the agent on)
+#
+# App from sbt (`npm run dev` / `~backend/reStart`), Jaeger in Docker:
+#   docker compose -f docker-compose.observability.yml up -d jaeger
+#   OTEL_JAVAAGENT_ENABLED=true   in .env
+#   The agent then exports to its own default, localhost:4317, which the ports below publish.
+#
+# Then open http://localhost:16686 and pick service `gathedge-backend`. A trace is one request;
+# expand it to see every SQL statement the OpenTelemetry Java agent captured, each with its exact
+# duration. Set OTEL_TRACES_SAMPLER_ARG below 1.0 in .env to sample.
+#
+# Jaeger is traces only. For latency percentiles and time-series charts per endpoint and per
+# query, and for production, send the same OTLP stream to SigNoz instead: install it separately
+# (https://signoz.io/docs/install/docker/) and set OTEL_EXPORTER_OTLP_ENDPOINT to its collector.
+# The backend instrumentation is OTLP and does not care which backend receives it.
+
+services:
+  jaeger:
+    image: jaegertracing/jaeger:2.9.0
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686" # web UI
+      # OTLP in. The backend container reaches it over the compose network as `jaeger:4317`; the
+      # published ports are for a backend run from sbt on the host (localhost:4317 / :4318), which
+      # is the OpenTelemetry agent's own default endpoint.
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    environment:
+      # All-in-one keeps traces in memory: fine for a laptop, gone on restart. Point at a real
+      # SigNoz for anything you need to keep.
+      JAEGER_STORAGE_TYPE: memory

@@ -19,6 +19,14 @@ val quillVersion = "4.8.6"
 val postgresqlVersion = "42.7.13"
 val hikariCpVersion = "7.1.0"
 val flywayVersion = "13.1.0"
+val zioTelemetryVersion = "3.1.19"
+val otelSemconvVersion = "1.43.0"
+// The OpenTelemetry Java agent, for `~backend/reStart` and `npm run dev`. Same jar the Dockerfile
+// ADDs into the runtime image; keep the two versions in step. Resolved into its own ivy
+// configuration (below) so it never reaches the compile/runtime classpath or `backend/stage/lib` —
+// a `-javaagent` is loaded by the JVM itself, not imported.
+val otelAgentVersion = "2.31.1"
+val OtelAgent = config("otelAgent").hide
 val testcontainersScalaVersion = "0.44.1"
 
 ThisBuild / scalaVersion := scala3Version
@@ -122,6 +130,12 @@ lazy val backend = project
         "dev.zio" %% "zio-config-typesafe" % zioConfigVersion,
         "dev.zio" %% "zio-config-magnolia" % zioConfigVersion,
         "dev.zio" %% "zio-logging-slf4j2" % zioLoggingVersion,
+        // Manual span creation for the HTTP server span; per-SQL-statement spans, HikariCP and JVM
+        // metrics come from the OpenTelemetry Java agent added to the runtime image (see Dockerfile).
+        // `OpenTelemetry.global` reads the agent-registered SDK; with no agent it is a no-op tracer,
+        // so `sbt test` and `npm run dev` need nothing extra.
+        "dev.zio" %% "zio-opentelemetry" % zioTelemetryVersion,
+        "io.opentelemetry.semconv" % "opentelemetry-semconv" % otelSemconvVersion,
         "ch.qos.logback" % "logback-classic" % logbackVersion,
         "io.getquill" %% "quill-jdbc-zio" % quillVersion,
         "org.postgresql" % "postgresql" % postgresqlVersion,
@@ -154,6 +168,32 @@ lazy val backend = project
     // A real environment variable wins over the file, so `GOOGLE_CLIENT_ID=… sbt "~backend/reStart"`
     // still overrides one set in `.env` — the same precedence `docker compose` gives it.
     reStart / envVars := dotEnv((ThisBuild / baseDirectory).value) ++ sys.env,
+    // The OpenTelemetry Java agent for the forked dev JVM. Downloaded like a dependency but kept off
+    // every classpath — see `OtelAgent` above.
+    ivyConfigurations += OtelAgent,
+    libraryDependencies += "io.opentelemetry.javaagent" % "opentelemetry-javaagent" % otelAgentVersion % OtelAgent,
+    // `-javaagent` is added to `reStart` only when `.env` (or the shell) sets
+    // OTEL_JAVAAGENT_ENABLED=true — the same switch docker-compose reads. Left off, `~backend/reStart`
+    // and `npm run dev` behave exactly as before and nothing extra is resolved at launch. The agent
+    // still needs an OTLP backend to reach (a local Jaeger from docker-compose.observability.yml on
+    // localhost:4317 is the default); with none it just logs export failures.
+    reStart / javaOptions ++= {
+      // `update` is evaluated regardless of the toggle (sbt runs task dependencies eagerly), so it
+      // is looked up outside the `if` on purpose; resolving the `OtelAgent` config is cheap and
+      // already part of any build.
+      val agentJars = update.value.select(configurationFilter(OtelAgent.name))
+      val optedIn = (dotEnv((ThisBuild / baseDirectory).value) ++ sys.env)
+        .get("OTEL_JAVAAGENT_ENABLED")
+        .exists(_.trim.equalsIgnoreCase("true"))
+      if (!optedIn) {
+        Seq.empty[String]
+      } else {
+        agentJars.headOption match {
+          case Some(jar) => Seq(s"-javaagent:${jar.getAbsolutePath}")
+          case None      => sys.error(s"${OtelAgent.name}: the OpenTelemetry agent jar did not resolve")
+        }
+      }
+    },
   )
 
 lazy val frontend = project
