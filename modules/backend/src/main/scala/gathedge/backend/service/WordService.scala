@@ -66,6 +66,18 @@ enum WordFailure {
     */
   case DuplicateTranslation
 
+  /** Setting a noun's gender was refused before it was tried: the word already has one, it is not a noun, or the gender
+    * is not one its language has. All three are the same answer to the caller, because the screen offers the control on
+    * none of them — a request that reached here was not made from it.
+    */
+  case GenderNotApplicable
+
+  /** Setting a noun's gender would collide with the row that already holds that identity — `das Haus` beside a blank
+    * `Haus`. Nothing is merged: the two rows carry different translations, tags and marks, and choosing which survives
+    * is not a decision one reader gets to make for everybody.
+    */
+  case GenderConflict
+
   /** The account already owns as many tags as `limit` (`AppConfig.quotas.tagsPerUserHard`) allows. Carries the limit
     * itself, since `ApiFailures` mints no signature that takes an `AppConfig` to look it up.
     */
@@ -134,6 +146,13 @@ trait WordService {
 
   def addTranslation(wordId: Long, translation: NewTranslation, userId: Long): IO[WordFailure, WordDetail]
   def removeTranslation(wordId: Long, translationId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Fills in the article a noun was imported without — the only edit any word accepts.
+    *
+    * Only a blank is filled. A word already carrying a gender answers `GenderNotApplicable`, not a correction: `words`
+    * rows belong to nobody, so one reader must not rewrite an article the rest are learning from.
+    */
+  def setGender(wordId: Long, gender: Gender, userId: Long): IO[WordFailure, WordDetail]
 
   def listTags(userId: Long): UIO[List[Tag]]
 
@@ -298,6 +317,9 @@ object WordService {
 
   def removeTranslation(wordId: Long, translationId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.removeTranslation(wordId, translationId, userId))
+
+  def setGender(wordId: Long, gender: Gender, userId: Long): ZIO[WordService, WordFailure, WordDetail] =
+    ZIO.serviceWithZIO[WordService](_.setGender(wordId, gender, userId))
 
   def listTags(userId: Long): URIO[WordService, List[Tag]] =
     ZIO.serviceWithZIO[WordService](_.listTags(userId))
@@ -727,6 +749,58 @@ final case class WordServiceLive(
     for {
       row    <- repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound)
       detail <- detailOf(row, reader)
+    } yield detail
+  }
+
+  /** The three conditions a word must meet before its gender may be filled in, read straight off the row.
+    *
+    * They are [[ensure]]'s `keptGender` rule the other way round: a gender is kept there exactly when the language has
+    * genders and the word is a noun, so those are the words that can be missing one. The third — the gender being one
+    * the language actually has — is what keeps `Neuter` out of Spanish, which has two genders and not three.
+    */
+  private def genderFillable(row: WordRow, gender: Gender): Boolean = {
+    val language = WordLanguage.fromString(row.language)
+    row.gender.isEmpty &&
+    row.partOfSpeech == PartOfSpeech.code(PartOfSpeech.Noun) &&
+    language.exists(l => LanguageProfile.of(l).genders.contains(gender))
+  }
+
+  /** Fills in a missing gender, or says why it cannot.
+    *
+    * The conflict is checked twice on purpose. The lookup before the write is what turns the ordinary case -- `das
+    * Haus` already being its own row -- into a 409 the reader can act on rather than a unique-index defect. The retry
+    * after a failed write covers the race the lookup cannot: another caller taking that identity in between. Between
+    * them sits [[WordRepository.setWordGender]]'s own `gender = ''` guard, which answers `0` rather than overwriting
+    * when somebody else filled the blank first -- also a conflict from this caller's side, since the word they were
+    * looking at is no longer the word they are editing.
+    *
+    * `userId` names the account for the log line only. Nothing here is scoped to it: a word belongs to nobody, so
+    * filling in an article it was imported without is open to any session, exactly as adding a word is.
+    */
+  def setGender(wordId: Long, gender: Gender, userId: Long): IO[WordFailure, WordDetail] = {
+    val code = Gender.code(gender)
+
+    def conflicting(row: WordRow): UIO[Option[WordRow]] = {
+      repo.findWord(row.language, row.textNorm, row.partOfSpeech, code).orDie
+    }
+
+    for {
+      row     <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      _       <- ZIO.unless(genderFillable(row, gender))(ZIO.fail(WordFailure.GenderNotApplicable))
+      taken   <- conflicting(row)
+      _       <- ZIO.when(taken.isDefined)(ZIO.fail(WordFailure.GenderConflict))
+      updated <- repo
+                   .setWordGender(wordId, code)
+                   .catchAll(error => {
+                     conflicting(row).flatMap {
+                       case Some(_) => ZIO.succeed(0L)
+                       case None    => ZIO.die(error)
+                     }
+                   })
+      _       <- ZIO.when(updated == 0L)(ZIO.fail(WordFailure.GenderConflict))
+      _       <- ZIO.logInfo(s"words.setGender id=$wordId gender=$code user=$userId")
+      filled  <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      detail  <- detailOf(filled, Some(userId))
     } yield detail
   }
 

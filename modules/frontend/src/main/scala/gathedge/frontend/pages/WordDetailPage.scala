@@ -6,6 +6,7 @@ import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, GuestBanner, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{
   Gender,
@@ -58,6 +59,14 @@ private class WordDetailPage(id: Long) {
   private val loadBus   = new EventBus[Unit]()
   private val addBus    = new EventBus[Unit]()
   private val removeBus = new EventBus[Long]()
+
+  /** The article control's own state, kept apart from the add-a-translation form's [[genderVar]]: the two are different
+    * writes about different words, and one being in flight must not disable the other.
+    */
+  private val setGenderBus      = new EventBus[Unit]()
+  private val setGenderVar      = Var(Option.empty[Gender])
+  private val setGenderFlyVar   = Var(false)
+  private val setGenderClashVar = Var(false)
 
   /** The tick, the chips and the tag they file into — the listing's, verbatim. A landed write applies what changed to
     * this page's local state without refetching — except for removing a translation, which changes the row set.
@@ -126,6 +135,15 @@ private class WordDetailPage(id: Long) {
           Var.set(detailVar -> Some(detail), textVar -> "", genderVar -> None, inFlightVar -> false, errorVar -> None)
         case Left(err)     =>
           Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+      },
+      setGenderStream --> Observer[Either[ApiError, WordDetail]] {
+        case Right(detail) =>
+          // The control disappears with the blank it filled, so the picker is reset for whichever word comes next.
+          Var.set(detailVar -> Some(detail), setGenderVar -> None, setGenderFlyVar -> false, errorVar -> None)
+        case Left(err)     =>
+          // 409 is the identity collision, and the only failure here with somewhere to go: the listing shows this word
+          // beside the row that already holds the article.
+          Var.set(setGenderFlyVar -> false, setGenderClashVar -> (err.status == 409), errorVar -> Some(err.message))
       },
       removeBus.events.flatMapSwitch(translationId => WordApiClient.removeTranslation(id, translationId)) -->
         Observer[Either[ApiError, Unit]] {
@@ -239,6 +257,17 @@ private class WordDetailPage(id: Long) {
       }
   }
 
+  private def setGenderStream: EventStream[Either[ApiError, WordDetail]] = {
+    setGenderBus.events
+      .filterWith(setGenderFlyVar.signal.not)
+      .map(_ => setGenderVar.now())
+      .collect { case Some(gender) => gender }
+      .flatMapSwitch(gender => {
+        Var.set(setGenderFlyVar -> true, setGenderClashVar -> false)
+        WordApiClient.setGender(id, gender)
+      })
+  }
+
   private def renderWord(detail: WordDetail): HtmlElement = {
     div(
       cls := "card bg-base-100 shadow mt-4",
@@ -254,6 +283,9 @@ private class WordDetailPage(id: Long) {
           cls  := "text-sm opacity-70",
           s"${Labels.language(detail.word.language)} · ${Labels.partOfSpeech(detail.word.partOfSpeech)}",
         ),
+        // Shown only on a noun of a gendered language that was imported without its article — the one thing about an
+        // existing word anybody may change.
+        child.maybe <-- signedInSignal.map(signedIn => Option.when(signedIn)(renderSetGender(detail.word)).flatten),
         // Shown only when this word is itself an inflected/declined form of another — see `dto.WordDetail.mainWords`.
         child.maybe <-- Val(Option.when(detail.mainWords.nonEmpty)(renderMainWords(detail.mainWords))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTranslations)),
@@ -265,6 +297,51 @@ private class WordDetailPage(id: Long) {
         renderTags(detail.tags),
       ),
     )
+  }
+
+  /** The article control, or nothing at all.
+    *
+    * `None` for every word that cannot be missing an article: one that already has it, one that is not a noun, and one
+    * in a language with no genders. That is [[gathedge.backend.service.WordServiceLive.genderFillable]]'s rule, and the
+    * server enforces it again — this only decides whether to offer the control.
+    *
+    * The picker is `ArticleSelect`, the same control the add-a-word forms use, so a language with two articles offers
+    * two here as well.
+    */
+  private def renderSetGender(word: Word): Option[HtmlElement] = {
+    val profile = LanguageProfile.of(word.language)
+    Option.when(word.gender.isEmpty && word.partOfSpeech == PartOfSpeech.Noun && profile.hasGenders) {
+      form(
+        cls        := "flex flex-wrap items-end gap-2 mt-2",
+        noValidate := true,
+        onSubmit.preventDefault.mapToUnit --> setGenderBus.writer,
+        ArticleSelect.render(profile, setGenderVar),
+        button(
+          cls := "btn btn-sm",
+          typ := "submit",
+          disabled <-- setGenderVar.signal.map(_.isEmpty).combineWithFn(setGenderFlyVar.signal)(_ || _),
+          I18n.t(UiKeys.wordDetailSetGender),
+        ),
+        // The way out of the 409: the listing strips a leading article from the search box, so this word and the row
+        // that already holds the article are shown together.
+        child.maybe <--
+          setGenderClashVar.signal.map(
+            Option.when(_)(
+              a(
+                cls := "link link-hover text-sm self-center",
+                AppRouter.router.navigateTo(
+                  Page.Words(WordQuery.default.copy(search = word.text, language = word.language))
+                ),
+                I18n.t(UiKeys.wordDetailSetGenderConflictLink),
+              )
+            )
+          ),
+        span(
+          cls := "basis-full text-xs opacity-70",
+          I18n.t(UiKeys.wordDetailSetGenderHint),
+        ),
+      )
+    }
   }
 
   /** Every lemma this word is a form of — ordinarily zero or one, but rendered as a list either way. */

@@ -34,6 +34,18 @@ trait WordRepository {
     */
   def ensureWord(row: WordRow): Task[WordRow]
 
+  /** Fills in the gender of a word that has none, answering how many rows that changed.
+    *
+    * The `gender = ''` half of the filter is the guard, not a formality: it is what makes "fill a blank" atomic, so two
+    * callers racing on the same imported noun cannot both win and the loser is told by the row count rather than by a
+    * later read. Changing a gender that is already set is not offered at all — `words` rows belong to nobody.
+    *
+    * Answers `0` for a word that is not there, and for one somebody else has just given a gender to. A unique-index
+    * violation is possible and is the caller's to interpret: gender is part of a word's identity, so this is an
+    * identity change that can collide with a row already holding it.
+    */
+  def setWordGender(id: Long, gender: String): Task[Long]
+
   /** One page of the listing. `search` is matched as a **prefix** of the accent-folded text, which is what an
     * autocomplete needs and what `idx_words_search` answers.
     *
@@ -286,6 +298,9 @@ object WordRepository {
 
   def ensureWord(row: WordRow): RIO[WordRepository, WordRow] =
     ZIO.serviceWithZIO[WordRepository](_.ensureWord(row))
+
+  def setWordGender(id: Long, gender: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setWordGender(id, gender))
 
   def listPage(
     offset: Int,
@@ -548,6 +563,11 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         // decides, and the loser simply reads the winner's row.
         insertWord(row).catchAll(error => lookup.flatMap(ZIO.fromOption(_).orElseFail(error)).mapError(identity))
     }
+  }
+
+  def setWordGender(id: Long, gender: String): Task[Long] = {
+    val q = quote(words.filter(word => word.id == lift(id) && word.gender == lift("")).update(_.gender -> lift(gender)))
+    logged(run(ctx.run(q)))(rows => s"words.setGender id=$id gender=$gender rows=$rows")
   }
 
   /** Every article form of every language this app teaches, longest first so `"los"` is not shadowed by a shorter form

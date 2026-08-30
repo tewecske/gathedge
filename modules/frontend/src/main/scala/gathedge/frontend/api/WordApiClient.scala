@@ -2,7 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{PartOfSpeech, Tag, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkUploadConfirmRequest,
@@ -16,6 +16,7 @@ import gathedge.shared.dto.{
   NewTranslation,
   PairSelectionResponse,
   RenameTagRequest,
+  SetGenderRequest,
   TagResponse,
   WordDetail,
   WordPage,
@@ -76,6 +77,13 @@ object WordApiClient {
 
   def addTranslation(wordId: Long, translation: NewTranslation): EventStream[Either[ApiError, WordDetail]] = {
     run(executor(WordEndpoints.addTranslation(wordId, AddTranslationRequest(translation))))
+  }
+
+  /** Fills in the article a noun was imported without. Answers the whole word again, so the caller replaces what it is
+    * showing rather than patching the one field.
+    */
+  def setGender(wordId: Long, gender: Gender): EventStream[Either[ApiError, WordDetail]] = {
+    run(executor(WordEndpoints.setGender(wordId, SetGenderRequest(gender))))
   }
 
   def removeTranslation(wordId: Long, translationId: Long): EventStream[Either[ApiError, Unit]] = {

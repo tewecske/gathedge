@@ -12,6 +12,7 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   PairSelectionResponse,
   RenameTagRequest,
+  SetGenderRequest,
   TagResponse,
   WordDetail,
   WordPage,
@@ -126,6 +127,24 @@ object WordEndpoints {
   val addTranslation = {
     Endpoint(Method.POST / "api" / "words" / wordId / "translations")
       .in[AddTranslationRequest]
+      .withCodecError
+      .out[WordDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Fills in the article a noun was imported without — the one thing about an existing word that may be changed.
+    *
+    * Only a blank may be filled: a word whose gender is already set answers 400, because `words` rows belong to nobody
+    * and one reader must not rewrite an article everybody else is learning from. 400 also covers a gender the word's
+    * language does not have, and a word that is not a noun.
+    *
+    * 409 is the identity collision. Gender is part of `UNIQUE (language, text_norm, part_of_speech, gender)`, so
+    * setting one on `Haus` when `das Haus` is already its own row would be a duplicate. Nothing is merged; the caller
+    * is told the other word exists.
+    */
+  val setGender = {
+    Endpoint(Method.PUT / "api" / "words" / wordId / "gender")
+      .in[SetGenderRequest]
       .withCodecError
       .out[WordDetail]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
@@ -309,6 +328,7 @@ object WordEndpoints {
       get,
       create,
       addTranslation,
+      setGender,
       removeTranslation,
       listTags,
       createTag,

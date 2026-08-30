@@ -760,6 +760,14 @@ object UiKeys {
   val wordDetailAddTitle: String    = key("ui.word.addTitle")
   val wordDetailAddLanguage: String = key("ui.word.addLanguage")
 
+  /** The article control on the word itself, offered only on a noun of a gendered language that was imported without
+    * one. `setGenderConflictLink` is the way out of the 409: it points at the listing for this word, where the row that
+    * already holds the article is shown beside the blank one.
+    */
+  val wordDetailSetGender: String             = key("ui.word.setGender")
+  val wordDetailSetGenderHint: String         = key("ui.word.setGenderHint")
+  val wordDetailSetGenderConflictLink: String = key("ui.word.setGenderConflictLink")
+
   /** Shown when this word is itself an inflected/declined form of another — `dto.WordDetail.mainWords`. */
   val wordDetailMainWordLabel: String = key("ui.word.mainWord.label")
 

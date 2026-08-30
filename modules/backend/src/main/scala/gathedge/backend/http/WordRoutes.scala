@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   Paging,
   RenameTagRequest,
+  SetGenderRequest,
   SortDirection,
 }
 import zio.*
@@ -117,6 +118,14 @@ object WordRoutes {
     WordEndpoints.addTranslation.implementHandler(
       handler { (wordId: Long, body: AddTranslationRequest) =>
         userId.flatMap(id => WordService.addTranslation(wordId, body.translation, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val setGenderRoute = {
+    WordEndpoints.setGender.implementHandler(
+      handler { (wordId: Long, body: SetGenderRequest) =>
+        userId.flatMap(id => WordService.setGender(wordId, body.gender, id).mapError(ApiFailures.word))
       }
     )
   }
@@ -244,6 +253,7 @@ object WordRoutes {
     Routes(
       createRoute,
       addTranslationRoute,
+      setGenderRoute,
       removeTranslationRoute,
       listTagsRoute,
       createTagRoute,

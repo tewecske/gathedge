@@ -83,6 +83,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/guest/claim",
               "/api/words",
               "/api/words/{id}",
+              "/api/words/{id}/gender",
               "/api/words/{id}/translations",
               "/api/words/{id}/translations/{translationId}",
               "/api/words/{id}/tags/{tagId}",
@@ -228,6 +229,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // 404 covers a `mainWordId` naming no word and a `tagIds` entry naming a tag that is not the caller's
               // alike, the same rule every tag-scoped write in this resource follows.
               ("POST", "/api/words")                                                      -> Set(Created, BadRequest, Unauthorized, NotFound),
+              ("PUT", "/api/words/{id}/gender")                                           ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/words/{id}/translations")                                    ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/translations/{translationId}")                  ->

@@ -40,9 +40,10 @@ import gathedge.backend.service.{
   GameWordList,
   RateLimiter,
   SessionReaper,
+  WordFailure,
   WordService,
 }
-import gathedge.shared.domain.TranslationFilter
+import gathedge.shared.domain.{Gender, TranslationFilter}
 import gathedge.shared.dto.{Paging, WordSort}
 import zio._
 import zio.test._
@@ -511,6 +512,36 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // Untagging the word takes its pairs in that tag with it, both ways round, and leaves the translation filed.
           swept.isEmpty,
           left.map(_.wordId) == List(fork.id),
+        )
+      },
+      // The only UPDATE any `words` row takes, and the only one whose guard is a column the unique index also covers.
+      // `UNIQUE (language, text_norm, part_of_speech, gender)` is what decides the conflict, and only Postgres runs the
+      // dialect this ships on.
+      test("filling in a noun's gender updates the row in place, and refuses the twin's identity") {
+        for {
+          reader    <- AuthService.createGuest(Some("10.9.2.7")).map(_._1)
+          blank     <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "Pgsee", "pgsee", "noun", "", 1, "user", Some(reader.id), 0L, "pgsee")
+                       )
+          filled    <- WordService.setGender(blank.id, Gender.Masculine, reader.id)
+          twin      <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "Pgbank", "pgbank", "noun", "feminine", 1, "user", None, 0L, "pgbank")
+                       )
+          other     <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "Pgbank", "pgbank", "noun", "", 1, "user", None, 0L, "pgbank")
+                       )
+          conflict  <- WordService.setGender(other.id, Gender.Feminine, reader.id).either
+          untouched <- WordRepository.findWordById(other.id)
+          spent     <- WordRepository.setWordGender(blank.id, "neuter")
+        } yield assertTrue(
+          // Updated in place: the same id, so every translation, tag and mark on it survives.
+          filled.word.id == blank.id,
+          filled.word.gender.contains(Gender.Masculine),
+          twin.id != other.id,
+          conflict == Left(WordFailure.GenderConflict),
+          untouched.exists(_.gender.isEmpty),
+          // The repository's own `gender = ''` guard: a row that already has one is not overwritten.
+          spent == 0L,
         )
       },
       // The "newest in tag" ordering is the one listing shape that joins `word_tags` and orders by a column outside

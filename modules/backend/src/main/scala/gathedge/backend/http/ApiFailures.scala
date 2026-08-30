@@ -246,6 +246,16 @@ object ApiFailures {
           MessageRef(MessageKeys.wordTranslationExists),
           "You have already added that translation",
         )
+      case WordFailure.GenderNotApplicable          =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.wordGenderNotApplicable),
+          "That word cannot take that article",
+        )
+      case WordFailure.GenderConflict               =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordGenderConflict),
+          "That word already exists with that article",
+        )
       case WordFailure.TagQuotaExceeded(limit)      =>
         ApiFailure.Conflict(
           MessageRef(MessageKeys.wordTagQuotaExceeded, List(limit.toString)),

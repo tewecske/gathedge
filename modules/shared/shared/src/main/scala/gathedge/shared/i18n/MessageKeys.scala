@@ -100,6 +100,18 @@ object MessageKeys {
     */
   val wordMainWordLanguageMismatch: String = key("words.mainWordLanguageMismatch")
 
+  /** Setting a noun's article was refused: the word already has one, it is not a noun, or its language does not have
+    * the gender asked for. One key for all three, because a caller that reached any of them sent a request the screen
+    * does not offer — the control appears only on a gendered-language noun with no article yet.
+    */
+  val wordGenderNotApplicable: String = key("words.genderNotApplicable")
+
+  /** Setting a noun's article would collide: the same word with that article is already its own row, since gender is
+    * part of a word's identity. Takes no argument: the screen already shows the word and the article the reader picked,
+    * so repeating either in the sentence would only give Hungarian an article to decline.
+    */
+  val wordGenderConflict: String = key("words.genderConflict")
+
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.
     */

@@ -137,6 +137,15 @@ final case class NewTranslation(
 
 final case class AddTranslationRequest(translation: NewTranslation) derives JsonCodec
 
+/** Fills in the article a noun was imported without.
+  *
+  * `gender` is required rather than optional: this endpoint fills a blank, it never clears one. Gender is part of a
+  * word's identity (`UNIQUE (language, text_norm, part_of_speech, gender)`), so clearing one would be a second identity
+  * change with a second collision to answer for, and nothing asks for it -- an article that turned out to be wrong is a
+  * correction, which is refused outright.
+  */
+final case class SetGenderRequest(gender: Gender) derives JsonCodec
+
 final case class CreateTagRequest(name: String) derives JsonCodec
 
 /** One side of a pair the tag-creation page is building.

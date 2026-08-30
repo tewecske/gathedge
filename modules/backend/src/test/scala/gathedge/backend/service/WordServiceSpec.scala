@@ -1598,9 +1598,86 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  /** Filling in the article an imported noun was written without — the one edit an existing word accepts.
+    *
+    * Every test seeds its own word rather than leaning on [[seed]], because gender is part of a word's identity: the
+    * whole subject here is which row a `(language, text, part of speech, gender)` key names, so a word another test
+    * also writes would decide the answer.
+    */
+  private def genderSpec = {
+    suite("setting a noun's gender")(
+      test("an imported noun with no article takes one, keeping its translations, tags and marks") {
+        for {
+          blank  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Fenster"))
+          hu     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ablak"))
+          _      <- WordRepository.insertTranslationPair(blank.id, hu.id, WordService.dictionaryOrigin, None, 0L)
+          tag    <- createTag("fenster-lesson", 1L)
+          _      <- WordService.selectPair(blank.id, tag.id, hu.id, 1L)
+          detail <- WordService.setGender(blank.id, Gender.Neuter, 1L)
+          again  <- WordService.detail(blank.id, Some(1L))
+        } yield assertTrue(
+          // The same row, not a second one: that is the whole point of editing rather than adding.
+          detail.word.id == blank.id,
+          detail.word.gender.contains(Gender.Neuter),
+          detail.translations.map(_.word.text) == List("ablak"),
+          detail.tags.map(_.id) == List(tag.id),
+          detail.pairs == List(TaggedPair(tag.id, hu.id)),
+          again.word.gender.contains(Gender.Neuter),
+        )
+      },
+      test("a word that already has an article is not corrected, only a blank is filled") {
+        for {
+          word   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
+          result <- WordService.setGender(word.id, Gender.Neuter, 1L).either
+          after  <- WordService.detail(word.id, None)
+        } yield assertTrue(
+          result == Left(WordFailure.GenderNotApplicable),
+          after.word.gender.contains(Gender.Masculine),
+        )
+      },
+      test("only a noun of a language that has the gender asked for: not a verb, not English, not Neuter in Spanish") {
+        for {
+          verb    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "gehen", pos = PartOfSpeech.Verb))
+          english <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "window"))
+          spanish <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "ventana"))
+          onVerb  <- WordService.setGender(verb.id, Gender.Neuter, 1L).either
+          onEn    <- WordService.setGender(english.id, Gender.Neuter, 1L).either
+          onEs    <- WordService.setGender(spanish.id, Gender.Neuter, 1L).either
+          okEs    <- WordService.setGender(spanish.id, Gender.Feminine, 1L)
+        } yield assertTrue(
+          onVerb == Left(WordFailure.GenderNotApplicable),
+          onEn == Left(WordFailure.GenderNotApplicable),
+          // Spanish has two genders, so the third is refused for it exactly as it is for a language with none.
+          onEs == Left(WordFailure.GenderNotApplicable),
+          okEs.word.gender.contains(Gender.Feminine),
+        )
+      },
+      test("a word that is not there is a NotFound") {
+        for {
+          result <- WordService.setGender(9999L, Gender.Neuter, 1L).either
+        } yield assertTrue(result == Left(WordFailure.NotFound))
+      },
+      test("the gendered twin already existing is a conflict, and neither row is touched") {
+        for {
+          blank  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bank"))
+          twin   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bank", gender = Some(Gender.Feminine)))
+          result <- WordService.setGender(blank.id, Gender.Feminine, 1L).either
+          left   <- WordService.detail(blank.id, None)
+          right  <- WordService.detail(twin.id, None)
+        } yield assertTrue(
+          blank.id != twin.id,
+          result == Left(WordFailure.GenderConflict),
+          left.word.gender.isEmpty,
+          right.word.gender.contains(Gender.Feminine),
+        )
+      },
+    ).provide(layer)
+  }
+
   def spec = {
     suite("WordService (SQLite)")(
       coreSpec,
+      genderSpec,
       quotaSpec,
       tagCreationSpec,
       bulkUploadSpec,
