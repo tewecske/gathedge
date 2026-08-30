@@ -34,7 +34,19 @@ object GameInstancePageSpec extends ZIOSpecDefault {
         rootNode.unmount()
         dom.document.body.removeChild(container)
         assertTrue(true)
-      }
+      },
+      test("WordLimitChoice.toLimit maps each radio to its wordLimit") {
+        assertTrue(
+          WordLimitChoice.toLimit(WordLimitChoice.All, "") == None,
+          WordLimitChoice.toLimit(WordLimitChoice.Ten, "") == Some(10),
+          WordLimitChoice.toLimit(WordLimitChoice.Twenty, "") == Some(20),
+          WordLimitChoice.toLimit(WordLimitChoice.Custom, " 3 ") == Some(3),
+          WordLimitChoice.toLimit(WordLimitChoice.Custom, "") == None,
+          WordLimitChoice.toLimit(WordLimitChoice.Custom, "0") == None,
+          WordLimitChoice.toLimit(WordLimitChoice.Custom, "-4") == None,
+          WordLimitChoice.toLimit(WordLimitChoice.Custom, "x") == None,
+        )
+      },
     )
   }
 }

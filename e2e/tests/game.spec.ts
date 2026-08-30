@@ -136,9 +136,9 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // The quiz itself renders with no session at all — GameEndpoints.get mints nobody.
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
 
-  // The play-time variant picker, in full: direction swap, word-limit select-all/count, an articles toggle
-  // (both languages of this pair include German, since the pair is German<->Hungarian), and the three-way
-  // preference select — none of which appeared on the setup screen above.
+  // The play-time variant picker, in full: direction swap, the All/10/20/Custom word-count radios, an articles
+  // toggle (both languages of this pair include German, since the pair is German<->Hungarian), and the
+  // three-way preference select — none of which appeared on the setup screen above.
   await expect(guestPage.getByTitle('Swap languages')).toBeVisible();
   const langSpans = guestPage.locator('span.font-medium');
   await expect(langSpans).toHaveCount(2);
@@ -146,8 +146,12 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(langSpans.nth(1)).toHaveText('Hungarian');
 
   await expect(guestPage.getByText('How many words')).toBeVisible();
-  const selectAllCheckbox = guestPage.locator('label', { hasText: 'Use every eligible word' }).locator('input[type=checkbox]');
-  await expect(selectAllCheckbox).toBeChecked();
+  const allWordsRadio = guestPage.getByRole('radio', { name: 'All' });
+  const customWordsRadio = guestPage.getByRole('radio', { name: 'Custom' });
+  await expect(allWordsRadio).toBeChecked();
+  // Only 4 words are eligible, so the 10 and 20 presets are out of range and disabled.
+  await expect(guestPage.getByRole('radio', { name: '10' })).toBeDisabled();
+  await expect(guestPage.getByRole('radio', { name: '20' })).toBeDisabled();
 
   const articlesRow = guestPage.locator('label', { hasText: 'Include definite articles' });
   await expect(articlesRow).toBeVisible();
@@ -182,9 +186,16 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   // First play: narrow to 3 of the 4 eligible words (direction unswapped, preference "All"), so exactly one
   // word is left untouched by this player in this direction for the second play to skew toward.
-  await selectAllCheckbox.uncheck();
+  await customWordsRadio.click();
   const wordLimitInput = guestPage.locator('input[type=number]');
+
+  // A custom count that is not below the eligible pool is rejected: inline error, Start disabled.
+  await wordLimitInput.fill('4');
+  await expect(guestPage.getByText('Choose fewer than the 4 available words')).toBeVisible();
+  await expect(guestPage.getByRole('button', { name: 'Start' })).toBeDisabled();
+
   await wordLimitInput.fill('3');
+  await expect(guestPage.getByText('Choose fewer than the 4 available words')).toHaveCount(0);
 
   await guestPage.getByRole('button', { name: 'Start' }).click();
 
@@ -249,7 +260,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
-  await selectAllCheckbox.uncheck();
+  await customWordsRadio.click();
   await wordLimitInput.fill('1');
   await guestPage.getByRole('button', { name: 'Start' }).click();
 

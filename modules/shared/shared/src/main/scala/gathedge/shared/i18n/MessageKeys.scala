@@ -143,6 +143,10 @@ object MessageKeys {
     */
   val gameWordLimitInvalid: String = key("games.wordLimitInvalid")
 
+  /** Takes the eligible pool size as `{0}` — a fixed count `>=` the words actually available in the chosen direction.
+    */
+  val gameWordLimitTooMany: String = key("games.wordLimitTooMany")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // `codeInvalid` answers an unknown, revoked or malformed transfer code alike, so the code space
   // cannot be probed — the same reasoning as the verification token's single answer.

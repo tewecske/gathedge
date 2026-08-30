@@ -33,7 +33,7 @@ import gathedge.shared.dto.{
   Paging,
   PlayStarted,
 }
-import gathedge.shared.i18n.MessageRef
+import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import gathedge.shared.validation.Validation
 import zio.*
 
@@ -115,8 +115,8 @@ trait GameService {
     * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference`/`mode`
     * are this play's own settings, snapshotted onto its `game_plays` row — see the design doc. `mode` also decides the
     * play's `maxScore`, since a clicked answer is worth less than a typed one. Fails [[GameFailure.ValidationError]]
-    * for an out-of-range `wordLimit`, [[GameFailure.NoEligibleWords]] if the resolved direction's pool is empty right
-    * now.
+    * for a `wordLimit` out of `[1, maxWordLimit]` or one `>=` the resolved direction's eligible pool,
+    * [[GameFailure.NoEligibleWords]] if that pool is empty right now.
     */
   def startPlay(
     slug: String,
@@ -781,6 +781,24 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       (resolvedSource, resolvedTarget) = resolved
       pool                            <- eligibleWordPoolFor(game.id, resolvedSource, resolvedTarget)
       _                               <- ZIO.when(pool.isEmpty)(ZIO.fail(GameFailure.NoEligibleWords))
+      // A fixed count only makes sense below the pool it draws from — "10 of 4 words" is the caller asking for
+      // something that cannot happen. The picker already blocks this, but its word count can lag a direction swap,
+      // so the rule is enforced here too. `None` ("every eligible word") is always fine.
+      _                               <- ZIO
+                                           .foreach(validLimit)(n => {
+                                             ZIO.when(n >= pool.size)(
+                                               ZIO.fail(
+                                                 GameFailure.ValidationError(
+                                                   Map(
+                                                     "wordLimit" -> MessageRef(
+                                                       MessageKeys.gameWordLimitTooMany,
+                                                       List(pool.size.toString),
+                                                     )
+                                                   )
+                                                 )
+                                               )
+                                             )
+                                           })
       sampled                         <- sampleWordPool(game.id, playerUserId, resolvedSource, resolvedTarget, pool, validLimit, wordPreference)
       now                             <- Clock.currentTime(TimeUnit.MILLISECONDS)
       wordCount                        = sampled.size

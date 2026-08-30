@@ -1038,9 +1038,10 @@ object UiKeys {
 
   val gameInstanceDirectionSwap: String = key("ui.gameInstance.direction.swap")
 
-  val gameInstanceWordLimitLabel: String     = key("ui.gameInstance.wordLimit.label")
-  val gameInstanceWordLimitSelectAll: String = key("ui.gameInstance.wordLimit.selectAll")
-  val gameInstanceWordLimitCount: String     = key("ui.gameInstance.wordLimit.count")
+  val gameInstanceWordLimitLabel: String  = key("ui.gameInstance.wordLimit.label")
+  val gameInstanceWordLimitAll: String    = key("ui.gameInstance.wordLimit.all")
+  val gameInstanceWordLimitCustom: String = key("ui.gameInstance.wordLimit.custom")
+  val gameInstanceWordLimitCount: String  = key("ui.gameInstance.wordLimit.count")
 
   val gameInstanceIncludeArticlesLabel: String = key("ui.gameInstance.includeArticles.label")
   val gameInstanceIncludeArticlesHint: String  = key("ui.gameInstance.includeArticles.hint")

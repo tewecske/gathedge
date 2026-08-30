@@ -136,8 +136,8 @@ object GameEndpoints {
   }
 
   /** Starts a fresh attempt at `slug` under the variant `body` describes — see [[StartPlayRequest]]. `badRequest`
-    * covers both a body that fails validation (an out-of-range `wordLimit`) and `NoEligibleWords` (the resolved
-    * direction's pool is empty right now).
+    * covers both a body that fails validation (an out-of-range `wordLimit`, or one `>=` the resolved direction's
+    * eligible pool) and `NoEligibleWords` (the resolved direction's pool is empty right now).
     */
   val startPlay = {
     Endpoint(Method.POST / "api" / "games" / gameSlug / "plays")

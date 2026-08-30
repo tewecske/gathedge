@@ -446,6 +446,20 @@ object GameServiceSpec extends ZIOSpecDefault {
           result  <- GameService.startPlay(created.slug, owner, wordLimit = Some(0)).either
         } yield assertTrue(result.left.exists(_.isInstanceOf[GameFailure.ValidationError]))
       },
+      test("a play-time word limit at or above the eligible pool fails validation") {
+        for {
+          owner     <- newUser()
+          tagId     <- eligibleTagWithPairs(owner, "playLimitFull", WordLanguage.De, WordLanguage.Hu, count = 4)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          atPool    <- GameService.startPlay(created.slug, owner, wordLimit = Some(4)).either
+          overPool  <- GameService.startPlay(created.slug, owner, wordLimit = Some(5)).either
+          underPool <- GameService.startPlay(created.slug, owner, wordLimit = Some(3))
+        } yield assertTrue(
+          atPool.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
+          overPool.left.exists(_.isInstanceOf[GameFailure.ValidationError]),
+          underPool.wordCount == 3,
+        )
+      },
       test("Unplayed preference fills the sample from never-answered words first, in this direction only") {
         for {
           owner      <- newUser()

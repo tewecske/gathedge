@@ -8,7 +8,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
-import gathedge.shared.i18n.UiKeys
+import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import org.scalajs.dom
 
 import scala.concurrent.Future
@@ -40,6 +40,35 @@ object GameInstancePage {
   }
 }
 
+/** How many words a play draws, as the picker's radio row states it: every eligible word, one of the fixed presets, or
+  * a number the player types. [[WordLimitChoice.toLimit]] turns a choice back into the `Option[Int]` `StartPlayRequest`
+  * carries.
+  */
+private enum WordLimitChoice {
+  case All, Ten, Twenty, Custom
+}
+
+private object WordLimitChoice {
+
+  /** The preset radios and the fixed count each stands for. `All` and `Custom` are not here — one means "no limit", the
+    * other reads its number from the text field.
+    */
+  val presets: List[(WordLimitChoice, Int)] = List(WordLimitChoice.Ten -> 10, WordLimitChoice.Twenty -> 20)
+
+  /** The `wordLimit` a choice resolves to: `None` for "every eligible word", the preset's own number, or the parsed
+    * custom text. Only a positive integer counts for `Custom`; anything else is `None`, which the picker reads as an
+    * invalid custom entry and blocks the start on (it never reaches `startPlay` as a silent "no limit").
+    */
+  def toLimit(choice: WordLimitChoice, customText: String): Option[Int] = {
+    choice match {
+      case WordLimitChoice.All    => None
+      case WordLimitChoice.Ten    => Some(10)
+      case WordLimitChoice.Twenty => Some(20)
+      case WordLimitChoice.Custom => customText.trim.toIntOption.filter(_ > 0)
+    }
+  }
+}
+
 private class GameInstancePage(slug: String, generateQr: String => Future[String]) {
 
   private val gameVar    = Var(Option.empty[GameDetail])
@@ -63,16 +92,15 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val gameModeVar = Var[GameMode](GameMode.Typing)
 
-  /** Mutually exclusive with [[wordLimitTextVar]], the same pattern `GameSetupPage` used before this control moved
-    * here. Defaults to `true`: "use every eligible word".
+  /** The word-count radio row's state — All / 10 / 20 / Custom — plus the number typed when `Custom` is picked.
+    * Defaults to `All`: "use every eligible word".
     */
-  private val selectAllVar     = Var(true)
-  private val wordLimitTextVar = Var("")
+  private val wordLimitChoiceVar = Var[WordLimitChoice](WordLimitChoice.All)
+  private val customLimitTextVar = Var("")
 
   private val wordLimitSignal: Signal[Option[Int]] = {
-    selectAllVar.signal.combineWith(wordLimitTextVar.signal).map {
-      case (true, _)     => None
-      case (false, text) => text.trim.toIntOption.filter(_ > 0)
+    wordLimitChoiceVar.signal.combineWith(customLimitTextVar.signal).map { case (choice, text) =>
+      WordLimitChoice.toLimit(choice, text)
     }
   }
 
@@ -91,6 +119,29 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val previewWordsVar   = Var(List.empty[GameSetupWord])
   private val previewLoadingVar = Var(false)
+
+  /** The eligible pool size for the currently-shown direction — the same count [[renderPreviewList]] displays, and the
+    * number a fixed word limit must stay below. Lags a direction/preference change by one preview fetch
+    * ([[previewLoadingVar]]).
+    */
+  private val totalAvailableSignal: Signal[Int] = previewWordsVar.signal.map(_.size)
+
+  /** Whether the `Custom` entry is unusable: no number, a non-positive one, or one that is not below the eligible pool.
+    * The pool comparison only bites once the preview has actually settled with words in it — before that the count is
+    * unknown, and the backend re-checks the limit against the real pool anyway.
+    */
+  private val customInvalidSignal: Signal[Boolean] = {
+    wordLimitChoiceVar.signal
+      .combineWith(customLimitTextVar.signal, totalAvailableSignal, previewLoadingVar.signal)
+      .map { case (choice, text, total, loading) =>
+        choice == WordLimitChoice.Custom && {
+          WordLimitChoice.toLimit(choice, text) match {
+            case None    => true
+            case Some(n) => !loading && total > 0 && n >= total
+          }
+        }
+      }
+  }
 
   /** Fires once, right after the game successfully loads — see `render`'s `loadBus` wiring. Merged into
     * [[previewTriggerStream]] below so the preview populates on first entering the Play screen, not only after the
@@ -225,6 +276,15 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           case Left(err)                                                 =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
+      // A direction swap can shrink the eligible pool under a preset the player already picked (say "20" with only 8
+      // words left the other way). Rather than leave a disabled radio selected, fall back to "All".
+      totalAvailableSignal.updates --> Observer[Int] { total =>
+        if (!previewLoadingVar.now() && total > 0) {
+          val selected = wordLimitChoiceVar.now()
+          if (WordLimitChoice.presets.exists { case (choice, n) => choice == selected && n >= total })
+            wordLimitChoiceVar.set(WordLimitChoice.All)
+        }
+      },
       previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
       previewTriggerStream
         .filterWith(gameVar.signal.map(_.isDefined))
@@ -347,7 +407,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       button(
         cls := "btn btn-primary",
         typ := "button",
-        disabled <-- startingVar.signal,
+        disabled <-- startingVar.signal.combineWith(customInvalidSignal).map { case (starting, invalid) =>
+          starting || invalid
+        },
         I18n.t(UiKeys.gameInstanceStart),
         onClick.mapToUnit --> startBus.writer,
       ),
@@ -387,40 +449,76 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  /** Moved verbatim from the old `GameSetupPage`, just retargeted at [[selectAllVar]]/[[wordLimitTextVar]] here. */
+  /** A daisyUI `join` of btn-styled radios — All / 10 / 20 / Custom — modelled on [[components.ArticlePicker]]. A
+    * preset that would meet or exceed the eligible pool is disabled; picking `Custom` reveals a number field, validated
+    * below the pool ([[customInvalidSignal]]).
+    */
   private def renderWordLimitControls(): HtmlElement = {
+    val groupName = s"word-limit-$slug"
     div(
       cls := "flex flex-col gap-2",
       span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceWordLimitLabel)),
-      label(
-        cls    := "flex items-center gap-2 cursor-pointer",
-        input(
-          typ    := "checkbox",
-          cls    := "checkbox checkbox-sm",
-          controlled(
-            checked <-- selectAllVar.signal,
-            onClick.mapToChecked --> Observer[Boolean] { on =>
-              if (on) Var.set(selectAllVar -> true, wordLimitTextVar -> "") else selectAllVar.set(false)
+      div(
+        cls    := "join",
+        wordLimitRadio(groupName, WordLimitChoice.All, I18n.t(UiKeys.gameInstanceWordLimitAll), Val(false)),
+        WordLimitChoice.presets.map { case (choice, n) =>
+          wordLimitRadio(
+            groupName,
+            choice,
+            n.toString,
+            totalAvailableSignal.combineWith(previewLoadingVar.signal).map { case (total, loading) =>
+              !loading && total > 0 && n >= total
             },
-          ),
-        ),
-        span(cls := "label-text text-sm", I18n.t(UiKeys.gameInstanceWordLimitSelectAll)),
+          )
+        },
+        wordLimitRadio(groupName, WordLimitChoice.Custom, I18n.t(UiKeys.gameInstanceWordLimitCustom), Val(false)),
       ),
-      label(
-        cls    := "flex items-center gap-2",
-        span(cls  := "label-text text-sm", I18n.t(UiKeys.gameInstanceWordLimitCount)),
-        input(
-          typ     := "number",
-          minAttr := "1",
-          cls     := "input input-sm w-24",
-          disabled <-- selectAllVar.signal,
-          controlled(
-            value <-- wordLimitTextVar.signal,
-            onInput.mapToValue --> Observer[String] { text =>
-              Var.set(wordLimitTextVar -> text, selectAllVar -> false)
+      child.maybe <-- wordLimitChoiceVar.signal.map { choice =>
+        Option.when(choice == WordLimitChoice.Custom)(
+          div(
+            cls := "flex flex-col gap-1",
+            label(
+              cls := "flex items-center gap-2",
+              span(cls  := "label-text text-sm", I18n.t(UiKeys.gameInstanceWordLimitCount)),
+              input(
+                typ     := "number",
+                minAttr := "1",
+                cls     := "input input-sm w-24",
+                controlled(
+                  value <-- customLimitTextVar.signal,
+                  onInput.mapToValue --> customLimitTextVar.writer,
+                ),
+              ),
+            ),
+            child.maybe <-- customInvalidSignal.combineWith(totalAvailableSignal).map { case (invalid, total) =>
+              Option.when(invalid && total > 0)(
+                span(
+                  cls := "label-text text-xs text-error",
+                  I18n.t(MessageKeys.gameWordLimitTooMany, total),
+                )
+              )
             },
-          ),
-        ),
+          )
+        )
+      },
+    )
+  }
+
+  private def wordLimitRadio(
+    groupName: String,
+    choice: WordLimitChoice,
+    label: String,
+    disabledSignal: Signal[Boolean],
+  ): HtmlElement = {
+    input(
+      typ        := "radio",
+      cls        := "join-item btn btn-xs",
+      nameAttr   := groupName,
+      aria.label := label,
+      disabled <-- disabledSignal,
+      controlled(
+        checked <-- wordLimitChoiceVar.signal.map(_ == choice),
+        onClick.mapToUnit --> Observer[Unit](_ => wordLimitChoiceVar.set(choice)),
       ),
     )
   }
