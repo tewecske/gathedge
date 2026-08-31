@@ -284,11 +284,12 @@ The first feature: shared dictionary of English, German, Hungarian words, plus t
 
 **Two per-account quotas** (`AppConfig.quotas`): tags owned, and `word_tag_pairs` rows owned (a marked translation is two rows). Not time-windowed. Checked in `WordService` (`checkQuota`/`tagQuota`/`pairQuota`), never `RateLimitKey`. Each has a soft threshold (writes through with `dto.*Response.warning`) and a hard one (409 `WordFailure.*QuotaExceeded`). Enforced at `createTag`, `selectPair` (never charged for an already-marked pair), and `copyTag` (checks both dimensions before writing).
 
-Three load-bearing columns:
+Four load-bearing columns:
 
 - **`gender` is part of a word's identity** (`der See` and `die See` are two rows). `NOT NULL` with `''` for "not gendered". The column stores the gender itself (`masculine`/`feminine`/`neuter`), not an article.
 - **`frequency_rank` is `NOT NULL` with a large sentinel.**
 - **Search is a prefix match on `text_norm`** (`LIKE 'hau%'`), lowercased on write.
+- **`is_form` is derived from `word_forms`, not authoritative.** It is what the listing's "main words only" filter reads, so the predicate is a column rather than a `NOT EXISTS`, and `idx_words_main_rank` (partial, `WHERE is_form = FALSE`) answers the default order. `word_forms` stays the truth: `WordRepository.insertForms` and `.deleteWordForms` are the only writers, each updating the flag in its own transaction, and a third writer of that table must do the same. Deleting one `(form, relation)` pair frees the word only when no relation is left.
 
 **`LanguageProfile` (`shared/domain/LanguageProfile.scala`) is the only place an article literal may appear.** It maps each `WordLanguage` to the genders it has, the article each takes, the article forms its parser recognises, and whether its nouns capitalize. Every display, strip, or picker goes through it — a fifth language is a profile entry, not a grep for `WordLanguage.De`.
 

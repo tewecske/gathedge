@@ -16,13 +16,15 @@ async function reachable(url: string): Promise<boolean> {
 }
 
 export default async function globalSetup(): Promise<void> {
-  const vite = 'http://localhost:5173';
-  const backend = 'http://localhost:8080/api/auth/providers';
+  // Both follow PLAYWRIGHT_BASE_URL, so a worktree's own stack is checked rather than the default one.
+  // The backend is reached through Vite's own /api proxy, which is how every test reaches it too.
+  const vite = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173';
+  const backend = `${vite}/api/auth/providers`;
 
   const [viteUp, backendUp] = await Promise.all([reachable(vite), reachable(backend)]);
 
   if (!viteUp || !backendUp) {
-    const missing = [!viteUp && 'Vite dev server (:5173)', !backendUp && 'backend (:8080)'].filter(Boolean);
+    const missing = [!viteUp && `Vite dev server (${vite})`, !backendUp && `backend (via ${vite}/api)`].filter(Boolean);
     throw new Error(
       `e2e stack not reachable: ${missing.join(', ')}.\n` +
         'Start it first (see e2e/playwright.config.ts):\n' +

@@ -652,13 +652,6 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     translations.filter(edge => edge.sourceWordId == wordId).nonEmpty
   }
 
-  /** True when the word is itself an inflected/declined form of another word — a `word_forms` row naming it as the form
-    * side. A main word is one this is false for.
-    */
-  private inline def isForm = quote { (wordId: Long) =>
-    wordForms.filter(form => form.formWordId == wordId).nonEmpty
-  }
-
   /** The narrowing [[listPage]] and [[countMatching]] share, so the total counts the set the page is cut from.
     * `targetLanguage` is read only under [[TranslationFilter.HasTarget]].
     */
@@ -680,7 +673,9 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         quote(wordTags.filter(link => link.wordId == word.id && link.tagId == unquote(value)).nonEmpty)
       )
       .filterOpt(taggedBy)((word, userId) => quote(taggedByUser(word.id, unquote(userId))))
-      .filterOpt(Option.when(mainOnly)(true))((word, _) => quote(!isForm(word.id)))
+      // A column, not a `NOT EXISTS` over `word_forms`: as a row predicate it combines with the `ORDER BY ... LIMIT`
+      // below, which `idx_words_main_rank` then answers outright. `WordRow.isForm` says who keeps it true.
+      .filterOpt(Option.when(mainOnly)(true))((word, _) => quote(!word.isForm))
     translationFilter match {
       case TranslationFilter.All       =>
         base
@@ -765,6 +760,9 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     targetLanguage: String,
     mainOnly: Boolean,
   ): Task[Long] = {
+    // A bare `.size`, deliberately: it renders `COUNT(*)`, which needs no column at all and so is answered by
+    // V20's partial indexes as an index-only scan. `.map(_.id).size` renders `COUNT(id)`, and `id` is in none of
+    // those indexes — measured on the real dictionary it drops to a bitmap heap scan, 2405 buffers against 112.
     val q = matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly).size
     logged(run(ctx.run(q)))(count => s"words.countMatching count=$count")
   }
@@ -1291,7 +1289,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     if (rows.isEmpty)
       ZIO.succeed(0L)
     else {
-      val q = quote {
+      val q       = quote {
         liftQuery(rows).foreach(row => {
           wordForms.insert(
             _.lemmaWordId -> row.lemmaWordId,
@@ -1301,7 +1299,15 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
           )
         })
       }
-      logged(run(ctx.run(q)).map(_.sum))(inserted => s"wordForms.insertBatch rows=${rows.size} inserted=$inserted")
+      // `words.is_form` is derived from the rows just written, so it is set in the same transaction: a reader must
+      // never see a `word_forms` row whose form word still counts as a main word. One `UPDATE ... WHERE id IN (...)`
+      // for the whole batch, which is what keeps this affordable on `DictionaryImport`'s bulk path.
+      val formIds = rows.map(_.formWordId).distinct
+      val flag    = quote {
+        words.filter(row => liftQuery(formIds).contains(row.id) && !row.isForm).update(_.isForm -> true)
+      }
+      val written = transaction(ctx.run(q).map(_.sum) <* ctx.run(flag))
+      logged(written)(inserted => s"wordForms.insertBatch rows=${rows.size} inserted=$inserted")
     }
   }
 
@@ -1382,8 +1388,22 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def deleteWordForms(formWordId: Long, relation: String): Task[Long] = {
-    val q = quote(wordForms.filter(row => row.formWordId == lift(formWordId) && row.relation == lift(relation)).delete)
-    logged(run(ctx.run(q)))(rows => s"wordForms.delete form=$formWordId relation=$relation rows=$rows")
+    val q         = quote(
+      wordForms.filter(row => row.formWordId == lift(formWordId) && row.relation == lift(relation)).delete
+    )
+    // The word goes back to being a main word only once *no* relation names it as a form any more — deleting one
+    // `(form, relation)` pair may well leave others. Counted and cleared as two statements inside the delete's own
+    // transaction rather than one `UPDATE` with a correlated `NOT EXISTS`, which is a shape nothing else here renders.
+    val remaining = quote(wordForms.filter(row => row.formWordId == lift(formWordId)).size)
+    val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
+    val deleted   = transaction(
+      for {
+        rows <- ctx.run(q)
+        left <- ctx.run(remaining)
+        _    <- ZIO.when(left == 0L)(ctx.run(clear))
+      } yield rows
+    )
+    logged(deleted)(rows => s"wordForms.delete form=$formWordId relation=$relation rows=$rows")
   }
 
   def countWords: Task[Long] = {

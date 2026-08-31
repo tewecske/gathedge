@@ -113,6 +113,26 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       (AuthService.live ++ AuditTrail.live ++ GameService.live) >+> AdminService.live >+> WordService.live
   }
 
+  /** The listing narrowed to main words, as the texts it returns — the one caller of `mainOnly` on this dialect. */
+  private def mainWords(search: String): RIO[WordRepository, List[String]] = {
+    WordRepository
+      .listPage(
+        offset = 0,
+        limit = 20,
+        language = Some("de"),
+        search = Some(search),
+        partOfSpeech = None,
+        tagId = None,
+        taggedBy = None,
+        translationFilter = TranslationFilter.All,
+        targetLanguage = "hu",
+        mainOnly = true,
+        sort = None,
+        descending = false,
+      )
+      .map(_.map(_.text))
+  }
+
   def spec = {
     suite("Postgres dialect (testcontainers)")(
       // `RETURNING id` and `GENERATED ALWAYS AS IDENTITY` are the two things this dialect does differently from the
@@ -686,6 +706,45 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterForm.map(_.relation) == List("genitive"),
           // Deleting the lemma takes every remaining relation with it.
           afterLemma.isEmpty,
+        )
+      },
+      // `words.is_form` is a denormalization of `word_forms`, kept true by the two writers of that table inside their
+      // own transactions (V20__words_is_form.sql). Both the flag's two `UPDATE`s and the `mainOnly` listing predicate
+      // they feed are new statements over `words`, which is the rule `CLAUDE.md` states for that table. The cascade
+      // test above is the one place a `words` row is deleted at all, and it is raw SQL rather than a service.
+      test("the main-word flag follows word_forms on the real dialect") {
+        for {
+          lemma    <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "PgBaum", "pgbaum", "noun", "masculine", 1, "dictionary", None, 0L, "pgbaum")
+                      )
+          form     <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "PgBäume", "pgbäume", "noun", "", 2, "dictionary", None, 0L, "pgbaume")
+                      )
+          fresh    <- WordRepository.findWordById(form.id)
+          now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _        <- WordRepository.insertForms(
+                        List(
+                          WordFormRow(0L, lemma.id, form.id, "plural", now),
+                          WordFormRow(0L, lemma.id, form.id, "nominative,plural", now),
+                        )
+                      )
+          linked   <- WordRepository.findWordById(form.id)
+          hidden   <- mainWords("pgb")
+          _        <- WordRepository.deleteWordForms(form.id, "plural")
+          partial  <- WordRepository.findWordById(form.id)
+          _        <- WordRepository.deleteWordForms(form.id, "nominative,plural")
+          released <- WordRepository.findWordById(form.id)
+          back     <- mainWords("pgb")
+        } yield assertTrue(
+          // A word starts out main, and the batch insert flags every form word it names.
+          fresh.exists(!_.isForm),
+          linked.exists(_.isForm),
+          // The listing sees the column, not a subquery: the lemma is there, the form is not.
+          hidden == List("PgBaum"),
+          // One relation of two deleted still leaves the word a form; the last one frees it.
+          partial.exists(_.isForm),
+          released.exists(!_.isForm),
+          back == List("PgBaum", "PgBäume"),
         )
       },
       // Not a referential-integrity case either — the two distractor readers touch `words` and `word_forms` only. They

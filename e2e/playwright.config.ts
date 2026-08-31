@@ -13,7 +13,10 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    // A git worktree running its own dev stack picks its ports in that worktree's .env (VITE_PORT), so the
+    // suite has to be pointed at them too: PLAYWRIGHT_BASE_URL=http://localhost:5273 npm --prefix e2e test.
+    // Unset, this is the default stack, which is what CI and a single checkout both run.
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
     // Pinned so the app's language never depends on the machine running the suite: with no locale
     // prefix in the URL, index.html's boot script picks one from navigator.languages and redirects.
     // Every path below names /en explicitly anyway; this keeps a stray bare URL deterministic too.

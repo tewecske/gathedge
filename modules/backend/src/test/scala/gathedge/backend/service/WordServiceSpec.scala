@@ -822,6 +822,36 @@ object WordServiceSpec extends ZIOSpecDefault {
           mainOnly.total == 0L,
         )
       },
+      test("mainOnly takes a word back once its last form relation is deleted") {
+        for {
+          _       <- seed
+          haus    <- list(search = Some("haus")).map(_.items.head.word)
+          created <- WordService.create(
+                       CreateWordRequest(
+                         WordLanguage.De,
+                         "Häuser",
+                         PartOfSpeech.Noun,
+                         Some(Gender.Neuter),
+                         Nil,
+                         Nil,
+                         mainWordId = Some(haus.id),
+                         variantType = Some("plural"),
+                       ),
+                       userId = 7L,
+                     )
+          // Two relations over one form word, so the first delete must leave it a form and the second must free it —
+          // the case a flag cleared on any delete at all would get wrong.
+          _       <- WordRepository.insertForms(List(WordFormRow(0L, haus.id, created.word.id, "genitive", 0L)))
+          _       <- WordRepository.deleteWordForms(created.word.id, "plural")
+          still   <- list(search = Some("häuser"), mainOnly = true)
+          _       <- WordRepository.deleteWordForms(created.word.id, "genitive")
+          freed   <- list(search = Some("häuser"), mainOnly = true)
+        } yield assertTrue(
+          still.total == 0L,
+          freed.items.map(_.word.text) == List("Häuser"),
+          freed.total == 1L,
+        )
+      },
     ).provide(layer)
   }
 

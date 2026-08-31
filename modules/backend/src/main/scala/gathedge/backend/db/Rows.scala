@@ -119,6 +119,11 @@ final case class AuditLogRow(
   * sentinel stand in — because a NULL is distinct in a `UNIQUE` index on both dialects and sorts in a dialect-dependent
   * place; see the migration's comment. `createdBy` is `None` for an imported row, and becomes `None` again if the
   * account that typed one is deleted: a word other people have tagged outlives its author.
+  *
+  * `isForm` is derived, not authoritative: it is true exactly when a `word_forms` row names this word as the form side,
+  * and `word_forms` stays the truth. It exists so the listing's "main words only" filter is a row predicate rather than
+  * a correlated subquery — see `V20__words_is_form.sql`. It defaults to `false` because a word starts out belonging to
+  * nobody's inflection table, and only [[WordRepository.insertForms]]/`.deleteWordForms` may change it.
   */
 final case class WordRow(
   id: Long,
@@ -132,6 +137,7 @@ final case class WordRow(
   createdBy: Option[Long],
   createdAt: Long,
   textSearch: String,
+  isForm: Boolean = false,
 )
 
 /** One direction of a translation. Both directions are stored, so every read is a filter on `sourceWordId` and the
