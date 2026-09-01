@@ -130,6 +130,7 @@
   "ui.about.sourceReferencesTitle": "Adatforrások",
   "ui.about.sourceFrequencyWords": "FrequencyWords",
   "ui.about.sourceWiktextract": "wiktextract",
+  "ui.about.sourceWiktionary": "Wiktionary",
   "ui.about.sourceKaikki": "kaikki.org szótár",
   "ui.about.sourceLicenseLabel": "Creative Commons BY-SA 4.0",
   "ui.about.codeTitle": "Szoftver licence",

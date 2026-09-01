@@ -86,6 +86,15 @@ object AboutPage {
               li(
                 a(
                   cls    := "link link-primary",
+                  href   := Branding.sourceWiktionaryUrl,
+                  target := "_blank",
+                  rel    := "noopener noreferrer",
+                  I18n.t(UiKeys.aboutSourceWiktionary),
+                )
+              ),
+              li(
+                a(
+                  cls    := "link link-primary",
                   href   := Branding.sourceKaikkiUrl,
                   target := "_blank",
                   rel    := "noopener noreferrer",

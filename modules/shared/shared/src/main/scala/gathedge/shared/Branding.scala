@@ -35,6 +35,9 @@ object Branding {
   /** The Wiktionary dump the dictionary draws from. Reached from the About page. */
   val sourceWiktextractUrl: String = "https://github.com/tatuylonen/wiktextract"
 
+  /** Wiktionary itself. Reached from the About page. */
+  val sourceWiktionaryUrl: String = "https://www.wiktionary.org/"
+
   /** The kaikki.org dictionary derived from Wiktionary. Reached from the About page. */
   val sourceKaikkiUrl: String = "https://kaikki.org/dictionary/"
 
