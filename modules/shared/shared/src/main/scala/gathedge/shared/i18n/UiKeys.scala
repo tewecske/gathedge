@@ -209,6 +209,7 @@ object UiKeys {
   val aboutSourceReferencesTitle: String = key("ui.about.sourceReferencesTitle")
   val aboutSourceFrequencyWords: String  = key("ui.about.sourceFrequencyWords")
   val aboutSourceWiktextract: String     = key("ui.about.sourceWiktextract")
+  val aboutSourceWiktionary: String      = key("ui.about.sourceWiktionary")
   val aboutSourceKaikki: String          = key("ui.about.sourceKaikki")
   val aboutSourceLicenseLabel: String    = key("ui.about.sourceLicenseLabel")
   val aboutCodeTitle: String             = key("ui.about.codeTitle")
