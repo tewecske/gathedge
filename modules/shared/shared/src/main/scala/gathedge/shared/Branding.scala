@@ -29,6 +29,15 @@ object Branding {
   /** The licence under which the bundled vocabulary data is shared. Reached from the About page. */
   val sourceLicenseUrl: String = "https://creativecommons.org/licenses/by-sa/4.0/"
 
+  /** The public word-frequency lists the dictionary draws from. Reached from the About page. */
+  val sourceFrequencyWordsUrl: String = "https://github.com/hermitdave/FrequencyWords"
+
+  /** The Wiktionary dump the dictionary draws from. Reached from the About page. */
+  val sourceWiktextractUrl: String = "https://github.com/tatuylonen/wiktextract"
+
+  /** The kaikki.org dictionary derived from Wiktionary. Reached from the About page. */
+  val sourceKaikkiUrl: String = "https://kaikki.org/dictionary/"
+
   /** The person who created and maintains this deployment. Shown on the About page. */
   val authorName: String = "Levente Hortobágyi"
 
