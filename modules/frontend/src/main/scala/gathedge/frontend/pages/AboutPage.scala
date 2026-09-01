@@ -62,6 +62,37 @@ object AboutPage {
             p(I18n.t(UiKeys.aboutGoalBody)),
             h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutSourceTitle)),
             p(I18n.t(UiKeys.aboutSourceBody)),
+            h3(cls   := "card-title text-sm mt-2", I18n.t(UiKeys.aboutSourceReferencesTitle)),
+            ul(
+              cls    := "list-disc pl-5 space-y-1",
+              li(
+                a(
+                  cls    := "link link-primary",
+                  href   := Branding.sourceFrequencyWordsUrl,
+                  target := "_blank",
+                  rel    := "noopener noreferrer",
+                  I18n.t(UiKeys.aboutSourceFrequencyWords),
+                )
+              ),
+              li(
+                a(
+                  cls    := "link link-primary",
+                  href   := Branding.sourceWiktextractUrl,
+                  target := "_blank",
+                  rel    := "noopener noreferrer",
+                  I18n.t(UiKeys.aboutSourceWiktextract),
+                )
+              ),
+              li(
+                a(
+                  cls    := "link link-primary",
+                  href   := Branding.sourceKaikkiUrl,
+                  target := "_blank",
+                  rel    := "noopener noreferrer",
+                  I18n.t(UiKeys.aboutSourceKaikki),
+                )
+              ),
+            ),
             a(
               cls    := "link link-primary",
               href   := Branding.sourceLicenseUrl,
