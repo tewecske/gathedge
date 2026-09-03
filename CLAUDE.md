@@ -23,6 +23,13 @@ Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:808
 
 `.env` reaches the dev backend through `reStart / envVars` in `build.sbt`, not the shell. Editing `.env` needs `reload`, not just `reStart`. A real shell variable still wins.
 
+**Parallel worktree** (a second branch with its own dev stack)
+```
+scripts/new-worktree.sh <branch>    # -> ../wt-<n>-<branch>
+scripts/rm-worktree.sh <n>          # remove it + drop its schema
+```
+`<n>` is the lowest free slot. It offsets the dev ports (`SERVER_PORT=8080+n*10`, `VITE_PORT=5173+n*10`, bumped past anything listening) and names a `gathedge_wt<n>` schema cloned from `gathedge` (data included) in the same Postgres. The new `.env` is git-ignored and per-worktree. Needs the `postgres` compose service up, or `psql`/`pg_dump` on the PATH.
+
 **Tests**
 ```
 sbt test
