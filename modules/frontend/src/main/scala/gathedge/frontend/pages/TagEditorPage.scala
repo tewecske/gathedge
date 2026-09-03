@@ -582,7 +582,16 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         child <-- Signal.combine(isEditing, canEditSignal, isDeleting).map {
           case (_, false, _)        => span()
           case (false, true, true)  =>
-            span(cls := "loading loading-spinner loading-xs", role := "status")
+            // Button-shaped wrapper so the row keeps the exact height it has with the edit/delete buttons.
+            div(
+              cls := "flex gap-1",
+              button(
+                typ      := "button",
+                cls      := "btn btn-ghost btn-sm",
+                disabled := true,
+                span(cls := "loading loading-spinner loading-xs", role := "status"),
+              ),
+            )
           case (true, true, _)      =>
             div(
               cls := "flex gap-1",
