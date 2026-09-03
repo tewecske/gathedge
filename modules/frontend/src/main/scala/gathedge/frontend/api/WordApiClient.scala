@@ -9,6 +9,8 @@ import gathedge.shared.dto.{
   BulkImportResponse,
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
+  BulkDeletePairsRequest,
+  BulkDeleteWordsRequest,
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
@@ -18,6 +20,7 @@ import gathedge.shared.dto.{
   CreateTagWithPairsRequest,
   CreateWordRequest,
   NewTranslation,
+  PairRef,
   PairSelectionResponse,
   RenameTagRequest,
   ReplacePairRequest,
@@ -204,6 +207,30 @@ object WordApiClient {
     targetWordId: Option[Long] = None,
   ): EventStream[Either[ApiError, Unit]] = {
     run(executor(WordEndpoints.deletePair(tagId, sourceWordId, targetWordId)))
+  }
+
+  /** Removes a batch of editor rows in one request — the multiselect's bulk delete. Each `(sourceWordId, targetWordId)`
+    * follows [[deletePair]]'s rule: a `None` target removes the whole source entry.
+    */
+  def deletePairsBulk(
+    tagId: Long,
+    pairs: List[(Long, Option[Long])],
+  ): EventStream[Either[ApiError, Unit]] = {
+    run(
+      executor(
+        WordEndpoints.bulkDeletePairs(
+          tagId,
+          BulkDeletePairsRequest(pairs.map { case (source, target) => PairRef(source, target) }),
+        )
+      )
+    )
+  }
+
+  /** Deletes words from the dictionary outright — the multiselect's "delete words". The server keeps only the ids the
+    * caller minted that carry no other tag; anything else is ignored, so the whole selection is safe to send.
+    */
+  def deleteWords(tagId: Long, wordIds: List[Long]): EventStream[Either[ApiError, Unit]] = {
+    run(executor(WordEndpoints.bulkDeleteWords(tagId, BulkDeleteWordsRequest(wordIds))))
   }
 
   /** Tokenizes free text and writes every token into the tag in text order, then answers the counts. */

@@ -108,6 +108,9 @@ import gathedge.shared.dto.{
   TagImportResult,
   TagEntry,
   TagEntryResponse,
+  PairRef,
+  BulkDeletePairsRequest,
+  BulkDeleteWordsRequest,
   ReplacePairRequest,
   SharedViewer,
   SharedWithMe,
@@ -209,6 +212,9 @@ object ApiSchemas {
   given Schema[TagEntry]                      = DeriveSchema.gen[TagEntry]
   given Schema[TagEntryResponse]              = DeriveSchema.gen[TagEntryResponse]
   given Schema[ReplacePairRequest]            = DeriveSchema.gen[ReplacePairRequest]
+  given Schema[PairRef]                       = DeriveSchema.gen[PairRef]
+  given Schema[BulkDeletePairsRequest]        = DeriveSchema.gen[BulkDeletePairsRequest]
+  given Schema[BulkDeleteWordsRequest]        = DeriveSchema.gen[BulkDeleteWordsRequest]
   given Schema[BulkImportRequest]             = DeriveSchema.gen[BulkImportRequest]
   given Schema[BulkImportResponse]            = DeriveSchema.gen[BulkImportResponse]
   given Schema[LanguageCheckRequest]          = DeriveSchema.gen[LanguageCheckRequest]

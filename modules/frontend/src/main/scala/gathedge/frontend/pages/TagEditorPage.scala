@@ -39,6 +39,31 @@ object TagEditorPage {
     */
   private[pages] def isDuplicate(existing: List[TagEntry], entry: TagEntry): Boolean =
     existing.exists(row => rowKey(row) == rowKey(entry))
+
+  /** The three mutually-exclusive provenance buckets, read off a row's import flags. */
+  private[pages] enum EntryFilter { case Exact, NonExact, Unmatched }
+
+  private[pages] def stateOf(entry: TagEntry): Option[EntryFilter] = {
+    if (entry.exact) Some(EntryFilter.Exact)
+    else if (entry.imported && entry.target.isDefined) Some(EntryFilter.NonExact)
+    else if (entry.imported) Some(EntryFilter.Unmatched)
+    else None
+  }
+
+  /** Whether the filters show a row: the selected buckets are OR'd (none = every bucket), and "imported by me" / "only
+    * in this tag" AND on top of that.
+    */
+  private[pages] def rowVisible(
+    entry: TagEntry,
+    buckets: Set[EntryFilter],
+    importedByMe: Boolean,
+    uniqueToTag: Boolean,
+  ): Boolean = {
+    val bucketOk = buckets.isEmpty || stateOf(entry).exists(buckets.contains)
+    val mineOk   = !importedByMe || (entry.createdByMe && entry.imported)
+    val uniqueOk = !uniqueToTag || !entry.inMyOtherTags
+    bucketOk && mineOk && uniqueOk
+  }
 }
 
 private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
@@ -99,21 +124,23 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   // -- Filters --------------------------------------------------------------------------------
 
-  private enum EntryFilter { case Exact, NonExact, Unmatched }
+  import TagEditorPage.EntryFilter
+
+  // Three mutually-exclusive buckets read off the import flags, OR'd within the set: none selected shows every bucket.
   private val filtersVar = Var(Set.empty[EntryFilter])
 
-  private def stateOf(entry: TagEntry): Option[EntryFilter] = {
-    if (entry.exact) Some(EntryFilter.Exact)
-    else if (entry.imported && entry.target.isDefined) Some(EntryFilter.NonExact)
-    else if (entry.imported) Some(EntryFilter.Unmatched)
-    else None
-  }
+  // Two independent predicates that AND on top of the buckets. "Imported by me" — a word this reader minted (never in
+  // the dictionary) that a bulk import wrote. "Only in this tag" — the source word is in no other tag the reader owns.
+  private val importedByMeVar = Var(false)
+  private val uniqueToTagVar  = Var(false)
 
   private val visibleEntries: Signal[List[TagEntry]] = {
-    entriesVar.signal.combineWith(filtersVar.signal).map { case (entries, filters) =>
-      if (filters.isEmpty) entries
-      else entries.filter(entry => stateOf(entry).exists(filters.contains))
-    }
+    Signal
+      .combine(entriesVar.signal, filtersVar.signal, importedByMeVar.signal, uniqueToTagVar.signal)
+      .map { case (entries, buckets, importedByMe, uniqueToTag) =>
+        if (buckets.isEmpty && !importedByMe && !uniqueToTag) entries
+        else entries.filter(entry => TagEditorPage.rowVisible(entry, buckets, importedByMe, uniqueToTag))
+      }
   }
 
   // -- Add-a-row control --------------------------------------------------------------------
@@ -190,6 +217,39 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val replaceBus   = new EventBus[Unit]()
   private val deleteRowBus = new EventBus[(Long, Option[Long])]()
 
+  // -- Multiselect ---------------------------------------------------------------------------
+
+  /** Rows the reader has ticked, keyed by [[TagEditorPage.rowKey]]. Pruned to the visible set whenever a filter
+    * changes, so "Select all" stays scoped to what the filters show and a hidden row can never be bulk-deleted.
+    */
+  private val selectedVar    = Var(Set.empty[(Long, Option[Long])])
+  private val bulkDeleteOpen = Var(false)
+  private val bulkDeleteBus  = new EventBus[Unit]()
+
+  /** "Delete selected words" — a hard delete of `words` rows, not just untagging. Only selected rows the reader minted
+    * (`createdByMe`) that this tag alone holds (`!inMyOtherTags`) qualify; the server re-checks and skips the rest.
+    */
+  private val deleteWordsOpen = Var(false)
+  private val deleteWordsBus  = new EventBus[Unit]()
+
+  private def eligibleWordIdsFrom(entries: List[TagEntry], selected: Set[(Long, Option[Long])]): List[Long] = {
+    entries
+      .filter(e => selected.contains(TagEditorPage.rowKey(e)) && e.createdByMe && !e.inMyOtherTags)
+      .map(_.source.id)
+      .distinct
+  }
+
+  private val eligibleWordIds: Signal[List[Long]] = {
+    entriesVar.signal.combineWith(selectedVar.signal).map { case (entries, selected) =>
+      eligibleWordIdsFrom(entries, selected)
+    }
+  }
+
+  /** The keys of the rows the filters currently show — kept in step with [[visibleEntries]] so "Select all" can read
+    * them synchronously (a `Signal` has no public `now`).
+    */
+  private val visibleKeysVar = Var(List.empty[(Long, Option[Long])])
+
   /** Rows with a delete request in flight. The row is greyed out and shows a spinner instead of its buttons, and a
     * second click on the same row is ignored — the old behaviour let a fast clicker fire one request per click, every
     * one of them hitting the server.
@@ -203,6 +263,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       deleteRowBus.emit(key)
     }
   }
+
+  private def toggleSelected(key: (Long, Option[Long])): Unit =
+    selectedVar.update(s => if (s.contains(key)) s - key else s + key)
 
   private def startEdit(entry: TagEntry): Unit = {
     editingVar.set(Some(TagEditorPage.rowKey(entry)))
@@ -319,8 +382,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
             Option.unless(can)(p(cls := "text-sm opacity-70 mt-2", I18n.t(UiKeys.tagsEditorReadOnly)))
           ),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
           renderLanguages(),
           renderFilters(),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderSelectionBar())),
           renderRows(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderAddRow())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkPanel())),
@@ -446,6 +512,35 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           bulkBusy.set(false)
           errorVar.set(Some(err.message))
       },
+      // A selected row that a filter change hides drops out of the selection, so "Select all" only ever holds visible
+      // rows and the bulk delete cannot touch a row the reader can't see.
+      visibleEntries --> Observer[List[TagEntry]] { rows =>
+        val shown = rows.map(TagEditorPage.rowKey)
+        visibleKeysVar.set(shown)
+        selectedVar.update(_.intersect(shown.toSet))
+      },
+      bulkDeleteBus.events
+        .flatMapSwitch(_ => WordApiClient.deletePairsBulk(tagId, selectedVar.now().toList)) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            Var.set(selectedVar -> Set.empty[(Long, Option[Long])], bulkDeleteOpen -> false)
+            entriesBus.emit(())
+          case Left(err) =>
+            bulkDeleteOpen.set(false)
+            errorVar.set(Some(err.message))
+        },
+      deleteWordsBus.events
+        .flatMapSwitch(_ =>
+          WordApiClient.deleteWords(tagId, eligibleWordIdsFrom(entriesVar.now(), selectedVar.now()))
+        ) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            Var.set(selectedVar -> Set.empty[(Long, Option[Long])], deleteWordsOpen -> false)
+            entriesBus.emit(())
+          case Left(err) =>
+            deleteWordsOpen.set(false)
+            errorVar.set(Some(err.message))
+        },
       onMountCallback(_ => { reloadBus.emit(()); entriesBus.emit(()) }),
     )
   }
@@ -490,7 +585,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   }
 
   private def renderFilters(): HtmlElement = {
-    def chip(f: EntryFilter, labelKey: String) = {
+    def chip(f: EntryFilter, labelKey: String)       = {
       button(
         typ := "button",
         cls := "btn btn-xs",
@@ -499,12 +594,57 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         onClick.mapToUnit --> Observer[Unit](_ => filtersVar.update(s => if (s.contains(f)) s - f else s + f)),
       )
     }
+    def toggle(flag: Var[Boolean], labelKey: String) = {
+      button(
+        typ := "button",
+        cls := "btn btn-xs",
+        cls("btn-primary") <-- flag.signal,
+        I18n.t(labelKey),
+        onClick.mapToUnit --> Observer[Unit](_ => flag.update(!_)),
+      )
+    }
     div(
       cls := "flex flex-wrap items-center gap-2 mt-3",
       span(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsEditorFilterHeading)),
       chip(EntryFilter.Exact, UiKeys.tagsEditorFilterExact),
       chip(EntryFilter.NonExact, UiKeys.tagsEditorFilterNonExact),
       chip(EntryFilter.Unmatched, UiKeys.tagsEditorFilterUnmatched),
+      toggle(importedByMeVar, UiKeys.tagsEditorFilterImportedByMe),
+      toggle(uniqueToTagVar, UiKeys.tagsEditorFilterUniqueToTag),
+    )
+  }
+
+  /** Select all / deselect all over the visible rows, and the bulk-delete trigger. Shown only to an editor. */
+  private def renderSelectionBar(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-center gap-2 mt-3",
+      button(
+        typ := "button",
+        cls := "btn btn-xs",
+        I18n.t(UiKeys.tagsEditorSelectAll),
+        onClick.mapToUnit --> Observer[Unit](_ => selectedVar.set(visibleKeysVar.now().toSet)),
+      ),
+      button(
+        typ := "button",
+        cls := "btn btn-xs",
+        disabled <-- selectedVar.signal.map(_.isEmpty),
+        I18n.t(UiKeys.tagsEditorDeselectAll),
+        onClick.mapToUnit --> Observer[Unit](_ => selectedVar.set(Set.empty)),
+      ),
+      button(
+        typ := "button",
+        cls := "btn btn-xs btn-error",
+        disabled <-- selectedVar.signal.map(_.isEmpty),
+        child.text <-- selectedVar.signal.map(s => I18n.t(UiKeys.tagsEditorDeleteSelected, s.size.toString)),
+        onClick.mapToUnit --> Observer[Unit](_ => bulkDeleteOpen.set(true)),
+      ),
+      button(
+        typ := "button",
+        cls := "btn btn-xs btn-error btn-outline",
+        disabled <-- eligibleWordIds.map(_.isEmpty),
+        child.text <-- eligibleWordIds.map(ids => I18n.t(UiKeys.tagsEditorDeleteWords, ids.size.toString)),
+        onClick.mapToUnit --> Observer[Unit](_ => deleteWordsOpen.set(true)),
+      ),
     )
   }
 
@@ -514,10 +654,26 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       child <-- visibleEntries.map { rows =>
         if (rows.isEmpty) p(cls := "opacity-60 text-sm", I18n.t(UiKeys.tagsEditorEmpty))
         else {
+          val visibleKeys = rows.map(TagEditorPage.rowKey).toSet
           table(
             cls := "table table-sm",
             thead(
               tr(
+                th(
+                  cls := "w-4",
+                  child.maybe <-- canEditSignal.map(
+                    Option.when(_)(
+                      input(
+                        typ := "checkbox",
+                        cls := "checkbox checkbox-xs",
+                        checked <-- selectedVar.signal.map(s => visibleKeys.nonEmpty && visibleKeys.subsetOf(s)),
+                        onInput.mapToChecked --> Observer[Boolean](on =>
+                          selectedVar.update(s => if (on) s ++ visibleKeys else s -- visibleKeys)
+                        ),
+                      )
+                    )
+                  ),
+                ),
                 th(child.text <-- sourceLangVar.signal.map(Labels.language)),
                 th(child.text <-- targetLangVar.signal.map(Labels.language)),
                 th(I18n.t(UiKeys.wordsColPos)),
@@ -543,6 +699,19 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       cls("bg-warning/30 transition-colors duration-500") <-- flashRowVar.signal.map(_.contains(rowKey)),
       // While a delete is in flight the whole row is greyed out and stops taking clicks.
       cls("opacity-50 pointer-events-none") <-- isDeleting,
+      td(
+        cls := "w-4",
+        child.maybe <-- canEditSignal.map(
+          Option.when(_)(
+            input(
+              typ := "checkbox",
+              cls := "checkbox checkbox-xs",
+              checked <-- selectedVar.signal.map(_.contains(rowKey)),
+              onClick.mapToUnit --> Observer[Unit](_ => toggleSelected(rowKey)),
+            )
+          )
+        ),
+      ),
       td(
         child <-- isEditing.map {
           case true  => editSourcePicker.render()
@@ -743,6 +912,69 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         ),
       ),
       div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false))),
+    )
+  }
+
+  private def renderBulkDeleteModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- bulkDeleteOpen.signal,
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.tagsEditorBulkDeleteTitle)),
+        p(
+          cls  := "py-4",
+          child.text <-- selectedVar.signal.map(s => I18n.t(UiKeys.tagsEditorBulkDeleteConfirm, s.size.toString)),
+        ),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => bulkDeleteOpen.set(false)),
+          ),
+          button(
+            cls := "btn btn-sm btn-error",
+            typ := "button",
+            child.text <-- selectedVar.signal.map(s => I18n.t(UiKeys.tagsEditorDeleteSelected, s.size.toString)),
+            onClick.mapToUnit --> bulkDeleteBus.writer,
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => bulkDeleteOpen.set(false))),
+    )
+  }
+
+  private def renderDeleteWordsModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- deleteWordsOpen.signal,
+      div(
+        cls   := "modal-box w-full max-w-md",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.tagsEditorDeleteWordsTitle)),
+        p(
+          cls  := "mt-3 text-error font-semibold",
+          child.text <-- eligibleWordIds.map(ids => I18n.t(UiKeys.tagsEditorDeleteWordsWarning, ids.size.toString)),
+        ),
+        p(cls  := "py-3 text-sm opacity-80", I18n.t(UiKeys.tagsEditorDeleteWordsNote)),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => deleteWordsOpen.set(false)),
+          ),
+          button(
+            cls := "btn btn-sm btn-error",
+            typ := "button",
+            child.text <-- eligibleWordIds.map(ids => I18n.t(UiKeys.tagsEditorDeleteWords, ids.size.toString)),
+            onClick.mapToUnit --> deleteWordsBus.writer,
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => deleteWordsOpen.set(false))),
     )
   }
 

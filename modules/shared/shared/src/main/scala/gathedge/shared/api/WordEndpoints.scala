@@ -3,6 +3,8 @@ package gathedge.shared.api
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkDeletePairsRequest,
+  BulkDeleteWordsRequest,
   BulkImportRequest,
   BulkImportResponse,
   BulkUploadConfirmRequest,
@@ -384,6 +386,31 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
+  /** Removes a batch of editor rows in one request — a multiselect's bulk delete. Each `PairRef` follows the same rule
+    * as [[deletePair]]: with an answer half only that pair goes, without one the whole source entry goes. Idempotent —
+    * a `PairRef` that names nothing is skipped. 404 is a tag that is not the caller's (or their group's).
+    */
+  val bulkDeletePairs = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "pairs" / "bulk-delete")
+      .in[BulkDeletePairsRequest]
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Deletes words from the dictionary outright — the multiselect's "delete words", not just "remove from tag". The
+    * server keeps only the ids the caller minted (`source = user`, `created_by = caller`) that no other tag holds;
+    * everything else in the body is ignored, so the call is idempotent and safe to send the whole selection to. 404 is
+    * a tag that is not the caller's (or their group's).
+    */
+  val bulkDeleteWords = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "words" / "bulk-delete")
+      .in[BulkDeleteWordsRequest]
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
   /** Tokenizes free text, matches it against the dictionary in both declared languages, and '''writes the result
     * straight into the tag''' in text order: an exact pair (a word and its dictionary translation both present) is
     * marked as a practice pair with an "exact" flag; every other token becomes an answer-less row — a dictionary word
@@ -476,6 +503,8 @@ object WordEndpoints {
       addPair,
       replacePair,
       deletePair,
+      bulkDeletePairs,
+      bulkDeleteWords,
       bulkImport,
       languageCheck,
       bulkUploadPreview,

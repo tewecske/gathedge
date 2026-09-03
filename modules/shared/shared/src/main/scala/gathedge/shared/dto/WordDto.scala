@@ -194,12 +194,19 @@ final case class TagResponse(tag: Tag, warning: Option[MessageRef]) derives Json
 final case class PairSelectionResponse(warning: Option[MessageRef]) derives JsonCodec
 
 /** One row of the unified tag editor ([[gathedge.shared.api.WordEndpoints.tagEntries]]): a source word, the answer
-  * translation marked for it inside this tag (absent for an "unmatched" row that has no pair yet), and the two import
-  * provenance flags. `imported` is on the source word's membership, `exact` on the pair.
+  * translation marked for it inside this tag (absent for an "unmatched" row that has no pair yet), and the provenance
+  * flags. `imported` is on the source word's membership, `exact` on the pair; `createdByMe` and `inMyOtherTags` are
+  * computed per reader (they are not stored).
   *
-  * The editor's three filters are derived from the flags alone: `exact` = `exact`; `non-exact` = `imported` with a
-  * `target` but not `exact`; `unmatched` = `imported` with no `target`. A row with `imported = false` was added by hand
-  * and shows only when no filter is active.
+  * Three of the editor's filters are mutually-exclusive buckets read off `imported`/`exact`, OR'd together: `exact` =
+  * `exact`; `non-exact` = `imported` with a `target` but not `exact`; `unmatched` = `imported` with no `target`. A row
+  * with `imported = false` was added by hand and shows only when no bucket is active. Two more filters AND on top:
+  * "imported by me" = `createdByMe && imported` (a word this reader minted that a bulk import wrote); "only in this tag"
+  * = `!inMyOtherTags`.
+  *
+  *   - `createdByMe` — the source word's `source` is `user` and its `created_by` is this reader (a word never in the
+  *     dictionary, minted by them either by hand or by their own import).
+  *   - `inMyOtherTags` — the source word is also a member of at least one other tag this reader owns.
   *
   * `otherTranslations` are the source word's other known translations into the tag's target language — what the target
   * picker's chip row offers when the row is edited. Ordered best-first, the marked answer excluded.
@@ -209,6 +216,8 @@ final case class TagEntry(
   target: Option[Word],
   imported: Boolean,
   exact: Boolean,
+  createdByMe: Boolean,
+  inMyOtherTags: Boolean,
   otherTranslations: List[TranslationOption],
 ) derives JsonCodec
 
@@ -226,6 +235,23 @@ final case class ReplacePairRequest(
   oldTargetWordId: Option[Long],
   next: TagPairInput,
 ) derives JsonCodec
+
+/** One editor row to remove: its source word, and its answer word when the row has one. `targetWordId = None` removes
+  * the whole source entry and every pair naming it; with a target only that one pair goes. Same contract as
+  * [[gathedge.shared.api.WordEndpoints.deletePair]]'s path/query, one per list entry.
+  */
+final case class PairRef(sourceWordId: Long, targetWordId: Option[Long]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkDeletePairs]]'s body: the rows a multiselect chose, removed in one request
+  * instead of one call each. Idempotent — a `PairRef` that names nothing is skipped.
+  */
+final case class BulkDeletePairsRequest(pairs: List[PairRef]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkDeleteWords]]'s body: source word ids a multiselect chose to delete from the
+  * dictionary outright, not just untag. The server keeps only the ones the caller minted (`source = user`,
+  * `created_by = caller`) and that are in no tag but this one; anything else in the list is left alone. Idempotent.
+  */
+final case class BulkDeleteWordsRequest(wordIds: List[Long]) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.bulkImport]]'s body: the pasted/uploaded free text and the two languages to scan
   * it for. Unlike the old preview/confirm round-trip this writes straight away — every token becomes a row in the tag,

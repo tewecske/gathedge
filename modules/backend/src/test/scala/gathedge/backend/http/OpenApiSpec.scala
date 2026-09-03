@@ -101,6 +101,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/entries",
               "/api/tags/{tagId}/pairs",
               "/api/tags/{tagId}/pairs/{sourceWordId}",
+              "/api/tags/{tagId}/pairs/bulk-delete",
+              "/api/tags/{tagId}/words/bulk-delete",
               "/api/tags/{tagId}/bulk-import",
               "/api/games",
               "/api/games/setup",
@@ -291,6 +293,10 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}/pairs/{sourceWordId}")                        ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("POST", "/api/tags/{tagId}/pairs/bulk-delete")                             ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("POST", "/api/tags/{tagId}/words/bulk-delete")                             ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/tags/{tagId}/bulk-import")                                   ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
@@ -473,7 +479,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 289,
+          declared == 295,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

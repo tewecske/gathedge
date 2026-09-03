@@ -262,6 +262,22 @@ trait WordRepository {
     */
   def tagEntries(tagId: Long): Task[List[TagEntryRow]]
 
+  /** Of `wordIds`, the ones that are a member of some tag `userId` owns other than `exceptTagId` — what the editor's
+    * "only in this tag" filter is the complement of. One query; an empty `wordIds` skips it.
+    */
+  def sourceWordsInMyOtherTags(userId: Long, exceptTagId: Long, wordIds: List[Long]): Task[Set[Long]]
+
+  /** Of `wordIds`, the ones that carry a tag other than `exceptTagId` — whoever owns that tag. The stronger, all-owners
+    * form of [[sourceWordsInMyOtherTags]] that "delete word" checks before it removes a `words` row. Empty list skips.
+    */
+  def wordsInOtherTags(exceptTagId: Long, wordIds: List[Long]): Task[Set[Long]]
+
+  /** Deletes one `words` row and everything that references it (translations, pair marks, forms, memberships), but only
+    * when it is `source = 'user'` and `createdBy = userId` — a guard the caller has already checked, restated here so
+    * the query can never take a dictionary row. One transaction. Returns rows deleted from `words` (0 or 1).
+    */
+  def deleteOwnedWord(wordId: Long, userId: Long): Task[Long]
+
   /** Replaces one editor row's pair in one transaction: drops the old pair (both directions) and any now-orphaned,
     * non-imported membership among the old words, then links the resolved new pair. `oldTargetWordId` is `None` for an
     * unmatched row that had no pair yet.
@@ -548,6 +564,19 @@ object WordRepository {
 
   def tagEntries(tagId: Long): RIO[WordRepository, List[TagEntryRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId))
+
+  def sourceWordsInMyOtherTags(
+    userId: Long,
+    exceptTagId: Long,
+    wordIds: List[Long],
+  ): RIO[WordRepository, Set[Long]] =
+    ZIO.serviceWithZIO[WordRepository](_.sourceWordsInMyOtherTags(userId, exceptTagId, wordIds))
+
+  def wordsInOtherTags(exceptTagId: Long, wordIds: List[Long]): RIO[WordRepository, Set[Long]] =
+    ZIO.serviceWithZIO[WordRepository](_.wordsInOtherTags(exceptTagId, wordIds))
+
+  def deleteOwnedWord(wordId: Long, userId: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.deleteOwnedWord(wordId, userId))
 
   def replacePair(
     tagId: Long,
@@ -1450,6 +1479,65 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       )
     }
     logged(assembled)(rows => s"tags.entries tag=$tagId rows=${rows.size}")
+  }
+
+  def sourceWordsInMyOtherTags(userId: Long, exceptTagId: Long, wordIds: List[Long]): Task[Set[Long]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      val q = quote {
+        wordTags
+          .filter(link => {
+            liftQuery(wordIds).contains(link.wordId) &&
+            link.tagId != lift(exceptTagId) &&
+            tags.filter(tag => tag.id == link.tagId && tag.userId == lift(userId)).nonEmpty
+          })
+          .map(_.wordId)
+      }
+      logged(run(ctx.run(q)).map(_.toSet)) { ids =>
+        s"tags.wordsInMyOtherTags user=$userId except=$exceptTagId asked=${wordIds.size} rows=${ids.size}"
+      }
+    }
+  }
+
+  def wordsInOtherTags(exceptTagId: Long, wordIds: List[Long]): Task[Set[Long]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      val q = quote {
+        wordTags
+          .filter(link => liftQuery(wordIds).contains(link.wordId) && link.tagId != lift(exceptTagId))
+          .map(_.wordId)
+      }
+      logged(run(ctx.run(q)).map(_.toSet)) { ids =>
+        s"tags.wordsInOtherTags except=$exceptTagId asked=${wordIds.size} rows=${ids.size}"
+      }
+    }
+  }
+
+  def deleteOwnedWord(wordId: Long, userId: Long): Task[Long] = {
+    val work = transaction(
+      for {
+        _       <- ctx.run(quote {
+                     translations.filter(e => e.sourceWordId == lift(wordId) || e.targetWordId == lift(wordId)).delete
+                   })
+        _       <- ctx.run(quote {
+                     wordTagPairs.filter(p => p.wordId == lift(wordId) || p.translationWordId == lift(wordId)).delete
+                   })
+        _       <- ctx.run(quote {
+                     wordForms.filter(f => f.lemmaWordId == lift(wordId) || f.formWordId == lift(wordId)).delete
+                   })
+        _       <- ctx.run(quote(wordTags.filter(_.wordId == lift(wordId)).delete))
+        deleted <- ctx.run(quote {
+                     words
+                       .filter(w =>
+                         w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId))
+                       )
+                       .delete
+                   })
+      } yield deleted
+    )
+    logged(work)(n => s"words.deleteOwned word=$wordId user=$userId deleted=$n")
   }
 
   /** Seeds the tag and its pairs in one transaction. Inserting the tag and then calling [[pairTranslation]] would leave

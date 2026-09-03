@@ -5,6 +5,8 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkDeletePairsRequest,
+  BulkDeleteWordsRequest,
   BulkImportRequest,
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
@@ -265,6 +267,22 @@ object WordRoutes {
     )
   }
 
+  private val bulkDeletePairsRoute = {
+    WordEndpoints.bulkDeletePairs.implementHandler(
+      handler { (tagId: Long, body: BulkDeletePairsRequest) =>
+        userId.flatMap(id => WordService.removeEntries(tagId, body.pairs, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val bulkDeleteWordsRoute = {
+    WordEndpoints.bulkDeleteWords.implementHandler(
+      handler { (tagId: Long, body: BulkDeleteWordsRequest) =>
+        userId.flatMap(id => WordService.deleteWords(tagId, body.wordIds, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   private val bulkImportRoute = {
     WordEndpoints.bulkImport.implementHandler(
       handler { (tagId: Long, body: BulkImportRequest) =>
@@ -347,6 +365,8 @@ object WordRoutes {
       addPairRoute,
       replacePairRoute,
       deletePairRoute,
+      bulkDeletePairsRoute,
+      bulkDeleteWordsRoute,
       bulkImportRoute,
       languageCheckRoute,
       bulkUploadPreviewRoute,

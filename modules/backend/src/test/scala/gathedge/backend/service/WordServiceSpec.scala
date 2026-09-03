@@ -15,6 +15,7 @@ import gathedge.shared.dto.{
   BulkUploadSelectedTranslation,
   CreateWordRequest,
   NewTranslation,
+  PairRef,
   Paging,
   ReplacePairRequest,
   TagPairInput,
@@ -1955,6 +1956,140 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("tagEntries answers TagNotFound for a tag that does not exist") {
         WordService.tagEntries(9999L, 1L).either.map(result => assertTrue(result == Left(WordFailure.TagNotFound)))
+      },
+      test("tagEntries flags createdByMe for a source word the reader minted, not a dictionary word") {
+        for {
+          haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag  <- createTag("editor", 1L)
+          _    <- WordService.addPair(
+                    tag.id,
+                    TagPairInput(
+                      TagPairWord.New(WordLanguage.De, "Kobold", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                      TagPairWord.Existing(haz.id),
+                    ),
+                    1L,
+                  )
+          _    <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          mine <- WordService.tagEntries(tag.id, 1L)
+          them <- WordService.tagEntries(tag.id, 2L)
+        } yield assertTrue(
+          mine.map(r => (r.source.text, r.createdByMe)).toSet == Set(("Kobold", true), ("Haus", false)),
+          them.forall(!_.createdByMe),
+        )
+      },
+      test("tagEntries flags inMyOtherTags only when the source word is in another tag the reader owns") {
+        for {
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          hund  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          t1    <- createTag("t1", 1L)
+          t2    <- createTag("t2", 1L)
+          other <- createTag("theirs", 2L)
+          _     <- WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          _     <- WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(hund.id), TagPairWord.Existing(haz.id)), 1L)
+          // Haus is also in t2, another tag user 1 owns; Hund is also in a tag user 2 owns.
+          _     <- WordService.addPair(t2.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          _     <-
+            WordService.addPair(other.id, TagPairInput(TagPairWord.Existing(hund.id), TagPairWord.Existing(haz.id)), 2L)
+          rows  <- WordService.tagEntries(t1.id, 1L)
+        } yield assertTrue(
+          rows.find(_.source.text == "Haus").exists(_.inMyOtherTags),
+          rows.find(_.source.text == "Hund").exists(!_.inMyOtherTags),
+        )
+      },
+      test("removeEntries removes exactly the listed rows and is idempotent") {
+        for {
+          tag   <- createTag("editor", 1L)
+          add    = (a: String, b: String) => {
+                     WordService.addPair(
+                       tag.id,
+                       TagPairInput(
+                         TagPairWord.New(WordLanguage.En, a, PartOfSpeech.Other, None),
+                         TagPairWord.New(WordLanguage.De, b, PartOfSpeech.Other, None),
+                       ),
+                       1L,
+                     )
+                   }
+          _     <- add("one", "eins")
+          _     <- add("two", "zwei")
+          _     <- add("three", "drei")
+          rows0 <- WordService.tagEntries(tag.id, 1L)
+          keys   = rows0
+                     .filter(r => Set("one", "three").contains(r.source.text))
+                     .map(r => PairRef(r.source.id, r.target.map(_.id)))
+          _     <- WordService.removeEntries(tag.id, keys, 1L)
+          _     <- WordService.removeEntries(tag.id, keys, 1L)
+          rows  <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(_.source.text) == List("two"))
+      },
+      test("removeEntries answers TagNotFound for a caller who cannot edit the tag") {
+        for {
+          tag    <- createTag("editor", 1L)
+          result <- WordService.removeEntries(tag.id, List(PairRef(1L, None)), 2L).either
+        } yield assertTrue(result == Left(WordFailure.TagNotFound))
+      },
+      test("deleteWords removes a word the reader minted that only this tag holds, and spares the rest") {
+        for {
+          haz     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          dictDe  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          t1      <- createTag("t1", 1L)
+          t2      <- createTag("t2", 1L)
+          // "Kobold" — minted by user 1, only in t1. "Zwerg" — minted by user 1 but also in t2. "Haus" — dictionary.
+          _       <- WordService.addPair(
+                       t1.id,
+                       TagPairInput(
+                         TagPairWord.New(WordLanguage.De, "Kobold", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                         TagPairWord.Existing(haz.id),
+                       ),
+                       1L,
+                     )
+          _       <- WordService.addPair(
+                       t1.id,
+                       TagPairInput(
+                         TagPairWord.New(WordLanguage.De, "Zwerg", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                         TagPairWord.Existing(haz.id),
+                       ),
+                       1L,
+                     )
+          _       <-
+            WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(dictDe.id), TagPairWord.Existing(haz.id)), 1L)
+          rows0   <- WordService.tagEntries(t1.id, 1L)
+          zwergId  = rows0.find(_.source.text == "Zwerg").map(_.source.id).get
+          koboldId = rows0.find(_.source.text == "Kobold").map(_.source.id).get
+          _       <- WordService.addPair(t2.id, TagPairInput(TagPairWord.Existing(zwergId), TagPairWord.Existing(haz.id)), 1L)
+          _       <- WordService.deleteWords(t1.id, List(koboldId, zwergId, dictDe.id), 1L)
+          _       <- WordService.deleteWords(t1.id, List(koboldId, zwergId, dictDe.id), 1L) // idempotent
+          kobold  <- WordRepository.findWordById(koboldId)
+          zwerg   <- WordRepository.findWordById(zwergId)
+          haus    <- WordRepository.findWordById(dictDe.id)
+          rows    <- WordService.tagEntries(t1.id, 1L)
+        } yield assertTrue(
+          kobold.isEmpty,
+          zwerg.isDefined,
+          haus.isDefined,
+          rows.map(_.source.text).toSet == Set("Zwerg", "Haus"),
+        )
+      },
+      test("deleteWords will not touch a word another account created") {
+        for {
+          haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          theirs <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Fremd", "fremd", "noun", "neuter", 1, "user", Some(2L), 0L, "fremd")
+                    )
+          tag    <- createTag("t1", 1L)
+          _      <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(theirs.id), TagPairWord.Existing(haz.id)), 1L)
+          _      <- WordService.deleteWords(tag.id, List(theirs.id), 1L)
+          still  <- WordRepository.findWordById(theirs.id)
+        } yield assertTrue(still.isDefined)
+      },
+      test("deleteWords answers TagNotFound for a caller who cannot edit the tag") {
+        for {
+          tag    <- createTag("editor", 1L)
+          result <- WordService.deleteWords(tag.id, List(1L), 2L).either
+        } yield assertTrue(result == Left(WordFailure.TagNotFound))
       },
     ).provide(layer)
   }

@@ -36,6 +36,7 @@ import gathedge.shared.dto.{
   BulkUploadSuggestion,
   CreateWordRequest,
   NewTranslation,
+  PairRef,
   ReplacePairRequest,
   TagEntry,
   TagEntryResponse,
@@ -270,6 +271,17 @@ trait WordService {
     */
   def removeEntry(tagId: Long, sourceWordId: Long, targetWordId: Option[Long], userId: Long): IO[WordFailure, Unit]
 
+  /** Removes a batch of editor rows in one call — each `PairRef` follows [[removeEntry]]'s rule. The tag is checked
+    * once; a `PairRef` that names nothing is skipped, so the whole call is idempotent.
+    */
+  def removeEntries(tagId: Long, pairs: List[PairRef], userId: Long): IO[WordFailure, Unit]
+
+  /** Deletes words from the dictionary outright, not just from the tag. Keeps only the ids `userId` minted (`source =
+    * user`, `created_by = userId`) that carry no tag but this one; every other id is left untouched. A word a game
+    * still references is skipped too. Idempotent — safe to send a whole selection to.
+    */
+  def deleteWords(tagId: Long, wordIds: List[Long], userId: Long): IO[WordFailure, Unit]
+
   /** Tokenizes `content`, matches it against the dictionary in both languages, and writes the result into the tag in
     * text order: an exact pair (a word and its dictionary translation both present) is marked with an "exact" flag;
     * every other token becomes an answer-less row — a dictionary word tagged as-is, or a new `sourceLanguage` word.
@@ -495,6 +507,20 @@ object WordService {
     userId: Long,
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.removeEntry(tagId, sourceWordId, targetWordId, userId))
+
+  def removeEntries(
+    tagId: Long,
+    pairs: List[PairRef],
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.removeEntries(tagId, pairs, userId))
+
+  def deleteWords(
+    tagId: Long,
+    wordIds: List[Long],
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.deleteWords(tagId, wordIds, userId))
 
   def bulkImport(
     tagId: Long,
@@ -1489,32 +1515,43 @@ final case class WordServiceLive(
   // -- The unified tag editor -------------------------------------------------------------------
 
   /** [[TagEntryRow]]s dressed for the wire: each source word's other known translations into the tag's target language
-    * become the row's `otherTranslations` (the edited row's target picker reads them), the marked answer excluded. One
-    * batch query for the whole list.
+    * become the row's `otherTranslations` (the edited row's target picker reads them), the marked answer excluded, plus
+    * the two per-reader flags `createdByMe` and `inMyOtherTags` the editor's "imported by me" / "only in this tag"
+    * filters read. Two batch queries for the whole list.
     */
-  private def toTagEntries(tag: TagRow, rows: List[TagEntryRow]): UIO[List[TagEntry]] = {
+  private def toTagEntries(tag: TagRow, rows: List[TagEntryRow], viewerId: Long): UIO[List[TagEntry]] = {
     val targetLang = tag.targetLanguage.flatMap(WordLanguage.fromString)
+    val sourceIds  = rows.map(_.source.id).distinct
     val knownZ     = targetLang match {
-      case Some(language) => translationsInto(rows.map(_.source.id).distinct, language)
+      case Some(language) => translationsInto(sourceIds, language)
       case None           => ZIO.succeed(Map.empty[Long, List[TranslationOption]])
     }
-    knownZ.map { known =>
-      rows.map { row =>
-        val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
-        TagEntry(toDomain(row.source), row.target.map(toDomain), row.imported, row.exact, others)
-      }
+    for {
+      known         <- knownZ
+      otherTagWords <- repo.sourceWordsInMyOtherTags(viewerId, tag.id, sourceIds).orDie
+    } yield rows.map { row =>
+      val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
+      TagEntry(
+        toDomain(row.source),
+        row.target.map(toDomain),
+        row.imported,
+        row.exact,
+        createdByMe = row.source.source == WordService.userSource && row.source.createdBy.contains(viewerId),
+        inMyOtherTags = otherTagWords.contains(row.source.id),
+        others,
+      )
     }
   }
 
-  private def oneTagEntry(tag: TagRow, row: TagEntryRow): UIO[TagEntry] = {
-    toTagEntries(tag, List(row)).map(_.head)
+  private def oneTagEntry(tag: TagRow, row: TagEntryRow, viewerId: Long): UIO[TagEntry] = {
+    toTagEntries(tag, List(row), viewerId).map(_.head)
   }
 
   /** The row `(sourceId, targetId)` as the editor will show it after a write — read back from
     * [[gathedge.backend.db.WordRepository.tagEntries]] so `imported`/`exact` are whatever the write left them, with a
     * plain fallback for the rare stale-read case.
     */
-  private def entryAfterWrite(tag: TagRow, sourceId: Long, targetId: Option[Long]): UIO[TagEntry] = {
+  private def entryAfterWrite(tag: TagRow, sourceId: Long, targetId: Option[Long], viewerId: Long): UIO[TagEntry] = {
     for {
       rows   <- repo.tagEntries(tag.id).orDie
       source <- repo.findWordById(sourceId).orDie
@@ -1525,10 +1562,18 @@ final case class WordServiceLive(
       found   = rows.find(row => row.source.id == sourceId && row.target.map(_.id) == targetId)
       row     = found.orElse(source.map(s => TagEntryRow(s, target, imported = false, exact = false)))
       entry  <- row match {
-                  case Some(r) => oneTagEntry(tag, r)
+                  case Some(r) => oneTagEntry(tag, r, viewerId)
                   case None    =>
                     ZIO.succeed(
-                      TagEntry(Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None), None, false, false, Nil)
+                      TagEntry(
+                        Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None),
+                        None,
+                        imported = false,
+                        exact = false,
+                        createdByMe = false,
+                        inMyOtherTags = false,
+                        Nil,
+                      )
                     )
                 }
     } yield entry
@@ -1538,7 +1583,7 @@ final case class WordServiceLive(
     for {
       tag  <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
       rows <- repo.tagEntries(tagId).orDie
-      out  <- toTagEntries(tag, rows)
+      out  <- toTagEntries(tag, rows, userId)
     } yield out
   }
 
@@ -1556,7 +1601,7 @@ final case class WordServiceLive(
       targetRow           <- repo.findWordById(targetId).orDie.someOrFail(WordFailure.NotFound)
       _                   <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
       refreshed           <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
-      entry               <- entryAfterWrite(refreshed, sourceId, Some(targetId))
+      entry               <- entryAfterWrite(refreshed, sourceId, Some(targetId), userId)
     } yield TagEntryResponse(entry, warning)
   }
 
@@ -1578,7 +1623,7 @@ final case class WordServiceLive(
       targetRow                 <- repo.findWordById(newTargetId).orDie.someOrFail(WordFailure.NotFound)
       _                         <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
       refreshed                 <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
-      entry                     <- entryAfterWrite(refreshed, newSourceId, Some(newTargetId))
+      entry                     <- entryAfterWrite(refreshed, newSourceId, Some(newTargetId), userId)
     } yield TagEntryResponse(entry, warning)
   }
 
@@ -1594,6 +1639,28 @@ final case class WordServiceLive(
              case Some(targetId) => repo.removePair(tagId, sourceWordId, targetId).orDie
              case None           => repo.removeEntry(tagId, sourceWordId).orDie
            }
+    } yield ()
+  }
+
+  def removeEntries(tagId: Long, pairs: List[PairRef], userId: Long): IO[WordFailure, Unit] = {
+    for {
+      _ <- requireEditableTag(tagId, userId)
+      _ <- ZIO.foreachDiscard(pairs) {
+             case PairRef(sourceWordId, Some(targetId)) => repo.removePair(tagId, sourceWordId, targetId).orDie
+             case PairRef(sourceWordId, None)           => repo.removeEntry(tagId, sourceWordId).orDie
+           }
+    } yield ()
+  }
+
+  def deleteWords(tagId: Long, wordIds: List[Long], userId: Long): IO[WordFailure, Unit] = {
+    for {
+      _         <- requireEditableTag(tagId, userId)
+      rows      <- repo.findWordsByIds(wordIds.distinct).orDie
+      mine       = rows.filter(w => w.source == WordService.userSource && w.createdBy.contains(userId)).map(_.id)
+      elsewhere <- repo.wordsInOtherTags(tagId, mine).orDie
+      // A word another tag still holds is left alone. A word a game references makes the `words` delete fail on
+      // Postgres (RESTRICT); `.either` per id skips it rather than failing the batch.
+      _         <- ZIO.foreachDiscard(mine.filterNot(elsewhere.contains))(id => repo.deleteOwnedWord(id, userId).either)
     } yield ()
   }
 

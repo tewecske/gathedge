@@ -35,24 +35,35 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     }
   }
 
-  private def entry(sourceId: Long, targetId: Option[Long]): TagEntry = {
+  private def entry(
+    sourceId: Long,
+    targetId: Option[Long],
+    imported: Boolean = false,
+    exact: Boolean = false,
+    createdByMe: Boolean = false,
+    inMyOtherTags: Boolean = false,
+  ): TagEntry = {
     TagEntry(
       source = Word(sourceId, WordLanguage.De, s"w$sourceId", PartOfSpeech.Noun, None),
       target = targetId.map(id => Word(id, WordLanguage.Hu, s"t$id", PartOfSpeech.Noun, None)),
-      imported = false,
-      exact = false,
+      imported = imported,
+      exact = exact,
+      createdByMe = createdByMe,
+      inMyOtherTags = inMyOtherTags,
       otherTranslations = Nil,
     )
   }
 
   def spec = {
     suite("TagEditorPage")(
-      test("shows the three provenance filters") {
+      test("shows the three provenance filters plus the two new ones") {
         val text = withPage(_.textContent)
         assertTrue(
           text.contains(UiKeys.tagsEditorFilterExact),
           text.contains(UiKeys.tagsEditorFilterNonExact),
           text.contains(UiKeys.tagsEditorFilterUnmatched),
+          text.contains(UiKeys.tagsEditorFilterImportedByMe),
+          text.contains(UiKeys.tagsEditorFilterUniqueToTag),
         )
       },
       test("shows the empty-rows notice before any row loads") {
@@ -98,6 +109,52 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(
             TagEditorPage.isDuplicate(existing, entry(7, None)),
             !TagEditorPage.isDuplicate(existing, entry(7, Some(10))),
+          )
+        },
+      ),
+      suite("rowVisible")(
+        test("no filter selected shows every row") {
+          val row = entry(1, Some(2))
+          assertTrue(TagEditorPage.rowVisible(row, Set.empty, importedByMe = false, uniqueToTag = false))
+        },
+        test("the buckets are OR'd; a row matches when its bucket is among the selected") {
+          val exactRow     = entry(1, Some(2), imported = true, exact = true)
+          val unmatchedRow = entry(3, None, imported = true)
+          val selected     = Set(TagEditorPage.EntryFilter.Exact, TagEditorPage.EntryFilter.Unmatched)
+          assertTrue(
+            TagEditorPage.rowVisible(exactRow, selected, importedByMe = false, uniqueToTag = false),
+            TagEditorPage.rowVisible(unmatchedRow, selected, importedByMe = false, uniqueToTag = false),
+            !TagEditorPage.rowVisible(
+              entry(4, Some(5), imported = true),
+              selected,
+              importedByMe = false,
+              uniqueToTag = false,
+            ),
+          )
+        },
+        test("\"imported by me\" needs both createdByMe and imported, and ANDs with the buckets") {
+          val mineImported = entry(1, None, imported = true, createdByMe = true)
+          val mineByHand   = entry(2, None, imported = false, createdByMe = true)
+          val theirsImport = entry(3, None, imported = true, createdByMe = false)
+          assertTrue(
+            TagEditorPage.rowVisible(mineImported, Set.empty, importedByMe = true, uniqueToTag = false),
+            !TagEditorPage.rowVisible(mineByHand, Set.empty, importedByMe = true, uniqueToTag = false),
+            !TagEditorPage.rowVisible(theirsImport, Set.empty, importedByMe = true, uniqueToTag = false),
+            // still has to be in a selected bucket when one is active
+            !TagEditorPage.rowVisible(
+              mineImported,
+              Set(TagEditorPage.EntryFilter.Exact),
+              importedByMe = true,
+              uniqueToTag = false,
+            ),
+          )
+        },
+        test("\"only in this tag\" keeps a row only when it is in none of my other tags") {
+          val onlyHere  = entry(1, Some(2), inMyOtherTags = false)
+          val alsoOther = entry(3, Some(4), inMyOtherTags = true)
+          assertTrue(
+            TagEditorPage.rowVisible(onlyHere, Set.empty, importedByMe = false, uniqueToTag = true),
+            !TagEditorPage.rowVisible(alsoOther, Set.empty, importedByMe = false, uniqueToTag = true),
           )
         },
       ),

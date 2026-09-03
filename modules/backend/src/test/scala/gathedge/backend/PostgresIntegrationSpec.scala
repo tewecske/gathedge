@@ -44,7 +44,7 @@ import gathedge.backend.service.{
   WordService,
 }
 import gathedge.shared.domain.{Gender, TranslationFilter, WordLanguage}
-import gathedge.shared.dto.{Paging, ReplacePairRequest, TagPairInput, TagPairWord, WordSort}
+import gathedge.shared.dto.{PairRef, Paging, ReplacePairRequest, TagPairInput, TagPairWord, WordSort}
 import zio._
 import zio.test._
 
@@ -613,6 +613,52 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           pairs.map(p => (p.wordId, p.translationWordId)).toSet == Set((dog.id, koeter.id), (koeter.id, dog.id)),
           // `dog` stays (still paired with `koeter`); `hund` is gone (nothing pairs it any more).
           links.map(_.wordId).toSet == Set(dog.id, koeter.id),
+        )
+      },
+      // `sourceWordsInMyOtherTags` (the editor's "only in this tag" / "imported by me" filters) is a new
+      // `word_tags`-join-`tags` shape, and `removeEntries` is `removeEntry`'s per-key loop under one editable-tag
+      // check — both only ever run the real dialect here.
+      test("the editor's cross-tag lookup and bulk delete round-trip on the real dialect") {
+        for {
+          reader <- AuthService.createGuest(Some("10.9.2.11")).map(_._1)
+          t1     <- WordService.createTag("pgfilters1", reader.id).map(_.tag)
+          t2     <- WordService.createTag("pgfilters2", reader.id).map(_.tag)
+          haus   <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Pghaus", "pghaus", "noun", "neuter", 1, "user", None, 0L, "pghaus")
+                    )
+          hund   <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Pghund2", "pghund2", "noun", "masculine", 1, "user", None, 0L, "pghund2")
+                    )
+          haz    <- WordRepository.ensureWord(
+                      WordRow(0L, "hu", "Pghaz", "pghaz", "noun", "", 1, "user", None, 0L, "pghaz")
+                    )
+          _      <- WordService.addPair(
+                      t1.id,
+                      TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)),
+                      reader.id,
+                    )
+          _      <- WordService.addPair(
+                      t1.id,
+                      TagPairInput(TagPairWord.Existing(hund.id), TagPairWord.Existing(haz.id)),
+                      reader.id,
+                    )
+          // Pghaus is also in a second tag the reader owns; Pghund2 is only in t1.
+          _      <- WordService.addPair(
+                      t2.id,
+                      TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)),
+                      reader.id,
+                    )
+          rows   <- WordService.tagEntries(t1.id, reader.id)
+          _      <- WordService.removeEntries(
+                      t1.id,
+                      rows.map(r => PairRef(r.source.id, r.target.map(_.id))),
+                      reader.id,
+                    )
+          after  <- WordService.tagEntries(t1.id, reader.id)
+        } yield assertTrue(
+          rows.find(_.source.text == "Pghaus").exists(_.inMyOtherTags),
+          rows.find(_.source.text == "Pghund2").exists(!_.inMyOtherTags),
+          after.isEmpty,
         )
       },
       // The only UPDATE any `words` row takes, and the only one whose guard is a column the unique index also covers.

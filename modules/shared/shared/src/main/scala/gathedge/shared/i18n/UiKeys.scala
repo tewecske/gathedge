@@ -943,11 +943,34 @@ object UiKeys {
   /** Badge on a row whose membership a bulk import wrote. */
   val tagsEditorImportedBadge: String = key("ui.tags.editor.importedBadge")
 
-  /** The multi-select filter above the rows; with none selected every row shows. */
-  val tagsEditorFilterHeading: String   = key("ui.tags.editor.filterHeading")
-  val tagsEditorFilterExact: String     = key("ui.tags.editor.filterExact")
-  val tagsEditorFilterNonExact: String  = key("ui.tags.editor.filterNonExact")
-  val tagsEditorFilterUnmatched: String = key("ui.tags.editor.filterUnmatched")
+  /** The multi-select filter above the rows; with none selected every row shows. The first three are mutually-exclusive
+    * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
+    * in this tag" is a word in none of the reader's other tags.
+    */
+  val tagsEditorFilterHeading: String      = key("ui.tags.editor.filterHeading")
+  val tagsEditorFilterExact: String        = key("ui.tags.editor.filterExact")
+  val tagsEditorFilterNonExact: String     = key("ui.tags.editor.filterNonExact")
+  val tagsEditorFilterUnmatched: String    = key("ui.tags.editor.filterUnmatched")
+  val tagsEditorFilterImportedByMe: String = key("ui.tags.editor.filterImportedByMe")
+  val tagsEditorFilterUniqueToTag: String  = key("ui.tags.editor.filterUniqueToTag")
+
+  /** The row multiselect: select/deselect every visible row, and delete the ticked ones — `{0}` is how many are ticked.
+    * The confirm dialog's title, and its body with the same `{0}` count.
+    */
+  val tagsEditorSelectAll: String         = key("ui.tags.editor.selectAll")
+  val tagsEditorDeselectAll: String       = key("ui.tags.editor.deselectAll")
+  val tagsEditorDeleteSelected: String    = key("ui.tags.editor.deleteSelected")
+  val tagsEditorBulkDeleteTitle: String   = key("ui.tags.editor.bulkDeleteTitle")
+  val tagsEditorBulkDeleteConfirm: String = key("ui.tags.editor.bulkDeleteConfirm")
+
+  /** The stronger second bulk action: delete the words from the dictionary, not just untag them — `{0}` is how many of
+    * the selected rows qualify (a word the reader created, held by no other tag). The dialog's title, its red warning
+    * line (same `{0}`), and the note that everything else in the selection is left alone.
+    */
+  val tagsEditorDeleteWords: String        = key("ui.tags.editor.deleteWords")
+  val tagsEditorDeleteWordsTitle: String   = key("ui.tags.editor.deleteWordsTitle")
+  val tagsEditorDeleteWordsWarning: String = key("ui.tags.editor.deleteWordsWarning")
+  val tagsEditorDeleteWordsNote: String    = key("ui.tags.editor.deleteWordsNote")
 
   /** The bulk-import panel's toggle, its paste field, and its result line — `{0}` words written, `{1}` exact pairs,
     * `{2}` tokens that matched no dictionary word.
