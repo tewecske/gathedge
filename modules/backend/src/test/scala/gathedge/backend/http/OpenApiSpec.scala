@@ -88,6 +88,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/{id}/translations/{translationId}",
               "/api/words/{id}/tags/{tagId}",
               "/api/words/{id}/tags/{tagId}/translations/{translationWordId}",
+              "/api/words/language-check",
               "/api/words/tags/{tagId}/bulk-upload/preview",
               "/api/words/tags/{tagId}/bulk-upload/confirm",
               "/api/tags",
@@ -97,6 +98,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/export",
               "/api/tags/import",
               "/api/tags/with-pairs",
+              "/api/tags/{tagId}/entries",
+              "/api/tags/{tagId}/pairs",
+              "/api/tags/{tagId}/pairs/{sourceWordId}",
+              "/api/tags/{tagId}/bulk-import",
               "/api/games",
               "/api/games/setup",
               "/api/games/setup/words",
@@ -249,6 +254,10 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/words/{id}/tags/{tagId}/translations/{translationWordId}") ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Samples the pasted text and reports how many sampled words were in neither declared language, so the
+              // editor can warn before a bulk import. Writes nothing, names no tag: the only failures are the body's
+              // codec 400 and the aspect's 401.
+              ("POST", "/api/words/language-check")                                       -> Set(Ok, BadRequest, Unauthorized),
               // Scans an uploaded file's text for dictionary words in each of two languages and answers the matches
               // and unmatched tokens, writing nothing. 404 is the tag, for the reason every other write in this
               // resource answers 404 for one, even though this call is read-only. 429 is this endpoint's own
@@ -270,6 +279,20 @@ object OpenApiSpec extends ZIOSpecDefault {
               // word; 409 covers a duplicate name *and* either quota's hard threshold, `error.key` telling them apart.
               ("POST", "/api/tags/with-pairs")                                            ->
                 Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              // The unified tag editor. Reading a tag's rows is open to any signed-in caller (tag contents are
+              // world-visible), so 404 is only an id that names nothing. Adding/replacing a pair follows the same
+              // 404/409 rules as with-pairs. Removing a row is idempotent 204. Bulk import shares the upload
+              // rate-limit budget.
+              ("GET", "/api/tags/{tagId}/entries")                                        ->
+                Set(Ok, BadRequest, Unauthorized, NotFound),
+              ("POST", "/api/tags/{tagId}/pairs")                                         ->
+                Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              ("PUT", "/api/tags/{tagId}/pairs")                                          ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("DELETE", "/api/tags/{tagId}/pairs/{sourceWordId}")                        ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("POST", "/api/tags/{tagId}/bulk-import")                                   ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
               ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),
@@ -450,7 +473,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 269,
+          declared == 289,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -497,6 +520,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/guest/claim"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/preview"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm"),
+              // The review-free replacement for the two bulk-upload calls above: one call still tokenizes and writes
+              // a whole file's worth of rows, so it keeps the same budget.
+              ("POST", "/api/tags/{tagId}/bulk-import"),
               ("POST", "/api/tags/import"),
               ("POST", "/api/groups/join"),
               ("POST", "/api/progress-shares/redeem"),

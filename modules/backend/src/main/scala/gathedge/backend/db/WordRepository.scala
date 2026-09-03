@@ -232,6 +232,49 @@ trait WordRepository {
     */
   def pairsFor(userId: Long, wordIds: List[Long]): Task[List[WordTagPairRow]]
 
+  // -- The unified tag editor ----------------------------------------------------------------------
+
+  /** [[tagWord]] with the membership marked `imported`; promotes an existing hand-added row's flag. */
+  def importWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit]
+
+  /** [[pairTranslation]] with the pair marked `exact` and both memberships `imported`; promotes existing rows. */
+  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit]
+
+  /** One tag's memberships oldest-first (`word_tags.id` ascending), carrying the `imported` flag. */
+  def tagMemberships(tagId: Long): Task[List[WordTagRow]]
+
+  /** Deletes one editor row whole — the source word, its pairs in the tag both ways, and any partner word left with
+    * nothing referencing it (unless that partner was `imported`). One transaction.
+    */
+  def removeEntry(tagId: Long, sourceWordId: Long): Task[Unit]
+
+  /** Deletes one `(source, target)` practice pair from a tag, both directions, then drops whichever side the tag no
+    * longer pairs and did not `import` — so a source word with other marked translations keeps its remaining rows. One
+    * transaction. Idempotent.
+    */
+  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): Task[Unit]
+
+  /** Fills a tag's language pair, but only while it has none — the pair locks after the first row. Rows affected. */
+  def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long]
+
+  /** The editor's rows: each source word, its marked answer if any, and the two import flags — ordered by
+    * `word_tags.id` so a bulk import's text order survives, bidirectional pairs collapsed to one row.
+    */
+  def tagEntries(tagId: Long): Task[List[TagEntryRow]]
+
+  /** Replaces one editor row's pair in one transaction: drops the old pair (both directions) and any now-orphaned,
+    * non-imported membership among the old words, then links the resolved new pair. `oldTargetWordId` is `None` for an
+    * unmatched row that had no pair yet.
+    */
+  def replacePair(
+    tagId: Long,
+    oldSourceWordId: Long,
+    oldTargetWordId: Option[Long],
+    newSourceWordId: Long,
+    newTargetWordId: Long,
+    createdAt: Long,
+  ): Task[Unit]
+
   // -- The dictionary importer's bulk path ------------------------------------------------------
   // Batched and explicit-column, so no generated key has to come back: `getGeneratedKeys` after an
   // `executeBatch` is not something both drivers agree about. The importer inserts, then re-reads
@@ -484,6 +527,40 @@ object WordRepository {
 
   def pairsFor(userId: Long, wordIds: List[Long]): RIO[WordRepository, List[WordTagPairRow]] =
     ZIO.serviceWithZIO[WordRepository](_.pairsFor(userId, wordIds))
+
+  def importWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.importWord(wordId, tagId, createdAt))
+
+  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.importPair(wordId, tagId, translationWordId, createdAt))
+
+  def tagMemberships(tagId: Long): RIO[WordRepository, List[WordTagRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.tagMemberships(tagId))
+
+  def removeEntry(tagId: Long, sourceWordId: Long): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.removeEntry(tagId, sourceWordId))
+
+  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.removePair(tagId, sourceWordId, targetWordId))
+
+  def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setTagLanguages(tagId, sourceLanguage, targetLanguage))
+
+  def tagEntries(tagId: Long): RIO[WordRepository, List[TagEntryRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId))
+
+  def replacePair(
+    tagId: Long,
+    oldSourceWordId: Long,
+    oldTargetWordId: Option[Long],
+    newSourceWordId: Long,
+    newTargetWordId: Long,
+    createdAt: Long,
+  ): RIO[WordRepository, Unit] = {
+    ZIO.serviceWithZIO[WordRepository](
+      _.replacePair(tagId, oldSourceWordId, oldTargetWordId, newSourceWordId, newTargetWordId, createdAt)
+    )
+  }
 
   def insertWords(rows: List[WordRow]): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.insertWords(rows))
@@ -955,9 +1032,18 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     nameNorm: String,
     createdAt: Long,
   ): Task[(TagRow, Long, Long)] = {
-    val newTag = TagRow(0L, userId, name, nameNorm, createdAt)
     val copied = transaction(
       for {
+        source      <- ctx.run(quote(tags.filter(_.id == lift(sourceId)))).map(_.headOption)
+        newTag       = TagRow(
+                         0L,
+                         userId,
+                         name,
+                         nameNorm,
+                         createdAt,
+                         sourceLanguage = source.flatMap(_.sourceLanguage),
+                         targetLanguage = source.flatMap(_.targetLanguage),
+                       )
         newId       <- ctx.run(quote(tags.insertValue(lift(newTag)).returningGenerated(_.id)))
         sourceWords <- ctx.run(quote(wordTags.filter(_.tagId == lift(sourceId))))
         sourcePairs <- ctx.run(quote(wordTagPairs.filter(_.tagId == lift(sourceId))))
@@ -995,19 +1081,58 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     * [[QuillRepository.run]] discharges the requirement, and a query that has already had its own environment supplied
     * takes its own connection instead of the transaction's.
     */
-  private def linkOnce(wordId: Long, tagId: Long, createdAt: Long): ZIO[DataSource, Throwable, Boolean] = {
+  private def linkOnce(
+    wordId: Long,
+    tagId: Long,
+    createdAt: Long,
+    imported: Boolean = false,
+  ): ZIO[DataSource, Throwable, Boolean] = {
     val existing = quote(wordTags.filter(link => link.wordId == lift(wordId) && link.tagId == lift(tagId)))
-    val row      = WordTagRow(0L, wordId, tagId, createdAt)
-    ctx.run(existing).flatMap { found =>
-      if (found.nonEmpty)
-        ZIO.succeed(false)
-      else
+    val row      = WordTagRow(0L, wordId, tagId, createdAt, imported)
+    ctx.run(existing).map(_.headOption).flatMap {
+      case Some(link) =>
+        // An import may promote a hand-added membership to `imported`; nothing ever clears the flag.
+        if (imported && !link.imported) {
+          ctx
+            .run(quote {
+              wordTags.filter(l => l.wordId == lift(wordId) && l.tagId == lift(tagId)).update(_.imported -> true)
+            })
+            .as(false)
+        } else ZIO.succeed(false)
+      case None       =>
         ctx.run(quote(wordTags.insertValue(lift(row)).returningGenerated(_.id))).as(true)
     }
   }
 
   def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit] = {
     logged(run(linkOnce(wordId, tagId, createdAt)))(added => s"wordTags.tag word=$wordId tag=$tagId added=$added").unit
+  }
+
+  /** [[tagWord]], but the membership is marked `imported` — and an existing hand-added one is promoted to it. */
+  def importWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit] = {
+    logged(run(linkOnce(wordId, tagId, createdAt, imported = true))) { added =>
+      s"wordTags.import word=$wordId tag=$tagId added=$added"
+    }.unit
+  }
+
+  /** One tag's memberships, oldest first (`word_tags.id` ascending == insertion order == a bulk import's text order),
+    * carrying the `imported` flag — what the editor's row list is ordered and badged by.
+    */
+  def tagMemberships(tagId: Long): Task[List[WordTagRow]] = {
+    val q = quote(wordTags.filter(_.tagId == lift(tagId)).sortBy(_.id)(using Ord.asc))
+    logged(run(ctx.run(q)))(rows => s"wordTags.memberships tag=$tagId rows=${rows.size}")
+  }
+
+  /** Fills a tag's language pair, but only while it has none — the pair locks after the first row is added. Rows
+    * affected: `0` when the tag already has languages (or does not exist), `1` on the first write.
+    */
+  def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long] = {
+    val q = quote {
+      tags
+        .filter(tag => tag.id == lift(tagId) && tag.sourceLanguage.isEmpty && tag.targetLanguage.isEmpty)
+        .update(_.sourceLanguage -> lift(Option(sourceLanguage)), _.targetLanguage -> lift(Option(targetLanguage)))
+    }
+    logged(run(ctx.run(q)))(rows => s"tags.setLanguages id=$tagId rows=$rows")
   }
 
   def untagWord(wordId: Long, tagId: Long): Task[Long] = {
@@ -1082,12 +1207,15 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   // -- Practice pairs ---------------------------------------------------------------------------
 
-  /** One pair row, inserted only if it is not already there. A `ZIO[DataSource, …]` for the reason [[linkOnce]] is. */
+  /** One pair row, inserted only if it is not already there. A `ZIO[DataSource, …]` for the reason [[linkOnce]] is.
+    * `exact` promotes an existing row's flag the same way [[linkOnce]]'s `imported` does; nothing clears it.
+    */
   private def pairOnce(
     wordId: Long,
     tagId: Long,
     translationWordId: Long,
     createdAt: Long,
+    exact: Boolean = false,
   ): ZIO[DataSource, Throwable, Unit] = {
     val existing = quote(
       wordTagPairs.filter(pair => {
@@ -1095,30 +1223,42 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         pair.translationWordId == lift(translationWordId)
       })
     )
-    val row      = WordTagPairRow(0L, wordId, tagId, translationWordId, createdAt)
-    ctx.run(existing).flatMap { found =>
-      if (found.nonEmpty)
-        ZIO.unit
-      else
+    val row      = WordTagPairRow(0L, wordId, tagId, translationWordId, createdAt, exact)
+    ctx.run(existing).map(_.headOption).flatMap {
+      case Some(pair) =>
+        if (exact && !pair.exact) {
+          ctx
+            .run(quote {
+              wordTagPairs
+                .filter(p =>
+                  p.wordId == lift(wordId) && p.tagId == lift(tagId) && p.translationWordId == lift(translationWordId)
+                )
+                .update(_.exact -> true)
+            })
+            .unit
+        } else ZIO.unit
+      case None       =>
         ctx.run(quote(wordTagPairs.insertValue(lift(row)).returningGenerated(_.id))).unit
     }
   }
 
   /** The four rows a bilingual pair adds inside one tag, in both directions, each inserted only if it is not already
     * there. A `ZIO[DataSource, …]` so both [[pairTranslation]] and [[createTagWithPairs]] can run it inside their own
-    * transaction.
+    * transaction. `exact`/`imported` mark a pair a bulk import matched exactly and the memberships it wrote.
     */
   private def linkPair(
     wordId: Long,
     tagId: Long,
     translationWordId: Long,
     createdAt: Long,
+    exact: Boolean = false,
+    imported: Boolean = false,
   ): ZIO[DataSource, Throwable, Unit] = {
     for {
-      _ <- linkOnce(wordId, tagId, createdAt)
-      _ <- linkOnce(translationWordId, tagId, createdAt)
-      _ <- pairOnce(wordId, tagId, translationWordId, createdAt)
-      _ <- pairOnce(translationWordId, tagId, wordId, createdAt)
+      _ <- linkOnce(wordId, tagId, createdAt, imported)
+      _ <- linkOnce(translationWordId, tagId, createdAt, imported)
+      _ <- pairOnce(wordId, tagId, translationWordId, createdAt, exact)
+      _ <- pairOnce(translationWordId, tagId, wordId, createdAt, exact)
     } yield ()
   }
 
@@ -1127,6 +1267,189 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     // collected the answer to, and a half-recorded pair would be answerable one way round and not the other.
     val marked = transaction(linkPair(wordId, tagId, translationWordId, createdAt))
     logged(marked)(_ => s"wordTagPairs.pair word=$wordId tag=$tagId translation=$translationWordId")
+  }
+
+  /** [[pairTranslation]], but the pair is marked `exact` and both memberships `imported` — a bulk import's exact match.
+    * Existing rows are promoted, never re-inserted.
+    */
+  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit] = {
+    val marked = transaction(linkPair(wordId, tagId, translationWordId, createdAt, exact = true, imported = true))
+    logged(marked)(_ => s"wordTagPairs.import word=$wordId tag=$tagId translation=$translationWordId")
+  }
+
+  /** Replaces one editor row's pair in a single transaction. Drops the old pair in both directions, drops the old
+    * source/target memberships that are now orphaned and were not `imported` (an imported orphan stays as its own
+    * "unmatched" row), then links the new pair. `oldTargetWordId` is `None` for an unmatched row that had no pair. A
+    * word that also appears in the new pair is left alone, so its membership id and flags survive the edit.
+    */
+  def replacePair(
+    tagId: Long,
+    oldSourceWordId: Long,
+    oldTargetWordId: Option[Long],
+    newSourceWordId: Long,
+    newTargetWordId: Long,
+    createdAt: Long,
+  ): Task[Unit] = {
+    val keep    = Set(newSourceWordId, newTargetWordId)
+    val toPrune = (oldSourceWordId :: oldTargetWordId.toList).distinct.filterNot(keep.contains)
+    val work    = transaction(
+      for {
+        _ <- oldTargetWordId match {
+               case Some(oldTarget) =>
+                 ctx.run(quote {
+                   wordTagPairs
+                     .filter(pair => {
+                       pair.tagId == lift(tagId) &&
+                       ((pair.wordId == lift(oldSourceWordId) && pair.translationWordId == lift(oldTarget)) ||
+                         (pair.wordId == lift(oldTarget) && pair.translationWordId == lift(oldSourceWordId)))
+                     })
+                     .delete
+                 })
+               case None            =>
+                 ZIO.succeed(0L)
+             }
+        // The reader is explicitly editing this row, so a now-orphaned old side goes even if a bulk import wrote it —
+        // unlike [[removeEntry]], which leaves an imported orphan as its own row.
+        _ <- ZIO.foreachDiscard(toPrune)(pruneOrphanMembership(tagId, _, force = true))
+        _ <- linkPair(newSourceWordId, tagId, newTargetWordId, createdAt)
+      } yield ()
+    )
+    logged(work)(_ => s"wordTagPairs.replace tag=$tagId oldSource=$oldSourceWordId newSource=$newSourceWordId")
+  }
+
+  /** Deletes one editor row whole: the source word's membership, every `word_tag_pairs` row naming it in this tag (both
+    * directions), and each partner word's membership when nothing else in the tag references it and it was not
+    * `imported`. One transaction. Unlike [[untagWord]] — which the listing's tick uses and which deliberately leaves
+    * the other word collected — a row is a pair, and removing it should not strand its answer half as a stray row.
+    */
+  def removeEntry(tagId: Long, sourceWordId: Long): Task[Unit] = {
+    val work = transaction(
+      for {
+        pairs   <- ctx.run(quote {
+                     wordTagPairs.filter(pair => {
+                       pair.tagId == lift(tagId) &&
+                       (pair.wordId == lift(sourceWordId) || pair.translationWordId == lift(sourceWordId))
+                     })
+                   })
+        partners = pairs.flatMap(p => List(p.wordId, p.translationWordId)).filterNot(_ == sourceWordId).distinct
+        _       <- ctx.run(quote {
+                     wordTagPairs
+                       .filter(pair => {
+                         pair.tagId == lift(tagId) &&
+                         (pair.wordId == lift(sourceWordId) || pair.translationWordId == lift(sourceWordId))
+                       })
+                       .delete
+                   })
+        _       <- ctx.run(quote {
+                     wordTags.filter(link => link.wordId == lift(sourceWordId) && link.tagId == lift(tagId)).delete
+                   })
+        _       <- ZIO.foreachDiscard(partners)(pruneOrphanMembership(tagId, _))
+      } yield ()
+    )
+    logged(work)(_ => s"wordTags.removeEntry tag=$tagId source=$sourceWordId")
+  }
+
+  /** Deletes one `(source, target)` pair from a tag — both `word_tag_pairs` directions — then prunes whichever side the
+    * tag now pairs with nothing and did not `import`. A source word with other marked translations keeps those rows,
+    * and its membership, because a pair still names it. One transaction; idempotent.
+    */
+  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): Task[Unit] = {
+    val work = transaction(
+      for {
+        _ <- ctx.run(quote {
+               wordTagPairs
+                 .filter(pair => {
+                   pair.tagId == lift(tagId) &&
+                   ((pair.wordId == lift(sourceWordId) && pair.translationWordId == lift(targetWordId)) ||
+                     (pair.wordId == lift(targetWordId) && pair.translationWordId == lift(sourceWordId)))
+                 })
+                 .delete
+             })
+        _ <- pruneOrphanMembership(tagId, sourceWordId)
+        _ <- pruneOrphanMembership(tagId, targetWordId)
+      } yield ()
+    )
+    logged(work)(_ => s"wordTagPairs.removePair tag=$tagId source=$sourceWordId target=$targetWordId")
+  }
+
+  /** Removes a `word_tags` row that no `word_tag_pairs` row in the tag still names. `force = false` keeps an `imported`
+    * membership — it stands as its own "unmatched" row; `force = true` removes it anyway, which is what [[replacePair]]
+    * wants for the side it is explicitly discarding. A `ZIO[DataSource, …]` so it joins its caller's transaction.
+    */
+  private def pruneOrphanMembership(
+    tagId: Long,
+    wordId: Long,
+    force: Boolean = false,
+  ): ZIO[DataSource, Throwable, Unit] = {
+    val remaining = quote {
+      wordTagPairs
+        .filter(pair => {
+          pair.tagId == lift(tagId) &&
+          (pair.wordId == lift(wordId) || pair.translationWordId == lift(wordId))
+        })
+        .size
+    }
+    ctx.run(remaining).flatMap { left =>
+      ZIO
+        .when(left == 0L) {
+          if (force)
+            ctx.run(quote(wordTags.filter(l => l.wordId == lift(wordId) && l.tagId == lift(tagId)).delete))
+          else {
+            ctx.run(quote {
+              wordTags.filter(l => l.wordId == lift(wordId) && l.tagId == lift(tagId) && !l.imported).delete
+            })
+          }
+        }
+        .unit
+    }
+  }
+
+  /** One tag's rows for the editor: each source word, its marked answer (if any) and the pair's `exact` flag, plus
+    * whether the source membership was `imported`. Bidirectional `word_tag_pairs` are collapsed to one row on the
+    * `sourceLanguage` side (or the lower word id when the tag has no language pair yet); memberships that no pair names
+    * become their own answer-less rows. Ordered by `word_tags.id`, so a bulk import's text order survives.
+    */
+  def tagEntries(tagId: Long): Task[List[TagEntryRow]] = {
+    val assembled = for {
+      tagRow      <- run(ctx.run(quote(tags.filter(_.id == lift(tagId))))).map(_.headOption)
+      memberships <- run(ctx.run(quote(wordTags.filter(_.tagId == lift(tagId)).sortBy(_.id)(using Ord.asc))))
+      pairRows    <- run(ctx.run(quote(wordTagPairs.filter(_.tagId == lift(tagId)))))
+      wordIds      = (memberships.map(_.wordId) ++ pairRows.flatMap(p => List(p.wordId, p.translationWordId))).distinct
+      wordRows    <- if (wordIds.isEmpty) ZIO.succeed(List.empty[WordRow])
+                     else run(ctx.run(quote(words.filter(w => liftQuery(wordIds).contains(w.id)))))
+    } yield {
+      val byId       = wordRows.map(w => w.id -> w).toMap
+      val orderOf    = memberships.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
+      val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
+      val srcLang    = tagRow.flatMap(_.sourceLanguage)
+
+      // One row per undirected pair, keyed on the chosen source side.
+      val chosen = pairRows
+        .flatMap { pair =>
+          (byId.get(pair.wordId), byId.get(pair.translationWordId)) match {
+            case (Some(a), Some(b)) =>
+              val aIsSource = srcLang match {
+                case Some(code) if a.language == code && b.language != code => true
+                case Some(code) if b.language == code && a.language != code => false
+                case _                                                      => a.id <= b.id
+              }
+              if (aIsSource) Some(TagEntryRow(a, Some(b), importedOf.getOrElse(a.id, false), pair.exact))
+              else None
+            case _                  => None
+          }
+        }
+        .distinctBy(row => (row.source.id, row.target.map(_.id)))
+
+      val pairedIds = chosen.flatMap(row => row.source.id :: row.target.toList.map(_.id)).toSet
+      val loose     = memberships
+        .filterNot(m => pairedIds.contains(m.wordId))
+        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, exact = false)))
+
+      (chosen ++ loose).sortBy(row =>
+        (orderOf.getOrElse(row.source.id, Int.MaxValue), row.target.map(_.id).getOrElse(-1L))
+      )
+    }
+    logged(assembled)(rows => s"tags.entries tag=$tagId rows=${rows.size}")
   }
 
   /** Seeds the tag and its pairs in one transaction. Inserting the tag and then calling [[pairTranslation]] would leave

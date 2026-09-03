@@ -34,7 +34,7 @@ import gathedge.frontend.pages.{
   SharedProgressPage,
   SignInPage,
   SignUpPage,
-  TagDetailPage,
+  TagEditorPage,
   TagsPage,
   VerifyEmailPage,
   WordDetailPage,
@@ -486,7 +486,7 @@ object App {
       case Page.GroupJoin(code)                           =>
         GroupJoinPage.render(code)
       case Page.TagDetail(id)                             =>
-        TagDetailPage.render(id)
+        TagEditorPage.render(id, ImageOcr.recognize)
       case Page.Tags                                      =>
         TagsPage.render()
       case Page.Forbidden                                 =>

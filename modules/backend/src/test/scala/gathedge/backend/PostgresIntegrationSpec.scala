@@ -43,8 +43,8 @@ import gathedge.backend.service.{
   WordFailure,
   WordService,
 }
-import gathedge.shared.domain.{Gender, TranslationFilter}
-import gathedge.shared.dto.{Paging, WordSort}
+import gathedge.shared.domain.{Gender, TranslationFilter, WordLanguage}
+import gathedge.shared.dto.{Paging, ReplacePairRequest, TagPairInput, TagPairWord, WordSort}
 import zio._
 import zio.test._
 
@@ -532,6 +532,87 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // Untagging the word takes its pairs in that tag with it, both ways round, and leaves the translation filed.
           swept.isEmpty,
           left.map(_.wordId) == List(fork.id),
+        )
+      },
+      // The unified tag editor adds three more SQL shapes the real dialect has not seen: `bulkImport`'s per-token
+      // `importPair`/`importWord` writes, `replacePair`'s delete-then-relink transaction, and `removeEntry`'s
+      // orphan-partner prune. `tagEntries`' ordering-by-`word_tags.id` collapse runs here for the first time too.
+      test("the tag editor's add / bulk-import / replace / remove round-trip on the real dialect") {
+        for {
+          reader   <- AuthService.createGuest(Some("10.9.2.4")).map(_._1)
+          tag      <- WordService.createTag("pgeditor", reader.id).map(_.tag)
+          haus     <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "Pghaus", "pghaus", "noun", "neuter", 1, "user", None, 0L, "pghaus")
+                      )
+          haz      <- WordRepository.ensureWord(
+                        WordRow(0L, "hu", "Pghaz", "pghaz", "noun", "", 1, "user", None, 0L, "pghaz")
+                      )
+          _        <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
+          _        <- WordService.bulkImport(tag.id, "Pghaus Pghaz brandneu", WordLanguage.De, WordLanguage.Hu, reader.id)
+          imported <- WordService.tagEntries(tag.id, reader.id)
+          // Replace the exact row's answer with a fresh word.
+          neu      <- WordRepository.ensureWord(
+                        WordRow(0L, "hu", "Pgotthon", "pgotthon", "noun", "", 1, "user", None, 0L, "pgotthon")
+                      )
+          _        <- WordService.replacePair(
+                        tag.id,
+                        ReplacePairRequest(
+                          haus.id,
+                          Some(haz.id),
+                          TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(neu.id)),
+                        ),
+                        reader.id,
+                      )
+          replaced <- WordService.tagEntries(tag.id, reader.id)
+          _        <- WordService.removeEntry(tag.id, haus.id, None, reader.id)
+          afterRm  <- WordService.tagEntries(tag.id, reader.id)
+          pairsRm  <- WordRepository.pairsInTag(tag.id)
+        } yield assertTrue(
+          // Text order kept; exact pair collapsed to one row, the unmatched token its own answerless row.
+          imported.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) ==
+            List(("Pghaus", Some("Pghaz"), true, true), ("brandneu", None, true, false)),
+          // The swap landed and cleared the exact flag; the old answer no longer shows as a stray row.
+          replaced.map(r => (r.source.text, r.target.map(_.text), r.exact)) ==
+            List(("Pghaus", Some("Pgotthon"), false), ("brandneu", None, false)),
+          // Removing the row took its pair and the now-orphaned answer with it; the unmatched row is untouched.
+          afterRm.map(_.source.text) == List("brandneu"),
+          pairsRm.isEmpty,
+        )
+      },
+      // `removePair`'s targeted delete-plus-conditional-prune is its own SQL shape: a source word with two marked
+      // translations must lose only the named one, keeping its membership and its other row.
+      test("removePair drops one translation's row on the real dialect and keeps the word's others") {
+        for {
+          reader <- AuthService.createGuest(Some("10.9.2.9")).map(_._1)
+          tag    <- WordService.createTag("pgremovepair", reader.id).map(_.tag)
+          dog    <- WordRepository.ensureWord(
+                      WordRow(0L, "en", "Pgdog", "pgdog", "noun", "", 1, "user", None, 0L, "pgdog")
+                    )
+          hund   <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Pghund", "pghund", "noun", "masculine", 1, "user", None, 0L, "pghund")
+                    )
+          koeter <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Pgkoeter", "pgkoeter", "noun", "masculine", 1, "user", None, 0L, "pgkoeter")
+                    )
+          _      <- WordService.addPair(
+                      tag.id,
+                      TagPairInput(TagPairWord.Existing(dog.id), TagPairWord.Existing(hund.id)),
+                      reader.id,
+                    )
+          _      <- WordService.addPair(
+                      tag.id,
+                      TagPairInput(TagPairWord.Existing(dog.id), TagPairWord.Existing(koeter.id)),
+                      reader.id,
+                    )
+          _      <- WordService.removeEntry(tag.id, dog.id, Some(hund.id), reader.id)
+          rows   <- WordService.tagEntries(tag.id, reader.id)
+          pairs  <- WordRepository.pairsInTag(tag.id)
+          links  <- WordRepository.tagsFor(reader.id, List(dog.id, hund.id, koeter.id))
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text))) == List(("Pgdog", Some("Pgkoeter"))),
+          pairs.map(p => (p.wordId, p.translationWordId)).toSet == Set((dog.id, koeter.id), (koeter.id, dog.id)),
+          // `dog` stays (still paired with `koeter`); `hund` is gone (nothing pairs it any more).
+          links.map(_.wordId).toSet == Set(dog.id, koeter.id),
         )
       },
       // The only UPDATE any `words` row takes, and the only one whose guard is a column the unique index also covers.

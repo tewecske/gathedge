@@ -5,22 +5,30 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkImportRequest,
+  BulkImportResponse,
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
   CreateTagRequest,
+  LanguageCheckRequest,
+  LanguageCheckResponse,
   CreateTagWithPairsRequest,
   CreateWordRequest,
   NewTranslation,
   PairSelectionResponse,
   RenameTagRequest,
+  ReplacePairRequest,
   SetGenderRequest,
+  TagEntry,
+  TagEntryResponse,
   TagExportFile,
   TagImportChoice,
   TagImportRequest,
   TagImportResponse,
+  TagPairInput,
   TagResponse,
   WordDetail,
   WordPage,
@@ -165,6 +173,58 @@ object WordApiClient {
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
     run(executor(WordEndpoints.deselectPair(wordId, tagId, translationWordId)))
+  }
+
+  /** The unified tag editor's rows, in the order they were added. */
+  def tagEntries(tagId: Long): EventStream[Either[ApiError, List[TagEntry]]] = {
+    run(executor(WordEndpoints.tagEntries(tagId)))
+  }
+
+  /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */
+  def addPair(tagId: Long, pair: TagPairInput): EventStream[Either[ApiError, TagEntryResponse]] = {
+    run(executor(WordEndpoints.addPair(tagId, pair)))
+  }
+
+  /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */
+  def replacePair(
+    tagId: Long,
+    oldSourceWordId: Long,
+    oldTargetWordId: Option[Long],
+    next: TagPairInput,
+  ): EventStream[Either[ApiError, TagEntryResponse]] = {
+    run(executor(WordEndpoints.replacePair(tagId, ReplacePairRequest(oldSourceWordId, oldTargetWordId, next))))
+  }
+
+  /** Removes one editor row. With `targetWordId`, only that one pair goes and the source word keeps its other marked
+    * translations; without it, the source word and every pair naming it go. Idempotent.
+    */
+  def deletePair(
+    tagId: Long,
+    sourceWordId: Long,
+    targetWordId: Option[Long] = None,
+  ): EventStream[Either[ApiError, Unit]] = {
+    run(executor(WordEndpoints.deletePair(tagId, sourceWordId, targetWordId)))
+  }
+
+  /** Tokenizes free text and writes every token into the tag in text order, then answers the counts. */
+  def bulkImport(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): EventStream[Either[ApiError, BulkImportResponse]] = {
+    run(executor(WordEndpoints.bulkImport(tagId, BulkImportRequest(content, sourceLanguage, targetLanguage))))
+  }
+
+  /** Sanity-checks the pasted text's language against the tag's pair before an import — the server samples it and
+    * answers how many sampled words it recognised.
+    */
+  def checkLanguage(
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): EventStream[Either[ApiError, LanguageCheckResponse]] = {
+    run(executor(WordEndpoints.languageCheck(LanguageCheckRequest(content, sourceLanguage, targetLanguage))))
   }
 
   /** Commits what the reader chose out of a bulk-upload preview — the confirm half only, since the preview itself needs

@@ -116,6 +116,14 @@ final case class QuotaSection(
   wordPairsPerUserHard: Int,
 )
 
+/** The pre-import language sanity check (`WordService.checkLanguage`). Before a bulk import the editor sends the pasted
+  * text here; the server samples `sampleSize` distinct words at random and looks each one up in the tag's two
+  * languages. More than `unrecognizedThreshold` of them in neither dictionary and the editor shows a "this may be the
+  * wrong language" warning the reader can override. Both numbers are config so a deployment with a thin dictionary can
+  * loosen them.
+  */
+final case class LanguageCheckSection(sampleSize: Int, unrecognizedThreshold: Int)
+
 /** `maxThreads` is handed straight to Netty's event loop group, where 0 means "decide for me" (2× available
   * processors), so that is the default here too.
   *
@@ -136,6 +144,7 @@ final case class AppConfig(
   captcha: CaptchaSection,
   netty: NettySection,
   quotas: QuotaSection,
+  languageCheck: LanguageCheckSection,
 ) {
   def appEnv: AppEnv        = AppEnv.parse(app.env)
   def isProduction: Boolean = appEnv == AppEnv.Production

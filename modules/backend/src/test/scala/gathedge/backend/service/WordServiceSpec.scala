@@ -16,6 +16,7 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
   Paging,
+  ReplacePairRequest,
   TagPairInput,
   TagPairWord,
   TaggedPair,
@@ -52,6 +53,17 @@ object WordServiceSpec extends ZIOSpecDefault {
           wordPairsPerUserHard = pairsHard,
         )
       })
+    })
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+      config ++ RateLimiter.live >+> WordService.live
+  }
+
+  /** `AppConfig.live` with `languageCheck` overridden — the pre-import language check's tests want a miss threshold low
+    * enough to trip with a short fixture.
+    */
+  private def layerWithLanguageCheck(sampleSize: Int, threshold: Int) = {
+    val config = AppConfig.live.project(cfg => {
+      cfg.copy(languageCheck = cfg.languageCheck.copy(sampleSize = sampleSize, unrecognizedThreshold = threshold))
     })
     (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
       config ++ RateLimiter.live >+> WordService.live
@@ -1838,12 +1850,210 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  private def tagEditorSpec = {
+    suite("tag editor")(
+      test("addPair writes a pair and tagEntries returns it as one ordered, hand-added row") {
+        for {
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          tag  <- createTag("editor", 1L)
+          _    <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text))) == List(("Haus", Some("ház"))),
+          rows.forall(r => !r.imported && !r.exact),
+        )
+      },
+      test("addPair creates a brand-new word on the fly") {
+        for {
+          tag  <- createTag("editor", 1L)
+          _    <- WordService.addPair(
+                    tag.id,
+                    TagPairInput(
+                      TagPairWord.New(WordLanguage.De, "Katze", PartOfSpeech.Noun, Some(Gender.Feminine)),
+                      TagPairWord.New(WordLanguage.Hu, "macska", PartOfSpeech.Noun, None),
+                    ),
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(r => (r.source.text, r.target.map(_.text))) == List(("Katze", Some("macska"))))
+      },
+      test("tagEntries keeps the order rows were added in") {
+        for {
+          tag  <- createTag("editor", 1L)
+          pair  = (a: String, b: String) => {
+                    WordService.addPair(
+                      tag.id,
+                      TagPairInput(
+                        TagPairWord.New(WordLanguage.En, a, PartOfSpeech.Other, None),
+                        TagPairWord.New(WordLanguage.De, b, PartOfSpeech.Other, None),
+                      ),
+                      1L,
+                    )
+                  }
+          _    <- pair("one", "eins")
+          _    <- pair("two", "zwei")
+          _    <- pair("three", "drei")
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(_.source.text) == List("one", "two", "three"))
+      },
+      test("replacePair swaps one side of a row in place") {
+        for {
+          a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+          b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          c    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Köter", gender = Some(Gender.Masculine)))
+          tag  <- createTag("editor", 1L)
+          _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
+          _    <- WordService.replacePair(
+                    tag.id,
+                    ReplacePairRequest(
+                      a.id,
+                      Some(b.id),
+                      TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(c.id)),
+                    ),
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(r => (r.source.text, r.target.map(_.text))) == List(("dog", Some("Köter"))))
+      },
+      test("removeEntry drops the row and its pairs") {
+        for {
+          a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+          b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          tag  <- createTag("editor", 1L)
+          _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
+          _    <- WordService.removeEntry(tag.id, a.id, None, 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.isEmpty)
+      },
+      test("removeEntry with a target drops only that translation's row, keeping the word's others") {
+        for {
+          dog    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+          hund   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          koeter <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Köter", gender = Some(Gender.Masculine)))
+          tag    <- createTag("editor", 1L)
+          _      <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(dog.id), TagPairWord.Existing(hund.id)), 1L)
+          _      <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(dog.id), TagPairWord.Existing(koeter.id)), 1L)
+          _      <- WordService.removeEntry(tag.id, dog.id, Some(hund.id), 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text))) == List(("dog", Some("Köter")))
+        )
+      },
+      test("removeEntry with a target frees the source word once its last pair goes") {
+        for {
+          a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+          b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          tag  <- createTag("editor", 1L)
+          _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
+          _    <- WordService.removeEntry(tag.id, a.id, Some(b.id), 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.isEmpty)
+      },
+      test("tagEntries answers TagNotFound for a tag that does not exist") {
+        WordService.tagEntries(9999L, 1L).either.map(result => assertTrue(result == Left(WordFailure.TagNotFound)))
+      },
+    ).provide(layer)
+  }
+
+  private def bulkImportSpec = {
+    suite("bulk import")(
+      test("an exact pair is marked exact, with both memberships imported, and shown as one row") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          _      <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
+          tag    <- createTag("import", 1L)
+          result <- WordService.bulkImport(tag.id, "Haus ház", WordLanguage.De, WordLanguage.Hu, 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) == List(
+            ("Haus", Some("ház"), true, true)
+          ),
+          result.exactPairs == 1,
+          result.added == 2,
+        )
+      },
+      test("a dictionary word with no pair in the text becomes an imported answer-less row") {
+        for {
+          _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag  <- createTag("import", 1L)
+          _    <- WordService.bulkImport(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target, r.imported, r.exact)) == List(("Haus", None, true, false))
+        )
+      },
+      test("a token in neither dictionary is created in the source language, imported, with no answer") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.bulkImport(tag.id, "brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.length == 1,
+          rows.head.source.language == WordLanguage.De,
+          rows.head.target.isEmpty,
+          rows.head.imported,
+          result.unmatched == 1,
+        )
+      },
+      test("rows keep the pasted text order, interleaving the two languages") {
+        for {
+          _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hello", pos = PartOfSpeech.Other))
+          _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "world"))
+          _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag  <- createTag("import", 1L)
+          _    <- WordService.bulkImport(tag.id, "hello Haus world", WordLanguage.En, WordLanguage.De, 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(_.source.text) == List("hello", "Haus", "world"))
+      },
+      test("bulk import answers TagNotFound for a tag that is not the caller's") {
+        for {
+          tag    <- createTag("import", 2L)
+          result <- WordService.bulkImport(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L).either
+        } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
+      },
+    ).provide(layer)
+  }
+
+  private def languageCheckSpec = {
+    suite("language check")(
+      test("text whose words are in the tag's two languages is acceptable") {
+        for {
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Katze"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "macska"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kutya"))
+          result <- WordService.checkLanguage("Haus Katze Hund ház macska kutya", WordLanguage.De, WordLanguage.Hu)
+        } yield assertTrue(result.acceptable, result.unrecognized == 0, result.sampled == 6)
+      },
+      test("text in neither language trips the miss threshold") {
+        for {
+          result <- WordService.checkLanguage("alpha beta gamma delta epsilon zeta", WordLanguage.De, WordLanguage.Hu)
+        } yield assertTrue(!result.acceptable, result.unrecognized == result.sampled, result.sampled == 6)
+      },
+      test("empty text is acceptable with a zero sample") {
+        for {
+          result <- WordService.checkLanguage("   ", WordLanguage.De, WordLanguage.Hu)
+        } yield assertTrue(result.acceptable, result.sampled == 0, result.unrecognized == 0)
+      },
+    ).provide(layerWithLanguageCheck(sampleSize = 20, threshold = 2))
+  }
+
   def spec = {
     suite("WordService (SQLite)")(
       coreSpec,
       genderSpec,
       quotaSpec,
       tagCreationSpec,
+      tagEditorSpec,
+      bulkImportSpec,
+      languageCheckSpec,
       bulkUploadSpec,
       suggestionsSpec,
       wordFormsSpec,

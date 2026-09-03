@@ -920,6 +920,58 @@ object UiKeys {
   /** Confirmation shown after the tag is saved, `{0}` being the tag name. */
   val tagsSaved: String = key("ui.tags.saved")
 
+  // -- Unified tag editor --------------------------------------------------------------------------
+  // The one screen for creating and editing a tag, every row saved as it is entered. See `TagEditorPage`.
+
+  /** The name a freshly minted, still-empty tag gets, shown until the reader renames it — a `tags` row like any other.
+    */
+  val tagsEditorDefaultName: String = key("ui.tags.editor.defaultName")
+
+  /** Heading above the add-a-row control. */
+  val tagsEditorAddHeading: String = key("ui.tags.editor.addHeading")
+
+  /** Shown in place of the rows table while the tag holds none (matching the active filter, if any). */
+  val tagsEditorEmpty: String = key("ui.tags.editor.empty")
+
+  /** Accessible label for a row's edit button, and the button that commits an in-progress row edit. */
+  val tagsEditorEditRow: String = key("ui.tags.editor.editRow")
+  val tagsEditorSaveRow: String = key("ui.tags.editor.saveRow")
+
+  /** The muted marker shown in a row's answer cell when it has no marked translation. */
+  val tagsEditorNoAnswer: String = key("ui.tags.editor.noAnswer")
+
+  /** Badge on a row whose membership a bulk import wrote. */
+  val tagsEditorImportedBadge: String = key("ui.tags.editor.importedBadge")
+
+  /** The multi-select filter above the rows; with none selected every row shows. */
+  val tagsEditorFilterHeading: String   = key("ui.tags.editor.filterHeading")
+  val tagsEditorFilterExact: String     = key("ui.tags.editor.filterExact")
+  val tagsEditorFilterNonExact: String  = key("ui.tags.editor.filterNonExact")
+  val tagsEditorFilterUnmatched: String = key("ui.tags.editor.filterUnmatched")
+
+  /** The bulk-import panel's toggle, its paste field, and its result line — `{0}` words written, `{1}` exact pairs,
+    * `{2}` tokens that matched no dictionary word.
+    */
+  val tagsEditorBulkButton: String      = key("ui.tags.editor.bulkButton")
+  val tagsEditorBulkPlaceholder: String = key("ui.tags.editor.bulkPlaceholder")
+  val tagsEditorBulkSubmit: String      = key("ui.tags.editor.bulkSubmit")
+  val tagsEditorBulkResult: String      = key("ui.tags.editor.bulkResult")
+
+  /** The one file input on the bulk-import panel: it takes a plain text file or a photo of a word list, and a photo is
+    * read in the browser with OCR before its text is imported.
+    */
+  val tagsEditorBulkFileHint: String = key("ui.tags.editor.bulkFileHint")
+
+  /** Shown when the server's language check recognised too few of the pasted or uploaded words — `{0}` is how many of
+    * the `{1}` sampled words were in neither of the tag's dictionaries, `{2}` the languages checked. The reader may
+    * import anyway or cancel.
+    */
+  val tagsEditorBulkLangMismatch: String = key("ui.tags.editor.bulkLangMismatch")
+  val tagsEditorBulkImportAnyway: String = key("ui.tags.editor.bulkImportAnyway")
+
+  /** Shown instead of the editing controls when the reader may view the tag but not change it. */
+  val tagsEditorReadOnly: String = key("ui.tags.editor.readOnly")
+
   // -- Guest accounts --------------------------------------------------------------------------
   // The banner a visitor who has tagged something sees, and the two ways out of it: a transfer code
   // for another machine, or a real account.

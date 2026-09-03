@@ -33,6 +33,10 @@ import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadMatch,
+  BulkImportRequest,
+  BulkImportResponse,
+  LanguageCheckRequest,
+  LanguageCheckResponse,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
   BulkUploadSelectedTranslation,
@@ -102,6 +106,9 @@ import gathedge.shared.dto.{
   TagImportRequest,
   TagImportResponse,
   TagImportResult,
+  TagEntry,
+  TagEntryResponse,
+  ReplacePairRequest,
   SharedViewer,
   SharedWithMe,
   ShareCodeResponse,
@@ -199,6 +206,13 @@ object ApiSchemas {
   given Schema[RenameTagRequest]              = DeriveSchema.gen[RenameTagRequest]
   given Schema[TagResponse]                   = DeriveSchema.gen[TagResponse]
   given Schema[PairSelectionResponse]         = DeriveSchema.gen[PairSelectionResponse]
+  given Schema[TagEntry]                      = DeriveSchema.gen[TagEntry]
+  given Schema[TagEntryResponse]              = DeriveSchema.gen[TagEntryResponse]
+  given Schema[ReplacePairRequest]            = DeriveSchema.gen[ReplacePairRequest]
+  given Schema[BulkImportRequest]             = DeriveSchema.gen[BulkImportRequest]
+  given Schema[BulkImportResponse]            = DeriveSchema.gen[BulkImportResponse]
+  given Schema[LanguageCheckRequest]          = DeriveSchema.gen[LanguageCheckRequest]
+  given Schema[LanguageCheckResponse]         = DeriveSchema.gen[LanguageCheckResponse]
   given Schema[BulkUploadMatch]               = DeriveSchema.gen[BulkUploadMatch]
   given Schema[BulkUploadPreviewRequest]      = DeriveSchema.gen[BulkUploadPreviewRequest]
   given Schema[BulkUploadPreviewResponse]     = DeriveSchema.gen[BulkUploadPreviewResponse]

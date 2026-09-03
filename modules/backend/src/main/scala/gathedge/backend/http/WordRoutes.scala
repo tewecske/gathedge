@@ -5,17 +5,21 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkImportRequest,
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
   BulkUploadPreviewRequest,
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
+  LanguageCheckRequest,
   Paging,
   RenameTagRequest,
+  ReplacePairRequest,
   SetGenderRequest,
   SortDirection,
   TagImportRequest,
+  TagPairInput,
 }
 import zio.*
 import zio.http.*
@@ -231,6 +235,56 @@ object WordRoutes {
     )
   }
 
+  private val tagEntriesRoute = {
+    WordEndpoints.tagEntries.implementHandler(
+      handler((tagId: Long) => userId.flatMap(id => WordService.tagEntries(tagId, id).mapError(ApiFailures.word)))
+    )
+  }
+
+  private val addPairRoute = {
+    WordEndpoints.addPair.implementHandler(
+      handler { (tagId: Long, body: TagPairInput) =>
+        userId.flatMap(id => WordService.addPair(tagId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val replacePairRoute = {
+    WordEndpoints.replacePair.implementHandler(
+      handler { (tagId: Long, body: ReplacePairRequest) =>
+        userId.flatMap(id => WordService.replacePair(tagId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val deletePairRoute = {
+    WordEndpoints.deletePair.implementHandler(
+      handler { (tagId: Long, sourceWordId: Long, targetWordId: Option[Long]) =>
+        userId.flatMap(id => WordService.removeEntry(tagId, sourceWordId, targetWordId, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val bulkImportRoute = {
+    WordEndpoints.bulkImport.implementHandler(
+      handler { (tagId: Long, body: BulkImportRequest) =>
+        userId.flatMap(id => {
+          WordService
+            .bulkImport(tagId, body.content, body.sourceLanguage, body.targetLanguage, id)
+            .mapError(ApiFailures.bulkUpload)
+        })
+      }
+    )
+  }
+
+  private val languageCheckRoute = {
+    WordEndpoints.languageCheck.implementHandler(
+      handler { (body: LanguageCheckRequest) =>
+        userId.flatMap(_ => WordService.checkLanguage(body.content, body.sourceLanguage, body.targetLanguage))
+      }
+    )
+  }
+
   private val bulkUploadPreviewRoute = {
     WordEndpoints.bulkUploadPreview.implementHandler(
       handler { (tagId: Long, body: BulkUploadPreviewRequest) =>
@@ -289,6 +343,12 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
+      tagEntriesRoute,
+      addPairRoute,
+      replacePairRoute,
+      deletePairRoute,
+      bulkImportRoute,
+      languageCheckRoute,
       bulkUploadPreviewRoute,
       bulkUploadConfirmRoute,
     ) @@ RouteSupport.authenticated

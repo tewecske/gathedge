@@ -1,8 +1,9 @@
 package gathedge.backend.service
 
-import gathedge.backend.config.{AppConfig, QuotaSection}
+import gathedge.backend.config.{AppConfig, LanguageCheckSection, QuotaSection}
 import gathedge.backend.db.{
   GroupRepository,
+  TagEntryRow,
   TagRow,
   TextSearch,
   WordFormRow,
@@ -25,6 +26,8 @@ import gathedge.shared.domain.{
   WordLanguage,
 }
 import gathedge.shared.dto.{
+  BulkImportResponse,
+  LanguageCheckResponse,
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadMatch,
@@ -33,6 +36,9 @@ import gathedge.shared.dto.{
   BulkUploadSuggestion,
   CreateWordRequest,
   NewTranslation,
+  ReplacePairRequest,
+  TagEntry,
+  TagEntryResponse,
   TagExportEntry,
   TagExportFile,
   TagExportTag,
@@ -237,6 +243,61 @@ trait WordService {
   /** Unmarks it. Both words keep the tag: taking a word out of a vocabulary is the tick's job. */
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long, userId: Long): IO[WordFailure, Unit]
 
+  // -- The unified tag editor --------------------------------------------------------------------
+
+  /** One tag's rows for the editor, in the order they were added (a bulk import keeps the pasted text's order). Any
+    * signed-in caller may read them — tag contents are world-visible — so `TagNotFound` is only an id that names
+    * nothing, not somebody else's tag.
+    */
+  def tagEntries(tagId: Long, userId: Long): IO[WordFailure, List[TagEntry]]
+
+  /** Adds one bilingual pair to a tag, written straight away. Either side may be a brand-new word, created on the fly.
+    * Charges the pair quota exactly as [[selectPair]] does — the tag owner's, not the caller's, and never for a pair
+    * already marked. On the first row it also fixes the tag's language pair, which locks from then on.
+    */
+  def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse]
+
+  /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
+    * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair's `exact`
+    * flag is cleared: a hand-edited pair is no longer an exact import match.
+    */
+  def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse]
+
+  /** Removes one editor row. With `targetWordId`, only that one `(source, target)` practice pair goes, both directions,
+    * and a side is dropped only when the tag pairs it with nothing else and did not import it — so a word with several
+    * marked translations keeps its other rows. Without it — an answer-less row — the source word and every pair naming
+    * it go, and any orphaned answer word too (unless it was imported). Idempotent either way.
+    */
+  def removeEntry(tagId: Long, sourceWordId: Long, targetWordId: Option[Long], userId: Long): IO[WordFailure, Unit]
+
+  /** Tokenizes `content`, matches it against the dictionary in both languages, and writes the result into the tag in
+    * text order: an exact pair (a word and its dictionary translation both present) is marked with an "exact" flag;
+    * every other token becomes an answer-less row — a dictionary word tagged as-is, or a new `sourceLanguage` word.
+    * Every membership it writes is flagged "imported". No preview: the reader reviews on the editor with its filters.
+    *
+    * Not pair-quota-gated, for the same reason [[bulkUploadConfirm]] is not — a batch a reader confirmed is not the
+    * place to refuse half of it. Shares [[bulkUploadPreview]]'s rate-limit budget and token cap.
+    */
+  def bulkImport(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, BulkImportResponse]
+
+  /** Samples up to `AppConfig.languageCheck.sampleSize` distinct words from `content` and looks each one up in
+    * `sourceLanguage`'s and `targetLanguage`'s dictionaries, in one query per language. Answers how many were sampled,
+    * how many were in neither, and whether that miss count is within `AppConfig.languageCheck.unrecognizedThreshold` —
+    * the editor warns before a [[bulkImport]] when it is not. Writes nothing; names no tag, so it needs no
+    * `requireEditableTag`. Empty text is `acceptable` with a zero sample.
+    */
+  def checkLanguage(
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): UIO[LanguageCheckResponse]
+
   /** Scans `content` for words already in the dictionary, in each of `sourceLanguage` and `targetLanguage` — matching
     * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers what it found: every match,
     * with whichever of its translations into the *other* declared language the dictionary already has, plus every token
@@ -414,6 +475,43 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
 
+  def tagEntries(tagId: Long, userId: Long): ZIO[WordService, WordFailure, List[TagEntry]] =
+    ZIO.serviceWithZIO[WordService](_.tagEntries(tagId, userId))
+
+  def addPair(tagId: Long, pair: TagPairInput, userId: Long): ZIO[WordService, WordFailure, TagEntryResponse] =
+    ZIO.serviceWithZIO[WordService](_.addPair(tagId, pair, userId))
+
+  def replacePair(
+    tagId: Long,
+    request: ReplacePairRequest,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagEntryResponse] =
+    ZIO.serviceWithZIO[WordService](_.replacePair(tagId, request, userId))
+
+  def removeEntry(
+    tagId: Long,
+    sourceWordId: Long,
+    targetWordId: Option[Long],
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.removeEntry(tagId, sourceWordId, targetWordId, userId))
+
+  def bulkImport(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): ZIO[WordService, BulkUploadFailure, BulkImportResponse] =
+    ZIO.serviceWithZIO[WordService](_.bulkImport(tagId, content, sourceLanguage, targetLanguage, userId))
+
+  def checkLanguage(
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): URIO[WordService, LanguageCheckResponse] =
+    ZIO.serviceWithZIO[WordService](_.checkLanguage(content, sourceLanguage, targetLanguage))
+
   def bulkUploadPreview(
     tagId: Long,
     content: String,
@@ -484,7 +582,7 @@ object WordService {
 
   val live: URLayer[WordRepository & GroupRepository & AppConfig & RateLimiter, WordService] = {
     ZLayer.fromFunction((repo: WordRepository, groupRepo: GroupRepository, config: AppConfig, limiter: RateLimiter) =>
-      WordServiceLive(repo, groupRepo, config.quotas, limiter)
+      WordServiceLive(repo, groupRepo, config.quotas, config.languageCheck, limiter)
     )
   }
 
@@ -543,6 +641,7 @@ final case class WordServiceLive(
   repo: WordRepository,
   groupRepo: GroupRepository,
   quotas: QuotaSection,
+  languageCheck: LanguageCheckSection,
   limiter: RateLimiter,
 ) extends WordService {
 
@@ -1387,6 +1486,117 @@ final case class WordServiceLive(
     } yield ()
   }
 
+  // -- The unified tag editor -------------------------------------------------------------------
+
+  /** [[TagEntryRow]]s dressed for the wire: each source word's other known translations into the tag's target language
+    * become the row's `otherTranslations` (the edited row's target picker reads them), the marked answer excluded. One
+    * batch query for the whole list.
+    */
+  private def toTagEntries(tag: TagRow, rows: List[TagEntryRow]): UIO[List[TagEntry]] = {
+    val targetLang = tag.targetLanguage.flatMap(WordLanguage.fromString)
+    val knownZ     = targetLang match {
+      case Some(language) => translationsInto(rows.map(_.source.id).distinct, language)
+      case None           => ZIO.succeed(Map.empty[Long, List[TranslationOption]])
+    }
+    knownZ.map { known =>
+      rows.map { row =>
+        val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
+        TagEntry(toDomain(row.source), row.target.map(toDomain), row.imported, row.exact, others)
+      }
+    }
+  }
+
+  private def oneTagEntry(tag: TagRow, row: TagEntryRow): UIO[TagEntry] = {
+    toTagEntries(tag, List(row)).map(_.head)
+  }
+
+  /** The row `(sourceId, targetId)` as the editor will show it after a write — read back from
+    * [[gathedge.backend.db.WordRepository.tagEntries]] so `imported`/`exact` are whatever the write left them, with a
+    * plain fallback for the rare stale-read case.
+    */
+  private def entryAfterWrite(tag: TagRow, sourceId: Long, targetId: Option[Long]): UIO[TagEntry] = {
+    for {
+      rows   <- repo.tagEntries(tag.id).orDie
+      source <- repo.findWordById(sourceId).orDie
+      target <- targetId match {
+                  case Some(id) => repo.findWordById(id).orDie
+                  case None     => ZIO.succeed(None)
+                }
+      found   = rows.find(row => row.source.id == sourceId && row.target.map(_.id) == targetId)
+      row     = found.orElse(source.map(s => TagEntryRow(s, target, imported = false, exact = false)))
+      entry  <- row match {
+                  case Some(r) => oneTagEntry(tag, r)
+                  case None    =>
+                    ZIO.succeed(
+                      TagEntry(Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None), None, false, false, Nil)
+                    )
+                }
+    } yield entry
+  }
+
+  def tagEntries(tagId: Long, userId: Long): IO[WordFailure, List[TagEntry]] = {
+    for {
+      tag  <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      rows <- repo.tagEntries(tagId).orDie
+      out  <- toTagEntries(tag, rows)
+    } yield out
+  }
+
+  def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
+    for {
+      tag                 <- requireEditableTag(tagId, userId)
+      checked             <- checkPair(pair)
+      resolved            <- createPair(checked, userId)
+      (sourceId, targetId) = resolved
+      already             <- pairAlreadyMarked(userId, sourceId, tagId, targetId)
+      warning             <- if (already) ZIO.succeed(None)
+                             else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
+      _                   <- pairInTag(sourceId, tagId, targetId)
+      sourceRow           <- repo.findWordById(sourceId).orDie.someOrFail(WordFailure.NotFound)
+      targetRow           <- repo.findWordById(targetId).orDie.someOrFail(WordFailure.NotFound)
+      _                   <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
+      refreshed           <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      entry               <- entryAfterWrite(refreshed, sourceId, Some(targetId))
+    } yield TagEntryResponse(entry, warning)
+  }
+
+  def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {
+    for {
+      tag                       <- requireEditableTag(tagId, userId)
+      checked                   <- checkPair(TagPairInput(request.next.source, request.next.target))
+      resolved                  <- createPair(checked, userId)
+      (newSourceId, newTargetId) = resolved
+      already                   <- pairAlreadyMarked(userId, newSourceId, tagId, newTargetId)
+      // A genuine swap is net-zero on `word_tag_pairs`; only filling in a row that had no pair is a new charge.
+      warning                   <- if (already || request.oldTargetWordId.isDefined) ZIO.succeed(None)
+                                   else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
+      now                       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _                         <- repo
+                                     .replacePair(tagId, request.oldSourceWordId, request.oldTargetWordId, newSourceId, newTargetId, now)
+                                     .orDie
+      sourceRow                 <- repo.findWordById(newSourceId).orDie.someOrFail(WordFailure.NotFound)
+      targetRow                 <- repo.findWordById(newTargetId).orDie.someOrFail(WordFailure.NotFound)
+      _                         <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
+      refreshed                 <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      entry                     <- entryAfterWrite(refreshed, newSourceId, Some(newTargetId))
+    } yield TagEntryResponse(entry, warning)
+  }
+
+  def removeEntry(
+    tagId: Long,
+    sourceWordId: Long,
+    targetWordId: Option[Long],
+    userId: Long,
+  ): IO[WordFailure, Unit] = {
+    for {
+      _ <- requireEditableTag(tagId, userId)
+      _ <- targetWordId match {
+             case Some(targetId) => repo.removePair(tagId, sourceWordId, targetId).orDie
+             case None           => repo.removeEntry(tagId, sourceWordId).orDie
+           }
+    } yield ()
+  }
+
   /** Unicode-letter runs, lowercased and deduplicated in the order they first appear, capped at
     * [[WordService.maxBulkUploadTokens]] — what turns an uploaded file's raw text into candidate dictionary words.
     * Apostrophes and hyphens are kept mid-word (`don't`, `mother-in-law`) but never lead a token.
@@ -1498,7 +1708,7 @@ final case class WordServiceLive(
     * same `TagNotFound` a caller of [[tagWord]]/[[selectPair]] gets — bulk-uploading is content editing like they are,
     * so it goes through [[requireEditableTag]] too: the owner, or any member of the tag's group.
     */
-  private def bulkUploadGuard(tagId: Long, userId: Long): IO[BulkUploadFailure, Unit] = {
+  private def bulkUploadGuard(tagId: Long, userId: Long): IO[BulkUploadFailure, TagRow] = {
     val rateLimitKey = RateLimitKey.wordUpload(userId)
     for {
       blocked <- limiter.isBlocked(rateLimitKey)
@@ -1507,8 +1717,136 @@ final case class WordServiceLive(
                      ZIO.fail(BulkUploadFailure.RateLimited)
                  }
       _       <- limiter.recordFailure(rateLimitKey)
-      _       <- requireEditableTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
-    } yield ()
+      tag     <- requireEditableTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
+    } yield tag
+  }
+
+  /** Tokenizes `content` and writes every token into the tag in text order — the review-free replacement for the
+    * [[bulkUploadPreview]]/[[bulkUploadConfirm]] round-trip. An exact pair (a source word and its dictionary
+    * translation into the target language both present in the text) is marked with the pair's `exact` flag; a source-
+    * or target-language match with no such pair is tagged answer-less; a token in neither dictionary becomes a new
+    * `sourceLanguage` word, tagged answer-less. Every membership carries the `imported` flag. Homonyms are collapsed
+    * the same way [[bulkUploadPreview]] collapses them.
+    */
+  def bulkImport(
+    tagId: Long,
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, BulkImportResponse] = {
+    val invalidFile =
+      BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+    val languages   = List(sourceLanguage, targetLanguage)
+    val bareIn      = (language: WordLanguage) => (s: String) => stripArticle(s, language)._1.toLowerCase
+
+    def tagAnswerless(wordId: Long, now: Long): UIO[List[Long]] =
+      repo.importWord(wordId, tagId, now).orDie.as(List(wordId))
+
+    def markExact(sourceId: Long, targetWordId: Long, now: Long): UIO[List[Long]] =
+      repo.importPair(sourceId, tagId, targetWordId, now).orDie.as(List(sourceId, targetWordId))
+
+    def createAndTag(display: String, now: Long): UIO[List[Long]] = {
+      val (bare, gender) = stripArticle(display, sourceLanguage)
+      val profile        = LanguageProfile.of(sourceLanguage)
+      val text           = profile.capitalize(bare, gender)
+      val partOfSpeech   = if (gender.isDefined) PartOfSpeech.Noun else PartOfSpeech.Other
+      ensure(sourceLanguage, text, partOfSpeech, gender, userId)
+        .flatMap(row => repo.importWord(row.id, tagId, now).orDie.as(List(row.id)))
+        .catchAll(_ => ZIO.succeed(Nil))
+    }
+
+    for {
+      _                       <- bulkUploadGuard(tagId, userId)
+      trimmed                  = content.trim
+      _                       <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
+                                   ZIO.fail(invalidFile)
+                                 )
+      tokens                   = tokenize(trimmed, languages)
+      sourceMatched           <- matchTokens(sourceLanguage, tokens)
+      (sourceMatchesRaw, rem1) = sourceMatched
+      targetMatched           <- matchTokens(targetLanguage, rem1)
+      (targetMatchesRaw, rem2) = targetMatched
+      unmatched                = dedupeArticledVariants(rem2, languages)
+      sourceTranslations      <- translationsInto(sourceMatchesRaw.map(_.id), targetLanguage)
+      targetTranslations      <- translationsInto(targetMatchesRaw.map(_.id), sourceLanguage)
+      sourceMatches            = collapseHomonyms(sourceMatchesRaw, sourceTranslations)
+      targetMatches            = collapseHomonyms(targetMatchesRaw, targetTranslations)
+      importedTargetIds        = targetMatches.map(_.id).toSet
+      exactBySource            = sourceMatches.flatMap { row =>
+                                   sourceTranslations
+                                     .getOrElse(row.id, Nil)
+                                     .find(option => importedTargetIds.contains(option.wordId))
+                                     .map(option => row.id -> option.wordId)
+                                 }.toMap
+      dupTargetIds             = exactBySource.values.toSet
+      now                     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      tokenPos                 = (row: WordRow, language: WordLanguage) =>
+                                   tokens.indexWhere(token => stripArticle(token, language)._1 == row.textNorm)
+      exactActions             = exactBySource.toList.flatMap { case (sourceId, targetWordId) =>
+                                   sourceMatches
+                                     .find(_.id == sourceId)
+                                     .map(row => tokenPos(row, sourceLanguage) -> markExact(sourceId, targetWordId, now))
+                                 }
+      sourceWordActions        = sourceMatches
+                                   .filterNot(row => exactBySource.contains(row.id))
+                                   .map(row => tokenPos(row, sourceLanguage) -> tagAnswerless(row.id, now))
+      targetWordActions        = targetMatches
+                                   .filterNot(row => dupTargetIds.contains(row.id))
+                                   .map(row => tokenPos(row, targetLanguage) -> tagAnswerless(row.id, now))
+      unmatchedActions         = unmatched.map { display =>
+                                   val bare = bareIn(sourceLanguage)(display)
+                                   val pos  = tokens.indexWhere(token => bareIn(sourceLanguage)(token) == bare)
+                                   (if (pos < 0) tokens.size else pos) -> createAndTag(display, now)
+                                 }
+      ordered                  = (exactActions ++ sourceWordActions ++ targetWordActions ++ unmatchedActions)
+                                   .sortBy(_._1)
+                                   .map(_._2)
+      written                 <- ZIO.foreach(ordered)(identity)
+      _                       <- repo
+                                   .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+                                   .orDie
+    } yield BulkImportResponse(written.flatten.toSet.size, exactBySource.size, unmatched.size)
+  }
+
+  /** Samples the pasted text and reports whether enough of it is in the tag's two languages. Tokenized the same way a
+    * real [[bulkImport]] would tokenize it (so an article-led German noun counts once), a random
+    * [[LanguageCheckSection.sampleSize]] of the distinct tokens is looked up by bare word — one
+    * [[WordRepository.findWordsByKeys]] query per language, the "one query, not N" shape [[matchTokens]] uses — and a
+    * token in neither result set is a miss. `acceptable` is false once the misses pass
+    * [[LanguageCheckSection.unrecognizedThreshold]].
+    */
+  def checkLanguage(
+    content: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): UIO[LanguageCheckResponse] = {
+    val languages = List(sourceLanguage, targetLanguage)
+    val tokens    = tokenize(content.trim, languages)
+    if (tokens.isEmpty) {
+      ZIO.succeed(LanguageCheckResponse(sampled = 0, unrecognized = 0, acceptable = true))
+    } else {
+      def bareKeys(sample: List[String], language: WordLanguage): List[String] =
+        sample.map(token => stripArticle(token, language)._1)
+
+      def norms(language: WordLanguage, keys: List[String]): UIO[Set[String]] =
+        repo.findWordsByKeys(WordLanguage.code(language), keys).orDie.map(_.map(_.textNorm).toSet)
+
+      for {
+        shuffled <- Random.shuffle(tokens)
+        sample    = shuffled.take(languageCheck.sampleSize)
+        srcNorms <- norms(sourceLanguage, bareKeys(sample, sourceLanguage))
+        tgtNorms <- norms(targetLanguage, bareKeys(sample, targetLanguage))
+        misses    = sample.count(token => {
+                      !srcNorms.contains(stripArticle(token, sourceLanguage)._1) &&
+                      !tgtNorms.contains(stripArticle(token, targetLanguage)._1)
+                    })
+      } yield LanguageCheckResponse(
+        sampled = sample.size,
+        unrecognized = misses,
+        acceptable = misses <= languageCheck.unrecognizedThreshold,
+      )
+    }
   }
 
   /** The tokens already in the dictionary for `language`, and whatever is left. Looks each token up by its bare word
