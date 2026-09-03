@@ -193,6 +193,72 @@ final case class TagResponse(tag: Tag, warning: Option[MessageRef]) derives Json
   */
 final case class PairSelectionResponse(warning: Option[MessageRef]) derives JsonCodec
 
+/** One row of the unified tag editor ([[gathedge.shared.api.WordEndpoints.tagEntries]]): a source word, the answer
+  * translation marked for it inside this tag (absent for an "unmatched" row that has no pair yet), and the two import
+  * provenance flags. `imported` is on the source word's membership, `exact` on the pair.
+  *
+  * The editor's three filters are derived from the flags alone: `exact` = `exact`; `non-exact` = `imported` with a
+  * `target` but not `exact`; `unmatched` = `imported` with no `target`. A row with `imported = false` was added by hand
+  * and shows only when no filter is active.
+  *
+  * `otherTranslations` are the source word's other known translations into the tag's target language — what the target
+  * picker's chip row offers when the row is edited. Ordered best-first, the marked answer excluded.
+  */
+final case class TagEntry(
+  source: Word,
+  target: Option[Word],
+  imported: Boolean,
+  exact: Boolean,
+  otherTranslations: List[TranslationOption],
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addPair]]/`.replacePair`'s answer: the row as it now stands, plus the same
+  * soft-quota warning [[PairSelectionResponse]] carries when the write crossed the pair quota's soft threshold.
+  */
+final case class TagEntryResponse(entry: TagEntry, warning: Option[MessageRef]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
+  * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may
+  * be an existing word or one to create.
+  */
+final case class ReplacePairRequest(
+  oldSourceWordId: Long,
+  oldTargetWordId: Option[Long],
+  next: TagPairInput,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkImport]]'s body: the pasted/uploaded free text and the two languages to scan
+  * it for. Unlike the old preview/confirm round-trip this writes straight away — every token becomes a row in the tag,
+  * in text order — and the reader reviews the result on the editor with its filters.
+  */
+final case class BulkImportRequest(
+  content: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.bulkImport]]'s answer: how many distinct words the import tagged or created, how
+  * many exact pairs it marked, and how many tokens matched no dictionary word (created as answer-less rows).
+  */
+final case class BulkImportResponse(added: Int, exactPairs: Int, unmatched: Int) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.languageCheck]]'s body: the free text a reader is about to bulk-import, and the
+  * tag's two declared languages. The server samples a fixed number of distinct words from the text and looks each one
+  * up in both languages' dictionaries; if too few are recognised, the editor warns that the text may be the wrong
+  * language before the import runs.
+  */
+final case class LanguageCheckRequest(
+  content: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.languageCheck]]'s answer: how many distinct words were sampled, how many of them
+  * were in neither declared language's dictionary, and whether that count is low enough to import without a warning.
+  * The sample size and the tolerated miss count are server config (the `language-check` section).
+  */
+final case class LanguageCheckResponse(sampled: Int, unrecognized: Int, acceptable: Boolean) derives JsonCodec
+
 /** What a bulk upload preview asks: the file's raw text, and which two languages to scan it for.
   *
   * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUploadPreview]]

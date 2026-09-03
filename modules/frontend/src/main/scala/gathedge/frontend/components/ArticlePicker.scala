@@ -23,9 +23,17 @@ object ArticlePicker {
             nameAttr   := groupName,
             aria.label := article,
             controlled(
-              checked <-- textVar.signal.map(_.toLowerCase.startsWith(article + " ")),
+              checked <-- textVar.signal.map { text =>
+                val low = text.trim.toLowerCase
+                low == article || low.startsWith(article + " ")
+              },
               onClick.mapToUnit --> Observer[Unit] { _ =>
-                textVar.set(s"$article ${profile.strip(textVar.now())._1}")
+                // `strip` leaves a lone article untouched (by design — "der" alone is not a gendered word), so switching
+                // articles on a field that holds only one has to drop it here, or the new one lands in front of the old.
+                val current = textVar.now().trim
+                val bare    =
+                  if (profile.articleForms.contains(current.toLowerCase)) "" else profile.strip(current)._1
+                textVar.set(s"$article $bare")
                 refocus()
               },
             ),

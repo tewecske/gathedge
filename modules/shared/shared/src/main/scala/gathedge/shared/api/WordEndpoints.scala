@@ -3,6 +3,8 @@ package gathedge.shared.api
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  BulkImportRequest,
+  BulkImportResponse,
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
   BulkUploadPreviewRequest,
@@ -10,12 +12,18 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
+  LanguageCheckRequest,
+  LanguageCheckResponse,
   PairSelectionResponse,
   RenameTagRequest,
+  ReplacePairRequest,
   SetGenderRequest,
+  TagEntry,
+  TagEntryResponse,
   TagExportFile,
   TagImportRequest,
   TagImportResponse,
+  TagPairInput,
   TagResponse,
   WordDetail,
   WordPage,
@@ -43,6 +51,7 @@ object WordEndpoints {
   private val wordId        = PathCodec.long("id")
   private val tagId         = PathCodec.long("tagId")
   private val translationId = PathCodec.long("translationId")
+  private val sourceWordId  = PathCodec.long("sourceWordId")
 
   /** A `words.id`, and deliberately not the same thing as [[translationId]] above, which is a `word_translations.id` —
     * an edge somebody recorded. A practice answer names the word itself, because the answer belongs to the reader's tag
@@ -66,6 +75,8 @@ object WordEndpoints {
   private val mineQuery     = HttpCodec.query[Boolean]("mine").optional
   private val trQuery       = HttpCodec.query[String]("tr").optional
   private val mainQuery     = HttpCodec.query[Boolean]("main").optional
+
+  private val targetWordIdQuery = HttpCodec.query[Long]("targetWordId").optional
 
   /** The browse-and-tag listing, paged and counted by the database.
     *
@@ -325,6 +336,86 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
+  /** The unified tag editor's rows, in the order they were added (a bulk import keeps the pasted text's order): each
+    * source word, the answer translation marked for it in this tag if any, and the two import provenance flags. Any
+    * signed-in caller may read a tag's rows — tag contents are world-visible — so 404 is only an id that names nothing.
+    */
+  val tagEntries = {
+    Endpoint(Method.GET / "api" / "tags" / tagId / "entries").withCodecError
+      .out[List[TagEntry]]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Adds one bilingual pair to a tag, saved immediately — the unified editor's add-row action. Either side may be a
+    * brand-new word (`TagPairWord.New`), created on the fly, exactly as [[createTagWithPairs]] allows. 404 is a tag
+    * that is not the caller's (or their group's) or a `TagPairWord.Existing` naming no word; 409 is the pair quota's
+    * hard limit, with a soft-threshold crossing carried as a warning on the answer instead.
+    */
+  val addPair = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "pairs")
+      .in[TagPairInput]
+      .withCodecError
+      .out[TagEntryResponse](Status.Created)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Replaces one editor row's pair in place — the row's inline edit. The body names the row (its old source word id,
+    * and its old answer word id when it had one) and the pair it should become. The pair's `exact` flag is cleared: a
+    * hand-edited pair is no longer an exact import match. Same 404/409 rules as [[addPair]].
+    */
+  val replacePair = {
+    Endpoint(Method.PUT / "api" / "tags" / tagId / "pairs")
+      .in[ReplacePairRequest]
+      .withCodecError
+      .out[TagEntryResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Removes one editor row. `targetWordId` names the row's answer half: with it, only that one practice pair goes
+    * (both directions), and each side's membership is dropped only when the tag no longer pairs it — so a word with
+    * several marked translations keeps its other rows. Without it — an answer-less row — the source word and every pair
+    * naming it go, the same effect as [[untagWord]]. Idempotent either way.
+    */
+  val deletePair = {
+    Endpoint(Method.DELETE / "api" / "tags" / tagId / "pairs" / sourceWordId)
+      .query(targetWordIdQuery)
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Tokenizes free text, matches it against the dictionary in both declared languages, and '''writes the result
+    * straight into the tag''' in text order: an exact pair (a word and its dictionary translation both present) is
+    * marked as a practice pair with an "exact" flag; every other token becomes an answer-less row — a dictionary word
+    * tagged as-is, or a new word created in `sourceLanguage`. Every membership it writes carries an "imported" flag.
+    * The reader reviews the result on the editor with its filters — there is no preview round-trip.
+    *
+    * 404 is the tag, whoever's it is. 429 is `RateLimitKey.wordUpload`'s budget: one call can scan up to
+    * `WordService.maxBulkUploadTokens` tokens.
+    */
+  val bulkImport = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "bulk-import")
+      .in[BulkImportRequest]
+      .withCodecError
+      .out[BulkImportResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
+  }
+
+  /** Samples a fixed number of distinct words from `content` and looks each one up in `sourceLanguage`'s and
+    * `targetLanguage`'s dictionaries. Answers how many were sampled, how many matched neither, and whether that miss
+    * count is inside the tolerance — the editor calls this before a [[bulkImport]] and warns the reader when
+    * `acceptable` is false, so a German paste into an English→Hungarian tag is caught server-side rather than guessed
+    * at in the browser. '''Writes nothing'''. The sample size and the tolerated miss count are server config (the
+    * `language-check` config section). No 404: it names no tag.
+    */
+  val languageCheck = {
+    Endpoint(Method.POST / "api" / "words" / "language-check")
+      .in[LanguageCheckRequest]
+      .withCodecError
+      .out[LanguageCheckResponse]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   /** Scans an uploaded file's free text for words already in the dictionary, in each of the two languages named —
     * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers every match, with its known
     * translations into the other language, plus every token that matched neither. '''Writes nothing''': this is the
@@ -381,6 +472,12 @@ object WordEndpoints {
       untagWord,
       selectPair,
       deselectPair,
+      tagEntries,
+      addPair,
+      replacePair,
+      deletePair,
+      bulkImport,
+      languageCheck,
       bulkUploadPreview,
       bulkUploadConfirm,
     )

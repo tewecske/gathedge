@@ -176,6 +176,12 @@ final case class WordFormRow(
   * content; see `WordService.requireEditableTag`. `userId` is unaffected either way: the tag still has exactly one
   * owner, who alone may rename or delete it.
   */
+/** `sourceLanguage`/`targetLanguage` are the tag's fixed language pair (`WordLanguage.code` strings), decided the first
+  * time a row is added and locked afterwards — see `WordRepository.setTagLanguages`. They tell the editor and a later
+  * import which side of a bidirectional `word_tag_pairs` row is the "source". `None` on a freshly minted empty tag and
+  * on every tag that predates the unified editor. Defaulted, like `groupId`, so positional construction keeps
+  * compiling.
+  */
 final case class TagRow(
   id: Long,
   userId: Long,
@@ -183,6 +189,8 @@ final case class TagRow(
   nameNorm: String,
   createdAt: Long,
   groupId: Option[Long] = None,
+  sourceLanguage: Option[String] = None,
+  targetLanguage: Option[String] = None,
 )
 
 /** A classroom-style group of accounts collaborating on shared tags. `inviteCode` is a bearer credential — like
@@ -203,7 +211,11 @@ final case class GroupMemberRow(id: Long, groupId: Long, userId: Long, role: Str
 /** One word carrying one tag — and, since a tag belongs to exactly one account, the whole of what "this word is in my
   * vocabulary" means.
   */
-final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long)
+/** `imported` marks a membership a bulk import wrote rather than one added by hand — scoped to this (word, tag) row.
+  * Defaulted so positional construction (test fixtures included) keeps compiling; every row that predates the unified
+  * editor reads as `false`, which is what it was.
+  */
+final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long, imported: Boolean = false)
 
 /** One translation of one word, marked as a practice answer inside one tag.
   *
@@ -214,8 +226,25 @@ final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long
   * `(ház, lesson1, Haus)`, so a prompt works either way round with no union. Both words also carry the tag, since a
   * pair whose answer is not itself collected is a question with a missing half — which is why this is written through
   * `WordRepository.pairTranslation` rather than a bare insert.
+  *
+  * `exact` marks a pair a bulk import matched exactly — the word and its dictionary translation were both in the
+  * uploaded text. History, not state; defaulted `false` for every hand-marked pair and every pair that predates the
+  * unified editor.
   */
-final case class WordTagPairRow(id: Long, wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long)
+final case class WordTagPairRow(
+  id: Long,
+  wordId: Long,
+  tagId: Long,
+  translationWordId: Long,
+  createdAt: Long,
+  exact: Boolean = false,
+)
+
+/** One row of the unified tag editor, assembled by `WordRepository.tagEntries`: the source word, its marked answer
+  * (absent for an "unmatched" row), whether a bulk import wrote the membership, and whether it wrote the pair as an
+  * exact match. Not a table — a projection the editor and its filters read.
+  */
+final case class TagEntryRow(source: WordRow, target: Option[WordRow], imported: Boolean, exact: Boolean)
 
 /** A guest account's transfer code. The `code` column *is* the bearer credential, like `SessionRow.id`: it must never
   * reach a log line, and it is answered to its owner exactly once, when it is minted.
