@@ -7,8 +7,8 @@ import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, GuestBanner, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{GameMode, LanguageProfile}
-import gathedge.shared.dto.{GamePrompt, GameResults, GameVariantDto}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, LanguageProfile}
+import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -18,10 +18,11 @@ import org.scalajs.dom
   * (rename/share/QR/tags) — that stays on the picker page, which is always reachable via the finished screen's "Back to
   * games" or a fresh "Play again".
   *
-  * One prompt is shown at a time, with a "3 of 12" progress line and nothing else about how the game is going —
-  * `GameEndpoints.submitAnswer`'s doc comment is why: a player is never shown correctness mid-game, and that includes
-  * the running score. Once the play is finished, the score and the full answer history become the point of the screen —
-  * that is what `getResults` and `Phase.Finished` are for.
+  * One prompt is shown at a time, with a "3 of 12" progress line. Each answer is graded on the spot: `submitAnswer`
+  * answers with the row it recorded, [[Phase.Feedback]] shows it beside the same word, and the play moves on by itself
+  * after a short hold — longer for a mistake, since a mistake has an accepted answer to read. The running score is
+  * still withheld until the end; only this one word's outcome is shown. Once the play is finished, the score and the
+  * full answer history become the point of the screen — that is what `getResults` and `Phase.Finished` are for.
   */
 object GamePlayPage {
 
@@ -39,8 +40,19 @@ private class GamePlayPage(slug: String, playId: Long) {
 
     final case class Playing(prompt: GamePrompt) extends Phase
 
+    /** The same word still on screen, now with its grade under it and no way to answer it again. Left by
+      * [[advanceBus]], whichever fired it: the hold timer, the "Next" button, or a second Enter.
+      */
+    final case class Feedback(prompt: GamePrompt, result: GameAnswerResult) extends Phase
+
     case object Finished extends Phase
   }
+
+  /** How long [[Phase.Feedback]] holds before the play moves on by itself. A correct answer is a glance; a mistake
+    * carries an accepted answer to read, so it is held long enough to read it. Either is skipped by Enter or "Next".
+    */
+  private val correctHoldMs = 1500
+  private val mistakeHoldMs = 4000
 
   /** Read once, synchronously, at construction — see `PendingPlay`'s doc comment. `None` means this mount has nothing
     * to resume (a raw URL visit, refresh, or back/forward navigation, the hand-off being one-shot and in-memory), so
@@ -52,6 +64,9 @@ private class GamePlayPage(slug: String, playId: Long) {
   private val finishedVar = Var(false)
   private val resultsVar  = Var(Option.empty[GameResults])
 
+  /** The graded row for the word on screen, or `None` while it is still being answered. */
+  private val feedbackVar = Var(Option.empty[GameAnswerResult])
+
   private val answerTextVar = Var("")
   private val submittingVar = Var(false)
   private val startingVar   = Var(false)
@@ -59,6 +74,11 @@ private class GamePlayPage(slug: String, playId: Long) {
   private val errorVar: Var[Option[String]] = Var(None)
 
   private val nextBus = new EventBus[Unit]()
+
+  /** Leaves [[Phase.Feedback]] for the next word. Three things write to it and they mean the same thing: the hold timer
+    * running out, the "Next" button, and a second Enter (which the focused button turns into a click).
+    */
+  private val advanceBus = new EventBus[Unit]()
 
   /** The answer being sent, whatever produced it: the typed form's submit, or a clicked option in a
     * [[GameMode.MultipleChoice]] play. Carrying the text itself rather than a bare tick is what lets one stream serve
@@ -70,11 +90,12 @@ private class GamePlayPage(slug: String, playId: Long) {
 
   private val phaseSignal: Signal[Phase] = {
     finishedVar.signal
-      .combineWith(promptVar.signal)
+      .combineWith(promptVar.signal, feedbackVar.signal)
       .map {
-        case (true, _)        => Phase.Finished
-        case (false, Some(p)) => Phase.Playing(p)
-        case (false, None)    => Phase.Loading
+        case (true, _, _)                   => Phase.Finished
+        case (false, Some(p), Some(result)) => Phase.Feedback(p, result)
+        case (false, Some(p), None)         => Phase.Playing(p)
+        case (false, None, _)               => Phase.Loading
       }
       .distinct
   }
@@ -115,11 +136,25 @@ private class GamePlayPage(slug: String, playId: Long) {
         case Left(err)     =>
           Var.set(submittingVar -> false, errorVar -> Some(err.message))
       },
-      submitStream --> Observer[Either[ApiError, Unit]] {
-        case Right(_)  =>
-          nextBus.emit(())
-        case Left(err) =>
+      // `submittingVar` deliberately stays true from here until the next prompt lands: the answer form is off screen
+      // for the whole hold, and a stray Enter must not send the same word twice on the way back.
+      submitStream --> Observer[Either[ApiError, GameAnswerResult]] {
+        case Right(result) =>
+          feedbackVar.set(Some(result))
+        case Left(err)     =>
           Var.set(submittingVar -> false, errorVar -> Some(err.message))
+      },
+      // The hold. `flatMapSwitch` over the `None` case is what cancels a pending timer the moment the reader skips
+      // ahead, so a 4-second timer from a mistake can never cut the next word's feedback short.
+      feedbackVar.signal.updates.flatMapSwitch {
+        case Some(result) =>
+          EventStream.delay(holdMsFor(result.outcome))
+        case None         =>
+          EventStream.empty
+      } --> advanceBus.writer,
+      advanceBus.events.filterWith(feedbackVar.signal.map(_.isDefined)) --> Observer[Unit] { _ =>
+        Var.set(feedbackVar -> None, answerTextVar -> "")
+        nextBus.emit(())
       },
       resultsStream --> Observer[Either[ApiError, GameResults]] {
         case Right(results) =>
@@ -151,7 +186,16 @@ private class GamePlayPage(slug: String, playId: Long) {
     nextBus.events.flatMapSwitch(_ => GameApiClient.nextPrompt(playId))
   }
 
-  private def submitStream: EventStream[Either[ApiError, Unit]] = {
+  private def holdMsFor(outcome: AnswerOutcome): Int = {
+    outcome match {
+      case AnswerOutcome.Correct                    =>
+        correctHoldMs
+      case AnswerOutcome.Typo | AnswerOutcome.Wrong =>
+        mistakeHoldMs
+    }
+  }
+
+  private def submitStream: EventStream[Either[ApiError, GameAnswerResult]] = {
     submitBus.events
       .filterWith(submittingVar.signal.not)
       .map(answer => (promptVar.now().flatMap(_.wordId), answer.trim))
@@ -168,16 +212,21 @@ private class GamePlayPage(slug: String, playId: Long) {
 
   private def renderPhase(phase: Phase, playState: PlayHandoff): HtmlElement = {
     phase match {
-      case Phase.Loading         =>
+      case Phase.Loading                  =>
         span(cls := "loading loading-spinner")
-      case Phase.Playing(prompt) =>
-        renderPrompt(prompt, playState)
-      case Phase.Finished        =>
+      case Phase.Playing(prompt)          =>
+        renderPrompt(prompt, playState, renderAnswerArea(prompt, playState))
+      case Phase.Feedback(prompt, result) =>
+        renderPrompt(prompt, playState, renderFeedback(result))
+      case Phase.Finished                 =>
         renderFinished()
     }
   }
 
-  private def renderPrompt(prompt: GamePrompt, playState: PlayHandoff): HtmlElement = {
+  /** The word being asked, with `answerArea` under it: the form or the choices while it is unanswered, the grade once
+    * it is. The word itself is rendered the same way either way, so it does not move as the two swap.
+    */
+  private def renderPrompt(prompt: GamePrompt, playState: PlayHandoff, answerArea: HtmlElement): HtmlElement = {
     div(
       p(
         cls  := "text-sm opacity-70",
@@ -190,12 +239,49 @@ private class GamePlayPage(slug: String, playId: Long) {
         cls  := "text-xs opacity-60 mb-2",
         prompt.partOfSpeech.map(Labels.partOfSpeech).getOrElse(""),
       ),
-      playState.variant.mode match {
-        case GameMode.Typing         =>
-          renderTypedAnswer(playState)
-        case GameMode.MultipleChoice =>
-          renderChoices(prompt)
-      },
+      answerArea,
+    )
+  }
+
+  private def renderAnswerArea(prompt: GamePrompt, playState: PlayHandoff): HtmlElement = {
+    playState.variant.mode match {
+      case GameMode.Typing         =>
+        renderTypedAnswer(playState)
+      case GameMode.MultipleChoice =>
+        renderChoices(prompt)
+    }
+  }
+
+  /** How the answer just given was graded. The accepted answer is shown only for a mistake — a player who got it right
+    * has nothing to read there, and it is the same word they typed anyway.
+    *
+    * Kept deliberately plain: no table (the results screen's own is what `e2e/tests/game.spec.ts` counts rows in) and
+    * no `btn-outline` (that class is how the same suite counts a multiple-choice play's options).
+    */
+  private def renderFeedback(result: GameAnswerResult): HtmlElement = {
+    div(
+      cls := "flex flex-col items-start gap-2",
+      div(
+        cls := "flex flex-wrap items-center gap-2",
+        GameAnswersTable.outcomeBadge(result.outcome),
+        if (result.outcome == AnswerOutcome.Correct) {
+          emptyNode
+        } else {
+          span(
+            cls := "text-sm",
+            I18n.t(UiKeys.gameInstanceFeedbackExpected, result.expectedTexts.mkString(", ")),
+          )
+        },
+      ),
+      button(
+        cls := "btn btn-sm btn-primary",
+        typ := "button",
+        I18n.t(UiKeys.gameInstanceFeedbackNext),
+        onClick.mapToUnit --> advanceBus.writer,
+        // Focused on mount so a second Enter — the same key that sent the answer — moves on without waiting the hold
+        // out. A focused button is activated by Enter natively, so no key listener of our own is needed.
+        onMountFocus,
+      ),
     )
   }
 

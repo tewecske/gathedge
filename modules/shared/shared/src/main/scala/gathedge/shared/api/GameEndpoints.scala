@@ -4,6 +4,7 @@ import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
+  GameAnswerResult,
   GameCreated,
   GameDetail,
   GamePlayDetail,
@@ -171,14 +172,16 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
-  /** Scores one answer. Answers with a bare 204 rather than the score — see `GameService.submitAnswer`'s doc comment on
-    * why a player is never shown correctness mid-game.
+  /** Scores one answer and answers with that one row, so the player is told at once whether it was right and what the
+    * game would have accepted — see `GameService.submitAnswer`. The row is the same [[GameAnswerResult]] the finished
+    * play's [[results]] table carries, built by the same code, so the two can never disagree. The running score stays
+    * out of it: a player still learns their total only when the play ends.
     */
   val submitAnswer = {
     Endpoint(Method.POST / "api" / "games" / "plays" / playId / "answers")
       .in[SubmitAnswerRequest]
       .withCodecError
-      .outCodec(noContent)
+      .out[GameAnswerResult]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 

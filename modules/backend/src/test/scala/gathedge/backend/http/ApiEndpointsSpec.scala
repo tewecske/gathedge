@@ -37,7 +37,7 @@ import gathedge.backend.service.{
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{GameMode, Gender, PartOfSpeech, Theme, User, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, Theme, User, WordLanguage}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
@@ -50,10 +50,12 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   ErrorResponse,
   ForgotPasswordRequest,
+  GameAnswerResult,
   GamePrompt,
   GameResults,
   PlayStarted,
   StartPlayRequest,
+  SubmitAnswerRequest,
   NewTranslation,
   LoginRequest,
   PairSelectionResponse,
@@ -746,7 +748,35 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             resultsRaw.contains("\"MultipleChoice\""),
             resultsRaw.fromJson[GameResults].map(_.variant.mode) == Right(GameMode.MultipleChoice),
           )
-        }
+        },
+        test("submitting an answer answers 200 with the graded row") {
+          for {
+            fixture        <- gameFixture("games-answer-wire@example.com")
+            (slug, session) = fixture
+            startRequest    = Request.post(s"/api/games/$slug/plays", Body.fromString(StartPlayRequest().toJson))
+            started        <- runRoutes(GameRoutes.routes, withCsrf(withSession(startRequest, session)))
+            startedRaw     <- body(started)
+            playId          = startedRaw.fromJson[PlayStarted].map(_.playId).getOrElse(0L)
+            prompt         <- runRoutes(
+                                GameRoutes.routes,
+                                withSession(Request.get(s"/api/games/plays/$playId/prompt"), session),
+                              )
+            promptRaw      <- body(prompt)
+            wordId          = promptRaw.fromJson[GamePrompt].toOption.flatMap(_.wordId).getOrElse(0L)
+            answerRequest   = Request.post(
+                                s"/api/games/plays/$playId/answers",
+                                Body.fromString(SubmitAnswerRequest(wordId, "kutya").toJson),
+                              )
+            answered       <- runRoutes(GameRoutes.routes, withCsrf(withSession(answerRequest, session)))
+            answeredRaw    <- body(answered)
+          } yield assertTrue(
+            // 200 with a body, not the bare 204 this endpoint used to answer: the player is told how the word went.
+            answered.status == Status.Ok,
+            answeredRaw.contains("\"Correct\""),
+            answeredRaw.fromJson[GameAnswerResult].map(_.outcome) == Right(AnswerOutcome.Correct),
+            answeredRaw.fromJson[GameAnswerResult].map(_.expectedTexts) == Right(List("kutya")),
+          )
+        },
       ),
       suite("guest")(
         test("minting a guest answers 201, a session cookie, and a user with no address") {

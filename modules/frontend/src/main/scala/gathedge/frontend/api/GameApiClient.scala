@@ -6,6 +6,7 @@ import gathedge.shared.domain.{GameMode, Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
+  GameAnswerResult,
   GameCreated,
   GameDetail,
   GamePlayDetail,
@@ -120,7 +121,8 @@ object GameApiClient {
     run(executor(GameEndpoints.nextPrompt(playId)))
   }
 
-  def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, Unit]] = {
+  /** Answers with the graded row, which is what the play loop shows the player before it moves on. */
+  def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, GameAnswerResult]] = {
     run(executor(GameEndpoints.submitAnswer(playId, SubmitAnswerRequest(wordId, answerText))))
   }
 

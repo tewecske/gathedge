@@ -1096,6 +1096,11 @@ object UiKeys {
   val gameInstanceFinishedTitle: String     = key("ui.gameInstance.finishedTitle")
   val gameInstanceBackToGames: String       = key("ui.gameInstance.backToGames")
 
+  // Shown between one word and the next: how the answer just given was graded. The accepted answer appears only when
+  // the given one was not correct, since a player who got it right has nothing to read there.
+  val gameInstanceFeedbackExpected: String = key("ui.gameInstance.feedback.expected")
+  val gameInstanceFeedbackNext: String     = key("ui.gameInstance.feedback.next")
+
   // The results screen: score, and the full per-word answer table.
   val gameInstanceScore: String              = key("ui.gameInstance.score")
   val gameInstanceResultsWordCol: String     = key("ui.gameInstance.results.wordCol")

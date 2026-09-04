@@ -150,10 +150,15 @@ trait GameService {
     * client-supplied translation id — and records it. When `wordId` has more than one marked translation in the game's
     * tags, `answerText` is scored against each and the best-scoring one wins. A clicked option arrives here as the
     * option's own text, so the same path grades both modes; only the rule differs (`GameScoring.scoreFor`). Answers
-    * with acknowledgement only: never the score or whether it was correct, so a player is never shown correctness
-    * mid-game.
+    * with the row just recorded, so the player is told at once how this one word went and what the game would have
+    * accepted. The running score stays out of it: a player still learns their total only when the play ends.
     */
-  def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit]
+  def submitAnswer(
+    playId: Long,
+    wordId: Long,
+    answerText: String,
+    requesterUserId: Long,
+  ): IO[GameFailure, GameAnswerResult]
 
   /** `playId`'s score and full answer history, for the results screen. [[GameFailure.NotOwner]] if it does not belong
     * to `requesterUserId`.
@@ -295,7 +300,7 @@ object GameService {
     wordId: Long,
     answerText: String,
     requesterUserId: Long,
-  ): ZIO[GameService, GameFailure, Unit] =
+  ): ZIO[GameService, GameFailure, GameAnswerResult] =
     ZIO.serviceWithZIO[GameService](_.submitAnswer(playId, wordId, answerText, requesterUserId))
 
   def getResults(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GameResults] =
@@ -1005,7 +1010,12 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       .map(pairs => (fallback :: pairs.collect { case (w, t) if w == wordId => t }).distinct)
   }
 
-  def submitAnswer(playId: Long, wordId: Long, answerText: String, requesterUserId: Long): IO[GameFailure, Unit] = {
+  def submitAnswer(
+    playId: Long,
+    wordId: Long,
+    answerText: String,
+    requesterUserId: Long,
+  ): IO[GameFailure, GameAnswerResult] = {
     for {
       play            <- requireOwnedPlay(playId, requesterUserId)
       pool            <- repo.wordPairsOf(playId).orDie
@@ -1037,7 +1047,11 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                            answeredAt = now,
                          )
       _               <- repo.recordAnswer(answer, newScore, finishedAt).orDie
-    } yield ()
+      // Built by the same code the results table goes through, so what the player is told now and what the finished
+      // play shows can never disagree. `answer.id` is still 0 — `recordAnswer` discards the generated id — but
+      // `answerResultsOf` uses that id only to correlate rows inside the list it was handed, and this list holds one.
+      results         <- answerResultsOf(play, List(answer))
+    } yield results.head
   }
 
   /** `answers` mapped to their display text, shared by [[getResults]] (player-facing) and [[getPlayDetail]]
