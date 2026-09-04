@@ -617,7 +617,10 @@ install_hook() {
 
 main() {
   cd "$REPO_ROOT"
-  [ -d .git ] || die "not a git repository: $REPO_ROOT"
+  # Asked of git rather than of the filesystem: a worktree's .git is a *file* naming the main
+  # checkout's worktrees directory, so a `-d .git` test says "not a git repository" in every worktree
+  # scripts/new-worktree.sh makes — and the pre-push hook runs here from each of them.
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $REPO_ROOT"
 
   local mode=prepare force=no run_tests=yes rev=""
   while [ $# -gt 0 ]; do
