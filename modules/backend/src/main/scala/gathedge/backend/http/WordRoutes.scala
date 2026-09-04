@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   BulkUploadConfirmRequest,
   BulkUploadConfirmResponse,
   BulkUploadPreviewRequest,
+  ColumnLanguageCheckRequest,
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
@@ -20,6 +21,7 @@ import gathedge.shared.dto.{
   ReplacePairRequest,
   SetGenderRequest,
   SortDirection,
+  TabularImportRequest,
   TagImportRequest,
   TagPairInput,
 }
@@ -303,6 +305,26 @@ object WordRoutes {
     )
   }
 
+  private val tabularImportRoute = {
+    WordEndpoints.tabularImport.implementHandler(
+      handler { (tagId: Long, body: TabularImportRequest) =>
+        userId.flatMap(id => {
+          WordService
+            .tabularImport(tagId, body.rows, body.sourceLanguage, body.targetLanguage, id)
+            .mapError(ApiFailures.bulkUpload)
+        })
+      }
+    )
+  }
+
+  private val columnLanguageCheckRoute = {
+    WordEndpoints.columnLanguageCheck.implementHandler(
+      handler { (body: ColumnLanguageCheckRequest) =>
+        userId.flatMap(_ => WordService.checkColumnLanguages(body.columns))
+      }
+    )
+  }
+
   private val bulkUploadPreviewRoute = {
     WordEndpoints.bulkUploadPreview.implementHandler(
       handler { (tagId: Long, body: BulkUploadPreviewRequest) =>
@@ -369,6 +391,8 @@ object WordRoutes {
       bulkDeleteWordsRoute,
       bulkImportRoute,
       languageCheckRoute,
+      tabularImportRoute,
+      columnLanguageCheckRoute,
       bulkUploadPreviewRoute,
       bulkUploadConfirmRoute,
     ) @@ RouteSupport.authenticated

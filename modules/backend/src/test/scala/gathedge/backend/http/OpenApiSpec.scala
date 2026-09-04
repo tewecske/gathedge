@@ -104,6 +104,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/pairs/bulk-delete",
               "/api/tags/{tagId}/words/bulk-delete",
               "/api/tags/{tagId}/bulk-import",
+              "/api/tags/{tagId}/tabular-import",
+              "/api/words/column-language-check",
               "/api/games",
               "/api/games/setup",
               "/api/games/setup/words",
@@ -260,6 +262,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // editor can warn before a bulk import. Writes nothing, names no tag: the only failures are the body's
               // codec 400 and the aspect's 401.
               ("POST", "/api/words/language-check")                                       -> Set(Ok, BadRequest, Unauthorized),
+              // Per-column language detection for a delimited paste. Names no tag either, so no 404, and it writes
+              // nothing, so no rate-limit budget of its own.
+              ("POST", "/api/words/column-language-check")                                -> Set(Ok, BadRequest, Unauthorized),
               // Scans an uploaded file's text for dictionary words in each of two languages and answers the matches
               // and unmatched tokens, writing nothing. 404 is the tag, for the reason every other write in this
               // resource answers 404 for one, even though this call is read-only. 429 is this endpoint's own
@@ -298,6 +303,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/tags/{tagId}/words/bulk-delete")                             ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/tags/{tagId}/bulk-import")                                   ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
+              // The tabular half of the same feature, with the same failures: 404 for the tag, 429 for the budget it
+              // shares with the free-text import.
+              ("POST", "/api/tags/{tagId}/tabular-import")                                ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
               ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
@@ -479,7 +488,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 295,
+          declared == 301,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -527,8 +536,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/words/tags/{tagId}/bulk-upload/preview"),
               ("POST", "/api/words/tags/{tagId}/bulk-upload/confirm"),
               // The review-free replacement for the two bulk-upload calls above: one call still tokenizes and writes
-              // a whole file's worth of rows, so it keeps the same budget.
+              // a whole file's worth of rows, so it keeps the same budget. Its tabular counterpart writes a whole
+              // spreadsheet's worth in one call and shares that budget for the same reason.
               ("POST", "/api/tags/{tagId}/bulk-import"),
+              ("POST", "/api/tags/{tagId}/tabular-import"),
               ("POST", "/api/tags/import"),
               ("POST", "/api/groups/join"),
               ("POST", "/api/progress-shares/redeem"),

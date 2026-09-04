@@ -37,6 +37,14 @@ import gathedge.shared.dto.{
   BulkImportResponse,
   LanguageCheckRequest,
   LanguageCheckResponse,
+  TabularRow,
+  TabularImportRequest,
+  TabularImportResponse,
+  ColumnSample,
+  ColumnLanguageCheckRequest,
+  LanguageHit,
+  ColumnLanguageGuess,
+  ColumnLanguageCheckResponse,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
   BulkUploadSelectedTranslation,
@@ -219,6 +227,14 @@ object ApiSchemas {
   given Schema[BulkImportResponse]            = DeriveSchema.gen[BulkImportResponse]
   given Schema[LanguageCheckRequest]          = DeriveSchema.gen[LanguageCheckRequest]
   given Schema[LanguageCheckResponse]         = DeriveSchema.gen[LanguageCheckResponse]
+  given Schema[TabularRow]                    = DeriveSchema.gen[TabularRow]
+  given Schema[TabularImportRequest]          = DeriveSchema.gen[TabularImportRequest]
+  given Schema[TabularImportResponse]         = DeriveSchema.gen[TabularImportResponse]
+  given Schema[ColumnSample]                  = DeriveSchema.gen[ColumnSample]
+  given Schema[ColumnLanguageCheckRequest]    = DeriveSchema.gen[ColumnLanguageCheckRequest]
+  given Schema[LanguageHit]                   = DeriveSchema.gen[LanguageHit]
+  given Schema[ColumnLanguageGuess]           = DeriveSchema.gen[ColumnLanguageGuess]
+  given Schema[ColumnLanguageCheckResponse]   = DeriveSchema.gen[ColumnLanguageCheckResponse]
   given Schema[BulkUploadMatch]               = DeriveSchema.gen[BulkUploadMatch]
   given Schema[BulkUploadPreviewRequest]      = DeriveSchema.gen[BulkUploadPreviewRequest]
   given Schema[BulkUploadPreviewResponse]     = DeriveSchema.gen[BulkUploadPreviewResponse]

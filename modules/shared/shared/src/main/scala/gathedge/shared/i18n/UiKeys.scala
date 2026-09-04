@@ -873,6 +873,7 @@ object UiKeys {
   val posVerb: String      = key("ui.pos.verb")
   val posAdjective: String = key("ui.pos.adjective")
   val posAdverb: String    = key("ui.pos.adverb")
+  val posPhrase: String    = key("ui.pos.phrase")
   val posOtherKind: String = key("ui.pos.otherKind")
 
   val originPrefix: String = "ui.origin."
@@ -991,6 +992,46 @@ object UiKeys {
     */
   val tagsEditorBulkLangMismatch: String = key("ui.tags.editor.bulkLangMismatch")
   val tagsEditorBulkImportAnyway: String = key("ui.tags.editor.bulkImportAnyway")
+
+  /** The column-mapping step, shown instead of a straight import when the paste or file turns out to be a table.
+    * `bulkTableHeading` titles it, `bulkTableHint` explains that each column needs a job, and `bulkTableFirstRowHeader`
+    * labels the checkbox that drops the first row as headings rather than importing it.
+    */
+  val tagsEditorBulkTableHeading: String        = key("ui.tags.editor.bulkTableHeading")
+  val tagsEditorBulkTableHint: String           = key("ui.tags.editor.bulkTableHint")
+  val tagsEditorBulkTableFirstRowHeader: String = key("ui.tags.editor.bulkTableFirstRowHeader")
+
+  /** What one column may be used for. The two "extra" roles take the gender or grammar markers belonging to the word in
+    * the column they name, which is why there is one per side rather than one overall.
+    */
+  val tagsEditorBulkTableRoleIgnore: String      = key("ui.tags.editor.bulkTableRoleIgnore")
+  val tagsEditorBulkTableRoleSource: String      = key("ui.tags.editor.bulkTableRoleSource")
+  val tagsEditorBulkTableRoleTarget: String      = key("ui.tags.editor.bulkTableRoleTarget")
+  val tagsEditorBulkTableRoleSourceExtra: String = key("ui.tags.editor.bulkTableRoleSourceExtra")
+  val tagsEditorBulkTableRoleTargetExtra: String = key("ui.tags.editor.bulkTableRoleTargetExtra")
+
+  /** The detected-language note under a column heading, `{0}` being the language name — the suggestion the reader is
+    * accepting or overriding. `bulkTableDetectedNone` takes its place when the dictionary recognised nothing in that
+    * column, which is ordinary for a hand-written list and is not an error.
+    */
+  val tagsEditorBulkTableDetected: String     = key("ui.tags.editor.bulkTableDetected")
+  val tagsEditorBulkTableDetectedNone: String = key("ui.tags.editor.bulkTableDetectedNone")
+
+  /** The step's own controls: the button that runs the import, and the one that abandons the table and imports the text
+    * as an ordinary word list instead.
+    */
+  val tagsEditorBulkTableSubmit: String   = key("ui.tags.editor.bulkTableSubmit")
+  val tagsEditorBulkTableAsText: String   = key("ui.tags.editor.bulkTableAsText")
+  val tagsEditorBulkTableNeedBoth: String = key("ui.tags.editor.bulkTableNeedBoth")
+
+  /** The result line — `{0}` rows written, `{1}` marked pairs, `{2}` words new to the dictionary, `{3}` word forms. */
+  val tagsEditorBulkTableResult: String = key("ui.tags.editor.bulkTableResult")
+
+  /** Shown when a mapped column's detected language disagrees with the one it was assigned — `{0}` is the language the
+    * reader chose, `{1}` the one the dictionary suggests. The same import-anyway or cancel choice the free-text guard
+    * offers, reusing [[tagsEditorBulkImportAnyway]].
+    */
+  val tagsEditorBulkTableLangMismatch: String = key("ui.tags.editor.bulkTableLangMismatch")
 
   /** Shown instead of the editing controls when the reader may view the tag but not change it. */
   val tagsEditorReadOnly: String = key("ui.tags.editor.readOnly")

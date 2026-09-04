@@ -285,6 +285,74 @@ final case class LanguageCheckRequest(
   */
 final case class LanguageCheckResponse(sampled: Int, unrecognized: Int, acceptable: Boolean) derives JsonCodec
 
+/** One row of a delimited paste, already split into the columns the reader mapped.
+  *
+  * The pairing is '''asserted''', not inferred: the reader put these two cells on one line, so they belong together
+  * whether or not the dictionary agrees. That is the whole difference from [[BulkImportRequest]], which can only mark a
+  * pair that `word_translations` already links.
+  *
+  * Each side may carry an extra column holding gender or grammatical markers — one per side, since a marker describes a
+  * specific word. Both cells are raw text; `shared.parsing.WordCell` does the parsing, server-side, so the browser's
+  * preview and the import can never disagree about what a cell meant.
+  */
+final case class TabularRow(
+  source: String,
+  target: String,
+  sourceExtra: Option[String],
+  targetExtra: Option[String],
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.tabularImport]]'s body: the mapped rows in the reader's own order, and the two
+  * languages their columns were assigned. Row order is preserved all the way into the editor, so it is load-bearing.
+  */
+final case class TabularImportRequest(
+  rows: List[TabularRow],
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.tabularImport]]'s answer: how many rows were written, how many of them became a
+  * marked pair, how many dictionary words had to be minted, and how many `word_forms` rows an extra column produced.
+  *
+  * `rows` can be lower than what was sent — a row whose source cell parses to nothing is skipped rather than failing
+  * the import.
+  */
+final case class TabularImportResponse(rows: Int, pairs: Int, newWords: Int, forms: Int) derives JsonCodec
+
+/** One column offered for language detection: its position in the grid, and the cell values to sample.
+  *
+  * The browser sends the values rather than the raw text because it has already parsed the grid to show a preview;
+  * re-splitting it server-side would be a second parser to keep in step with the first.
+  */
+final case class ColumnSample(index: Int, values: List[String]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.columnLanguageCheck]]'s body: every column of a delimited paste, so the mapping
+  * step can suggest which language each one holds.
+  */
+final case class ColumnLanguageCheckRequest(columns: List[ColumnSample]) derives JsonCodec
+
+/** How many of one column's sampled words were found in one language's dictionary.
+  *
+  * A list of pairs rather than a `Map[WordLanguage, Int]`: a keyed map is the shape most likely to be encoded
+  * differently by the two codec stacks `ApiEndpointsSpec` pins against each other.
+  */
+final case class LanguageHit(language: WordLanguage, matched: Int) derives JsonCodec
+
+/** What the check concluded about one column: how many words it sampled, how each language scored, and the best guess.
+  *
+  * `best` is empty when nothing matched at all — a column of words the dictionary has never seen, which is ordinary for
+  * a hand-written list and must not stop the import.
+  */
+final case class ColumnLanguageGuess(
+  index: Int,
+  sampled: Int,
+  hits: List[LanguageHit],
+  best: Option[WordLanguage],
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.columnLanguageCheck]]'s answer, one entry per column asked about. */
+final case class ColumnLanguageCheckResponse(columns: List[ColumnLanguageGuess]) derives JsonCodec
+
 /** What a bulk upload preview asks: the file's raw text, and which two languages to scan it for.
   *
   * Free-form text rather than a structured word-pair list — [[gathedge.backend.service.WordService.bulkUploadPreview]]

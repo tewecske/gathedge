@@ -34,6 +34,14 @@ trait WordRepository {
     */
   def ensureWord(row: WordRow): Task[WordRow]
 
+  /** [[ensureWord]], also answering whether the row had to be inserted — what a bulk import reports as "new to the
+    * dictionary".
+    *
+    * A separate method rather than something the caller infers from `createdAt`: a frozen test clock and two words
+    * written in the same millisecond both make that timestamp a lie, and only the find-or-insert itself knows.
+    */
+  def ensureWordCounted(row: WordRow): Task[(WordRow, Boolean)]
+
   /** Fills in the gender of a word that has none, answering how many rows that changed.
     *
     * The `gender = ''` half of the filter is the guard, not a formality: it is what makes "fill a blank" atomic, so two
@@ -371,6 +379,9 @@ object WordRepository {
   def ensureWord(row: WordRow): RIO[WordRepository, WordRow] =
     ZIO.serviceWithZIO[WordRepository](_.ensureWord(row))
 
+  def ensureWordCounted(row: WordRow): RIO[WordRepository, (WordRow, Boolean)] =
+    ZIO.serviceWithZIO[WordRepository](_.ensureWordCounted(row))
+
   def setWordGender(id: Long, gender: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.setWordGender(id, gender))
 
@@ -681,15 +692,19 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(inserted.map(id => row.copy(id = id)))(word => s"words.insert id=${word.id} lang=${row.language}")
   }
 
-  def ensureWord(row: WordRow): Task[WordRow] = {
+  def ensureWord(row: WordRow): Task[WordRow] = ensureWordCounted(row).map { case (word, _) => word }
+
+  def ensureWordCounted(row: WordRow): Task[(WordRow, Boolean)] = {
     val lookup = findWord(row.language, row.textNorm, row.partOfSpeech, row.gender)
     lookup.flatMap {
       case Some(existing) =>
-        ZIO.succeed(existing)
+        ZIO.succeed((existing, false))
       case None           =>
         // A concurrent caller may have inserted the same word between the lookup and here; the unique index is what
-        // decides, and the loser simply reads the winner's row.
-        insertWord(row).catchAll(error => lookup.flatMap(ZIO.fromOption(_).orElseFail(error)).mapError(identity))
+        // decides, and the loser simply reads the winner's row -- and did not create it, so it counts as found.
+        insertWord(row)
+          .map(inserted => (inserted, true))
+          .catchAll(error => lookup.flatMap(ZIO.fromOption(_).orElseFail(error)).map((_, false)).mapError(identity))
     }
   }
 

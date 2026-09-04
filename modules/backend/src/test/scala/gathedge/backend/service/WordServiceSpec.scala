@@ -13,11 +13,13 @@ import gathedge.shared.dto.{
   TagImportChoice,
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
+  ColumnSample,
   CreateWordRequest,
   NewTranslation,
   PairRef,
   Paging,
   ReplacePairRequest,
+  TabularRow,
   TagPairInput,
   TagPairWord,
   TaggedPair,
@@ -2154,6 +2156,273 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layer)
   }
 
+  /** A tabular row with no extra columns — the common two-column shape. */
+  private def row(source: String, target: String): TabularRow = TabularRow(source, target, None, None)
+
+  private def tabularImportSpec = {
+    suite("tabular import")(
+      test("a row's pairing is taken as given, even for words the dictionary has never seen") {
+        // The whole point of the tabular path: `bulkImport` could only mark this pair if `word_translations` already
+        // linked the two, and here nothing in the dictionary knows either word.
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(row("brandneu", "vadonatúj")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) == List(
+            ("brandneu", Some("vadonatúj"), true, true)
+          ),
+          result.rows == 1,
+          result.pairs == 1,
+          result.newWords == 2,
+        )
+      },
+      test("rows keep the reader's own order") {
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(row("eins", "egy"), row("zwei", "kettő"), row("drei", "három")),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(_.source.text) == List("eins", "zwei", "drei"))
+      },
+      test("an article yields the gender and is not stored as part of the word") {
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(tag.id, List(row("der Hund", "kutya")), WordLanguage.De, WordLanguage.Hu, 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.head.source.text == "Hund",
+          rows.head.source.gender.contains(Gender.Masculine),
+          rows.head.source.partOfSpeech == PartOfSpeech.Noun,
+        )
+      },
+      test("a marker is stripped off the word rather than stored with it") {
+        // A marker left in `text_norm` would make `helfen` and `helfen +D` two unrelated dictionary rows.
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(row("helfen +D", "segíteni"), row("gedenken (G)", "megemlékezni")),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(_.source.text) == List("helfen", "gedenken"))
+      },
+      test("a multi-word cell becomes one phrase, not several words") {
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(row("guten Tag", "jó napot")),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.length == 1,
+          rows.head.source.text == "guten Tag",
+          rows.head.source.partOfSpeech == PartOfSpeech.Phrase,
+          rows.head.target.map(_.text).contains("jó napot"),
+          rows.head.target.map(_.partOfSpeech).contains(PartOfSpeech.Phrase),
+        )
+      },
+      test("an extra column supplies the gender, in whichever language it is abbreviated") {
+        // `hn` is Hungarian for masculine and `w` is German for feminine; both describe the German word beside them.
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(
+                      TabularRow("Hund", "kutya", Some("hn"), None),
+                      TabularRow("Katze", "macska", Some("w"), None),
+                    ),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(_.source.gender) == List(Some(Gender.Masculine), Some(Gender.Feminine)),
+          rows.map(_.source.text) == List("Hund", "Katze"),
+        )
+      },
+      test("an extra column naming a form word and its relation writes a word_forms row") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(TabularRow("helfen", "segíteni", Some("hilft (3)"), None)),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+          forms  <- WordRepository.formsOf(rows.head.source.id)
+          form   <- WordRepository.findWordById(forms.head.formWordId)
+        } yield assertTrue(
+          result.forms == 1,
+          forms.map(_.relation) == List("third-person"),
+          form.map(_.text).contains("hilft"),
+          // `insertForms` maintains the derived flag in the same transaction, so the form drops out of the main list.
+          form.exists(_.isForm),
+        )
+      },
+      test("an extra column with a form word but no relation writes nothing") {
+        // `word_forms.relation` is NOT NULL and part of its UNIQUE key, so there is nothing to file it under.
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(TabularRow("Haus", "ház", Some("Häuser"), None)),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+          forms  <- WordRepository.formsOf(rows.head.source.id)
+        } yield assertTrue(result.forms == 0, forms.isEmpty)
+      },
+      test("a bare government marker is discarded rather than stored anywhere") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(TabularRow("helfen", "segíteni", Some("+D"), None)),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+          forms  <- WordRepository.formsOf(rows.head.source.id)
+        } yield assertTrue(rows.head.source.text == "helfen", result.forms == 0, forms.isEmpty)
+      },
+      test("a blank translation cell yields an answer-less row") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(tag.id, List(row("Haus", "")), WordLanguage.De, WordLanguage.Hu, 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target, r.imported)) == List(("Haus", None, true)),
+          result.rows == 1,
+          result.pairs == 0,
+        )
+      },
+      test("a row with no word at all is skipped, and does not count as written") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(row("", "kutya"), row("Haus", "ház")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(result.rows == 1, rows.map(_.source.text) == List("Haus"))
+      },
+      test("an existing dictionary word is reused rather than minted again") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag    <- createTag("import", 1L)
+          result <-
+            WordService.tabularImport(tag.id, List(row("das Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.head.source.id == haus.id,
+          // Only the Hungarian side was new.
+          result.newWords == 1,
+        )
+      },
+      test("re-importing the same table twice adds nothing the second time") {
+        for {
+          tag    <- createTag("import", 1L)
+          table   = List(row("Haus", "ház"), row("Hund", "kutya"))
+          _      <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 1L)
+          second <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 1L)
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.length == 2, second.newWords == 0)
+      },
+      test("the tag's two languages are recorded from the import") {
+        for {
+          tag   <- createTag("import", 1L)
+          _     <- WordService.tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L)
+          saved <- WordRepository.findTagById(tag.id)
+        } yield assertTrue(
+          saved.flatMap(_.sourceLanguage).contains("de"),
+          saved.flatMap(_.targetLanguage).contains("hu"),
+        )
+      },
+      test("an empty table is a validation error, not an empty success") {
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(tag.id, Nil, WordLanguage.De, WordLanguage.Hu, 1L).either
+        } yield assertTrue(result.isLeft)
+      },
+      test("tabular import answers TagNotFound for a tag that is not the caller's") {
+        for {
+          tag    <- createTag("import", 2L)
+          result <- WordService
+                      .tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L)
+                      .either
+        } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
+      },
+    ).provide(layer)
+  }
+
+  private def columnLanguageCheckSpec = {
+    suite("column language check")(
+      test("each column is scored against every study language, not just a tag's two") {
+        for {
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kutya"))
+          result <- WordService.checkColumnLanguages(
+                      List(
+                        ColumnSample(0, List("Haus", "Hund")),
+                        ColumnSample(1, List("ház", "kutya")),
+                      )
+                    )
+        } yield assertTrue(
+          result.columns.map(_.best) == List(Some(WordLanguage.De), Some(WordLanguage.Hu)),
+          result.columns.map(_.sampled) == List(2, 2),
+          // Every language is reported, so the mapping step can show a column's runner-up too.
+          result.columns.forall(_.hits.map(_.language).toSet == WordLanguage.all.toSet),
+        )
+      },
+      test("an article is stripped before the lookup, so a column of German nouns still matches") {
+        for {
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          result <- WordService.checkColumnLanguages(List(ColumnSample(0, List("das Haus"))))
+        } yield assertTrue(result.columns.head.best.contains(WordLanguage.De))
+      },
+      test("a column of words nobody knows has no best guess, which is not an error") {
+        for {
+          result <- WordService.checkColumnLanguages(List(ColumnSample(0, List("brandneu", "vadonatúj"))))
+        } yield assertTrue(result.columns.head.best.isEmpty, result.columns.head.sampled == 2)
+      },
+      test("an empty column samples nothing") {
+        for {
+          result <- WordService.checkColumnLanguages(List(ColumnSample(0, List("", "  "))))
+        } yield assertTrue(result.columns.head.sampled == 0, result.columns.head.best.isEmpty)
+      },
+    ).provide(layer)
+  }
+
   private def languageCheckSpec = {
     suite("language check")(
       test("text whose words are in the tag's two languages is acceptable") {
@@ -2188,6 +2457,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       tagCreationSpec,
       tagEditorSpec,
       bulkImportSpec,
+      tabularImportSpec,
+      columnLanguageCheckSpec,
       languageCheckSpec,
       bulkUploadSpec,
       suggestionsSpec,

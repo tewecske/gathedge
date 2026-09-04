@@ -318,6 +318,19 @@ Four load-bearing columns:
 
 **The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the committed sample; `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
 
+### Bulk import: two paths, one panel
+
+The tag editor's bulk-import panel sniffs its input (`shared/parsing/DelimitedText.sniff`) and forks. Prose keeps the old free-text path unchanged; a delimited paste or file goes through a column-mapping step instead.
+
+**The difference is who decides the pairing.** `bulkImport` *infers* it — two words are a pair only where `word_translations` already links them. `tabularImport` takes the row as given: the reader put both cells on one line, so the pair is written even for words the dictionary has never seen. That is why `POST /api/tags/{tagId}/tabular-import` exists rather than a flag on the old endpoint.
+
+- **The mapping is two language columns plus one extra column per side**, each extra belonging to a specific word. `POST /api/words/column-language-check` samples 20 words per column against **all four** languages and suggests the roles; the reader overrides them. The language guard is kept, moved to this step.
+- **Cell parsing is `shared/parsing/WordCell`**, used by the server so the browser's preview and the import cannot disagree. It strips markers so they never reach `text_norm`, reads the gender, and assigns `PartOfSpeech.Phrase` to a cell left holding two or more words. The article is stripped *before* the words are counted, which is what keeps `der Hund` a noun and makes `guten Tag` a phrase with no special case.
+- **`shared/parsing/MarkerVocabulary` holds every language's abbreviations, and `forPair` resolves the collisions.** A marker is written in the reader's language, not the column's: German writes `m`/`w`/`s` (where `w` is feminine and `s` neuter), Hungarian `hn`/`nn`/`sn` — on German words, since Hungarian has no gender. The column's own language wins a collision, then the tag's other language, then the rest. Articles stay out of this file; they come from `LanguageProfile`.
+- **Gender lands in `words.gender`; a real inflected word in an extra column becomes a `word_forms` row; a bare government marker (`+D`, `(G)`) is stripped and discarded.** There is no lemma-level property column, and a `word_forms` row needs a second word to point at — a self-edge would set `is_form` and drop the lemma out of the listing. Stripping still earns its keep: it is what stops `helfen` and `helfen +D` becoming two rows.
+- Rows are written **sequentially**, since `tagMemberships` answers in insertion order and that is the reader's own row order. `importPair` marks them `exact`: the file asserts the pair, which is a stronger claim than the dictionary agreeing. Neither bulk path is pair-quota-gated; `maxTabularRows` and the shared `RateLimitKey.wordUpload` budget are the bounds.
+- **`repo.ensureWordCounted` reports whether a word was inserted.** Never infer that from `createdAt` — a frozen test clock and a same-millisecond insert both make it a lie.
+
 ### Guest accounts
 
 **A guest is an ordinary `users` row with `is_guest` set and no address**, holding an ordinary session. Upgrading is an `UPDATE`. `users.email` is nullable.

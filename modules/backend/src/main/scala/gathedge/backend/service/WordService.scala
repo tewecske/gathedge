@@ -25,9 +25,16 @@ import gathedge.shared.domain.{
   Word,
   WordLanguage,
 }
+import gathedge.shared.parsing.{ExtraCell, MarkerVocabulary, WordCell}
 import gathedge.shared.dto.{
   BulkImportResponse,
+  ColumnLanguageCheckResponse,
+  ColumnLanguageGuess,
+  ColumnSample,
   LanguageCheckResponse,
+  LanguageHit,
+  TabularImportResponse,
+  TabularRow,
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadMatch,
@@ -310,6 +317,35 @@ trait WordService {
     targetLanguage: WordLanguage,
   ): UIO[LanguageCheckResponse]
 
+  /** Writes a delimited paste into the tag one row at a time, '''taking each row's pairing as given''' rather than
+    * inferring it the way [[bulkImport]] must — the reader put the two cells on one line, so they are marked as a
+    * practice pair whether or not `word_translations` already links them. A word the dictionary has never seen pairs
+    * just as well as one it has, which is the whole point of the tabular path.
+    *
+    * Each cell goes through `shared.parsing.WordCell`, so a marker never reaches `text_norm`, an article yields the
+    * gender, and a cell holding two or more words becomes one `PartOfSpeech.Phrase` entry. An extra column may add the
+    * gender, or an inflected word that becomes a `word_forms` row when it also names its relation.
+    *
+    * Rows are written in order, since `tagMemberships` answers in insertion order and that is what the editor shows. A
+    * row whose source cell parses to nothing is skipped rather than failing the batch. Not pair-quota-gated, for the
+    * same reason [[bulkImport]] is not; bounded by [[WordService.maxTabularRows]] and the shared rate-limit budget.
+    */
+  def tabularImport(
+    tagId: Long,
+    rows: List[TabularRow],
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, TabularImportResponse]
+
+  /** Samples each column of a delimited paste and reports how many of its words each study language's dictionary knows,
+    * so the mapping step can suggest which column holds which language.
+    *
+    * Scored against '''every''' `WordLanguage`, not only a tag's two: the point is to be able to say "this column looks
+    * German" about a column nobody has assigned yet. Writes nothing, names no tag.
+    */
+  def checkColumnLanguages(columns: List[ColumnSample]): UIO[ColumnLanguageCheckResponse]
+
   /** Scans `content` for words already in the dictionary, in each of `sourceLanguage` and `targetLanguage` — matching
     * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers what it found: every match,
     * with whichever of its translations into the *other* declared language the dictionary already has, plus every token
@@ -538,6 +574,18 @@ object WordService {
   ): URIO[WordService, LanguageCheckResponse] =
     ZIO.serviceWithZIO[WordService](_.checkLanguage(content, sourceLanguage, targetLanguage))
 
+  def tabularImport(
+    tagId: Long,
+    rows: List[TabularRow],
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): ZIO[WordService, BulkUploadFailure, TabularImportResponse] =
+    ZIO.serviceWithZIO[WordService](_.tabularImport(tagId, rows, sourceLanguage, targetLanguage, userId))
+
+  def checkColumnLanguages(columns: List[ColumnSample]): URIO[WordService, ColumnLanguageCheckResponse] =
+    ZIO.serviceWithZIO[WordService](_.checkColumnLanguages(columns))
+
   def bulkUploadPreview(
     tagId: Long,
     content: String,
@@ -643,6 +691,13 @@ object WordService {
     */
   val maxBulkUploadTokens = 2000
 
+  /** Bounds how many rows one [[tabularImport]] call may write — [[maxBulkUploadTokens]]' counterpart on the tabular
+    * path, and the only bound on it besides the shared rate limit, since a tabular import is no more quota-gated than a
+    * free-text one. A row costs more than a token (up to two words, a translation edge and a pair), so the same number
+    * is a stricter budget rather than a looser one.
+    */
+  val maxTabularRows = 2000
+
   /** Damerau-Levenshtein distance a bulk-upload token may be from a dictionary word and still be offered as a
     * suggestion — 2 catches the common single-substitution/transposition/insertion OCR misread without matching
     * unrelated words.
@@ -661,6 +716,34 @@ object WordService {
     * [[maxBulkUploadTokens]]. A token past this bound is still listed as unmatched, just with no correction offered.
     */
   val maxSuggestionTokens = 300
+}
+
+/** What one row of a [[WordService.tabularImport]] turned into, so the response can count the whole batch without a
+  * second pass over the database.
+  *
+  * `written` is false only for a row that was skipped outright — its source cell parsed to nothing, or the write failed
+  * and was swallowed. A row that legitimately produced an answer-less entry is still `written`, which is why this is a
+  * named flag rather than something inferred from the other three being zero.
+  */
+private final case class RowOutcome(
+  written: Boolean = false,
+  paired: Boolean = false,
+  minted: Int = 0,
+  forms: Int = 0,
+) {
+
+  def add(minted: Int, forms: Int): RowOutcome =
+    copy(minted = this.minted + minted, forms = this.forms + forms)
+
+  /** Totals only. `written`/`paired` are counted per row by the caller, so they are meaningless in a fold and stay
+    * false here.
+    */
+  def merge(other: RowOutcome): RowOutcome =
+    RowOutcome(minted = minted + other.minted, forms = forms + other.forms)
+}
+
+private object RowOutcome {
+  val skipped: RowOutcome = RowOutcome()
 }
 
 final case class WordServiceLive(
@@ -1021,6 +1104,19 @@ final case class WordServiceLive(
     gender: Option[Gender],
     userId: Long,
   ): IO[WordFailure, WordRow] = {
+    ensureCounted(language, text, partOfSpeech, gender, userId).map { case (row, _) => row }
+  }
+
+  /** [[ensure]], also answering whether the word had to be created — what [[tabularImport]] counts as new to the
+    * dictionary. The body lives here rather than in [[ensure]] so the two can never derive a different identity key.
+    */
+  private def ensureCounted(
+    language: WordLanguage,
+    text: String,
+    partOfSpeech: PartOfSpeech,
+    gender: Option[Gender],
+    userId: Long,
+  ): IO[WordFailure, (WordRow, Boolean)] = {
     val trimmed    = text.trim
     val keptGender = {
       if (LanguageProfile.of(language).hasGenders && partOfSpeech == PartOfSpeech.Noun)
@@ -1034,7 +1130,7 @@ final case class WordServiceLive(
                  .mapError(error => WordFailure.ValidationError(Map("text" -> error)))
       now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
       row   <- repo
-                 .ensureWord(
+                 .ensureWordCounted(
                    WordRow(
                      id = 0L,
                      language = WordLanguage.code(language),
@@ -1914,6 +2010,194 @@ final case class WordServiceLive(
         acceptable = misses <= languageCheck.unrecognizedThreshold,
       )
     }
+  }
+
+  def tabularImport(
+    tagId: Long,
+    rows: List[TabularRow],
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[BulkUploadFailure, TabularImportResponse] = {
+    val invalidFile =
+      BulkUploadFailure.ValidationError(Map("rows" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+
+    // One vocabulary per side, each with its own language winning a collision: German `w` must read as feminine on
+    // the German column even when the other column is Hungarian, whose `nn` must still be understood there too.
+    val sourceMarkers = MarkerVocabulary.forPair(sourceLanguage, targetLanguage)
+    val targetMarkers = MarkerVocabulary.forPair(targetLanguage, sourceLanguage)
+
+    /** Writes the `word_forms` rows an extra column asked for. A form word needs a relation to be filed under —
+      * `word_forms.relation` is `NOT NULL` and part of its UNIQUE key — so an unlabelled one is dropped, as is a
+      * relation with no word to attach it to. Idempotent against `existingFormRelations`, the same guard
+      * [[linkMainWord]] applies.
+      */
+    def writeForms(lemma: WordRow, extra: Option[ExtraCell], language: WordLanguage, now: Long): UIO[Int] = {
+      val wanted = extra.toList.flatMap(cell => {
+        val relation = cell.relations.distinct.sorted.mkString(",")
+        if (relation.isEmpty) Nil else cell.formWords.map(_ -> relation)
+      })
+      if (wanted.isEmpty)
+        ZIO.succeed(0)
+      else {
+        for {
+          known   <- repo.existingFormRelations(List(lemma.id)).orDie
+          present  = known.map { case (lemmaId, formId, relation) => (lemmaId, formId, relation) }.toSet
+          written <- ZIO.foreach(wanted) { case (text, relation) =>
+                       ensure(language, text, decode(lemma.partOfSpeech), None, userId)
+                         .flatMap(form => {
+                           if (form.id == lemma.id || present.contains((lemma.id, form.id, relation)))
+                             ZIO.succeed(0)
+                           else {
+                             repo
+                               .insertForms(List(WordFormRow(0L, lemma.id, form.id, relation, now)))
+                               .orDie
+                               .as(1)
+                           }
+                         })
+                         .catchAll(_ => ZIO.succeed(0))
+                     }
+        } yield written.sum
+      }
+    }
+
+    /** Records the pair the row asserts, unless the caller had already recorded it. Written from the two rows already
+      * in hand rather than through [[linkOrExisting]], which would `ensure` the target a second time. Both directions
+      * go in, as everywhere else — `insertTranslationPair` writes the mirror.
+      */
+    def linkRows(source: WordRow, target: WordRow, now: Long): UIO[Unit] = {
+      if (source.id == target.id)
+        ZIO.unit
+      else {
+        repo
+          .findTranslation(source.id, target.id, Some(userId))
+          .orDie
+          .flatMap(known => {
+            ZIO.when(known.isEmpty)(
+              repo.insertTranslationPair(source.id, target.id, WordService.userOrigin, Some(userId), now).orDie
+            )
+          })
+          .unit
+      }
+    }
+
+    /** One row's writes, or [[RowOutcome.skipped]] when the row had no source word to hang anything on. */
+    def writeRow(row: TabularRow, now: Long): UIO[RowOutcome] = {
+      val sourceExtra = row.sourceExtra.map(WordCell.parseExtra(_, sourceLanguage, sourceMarkers))
+      val targetExtra = row.targetExtra.map(WordCell.parseExtra(_, targetLanguage, targetMarkers))
+
+      // The extra column's gender is folded in before the part of speech is read: a one-word cell is a noun only once
+      // a gender is known, and `ensure` discards a gender that does not belong to one.
+      val sourceCell = WordCell
+        .parseWord(row.source, sourceLanguage, sourceMarkers)
+        .withGender(sourceExtra.flatMap(_.gender), sourceLanguage)
+      val targetCell = WordCell
+        .parseWord(row.target, targetLanguage, targetMarkers)
+        .withGender(targetExtra.flatMap(_.gender), targetLanguage)
+
+      if (sourceCell.text.isEmpty)
+        ZIO.succeed(RowOutcome.skipped)
+      else {
+        val effect = for {
+          source         <- ensureCounted(sourceLanguage, sourceCell.text, sourceCell.partOfSpeech, sourceCell.gender, userId)
+          (src, srcIsNew) = source
+          outcome        <- if (targetCell.text.isEmpty)
+                              repo.importWord(src.id, tagId, now).orDie.as(RowOutcome(written = true))
+                            else {
+                              for {
+                                target         <- ensureCounted(
+                                                    targetLanguage,
+                                                    targetCell.text,
+                                                    targetCell.partOfSpeech,
+                                                    targetCell.gender,
+                                                    userId,
+                                                  )
+                                (tgt, tgtIsNew) = target
+                                // The reader asserted this pair by putting both cells on one line, so the edge is recorded
+                                // even for a word the dictionary has never heard of. That is the whole difference from
+                                // `bulkImport`, which can only mark a pair the dictionary already knew about.
+                                _              <- linkRows(src, tgt, now)
+                                _              <- repo.importPair(src.id, tagId, tgt.id, now).orDie
+                                forms          <- writeForms(tgt, targetExtra, targetLanguage, now)
+                              } yield RowOutcome(
+                                written = true,
+                                paired = true,
+                                minted = if (tgtIsNew) 1 else 0,
+                                forms = forms,
+                              )
+                            }
+          forms          <- writeForms(src, sourceExtra, sourceLanguage, now)
+        } yield outcome.add(minted = if (srcIsNew) 1 else 0, forms = forms)
+
+        // A row the dictionary or validation rejects is skipped, never fatal: one bad line must not cost the reader
+        // the other two thousand. The same leniency `bulkImport.createAndTag` applies per token.
+        effect.catchAll(_ => ZIO.succeed(RowOutcome.skipped))
+      }
+    }
+
+    for {
+      _       <- bulkUploadGuard(tagId, userId)
+      _       <- ZIO.when(rows.isEmpty || rows.size > WordService.maxTabularRows)(ZIO.fail(invalidFile))
+      _       <- ZIO.when(Validation.utf8Length(rows.map(cells).mkString) > WordService.maxBulkUploadBytes)(
+                   ZIO.fail(invalidFile)
+                 )
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      // Strictly sequential: `tagMemberships` answers in insertion order, and that order is the reader's own row
+      // order, which the editor shows back to them.
+      written <- ZIO.foreach(rows)(row => writeRow(row, now))
+      _       <- repo
+                   .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+                   .orDie
+    } yield {
+      val totals = written.foldLeft(RowOutcome.skipped)((acc, row) => acc.merge(row))
+      TabularImportResponse(
+        rows = written.count(_.written),
+        pairs = written.count(_.paired),
+        newWords = totals.minted,
+        forms = totals.forms,
+      )
+    }
+  }
+
+  /** Every cell of one row, for the size check — the same bound the free-text path applies to its `content`. */
+  private def cells(row: TabularRow): String = {
+    row.source + row.target + row.sourceExtra.getOrElse("") + row.targetExtra.getOrElse("")
+  }
+
+  def checkColumnLanguages(columns: List[ColumnSample]): UIO[ColumnLanguageCheckResponse] = {
+    // Every study language, not just a tag's two: the mapping step's job is to say what a column *is*, including one
+    // the reader has not assigned yet.
+    ZIO
+      .foreach(columns)(column => {
+        val values = column.values.map(_.trim).filter(_.nonEmpty).distinct
+        if (values.isEmpty)
+          ZIO.succeed(ColumnLanguageGuess(column.index, sampled = 0, hits = Nil, best = None))
+        else {
+          for {
+            shuffled <- Random.shuffle(values)
+            sample    = shuffled.take(languageCheck.sampleSize)
+            hits     <- ZIO.foreach(WordLanguage.all)(language => {
+                          // Parsed the same way the import will parse it, so a marker or an article never counts as
+                          // part of the word being looked up.
+                          val markers = MarkerVocabulary.forPair(language, language)
+                          val keys    = sample.map(value => WordCell.parseWord(value, language, markers).text.toLowerCase)
+                          repo
+                            .findWordsByKeys(WordLanguage.code(language), keys)
+                            .orDie
+                            .map(found => {
+                              val norms = found.map(_.textNorm).toSet
+                              LanguageHit(language, keys.count(norms.contains))
+                            })
+                        })
+          } yield ColumnLanguageGuess(
+            index = column.index,
+            sampled = sample.size,
+            hits = hits,
+            best = hits.filter(_.matched > 0).maxByOption(_.matched).map(_.language),
+          )
+        }
+      })
+      .map(ColumnLanguageCheckResponse.apply)
   }
 
   /** The tokens already in the dictionary for `language`, and whatever is left. Looks each token up by its bare word

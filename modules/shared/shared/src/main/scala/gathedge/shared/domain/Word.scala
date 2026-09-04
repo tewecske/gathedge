@@ -64,18 +64,24 @@ object WordLanguage {
   *
   * Two words spelled the same with different parts of speech are two entries — `laufen` the verb and `Laufen` the noun
   * are not one row with two meanings — which is what keeps a translation attached to the sense it belongs to.
+  *
+  * [[Phrase]] is the odd one: not a part of speech at all, but the same kind of discriminator, and it earns its place
+  * here rather than in a column of its own because `part_of_speech` is already in `words`' identity key. An imported
+  * `guten Tag` is therefore one entry that cannot collide with the words it is made of. A tabular import assigns it
+  * (see `shared.parsing.WordCell`); nothing derives it from a word already stored.
   */
 enum PartOfSpeech derives JsonCodec, CanEqual {
   case Noun,
     Verb,
     Adjective,
     Adverb,
+    Phrase,
     Other
 }
 
 object PartOfSpeech {
 
-  val all: List[PartOfSpeech] = List(Noun, Verb, Adjective, Adverb, Other)
+  val all: List[PartOfSpeech] = List(Noun, Verb, Adjective, Adverb, Phrase, Other)
 
   /** What `words.part_of_speech` stores. Also what the dictionary importer maps wiktextract's much longer vocabulary
     * onto, everything it does not recognise becoming [[Other]].
@@ -90,6 +96,8 @@ object PartOfSpeech {
         "adjective"
       case Adverb    =>
         "adverb"
+      case Phrase    =>
+        "phrase"
       case Other     =>
         "other"
     }

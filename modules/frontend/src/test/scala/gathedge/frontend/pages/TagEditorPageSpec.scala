@@ -5,7 +5,7 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.TagEntry
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -158,6 +158,99 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
+      suite("suggestRoles")(
+        test("each language's best-scoring column takes the matching role") {
+          val guesses = List(
+            guess(0, WordLanguage.Hu, 8),
+            guess(1, WordLanguage.De, 9),
+          )
+          assertTrue(
+            TagEditorPage.suggestRoles(guesses, 2, WordLanguage.De, WordLanguage.Hu) == Map(
+              1 -> TagEditorPage.ColumnRole.Source,
+              0 -> TagEditorPage.ColumnRole.Target,
+            )
+          )
+        },
+        test("a third column of markers is left for the reader to assign") {
+          val guesses = List(guess(0, WordLanguage.De, 9), guess(1, WordLanguage.Hu, 8))
+          val roles   = TagEditorPage.suggestRoles(guesses, 3, WordLanguage.De, WordLanguage.Hu)
+          assertTrue(roles.get(2).isEmpty, roles.size == 2)
+        },
+        test("with only one language recognised, the other role falls back to a free column") {
+          val roles =
+            TagEditorPage.suggestRoles(List(guess(1, WordLanguage.De, 9)), 2, WordLanguage.De, WordLanguage.Hu)
+          assertTrue(
+            roles == Map(1 -> TagEditorPage.ColumnRole.Source, 0 -> TagEditorPage.ColumnRole.Target)
+          )
+        },
+        test("a hand-written list nothing recognises still gets the obvious two-column guess") {
+          // Scoring zero everywhere is ordinary for words the dictionary has never seen, not an error.
+          assertTrue(
+            TagEditorPage.suggestRoles(Nil, 2, WordLanguage.De, WordLanguage.Hu) == Map(
+              0 -> TagEditorPage.ColumnRole.Source,
+              1 -> TagEditorPage.ColumnRole.Target,
+            )
+          )
+        },
+        test("one column cannot be both roles when both languages point at it") {
+          val guesses = List(guess(0, WordLanguage.De, 9))
+          val roles   = TagEditorPage.suggestRoles(guesses, 2, WordLanguage.De, WordLanguage.De)
+          assertTrue(roles(0) == TagEditorPage.ColumnRole.Source, roles(1) == TagEditorPage.ColumnRole.Target)
+        },
+      ),
+      suite("rowsFor")(
+        test("maps the chosen columns and ignores the rest") {
+          val grid  = List(List("der Hund", "kutya", "hn"), List("Katze", "macska", "w"))
+          val roles = Map(
+            0 -> TagEditorPage.ColumnRole.Source,
+            1 -> TagEditorPage.ColumnRole.Target,
+            2 -> TagEditorPage.ColumnRole.SourceExtra,
+          )
+          assertTrue(
+            TagEditorPage.rowsFor(grid, roles) == List(
+              TabularRow("der Hund", "kutya", Some("hn"), None),
+              TabularRow("Katze", "macska", Some("w"), None),
+            )
+          )
+        },
+        test("the columns may be in any order, and an unmapped one is dropped") {
+          val grid  = List(List("kutya", "skip", "der Hund"))
+          val roles = Map(2 -> TagEditorPage.ColumnRole.Source, 0 -> TagEditorPage.ColumnRole.Target)
+          assertTrue(
+            TagEditorPage.rowsFor(grid, roles) == List(TabularRow("der Hund", "kutya", None, None))
+          )
+        },
+        test("a blank extra cell is sent as nothing rather than as an empty string") {
+          val grid  = List(List("Hund", "kutya", ""))
+          val roles = Map(
+            0 -> TagEditorPage.ColumnRole.Source,
+            1 -> TagEditorPage.ColumnRole.Target,
+            2 -> TagEditorPage.ColumnRole.TargetExtra,
+          )
+          assertTrue(TagEditorPage.rowsFor(grid, roles) == List(TabularRow("Hund", "kutya", None, None)))
+        },
+        test("a row with no word is dropped before it is sent") {
+          val grid  = List(List("", "kutya"), List("Hund", "kutya"))
+          val roles = Map(0 -> TagEditorPage.ColumnRole.Source, 1 -> TagEditorPage.ColumnRole.Target)
+          assertTrue(TagEditorPage.rowsFor(grid, roles).map(_.source) == List("Hund"))
+        },
+        test("nothing is sent until both the word and translation columns are chosen") {
+          val grid = List(List("Hund", "kutya"))
+          assertTrue(
+            TagEditorPage.rowsFor(grid, Map(0 -> TagEditorPage.ColumnRole.Source)).isEmpty,
+            TagEditorPage.rowsFor(grid, Map.empty).isEmpty,
+          )
+        },
+      ),
+    )
+  }
+
+  private def guess(index: Int, language: WordLanguage, matched: Int): ColumnLanguageGuess = {
+    ColumnLanguageGuess(
+      index = index,
+      sampled = 10,
+      hits = WordLanguage.all.map(l => LanguageHit(l, if (l == language) matched else 0)),
+      best = Some(language),
     )
   }
 }

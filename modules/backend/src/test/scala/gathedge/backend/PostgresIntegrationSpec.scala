@@ -43,8 +43,18 @@ import gathedge.backend.service.{
   WordFailure,
   WordService,
 }
-import gathedge.shared.domain.{Gender, TranslationFilter, WordLanguage}
-import gathedge.shared.dto.{PairRef, Paging, ReplacePairRequest, TagPairInput, TagPairWord, WordSort}
+import gathedge.shared.domain.{Gender, PartOfSpeech, TranslationFilter, WordLanguage}
+import gathedge.shared.dto.{
+  ColumnSample,
+  PairRef,
+  Paging,
+  ReplacePairRequest,
+  TabularImportResponse,
+  TabularRow,
+  TagPairInput,
+  TagPairWord,
+  WordSort,
+}
 import zio._
 import zio.test._
 
@@ -872,6 +882,74 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           partial.exists(_.isForm),
           released.exists(!_.isForm),
           back == List("PgBaum", "PgBäume"),
+        )
+      },
+      // `tabularImport` is the first *service* path that writes `word_forms` at all — until now only `DictionaryImport`
+      // did, which never runs here — so `existingFormRelations`' three-column read, `insertForms`' own `is_form` update
+      // and `ensureWordCounted`'s insert-or-find all reach the real dialect for the first time, as does
+      // `findTranslation` narrowed to one creator. Every one of them is a new statement over `words`, which is the rule
+      // `CLAUDE.md` states for that table. The second call is the same import again: on this dialect the unique key
+      // `(language, text_norm, part_of_speech, gender)` is what makes the find path answer instead of the insert path,
+      // and `newWords == 0` is the only evidence that it did.
+      test("a tabular import asserts its pairs, genders and forms on the real dialect, and repeats cleanly") {
+        val rows = List(
+          // The article carries the gender; a marker in the extra column carries it for the row that has none.
+          TabularRow("der Pgtabhund", "pgtabkutya", None, None),
+          TabularRow("Pgtabkatze", "pgtabmacska", Some("w"), None),
+          // `+D` says helfen governs the dative — no second word, so it is stripped and dropped. The extra column's
+          // `pgtabhilft (3)` does name one, so it becomes a `word_forms` row.
+          TabularRow("pgtabhelfen +D", "pgtabsegit", Some("pgtabhilft (3)"), None),
+          // Two words on both sides: one `Phrase` row each, not four words.
+          TabularRow("guten Pgtabtag", "jo pgtabnapot", None, None),
+        )
+        for {
+          reader    <- AuthService.createGuest(Some("10.9.3.1")).map(_._1)
+          tag       <- WordService.createTag("pgtabular", reader.id).map(_.tag)
+          first     <- WordService.tabularImport(tag.id, rows, WordLanguage.De, WordLanguage.Hu, reader.id)
+          entries   <- WordService.tagEntries(tag.id, reader.id)
+          helfen    <- WordRepository.findWordsByKeys("de", List("pgtabhelfen")).map(_.headOption)
+          forms     <- ZIO.foreach(helfen.map(_.id).toList)(id => WordRepository.formsOf(id)).map(_.flatten)
+          formWord  <- ZIO.foreach(forms.map(_.formWordId))(WordRepository.findWordById).map(_.flatten)
+          // The marker must never have reached `text_norm`: `pgtabhelfen +D` and `pgtabhelfen` are one row, not two.
+          helfenAll <- WordRepository.findWordsByKeys("de", List("pgtabhelfen", "pgtabhelfen +d"))
+          second    <- WordService.tabularImport(tag.id, rows, WordLanguage.De, WordLanguage.Hu, reader.id)
+          after     <- WordService.tagEntries(tag.id, reader.id)
+          languages <- WordRepository.findTagById(tag.id)
+          guesses   <- WordService.checkColumnLanguages(
+                         List(
+                           ColumnSample(0, List("der Pgtabhund", "Pgtabkatze")),
+                           ColumnSample(1, List("pgtabkutya", "pgtabmacska")),
+                         )
+                       )
+        } yield assertTrue(
+          // Four rows, four asserted pairs, eight words minted (both sides of each row), one form.
+          first == TabularImportResponse(rows = 4, pairs = 4, newWords = 8, forms = 1),
+          // Row order is the reader's own; the pair is `exact` because the file asserted it, not the dictionary.
+          entries.map(entry => (entry.source.text, entry.target.map(_.text), entry.exact)) == List(
+            ("Pgtabhund", Some("pgtabkutya"), true),
+            ("Pgtabkatze", Some("pgtabmacska"), true),
+            ("pgtabhelfen", Some("pgtabsegit"), true),
+            ("guten Pgtabtag", Some("jo pgtabnapot"), true),
+          ),
+          // The article and the German `w` both land as gender; a two-word cell is one `Phrase` row on either side.
+          entries.map(entry => (entry.source.gender, entry.source.partOfSpeech)) == List(
+            (Some(Gender.Masculine), PartOfSpeech.Noun),
+            (Some(Gender.Feminine), PartOfSpeech.Noun),
+            (None, PartOfSpeech.Other),
+            (None, PartOfSpeech.Phrase),
+          ),
+          entries.last.target.map(_.partOfSpeech).contains(PartOfSpeech.Phrase),
+          // The extra column's inflected word is filed under its relation, and flagged out of the main listing.
+          forms.map(_.relation) == List("third-person"),
+          formWord.map(_.text) == List("pgtabhilft"),
+          formWord.forall(_.isForm),
+          helfenAll.map(_.textNorm) == List("pgtabhelfen"),
+          // Re-importing the same file writes nothing new: every word and every pair is found rather than inserted.
+          second == TabularImportResponse(rows = 4, pairs = 4, newWords = 0, forms = 0),
+          after.map(_.source.text) == entries.map(_.source.text),
+          languages.exists(row => row.sourceLanguage.contains("de") && row.targetLanguage.contains("hu")),
+          // Scored against all four languages, so a column can be named before anybody assigns it.
+          guesses.columns.map(_.best) == List(Some(WordLanguage.De), Some(WordLanguage.Hu)),
         )
       },
       // Not a referential-integrity case either — the two distractor readers touch `words` and `word_forms` only. They

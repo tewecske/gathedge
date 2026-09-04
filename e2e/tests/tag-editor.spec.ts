@@ -184,3 +184,63 @@ test('multiselect: Delete selected words hard-deletes my own words and its dialo
   const body = await found.json();
   expect(body.items.some((w: { text: string }) => w.text === src)).toBe(false);
 });
+
+// The tabular bulk import: pasting a TSV opens the column-mapping step instead of importing the text word by word,
+// and each row is written as one asserted pair.
+//
+// What this locks down, none of which the free-text importer could do:
+//   - a delimited paste is detected and mapped rather than tokenized;
+//   - a row pairs two words the dictionary has never seen;
+//   - a multi-word cell is imported whole as a phrase, not split into its words;
+//   - a marker (`+D`) and an article are stripped off the stored word;
+//   - ordinary prose still takes the old free-text path, with no mapping step.
+test('a pasted TSV opens the column mapping step and imports one pair per row', async () => {
+  const id = `Tab${unique}`;
+  await page.getByRole('button', { name: 'Bulk import' }).click();
+
+  const paste = page.locator('textarea');
+  await paste.fill(
+    [
+      `der ${id}hund\t${id}kutya`,
+      `${id}helfen +D\t${id}segit`,
+      `guten ${id}tag\tjo ${id}napot`,
+    ].join('\n'),
+  );
+
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+
+  // The mapping step, not a straight import.
+  await expect(page.getByRole('heading', { name: 'Map the columns' })).toBeVisible();
+  const roles = page.locator('thead select');
+  await expect(roles).toHaveCount(2);
+  await expect(roles.nth(0)).toHaveValue('Source');
+  await expect(roles.nth(1)).toHaveValue('Target');
+
+  await page.getByRole('button', { name: 'Import rows' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Map the columns' })).toHaveCount(0);
+  await expect(page.locator('.alert-error')).toHaveCount(0);
+
+  // The article is stripped off the stored word, and the marker with it.
+  await expect(rowFor(`${id}hund`)).toContainText(`${id}kutya`);
+  await expect(rowFor(`${id}helfen`)).toContainText(`${id}segit`);
+  // The two-word cell is one row, not two.
+  await expect(rowFor(`guten ${id}tag`)).toContainText(`jo ${id}napot`);
+
+  await page.reload();
+  await expect(rowFor(`${id}hund`)).toBeVisible();
+  await expect(rowFor(`guten ${id}tag`)).toBeVisible();
+  // `+D` never reached the stored word.
+  await expect(page.getByText(`${id}helfen +D`)).toHaveCount(0);
+});
+
+test('ordinary prose still takes the free-text path, with no mapping step', async () => {
+  const id = `Prose${unique}`;
+  await page.getByRole('button', { name: 'Bulk import' }).click();
+
+  await page.locator('textarea').fill(`${id}eins ${id}zwei ${id}drei`);
+  await page.getByRole('button', { name: 'Import', exact: true }).click();
+
+  await expect(page.getByRole('heading', { name: 'Map the columns' })).toHaveCount(0);
+  await expect(rowFor(`${id}eins`.toLowerCase())).toBeVisible();
+});

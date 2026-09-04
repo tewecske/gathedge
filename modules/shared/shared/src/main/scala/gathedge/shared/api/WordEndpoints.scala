@@ -11,6 +11,8 @@ import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
   BulkUploadPreviewRequest,
   BulkUploadPreviewResponse,
+  ColumnLanguageCheckRequest,
+  ColumnLanguageCheckResponse,
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
@@ -25,6 +27,8 @@ import gathedge.shared.dto.{
   TagExportFile,
   TagImportRequest,
   TagImportResponse,
+  TabularImportRequest,
+  TabularImportResponse,
   TagPairInput,
   TagResponse,
   WordDetail,
@@ -443,6 +447,41 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** Writes a delimited paste into the tag one row at a time, '''taking each row's pairing as given''' rather than
+    * inferring it the way [[bulkImport]] must. A row's two cells were put on one line by the reader, so they are marked
+    * as a practice pair whether or not the dictionary already links them — a word the dictionary has never seen pairs
+    * just as well as one it has.
+    *
+    * Each cell is parsed by `shared.parsing.WordCell`: markers like `+D` or `(m)` are lifted off so they never reach
+    * `text_norm`, a leading article yields the gender, and a cell left holding two or more words becomes one
+    * `PartOfSpeech.Phrase` entry instead of being split up. An extra column may add the gender, or an inflected word
+    * that becomes a `word_forms` row.
+    *
+    * 404 is the tag, whoever's it is. 429 shares [[bulkImport]]'s `RateLimitKey.wordUpload` budget, for the same
+    * reason: one call writes up to `WordService.maxTabularRows` rows.
+    */
+  val tabularImport = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "tabular-import")
+      .in[TabularImportRequest]
+      .withCodecError
+      .out[TabularImportResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.tooManyRequests)
+  }
+
+  /** Samples each column of a delimited paste and reports how many of its words each language's dictionary knows, so
+    * the mapping step can suggest which column holds which language instead of making the reader work it out.
+    *
+    * Scored against '''every''' study language, not only the tag's two: the point is to be able to say "this column
+    * looks German" about a column nobody has assigned yet. '''Writes nothing'''; no 404, since it names no tag.
+    */
+  val columnLanguageCheck = {
+    Endpoint(Method.POST / "api" / "words" / "column-language-check")
+      .in[ColumnLanguageCheckRequest]
+      .withCodecError
+      .out[ColumnLanguageCheckResponse]
+      .outErrors(failure.badRequest, failure.unauthorized)
+  }
+
   /** Scans an uploaded file's free text for words already in the dictionary, in each of the two languages named —
     * `sourceLanguage` first, then whatever is left against `targetLanguage` — and answers every match, with its known
     * translations into the other language, plus every token that matched neither. '''Writes nothing''': this is the
@@ -507,6 +546,8 @@ object WordEndpoints {
       bulkDeleteWords,
       bulkImport,
       languageCheck,
+      tabularImport,
+      columnLanguageCheck,
       bulkUploadPreview,
       bulkUploadConfirm,
     )

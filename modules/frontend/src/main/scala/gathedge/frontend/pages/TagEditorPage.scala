@@ -7,8 +7,21 @@ import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, Word
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PartOfSpeech, Tag, Word, WordLanguage}
-import gathedge.shared.dto.{BulkImportResponse, LanguageCheckResponse, TagEntry, TagPairInput, TagPairWord, TagResponse}
+import gathedge.shared.dto.{
+  BulkImportResponse,
+  ColumnLanguageCheckResponse,
+  ColumnLanguageGuess,
+  ColumnSample,
+  LanguageCheckResponse,
+  TabularImportResponse,
+  TabularRow,
+  TagEntry,
+  TagPairInput,
+  TagPairWord,
+  TagResponse,
+}
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
+import gathedge.shared.parsing.DelimitedText
 import org.scalajs.dom
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -63,6 +76,92 @@ object TagEditorPage {
     val mineOk   = !importedByMe || (entry.createdByMe && entry.imported)
     val uniqueOk = !uniqueToTag || !entry.inMyOtherTags
     bucketOk && mineOk && uniqueOk
+  }
+
+  // -- Tabular import --------------------------------------------------------------------------
+
+  /** What one column of a delimited paste is used for. The two "extra" roles carry the gender and grammar markers
+    * belonging to a specific word, which is why there is one per side rather than one for the row.
+    */
+  private[pages] enum ColumnRole derives CanEqual {
+    case Ignore, Source, Target, SourceExtra, TargetExtra
+  }
+
+  private[pages] object ColumnRole {
+    val all: List[ColumnRole] = List(Ignore, Source, Target, SourceExtra, TargetExtra)
+  }
+
+  /** How many rows the mapping step shows. Enough to recognise which column is which, few enough that a two-thousand
+    * row paste does not render as a two-thousand row table.
+    */
+  private[pages] val previewRows = 5
+
+  /** Pre-fills the roles from what the server made of each column: the column that looks most like the tag's source
+    * language becomes the word column, the one that looks most like its target the translation. Everything else starts
+    * ignored, including a second column of the same language — guessing further would be worse than letting the reader
+    * say.
+    *
+    * A column with no guess at all is ordinary, not an error: a hand-written list of words the dictionary has never
+    * seen scores zero everywhere. When neither language is recognised anywhere, the first two columns are offered as a
+    * starting point, since a two-column paste is overwhelmingly word-then-translation.
+    */
+  private[pages] def suggestRoles(
+    guesses: List[ColumnLanguageGuess],
+    columnCount: Int,
+    source: WordLanguage,
+    target: WordLanguage,
+  ): Map[Int, ColumnRole] = {
+    def bestFor(language: WordLanguage): Option[Int] = {
+      guesses
+        .filter(_.best.contains(language))
+        .maxByOption(guess => guess.hits.find(_.language == language).map(_.matched).getOrElse(0))
+        .map(_.index)
+    }
+
+    val sourceColumn = bestFor(source)
+    val targetColumn = bestFor(target).filterNot(sourceColumn.contains)
+
+    (sourceColumn, targetColumn) match {
+      case (Some(s), Some(t)) =>
+        Map(s -> ColumnRole.Source, t -> ColumnRole.Target)
+      case (Some(s), None)    =>
+        val fallback = (0 until columnCount).find(_ != s)
+        Map(s -> ColumnRole.Source) ++ fallback.map(_ -> ColumnRole.Target)
+      case (None, Some(t))    =>
+        val fallback = (0 until columnCount).find(_ != t)
+        Map(t -> ColumnRole.Target) ++ fallback.map(_ -> ColumnRole.Source)
+      case (None, None)       =>
+        if (columnCount >= 2) Map(0 -> ColumnRole.Source, 1 -> ColumnRole.Target) else Map.empty
+    }
+  }
+
+  /** Turns the grid and the reader's role assignment into the rows to post. A row whose word cell is blank is dropped
+    * here rather than sent for the server to skip, so the reported count matches what was asked for.
+    */
+  private[pages] def rowsFor(grid: List[List[String]], roles: Map[Int, ColumnRole]): List[TabularRow] = {
+    def column(role: ColumnRole): Option[Int] = roles.collectFirst { case (index, `role`) => index }
+
+    val sourceColumn = column(ColumnRole.Source)
+    val targetColumn = column(ColumnRole.Target)
+
+    (sourceColumn, targetColumn) match {
+      case (Some(source), Some(target)) =>
+        val sourceExtra                                 = column(ColumnRole.SourceExtra)
+        val targetExtra                                 = column(ColumnRole.TargetExtra)
+        def cell(row: List[String], index: Int): String = row.lift(index).getOrElse("").trim
+        grid
+          .map(row => {
+            TabularRow(
+              source = cell(row, source),
+              target = cell(row, target),
+              sourceExtra = sourceExtra.map(cell(row, _)).filter(_.nonEmpty),
+              targetExtra = targetExtra.map(cell(row, _)).filter(_.nonEmpty),
+            )
+          })
+          .filter(_.source.nonEmpty)
+      case _                            =>
+        Nil
+    }
   }
 }
 
@@ -299,11 +398,128 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   /** Feeds [[WordApiClient.checkLanguage]] before an import runs. */
   private val langCheckBus = new EventBus[String]()
 
+  // -- Tabular import --------------------------------------------------------------------------
+  // Set only once a paste or file turns out to be delimited; while `gridVar` is empty the panel behaves exactly as it
+  // did before, so ordinary prose never meets the mapping step.
+
+  private val gridVar     = Var(Option.empty[List[List[String]]])
+  private val headerVar   = Var(false)
+  private val rolesVar    = Var(Map.empty[Int, TagEditorPage.ColumnRole])
+  private val guessVar    = Var(List.empty[ColumnLanguageGuess])
+  private val colCheckBus = new EventBus[List[List[String]]]()
+  private val tabularBus  = new EventBus[List[TabularRow]]()
+
+  /** A mapped column whose assigned language disagrees with what the dictionary suggests, held until the reader
+    * confirms — the tabular counterpart of [[bulkPendingVar]]/[[bulkLangWarnVar]].
+    */
+  private val tablePendingVar  = Var(Option.empty[List[TabularRow]])
+  private val tableLangWarnVar = Var(Option.empty[String])
+
+  /** The rows the grid currently maps to, minus the heading row when the reader ticked that box. */
+  private def mappedRows(): List[TabularRow] = {
+    val body = gridVar.now().getOrElse(Nil).drop(if (headerVar.now()) 1 else 0)
+    TagEditorPage.rowsFor(body, rolesVar.now())
+  }
+
+  /** Abandons the table and puts the raw text back on the free-text path — the escape hatch for a file that is
+    * technically delimited but is not really a word table.
+    */
+  private def dismissTable(): Unit = {
+    Var.set(
+      gridVar          -> None,
+      guessVar         -> List.empty[ColumnLanguageGuess],
+      rolesVar         -> Map.empty[Int, TagEditorPage.ColumnRole],
+      headerVar        -> false,
+      tablePendingVar  -> None,
+      tableLangWarnVar -> None,
+    )
+  }
+
+  /** Splits the text if it is a table and opens the mapping step, or answers false so the caller falls through to the
+    * free-text import. The one decision that keeps the old path intact.
+    */
+  private def offerTable(text: String): Boolean = {
+    DelimitedText.sniff(text) match {
+      case Some(delimiter) =>
+        val grid          = DelimitedText.parse(text, delimiter)
+        Var.set(
+          gridVar          -> Some(grid),
+          headerVar        -> false,
+          rolesVar         -> Map.empty[Int, TagEditorPage.ColumnRole],
+          guessVar         -> List.empty[ColumnLanguageGuess],
+          tablePendingVar  -> None,
+          tableLangWarnVar -> None,
+          bulkResultVar    -> None,
+          errorVar         -> None,
+          bulkLangWarnVar  -> None,
+          bulkBusy         -> true,
+        )
+        colCheckBus.emit(grid)
+        true
+      case None            =>
+        false
+    }
+  }
+
+  /** The warning for a column mapped to a language the dictionary disagrees with. `{0}` is what the reader chose, `{1}`
+    * what was detected.
+    */
+  private def tableWarning(chosen: WordLanguage, detected: WordLanguage): String = {
+    I18n.t(UiKeys.tagsEditorBulkTableLangMismatch, Labels.language(chosen), Labels.language(detected))
+  }
+
+  /** The mapped word and translation columns whose detected language contradicts the role they were given. A column the
+    * dictionary did not recognise at all says nothing either way and is not a disagreement.
+    */
+  private def tableMismatch(): Option[String] = {
+    val roles   = rolesVar.now()
+    val guesses = guessVar.now()
+
+    def check(role: TagEditorPage.ColumnRole, chosen: WordLanguage): Option[String] = {
+      for {
+        index    <- roles.collectFirst { case (column, `role`) => column }
+        guess    <- guesses.find(_.index == index)
+        detected <- guess.best
+        if detected != chosen
+      } yield tableWarning(chosen, detected)
+    }
+
+    check(TagEditorPage.ColumnRole.Source, sourceLangVar.now())
+      .orElse(check(TagEditorPage.ColumnRole.Target, targetLangVar.now()))
+  }
+
+  /** The language guard, kept but moved to the mapping step: a disagreement stops here with confirm-or-cancel, and
+    * anything else goes straight to the import.
+    */
+  private def gateTabularImport(): Unit = {
+    val rows = mappedRows()
+    if (rows.nonEmpty) {
+      tableMismatch() match {
+        case Some(warning) =>
+          Var.set(tablePendingVar -> Some(rows), tableLangWarnVar -> Some(warning))
+        case None          =>
+          Var.set(tablePendingVar -> None, tableLangWarnVar -> None)
+          tabularBus.emit(rows)
+      }
+    }
+  }
+
   /** Sends the text to the server's language check before importing. A recognised sample goes straight to [[bulkBus]];
     * a poorly-recognised one stops here with a confirm-or-cancel warning; a failed check is not the reader's problem,
     * so it falls through to the import.
     */
   private def gateBulkImport(text: String): Unit = {
+    if (text.trim.nonEmpty && !offerTable(text)) {
+      Var.set(bulkLangWarnVar -> None, bulkPendingVar -> None, bulkBusy -> true)
+      langCheckBus.emit(text)
+    }
+  }
+
+  /** The free-text import, with the table detection deliberately skipped — what "import as plain text" runs after the
+    * reader has seen the mapping step and decided the file is not a table after all.
+    */
+  private def forceTextImport(text: String): Unit = {
+    dismissTable()
     if (text.trim.nonEmpty) {
       Var.set(bulkLangWarnVar -> None, bulkPendingVar -> None, bulkBusy -> true)
       langCheckBus.emit(text)
@@ -323,8 +539,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     )
   }
 
-  private def clearBulkWarning(): Unit =
+  private def clearBulkWarning(): Unit = {
     if (bulkLangWarnVar.now().isDefined) Var.set(bulkLangWarnVar -> None, bulkPendingVar -> None)
+    // Editing the textarea invalidates a grid parsed from its previous contents; the next import re-sniffs it.
+    if (gridVar.now().isDefined) dismissTable()
+  }
 
   /** One file input for the panel: a photo is read with OCR in the browser first, anything else is read as plain text.
     * Either way the text goes through [[gateBulkImport]], the same as a pasted list.
@@ -510,6 +729,58 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           entriesBus.emit(())
         case Left(err)     =>
           bulkBusy.set(false)
+          errorVar.set(Some(err.message))
+      },
+      colCheckBus.events
+        .flatMapSwitch { grid =>
+          // Every column is offered, including ones the reader will ignore — the suggestion is only useful if it can
+          // speak about a column nobody has assigned yet. The heading row is left in: one row cannot move a sample of
+          // twenty, and the reader has not said whether it is a heading at this point.
+          val columns = grid.headOption.getOrElse(Nil).indices.toList.map { index =>
+            ColumnSample(index, grid.map(_.lift(index).getOrElse("")))
+          }
+          WordApiClient.checkColumnLanguages(columns)
+        } --> Observer[Either[ApiError, ColumnLanguageCheckResponse]] {
+        case Right(response) =>
+          val columns = gridVar.now().flatMap(_.headOption).map(_.size).getOrElse(0)
+          bulkBusy.set(false)
+          guessVar.set(response.columns)
+          rolesVar.set(
+            TagEditorPage.suggestRoles(response.columns, columns, sourceLangVar.now(), targetLangVar.now())
+          )
+        case Left(_)         =>
+          // A failed check must not block the reader, the same rule the free-text guard follows: the mapping step
+          // still opens, just with nothing suggested.
+          val columns = gridVar.now().flatMap(_.headOption).map(_.size).getOrElse(0)
+          bulkBusy.set(false)
+          guessVar.set(Nil)
+          rolesVar.set(TagEditorPage.suggestRoles(Nil, columns, sourceLangVar.now(), targetLangVar.now()))
+      },
+      tabularBus.events
+        .filter(_.nonEmpty)
+        .flatMapSwitch { rows =>
+          bulkBusy.set(true)
+          WordApiClient.tabularImport(tagId, rows, sourceLangVar.now(), targetLangVar.now())
+        } --> Observer[Either[ApiError, TabularImportResponse]] {
+        case Right(result) =>
+          bulkBusy.set(false)
+          bulkResultVar.set(
+            Some(
+              I18n.t(
+                UiKeys.tagsEditorBulkTableResult,
+                result.rows.toString,
+                result.pairs.toString,
+                result.newWords.toString,
+                result.forms.toString,
+              )
+            )
+          )
+          bulkTextVar.set("")
+          dismissTable()
+          entriesBus.emit(())
+        case Left(err)     =>
+          bulkBusy.set(false)
+          Var.set(tablePendingVar -> None, tableLangWarnVar -> None)
           errorVar.set(Some(err.message))
       },
       // A selected row that a filter change hides drops out of the selection, so "Select all" only ever holds visible
@@ -827,7 +1098,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
             input(
               typ         := "file",
               cls         := "file-input file-input-bordered file-input-sm w-full",
-              accept      := "image/*,.txt,text/plain",
+              accept      := "image/*,.txt,.csv,.tsv,text/plain,text/csv,text/tab-separated-values",
               disabled <-- bulkBusy.signal,
               onChange --> Observer[dom.Event] { event =>
                 val target = event.target.asInstanceOf[dom.html.Input]
@@ -868,23 +1139,191 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                 ),
               )
             }),
+            child.maybe <-- gridVar.signal.map(_.map(renderTableMapping)),
             div(
               cls         := "flex items-center gap-2",
-              button(
-                typ := "button",
-                cls := "btn btn-primary btn-sm",
-                disabled <-- bulkBusy.signal.combineWith(bulkTextVar.signal).map { case (busy, text) =>
-                  busy || text.trim.isEmpty
-                },
-                I18n.t(UiKeys.tagsEditorBulkSubmit),
-                onClick.mapToUnit --> Observer[Unit](_ => gateBulkImport(bulkTextVar.now())),
-              ),
+              // Hidden while the mapping step is up: that step has its own two buttons, and offering a third that
+              // would re-sniff the same text is only confusing.
+              child.maybe <-- gridVar.signal.map(grid => {
+                Option.when(grid.isEmpty)(
+                  button(
+                    typ := "button",
+                    cls := "btn btn-primary btn-sm",
+                    disabled <-- bulkBusy.signal.combineWith(bulkTextVar.signal).map { case (busy, text) =>
+                      busy || text.trim.isEmpty
+                    },
+                    I18n.t(UiKeys.tagsEditorBulkSubmit),
+                    onClick.mapToUnit --> Observer[Unit](_ => gateBulkImport(bulkTextVar.now())),
+                  )
+                )
+              }),
               child.maybe <-- bulkResultVar.signal.map(_.map(text => span(cls := "text-sm opacity-70", text))),
             ),
           )
         )
       ),
     )
+  }
+
+  /** The column-mapping step: a preview of the first rows with a role picker above each column, the heading-row toggle,
+    * and the two ways out — import the rows, or fall back to the free-text path.
+    */
+  private def renderTableMapping(grid: List[List[String]]): HtmlElement = {
+    val columns = grid.headOption.map(_.size).getOrElse(0)
+    val preview = grid.take(TagEditorPage.previewRows)
+
+    div(
+      cls := "border border-base-300 rounded-lg p-3 flex flex-col gap-3",
+      h3(cls := "font-semibold", I18n.t(UiKeys.tagsEditorBulkTableHeading)),
+      p(cls  := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorBulkTableHint)),
+      label(
+        cls  := "label cursor-pointer justify-start gap-2 p-0",
+        input(
+          typ    := "checkbox",
+          cls    := "checkbox checkbox-sm",
+          controlled(
+            checked <-- headerVar.signal,
+            onInput.mapToChecked --> Observer[Boolean](headerVar.set),
+          ),
+        ),
+        span(cls := "label-text text-sm", I18n.t(UiKeys.tagsEditorBulkTableFirstRowHeader)),
+      ),
+      div(
+        cls  := "overflow-x-auto",
+        table(
+          cls := "table table-xs",
+          thead(
+            tr(
+              (0 until columns).toList.map(index => {
+                th(
+                  cls := "align-top",
+                  div(
+                    cls := "flex flex-col gap-1",
+                    select(
+                      cls    := "select select-bordered select-xs",
+                      TagEditorPage.ColumnRole.all.map(role =>
+                        option(value := role.toString, roleLabel(role), selected <-- roleSignal(index, role))
+                      ),
+                      onChange.mapToValue --> Observer[String](value => {
+                        TagEditorPage.ColumnRole.all
+                          .find(_.toString == value)
+                          .foreach(role => assignRole(index, role))
+                      }),
+                    ),
+                    span(cls := "text-xs font-normal opacity-60", child.text <-- detectedLabel(index)),
+                  ),
+                )
+              })
+            )
+          ),
+          tbody(
+            preview.zipWithIndex.map { case (row, rowIndex) =>
+              tr(
+                // The heading row is dimmed rather than hidden, so ticking the box visibly does something.
+                cls("opacity-40") <-- headerVar.signal.map(_ && rowIndex == 0),
+                (0 until columns).toList.map(index => td(row.lift(index).getOrElse(""))),
+              )
+            }
+          ),
+        ),
+      ),
+      child.maybe <-- tableLangWarnVar.signal.map(_.map { message =>
+        div(
+          cls := "alert alert-warning flex flex-col items-start gap-2 text-sm",
+          span(message),
+          div(
+            cls := "flex gap-2",
+            button(
+              typ := "button",
+              cls := "btn btn-xs btn-warning",
+              I18n.t(UiKeys.tagsEditorBulkImportAnyway),
+              onClick.mapToUnit --> Observer[Unit] { _ =>
+                tablePendingVar.now().foreach(tabularBus.emit)
+                Var.set(tableLangWarnVar -> None, tablePendingVar -> None)
+              },
+            ),
+            button(
+              typ := "button",
+              cls := "btn btn-xs btn-ghost",
+              I18n.t(UiKeys.commonCancel),
+              onClick.mapToUnit --> Observer[Unit](_ => Var.set(tableLangWarnVar -> None, tablePendingVar -> None)),
+            ),
+          ),
+        )
+      }),
+      child.maybe <-- readySignal.map(ready =>
+        Option.unless(ready)(p(cls := "text-xs text-warning", I18n.t(UiKeys.tagsEditorBulkTableNeedBoth)))
+      ),
+      div(
+        cls  := "flex items-center gap-2",
+        button(
+          typ := "button",
+          cls := "btn btn-primary btn-sm",
+          disabled <-- bulkBusy.signal.combineWith(readySignal).map { case (busy, ready) => busy || !ready },
+          I18n.t(UiKeys.tagsEditorBulkTableSubmit),
+          onClick.mapToUnit --> Observer[Unit](_ => gateTabularImport()),
+        ),
+        button(
+          typ := "button",
+          cls := "btn btn-ghost btn-sm",
+          disabled <-- bulkBusy.signal,
+          I18n.t(UiKeys.tagsEditorBulkTableAsText),
+          onClick.mapToUnit --> Observer[Unit](_ => forceTextImport(bulkTextVar.now())),
+        ),
+      ),
+    )
+  }
+
+  /** True once a word column and a translation column are both chosen — the minimum a row needs to mean anything. */
+  private val readySignal: Signal[Boolean] = {
+    rolesVar.signal.map(roles => {
+      roles.values.exists(_ == TagEditorPage.ColumnRole.Source) &&
+        roles.values.exists(_ == TagEditorPage.ColumnRole.Target)
+    })
+  }
+
+  private def roleSignal(index: Int, role: TagEditorPage.ColumnRole): Signal[Boolean] = {
+    rolesVar.signal.map(roles => roles.getOrElse(index, TagEditorPage.ColumnRole.Ignore) == role)
+  }
+
+  /** Assigns a role, taking it off whichever column held it. Every role but `Ignore` is unique, so picking "Word" for a
+    * second column moves it rather than leaving two columns claiming to be the same thing.
+    */
+  private def assignRole(index: Int, role: TagEditorPage.ColumnRole): Unit = {
+    rolesVar.update { roles =>
+      val cleared = roles - index
+      val freed   =
+        if (role == TagEditorPage.ColumnRole.Ignore) cleared else cleared.filterNot { case (_, held) => held == role }
+      if (role == TagEditorPage.ColumnRole.Ignore) freed else freed + (index -> role)
+    }
+    // The reader has overridden the mapping, so a warning raised against the old one no longer applies.
+    Var.set(tableLangWarnVar -> None, tablePendingVar -> None)
+  }
+
+  private def roleLabel(role: TagEditorPage.ColumnRole): String = {
+    role match {
+      case TagEditorPage.ColumnRole.Ignore      =>
+        I18n.t(UiKeys.tagsEditorBulkTableRoleIgnore)
+      case TagEditorPage.ColumnRole.Source      =>
+        I18n.t(UiKeys.tagsEditorBulkTableRoleSource)
+      case TagEditorPage.ColumnRole.Target      =>
+        I18n.t(UiKeys.tagsEditorBulkTableRoleTarget)
+      case TagEditorPage.ColumnRole.SourceExtra =>
+        I18n.t(UiKeys.tagsEditorBulkTableRoleSourceExtra)
+      case TagEditorPage.ColumnRole.TargetExtra =>
+        I18n.t(UiKeys.tagsEditorBulkTableRoleTargetExtra)
+    }
+  }
+
+  private def detectedLabel(index: Int): Signal[String] = {
+    guessVar.signal.map(guesses => {
+      guesses.find(_.index == index).flatMap(_.best) match {
+        case Some(language) =>
+          I18n.t(UiKeys.tagsEditorBulkTableDetected, Labels.language(language))
+        case None           =>
+          I18n.t(UiKeys.tagsEditorBulkTableDetectedNone)
+      }
+    })
   }
 
   private def renderDeleteModal(tag: Tag): HtmlElement = {

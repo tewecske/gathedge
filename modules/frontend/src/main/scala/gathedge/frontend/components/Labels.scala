@@ -57,6 +57,8 @@ object Labels {
         I18n.t(UiKeys.posAdjective)
       case PartOfSpeech.Adverb    =>
         I18n.t(UiKeys.posAdverb)
+      case PartOfSpeech.Phrase    =>
+        I18n.t(UiKeys.posPhrase)
       case PartOfSpeech.Other     =>
         I18n.t(UiKeys.posOtherKind)
     }

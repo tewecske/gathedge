@@ -14,9 +14,15 @@ import gathedge.shared.dto.{
   BulkUploadManualPair,
   BulkUploadManualWord,
   BulkUploadSelectedTranslation,
+  ColumnLanguageCheckRequest,
+  ColumnLanguageCheckResponse,
+  ColumnSample,
   CreateTagRequest,
   LanguageCheckRequest,
   LanguageCheckResponse,
+  TabularImportRequest,
+  TabularImportResponse,
+  TabularRow,
   CreateTagWithPairsRequest,
   CreateWordRequest,
   NewTranslation,
@@ -252,6 +258,25 @@ object WordApiClient {
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, LanguageCheckResponse]] = {
     run(executor(WordEndpoints.languageCheck(LanguageCheckRequest(content, sourceLanguage, targetLanguage))))
+  }
+
+  /** Writes a mapped table into the tag, one asserted pair per row, and answers the counts. */
+  def tabularImport(
+    tagId: Long,
+    rows: List[TabularRow],
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): EventStream[Either[ApiError, TabularImportResponse]] = {
+    run(executor(WordEndpoints.tabularImport(tagId, TabularImportRequest(rows, sourceLanguage, targetLanguage))))
+  }
+
+  /** Asks which language each column of a delimited paste looks like, so the mapping step can suggest the roles instead
+    * of leaving the reader to assign every column by hand.
+    */
+  def checkColumnLanguages(
+    columns: List[ColumnSample]
+  ): EventStream[Either[ApiError, ColumnLanguageCheckResponse]] = {
+    run(executor(WordEndpoints.columnLanguageCheck(ColumnLanguageCheckRequest(columns))))
   }
 
   /** Commits what the reader chose out of a bulk-upload preview — the confirm half only, since the preview itself needs
