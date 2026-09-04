@@ -447,6 +447,8 @@
   "ui.gameInstance.chooseLabel": "Válaszd ki a fordítást",
   "ui.gameInstance.finishedTitle": "Kvíz kész",
   "ui.gameInstance.backToGames": "Vissza a játékokhoz",
+  "ui.gameInstance.feedback.expected": "Elfogadott válasz: {0}",
+  "ui.gameInstance.feedback.next": "Tovább",
   "ui.gameInstance.score": "Pontszám: {0} / {1}",
   "ui.gameInstance.results.wordCol": "Szó",
   "ui.gameInstance.results.expectedCol": "Elvárt",

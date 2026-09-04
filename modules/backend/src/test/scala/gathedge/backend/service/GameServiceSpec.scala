@@ -577,6 +577,32 @@ object GameServiceSpec extends ZIOSpecDefault {
           resultsResult == Left(GameFailure.NotOwner),
         )
       },
+      test("submitAnswer answers with the graded row, the same one the results screen later shows") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "feedback", "feedback", 0L)
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "feedback-source"))
+          target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "feedback-target"))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tag.id))
+          missed  <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(missed.playId, owner)
+          wrong   <- GameService.submitAnswer(missed.playId, prompt.wordId.get, "nothing-like-it", owner)
+          results <- GameService.getResults(missed.playId, owner)
+          restart <- GameService.startPlay(created.slug, owner)
+          prompt2 <- GameService.nextPrompt(restart.playId, owner)
+          right   <- GameService.submitAnswer(restart.playId, prompt2.wordId.get, "feedback-target", owner)
+        } yield assertTrue(
+          // A mistake is named as one and carries what the game would have accepted, so the player is told at once.
+          wrong.outcome == AnswerOutcome.Wrong,
+          wrong.expectedTexts == List("feedback-target"),
+          wrong.givenText == "nothing-like-it",
+          wrong.wordText == "feedback-source",
+          // The very row the finished play shows: both go through `answerResultsOf`, so they cannot disagree.
+          results.answers.head == wrong,
+          right.outcome == AnswerOutcome.Correct,
+        )
+      },
       test("a gendered source word's prompt and results carry its article, an ungendered one is unaffected") {
         for {
           owner   <- newUser()

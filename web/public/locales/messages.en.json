@@ -447,6 +447,8 @@
   "ui.gameInstance.chooseLabel": "Pick the translation",
   "ui.gameInstance.finishedTitle": "Quiz complete",
   "ui.gameInstance.backToGames": "Back to games",
+  "ui.gameInstance.feedback.expected": "Accepted answer: {0}",
+  "ui.gameInstance.feedback.next": "Next",
   "ui.gameInstance.score": "Score: {0} / {1}",
   "ui.gameInstance.results.wordCol": "Word",
   "ui.gameInstance.results.expectedCol": "Expected",

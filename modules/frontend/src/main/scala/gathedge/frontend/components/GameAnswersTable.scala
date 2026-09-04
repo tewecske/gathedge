@@ -48,14 +48,17 @@ object GameAnswersTable {
       ),
       td(answer.expectedTexts.mkString(", ")),
       td(answer.givenText),
-      td(renderOutcomeBadge(answer.outcome)),
+      td(outcomeBadge(answer.outcome)),
     )
   }
 
   /** Mistakes (typo/wrong) get a warning/error badge, matching `AdminUserDiagnostics.renderOutcome`'s style for
     * `login_attempts.outcome` — the same "outcome of one attempt, in a table" shape.
+    *
+    * Public because `GamePlayPage`'s mid-play feedback badges one answer with no table around it, and an answer must
+    * not read one way between two words and another way in the history.
     */
-  private def renderOutcomeBadge(outcome: AnswerOutcome): HtmlElement = {
+  def outcomeBadge(outcome: AnswerOutcome): HtmlElement = {
     val style = outcome match {
       case AnswerOutcome.Correct =>
         "badge-success badge-soft"

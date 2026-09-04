@@ -326,7 +326,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/plays/{playId}/prompt")                                 ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("POST", "/api/games/plays/{playId}/answers")                               ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               ("GET", "/api/games/plays/{playId}/results")                                ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
               // Owner-only: NotFound for an unknown slug (or, for the detail operation, a playId that does not belong

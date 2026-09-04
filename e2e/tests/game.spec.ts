@@ -218,6 +218,12 @@ test('a stranger with no account plays the shared link, exercising the variant p
     await guestPage.getByPlaceholder('Type the translation').fill(match!.hu);
     await guestPage.getByRole('button', { name: 'Submit' }).click();
 
+    // Every answer is graded on the spot now, and the word stays put until that step is left. Clicking "Next" is the
+    // skip path issue #8 asked for; the multiple-choice loop below lets the same step time out on its own instead.
+    const next = guestPage.getByRole('button', { name: 'Next' });
+    await expect(next).toBeVisible();
+    await next.click();
+
     if (i < 2) {
       // Prompts arrive in a random order (GameService.nextPrompt picks one at random from what is left), so the
       // only thing worth waiting for is that this word is no longer the one shown — not which word replaces it.
@@ -364,6 +370,10 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
     const options = clickPage.locator('button.btn-outline');
     await expect(options).toHaveCount(4);
     await options.filter({ hasText: match!.hu }).click();
+
+    // A clicked answer is graded like a typed one. Nothing clicks "Next" here: this loop is where the hold is left
+    // to run out on its own, which is what the assertions below then wait for.
+    await expect(clickPage.getByRole('button', { name: 'Next' })).toBeVisible();
 
     if (i < words.length - 1) {
       await expect(heading).not.toHaveText(promptText);
