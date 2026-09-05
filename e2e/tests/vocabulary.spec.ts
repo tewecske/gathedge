@@ -70,7 +70,7 @@ test('the collect bar is there for a visitor with no account yet, but the tag fi
   // before their first tick mints an account. The tag *filter* and the guest banner still belong to an account.
   await expect(page.locator('input[placeholder="lesson1"]')).toBeVisible();
   await expect(page.getByText('Only my words')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Your words are saved on this device' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toHaveCount(0);
 });
 
 test('tagging a word mints a guest account and keeps the word', async () => {
@@ -78,7 +78,7 @@ test('tagging a word mints a guest account and keeps the word', async () => {
 
   // The banner is the first thing that tells the visitor they now have an account.
   // By role: the account menu offers the same words as a link to the banner, so plain text matches twice.
-  await expect(page.getByRole('heading', { name: 'Your words are saved on this device' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Get a transfer code' })).toBeVisible();
 
   // The banner appears as soon as the guest exists, which is two requests before the word is actually
@@ -115,8 +115,8 @@ test('a transfer code is shown once and carries the vocabulary to another browse
 test('upgrading keeps every word, and the account can sign in afterwards', async () => {
   const email = `e2e-guest-${unique}@example.com`;
 
-  // GuestBanner's upgrade control is a real `<a href>` (it navigates to Page.SignUp), so its accessible role is
-  // "link" even though it is styled as a button.
+  // The shell banner's upgrade control is a real `<a href>` (it navigates to Page.SignUp), so its accessible
+  // role is "link" even though it is styled as a button.
   await page.getByRole('link', { name: 'Create an account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await page.locator('input[type=email]').fill(email);
@@ -132,7 +132,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await expect(page).toHaveURL(/\/en\/$/);
 
   // The banner belongs to guests, so it goes as soon as the account is a real one.
-  await expect(page.getByRole('heading', { name: 'Your words are saved on this device' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Log out' }).click();

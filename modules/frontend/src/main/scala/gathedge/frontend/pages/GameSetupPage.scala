@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, Labels, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
@@ -138,7 +138,6 @@ private class GameSetupPage {
           renderPlayButton(),
         ),
       ),
-      child.maybe <-- userSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
       // A language-pair change fetches a different tag list, so a filter typed against the old one is cleared with
       // it — the same reasoning that already drops now-ineligible selections below.

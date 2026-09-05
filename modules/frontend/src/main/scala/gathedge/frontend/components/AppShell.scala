@@ -44,6 +44,12 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private val codeBus = new EventBus[Unit]()
   private val codeVar = Var(Option.empty[String])
 
+  /** Why the code request reports its failure now: the guest banner below is where a guest is *told* to ask for one, so
+    * a button that answers nothing would be a dead control. The account menu item shares this state, which is fine —
+    * both of them mean the same request.
+    */
+  private val codeErrorVar = Var(Option.empty[String])
+
   /** Open state of the guest "sign in to a different account" confirm dialog. A plain `Var` rather than the native
     * `<dialog>`/popover forms of a daisyUI modal — those close over imperative `showModal()`/`.close()` calls or a
     * `popovertarget` id, neither of which fits a reactively-rendered element as well as toggling a class off a signal,
@@ -88,6 +94,13 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     div(
       cls := "min-h-screen flex flex-col bg-base-200",
       renderNavbar(),
+      // A guest has no address to recover this account by, so the warning belongs where it cannot be scrolled past:
+      // directly under the navbar, on every signed-in page rather than on the handful that used to carry a card at the
+      // bottom of their content. Not on the signed-out shell — that is sign-in and sign-up, and a guest who reached
+      // sign-up is already performing the upgrade this banner asks for (`SignUpPage.isGuestSignedIn`).
+      child.maybe <-- currentUserSignal.map { user =>
+        Option.when(isAuthenticated && user.exists(_.isGuest))(renderGuestBanner())
+      },
       child.maybe <-- codeVar.signal.map(_.map(renderCodePanel)),
       // Guests only: this is the "sign in abandons this device's words" confirmation, and its trigger
       // (the account menu's "Sign in" item) exists only for a guest. Mounting it for every account
@@ -123,9 +136,9 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       codeBus.events.flatMapSwitch(_ => ApiClient.guestCode) -->
         Observer[Either[ApiError, ClaimCodeResponse]] {
           case Right(response) =>
-            codeVar.set(Some(response.code))
-          case Left(_)         =>
-            () // low-stakes: the account menu item is still there to try again
+            Var.set(codeVar -> Some(response.code), codeErrorVar -> None)
+          case Left(err)       =>
+            codeErrorVar.set(Some(err.message))
         },
     )
   }
@@ -472,6 +485,47 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
+  /** What a guest is told, and the two ways out of being one.
+    *
+    * A guest account exists only in one browser's cookie jar: no address to recover it by, no password to sign in with.
+    * That is the price of not asking anybody to register, and this is where it is paid back — a transfer code carries
+    * the vocabulary to another machine, and upgrading turns the account into an ordinary one, in place.
+    *
+    * A full-bleed bar rather than a card: it is the first thing under the navbar on every page, so it is squared off
+    * against the bar above it. It scrolls away with the page and has no dismiss control — the account it warns about
+    * stays as fragile after the reader has read this once.
+    */
+  private def renderGuestBanner(): HtmlElement = {
+    div(
+      cls  := "alert alert-info rounded-none flex flex-col items-start gap-2 lg:flex-row lg:items-center",
+      role := "status",
+      div(
+        cls := "flex flex-col gap-1",
+        h2(cls := "font-semibold", I18n.t(UiKeys.guestBannerTitle)),
+        p(cls  := "text-sm", I18n.t(UiKeys.guestBannerHint)),
+        Alert.maybeError(codeErrorVar.signal),
+      ),
+      div(
+        cls := "flex flex-wrap gap-2 lg:ms-auto",
+        // The same request the account menu makes, answered by the same floating panel.
+        button(
+          cls := "btn btn-sm",
+          typ := "button",
+          I18n.t(UiKeys.guestGetCode),
+          onClick.mapToUnit --> codeBus.writer,
+        ),
+        // The upgrade itself happens on Page.SignUp, guest-aware there: it reuses this account in place rather than
+        // starting a new one, and the `RequireAnon` guard is what lets a guest reach that page at all. A real anchor,
+        // so it is a link to a reader and to the accessibility tree whatever it is styled as.
+        a(
+          cls := "btn btn-sm btn-primary",
+          AppRouter.router.navigateTo(Page.SignUp),
+          I18n.t(UiKeys.guestUpgrade),
+        ),
+      ),
+    )
+  }
+
   /** Confirms the guest "Sign in" item before it navigates away — see [[confirmSignInOpenVar]]. `Yes`/`No` reuse
     * [[UiKeys.commonYes]]/[[UiKeys.commonNo]] rather than minting dialog-specific labels, matching the plain
     * question-worded body text.
@@ -535,7 +589,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** Feature-checked, like [[GuestBanner]]'s own copy of this: the clipboard API is absent in jsdom and on older
+  /** Feature-checked, like `SettingsPage`'s own copy of this: the clipboard API is absent in jsdom and on older
     * browsers, and a copy button that throws would take the page with it. The code is on screen either way.
     */
   private def copyToClipboard(value: String): Unit = {

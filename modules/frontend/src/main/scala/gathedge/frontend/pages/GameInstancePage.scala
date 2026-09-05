@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, GuestBanner, InlineRename, Labels, ShareRow, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
@@ -234,7 +234,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         .map(_.isDefined)
         .distinct
         .map(loaded => Option.when(loaded)(renderGameCard())),
-      child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       AppState.currentUserSignal --> readerVar.writer,
       loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
         Observer[Either[ApiError, GameDetail]] {

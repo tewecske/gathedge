@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, GuestBanner, Labels}
+import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{AnswerOutcome, GameMode, LanguageProfile}
@@ -113,10 +113,6 @@ private class GamePlayPage(slug: String, playId: Long) {
     div(
       cls := "max-w-xl mx-auto",
       Alert.maybeError(errorVar.signal),
-      // Persists through the whole play, not just the picker: `startPlay`'s own guest detour is what usually mints
-      // the account this page's very first mount is riding on, so a reader landing here for the first time is the
-      // reader most likely to need this notice.
-      child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       div(
         cls := "card bg-base-100 shadow mt-4",
         div(
