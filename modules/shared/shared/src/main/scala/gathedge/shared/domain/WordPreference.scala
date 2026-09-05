@@ -8,22 +8,27 @@ import zio.json.*
   */
 enum WordPreference derives JsonCodec, CanEqual {
   case All,
-    Unplayed,
+    LeastPlayed,
     MostMistakes
 }
 
 object WordPreference {
 
-  val all: List[WordPreference] = List(All, Unplayed, MostMistakes)
+  val all: List[WordPreference] = List(All, LeastPlayed, MostMistakes)
 
   /** What `game_plays.word_preference` stores and what the `wordPreference` query param carries. Written out rather
     * than derived from `toString`, the same reasoning `AnswerOutcome.code`/`WordLanguage.code` follow.
+    *
+    * [[LeastPlayed]] keeps the code `"unplayed"` it was written under: every play ever recorded carries that string,
+    * and the option still prefers the same words first — a word with no answers is the least played one there is. A
+    * migration would buy a tidier column and lose nothing else, so the old rows keep their word. Note this is the one
+    * case where the code and the JSON form (the case name, from `derives JsonCodec`) differ.
     */
   def code(preference: WordPreference): String = {
     preference match {
       case All          =>
         "all"
-      case Unplayed     =>
+      case LeastPlayed  =>
         "unplayed"
       case MostMistakes =>
         "mostMistakes"
@@ -35,7 +40,7 @@ object WordPreference {
       case "all"          =>
         Some(All)
       case "unplayed"     =>
-        Some(Unplayed)
+        Some(LeastPlayed)
       case "mostmistakes" =>
         Some(MostMistakes)
       case _              =>

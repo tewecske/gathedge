@@ -11,7 +11,9 @@ object WordPreferenceSpec extends ZIOSpecDefault {
       test("code is the stable wire string, not toString") {
         assertTrue(
           WordPreference.code(WordPreference.All) == "all",
-          WordPreference.code(WordPreference.Unplayed) == "unplayed",
+          // Deliberate: `LeastPlayed` keeps the code it was written under, so the plays already recorded as
+          // "unplayed" keep reading back as the option they were played with.
+          WordPreference.code(WordPreference.LeastPlayed) == "unplayed",
           WordPreference.code(WordPreference.MostMistakes) == "mostMistakes",
         )
       },

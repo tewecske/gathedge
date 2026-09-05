@@ -20,7 +20,7 @@ import { test, expect, type Page } from '@playwright/test';
 // Rewritten for the play-time variant picker (game-variants-redesign): word-count/randomize/articles controls
 // moved off GameSetupPage (creation) and onto GameInstancePage (play), chosen fresh each play rather than fixed
 // at creation. This suite now also exercises the swap-direction arrow, the play-time word-limit control, and the
-// "words I haven't played" preference actually skewing a narrower second play toward words the first play never
+// "words I played the least" preference actually skewing a narrower second play toward words the first play never
 // touched — plus the owner's results listing showing both plays as distinct rows.
 
 const unique = Date.now();
@@ -124,7 +124,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
 }) => {
   // Two full plays plus the whole picker's worth of assertions comfortably outgrow Playwright's 30s default —
   // this single test intentionally keeps both plays together (same guest, same in-browser answer history
-  // driving the second play's "unplayed" narrowing), so it gets a longer budget instead of being split.
+  // driving the second play's least-played narrowing), so it gets a longer budget instead of being split.
   test.setTimeout(60000);
 
   // A fresh, cookie-free context is a fresh visitor as far as the server is concerned — the same trick
@@ -159,7 +159,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   await expect(guestPage.getByText('Which words')).toBeVisible();
   await expect(guestPage.locator('select option', { hasText: 'All words' })).toHaveCount(1);
-  await expect(guestPage.locator('select option', { hasText: "Words I haven't played" })).toHaveCount(1);
+  await expect(guestPage.locator('select option', { hasText: 'Words I played the least' })).toHaveCount(1);
   await expect(guestPage.locator('select option', { hasText: "Words I've made the most mistakes with" })).toHaveCount(1);
 
   // Preview list reflects the full pool before any play — GameApiClient.playSetup fetched right on load.
@@ -241,7 +241,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   const untouched = words.find((w) => !firstPlaySeen.includes(w.term));
   expect(untouched, 'expected exactly one word left unanswered by the first play').toBeTruthy();
 
-  // Second play: same direction, but "Words I haven't played" narrowed to exactly 1 — the per-direction answer
+  // Second play: same direction, but "Words I played the least" narrowed to exactly 1 — the per-direction answer
   // history this player just built means only `untouched` qualifies, so the preview (fetched fresh on the
   // preference change, before starting) should show exactly that one word, and the prompt itself must be it.
   //
@@ -259,9 +259,11 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // `GET /api/games/{slug}/plays/setup` answers the whole eligible pool re-ordered by preference (priority
   // sampling, not a hard filter — see the design doc), so the preview's own count stays at the pool size (4)
   // regardless of which preference is picked; `renderPreviewList` never lists individual words, only the count.
-  // The one place the "unplayed" narrowing is actually observable is the sampled prompt itself, below.
+  // The one place the least-played narrowing is actually observable is the sampled prompt itself, below.
   // Two selects share this card now (the play mode and the word preference), so this one is picked by an
   // option only it carries.
+  // The option's value is still `unplayed`: that is the wire code `WordPreference.code` writes and
+  // `game_plays.word_preference` stores, kept across the rename so recorded plays still read back.
   await guestPage.locator('select').filter({ hasText: 'All words' }).selectOption('unplayed');
   await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
@@ -283,10 +285,10 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.locator('table tbody tr')).toHaveCount(1);
 
   // Third play: "Play again" itself, now that the play loop is its own page. It skips the picker entirely and
-  // reuses the just-finished play's exact variant (unswapped, limit 1, "Words I haven't played") via
+  // reuses the just-finished play's exact variant (unswapped, limit 1, "Words I played the least") via
   // `GameReplay.start` — landing straight on a new prompt at a new play id, never showing "Start" or the swap
   // arrow. By now every word has been answered at least once (the first and second plays together cover all
-  // four), so "unplayed" priority has nothing left to prefer and the sampled word is not asserted — only that
+  // four), so which word this priority prefers depends on the answer counts so far and is not asserted — only that
   // the loop actually started.
   await guestPage.getByRole('button', { name: 'Play again' }).click();
   // The regex alone would also match `secondPlayUrl` (same shape, different id), and resolve trivially without
@@ -317,7 +319,7 @@ test("the owner's results listing shows all three plays as distinct rows", async
   // Every play was the same anonymous guest (playerEmail absent), so every row badges "Guest" — what actually
   // distinguishes the rows is the Variant column (GameResultsPage.renderRow, Labels.wordPreference): the first
   // play used the default "All words" preference; the second and third ("Play again" reusing it) both narrowed
-  // to "Words I haven't played". Direction is German -> Hungarian for all three (never swapped for any play).
+  // to "Words I played the least". Direction is German -> Hungarian for all three (never swapped for any play).
   await expect(rows.filter({ hasText: 'Guest' })).toHaveCount(3);
 
   const wideRow = rows.filter({ hasText: '6 / 6' });
@@ -325,17 +327,19 @@ test("the owner's results listing shows all three plays as distinct rows", async
   await expect(wideRow).toContainText('3');
   await expect(wideRow).toContainText('German → Hungarian · All words');
 
-  // Two rows share this shape: the "unplayed"-narrowed play and its own "Play again" replay.
+  // Two rows share this shape: the least-played-narrowed play and its own "Play again" replay.
   const narrowRows = rows.filter({ hasText: '2 / 2' });
   await expect(narrowRows).toHaveCount(2);
   await expect(narrowRows.first()).toContainText('1');
-  await expect(narrowRows.first()).toContainText("German → Hungarian · Words I haven't played");
+  await expect(narrowRows.first()).toContainText('German → Hungarian · Words I played the least');
 
   // Opening one row's detail modal works, shows its own answer history, and the same variant line.
   await narrowRows.first().getByRole('button', { name: 'View' }).click();
   await expect(page.getByRole('heading', { name: 'Play result' })).toBeVisible();
   await expect(page.locator('.modal-box table tbody tr')).toHaveCount(1);
-  await expect(page.locator('.modal-box.max-w-2xl')).toContainText("German → Hungarian · Words I haven't played");
+  await expect(page.locator('.modal-box.max-w-2xl')).toContainText(
+    'German → Hungarian · Words I played the least',
+  );
   await page.getByRole('button', { name: 'Close' }).click();
 });
 

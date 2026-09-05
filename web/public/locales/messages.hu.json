@@ -435,7 +435,7 @@
   "ui.gameInstance.includeArticles.hint": "A nemet jelölő határozott névelő jelenjen meg a kvízben a főnév előtt",
   "ui.gameInstance.preference.label": "Melyik szavak",
   "ui.gameInstance.preference.all": "Minden szó",
-  "ui.gameInstance.preference.unplayed": "Amiket még nem játszottam",
+  "ui.gameInstance.preference.leastPlayed": "Amiket a legkevesebbet játszottam",
   "ui.gameInstance.preference.mostMistakes": "Amikben a legtöbbet hibáztam",
   "ui.gameInstance.mode.label": "Válasz módja",
   "ui.gameInstance.mode.typing": "Beírás",
