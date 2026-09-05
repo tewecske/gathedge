@@ -18,7 +18,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, TranslationFilter, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   CreateWordRequest,
   NewTranslation,
@@ -89,11 +89,6 @@ private class WordsPage(
   private val pageSizeSignal = querySignal.map(_.pageSize).distinct
   private val targetSignal   = querySignal.map(_.target).distinct
 
-  /** The tag the *listing* is narrowed to. Nothing else reads it — where a tick files is the collect tag, which lives
-    * in [[WordCollect]] and never in the URL.
-    */
-  private val filterTagSignal = querySignal.map(_.tagId).distinct
-
   private val userSignal     = AppState.currentUserSignal
   private val signedInSignal = AppState.isSignedInSignal
 
@@ -133,7 +128,17 @@ private class WordsPage(
     onNotice = noticeVar.writer.contramap[String](Some(_)),
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => wordsVar.update(_.map(applyChange(_, change)))),
+    // The tag an auto-minted "saved" gets its language pair from is the direction the reader is browsing.
+    collectLanguages = querySignal.map(query => (query.language, query.target)),
   )
+
+  /** The collect tag resolved to a [[Tag]], or `None` before the tag list arrives or for a visitor with no tags. When
+    * it is set, its language pair drives — and locks — the two language selects.
+    */
+  private val collectTagSignal: Signal[Option[Tag]] =
+    collect.collectTagSignal.combineWithFn(collect.tagsSignal)((id, tags) => id.flatMap(tid => tags.find(_.id == tid)))
+
+  private val languagesLockedSignal = collectTagSignal.map(_.isDefined).distinct
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
@@ -271,6 +276,12 @@ private class WordsPage(
           }
         }
       },
+      // Choosing a collect tag sets the browsing direction to its language pair (and the selects below lock to it).
+      collectTagSignal.updates.withCurrentValueOf(querySignal) --> Observer[(Option[Tag], WordQuery)] {
+        case (Some(tag), current) if current.language != tag.sourceLanguage || current.target != tag.targetLanguage =>
+          change(_.reset(_.copy(language = tag.sourceLanguage, target = tag.targetLanguage)))
+        case _                                                                                                      => ()
+      },
       onMountCallback(_ => { reloadBus.emit(()); restoreBus.emit(()) }),
       collect.bindings,
     )
@@ -293,7 +304,6 @@ private class WordsPage(
       language = Some(query.language),
       target = Some(query.target),
       partOfSpeech = query.partOfSpeech,
-      tagId = query.tagId,
       mine = Option.when(query.mine)(true),
       translationFilter = Some(query.translationFilter),
       mainOnly = Option.when(query.mainOnly)(true),
@@ -336,7 +346,8 @@ private class WordsPage(
   }
 
   /** Which language is being read, and which one the translations are in. Two selects rather than one "de → hu"
-    * control, so a reader can flip either half without the other becoming impossible.
+    * control, so a reader can flip either half without the other becoming impossible — except while a collect tag is
+    * chosen, when both lock to the tag's own pair.
     */
   private def renderDirection(): HtmlElement = {
     div(
@@ -370,12 +381,6 @@ private class WordsPage(
       ),
       renderTranslationFilter(),
       renderMainOnlyToggle(),
-      child.maybe <-- signedInSignal.map(Option.when(_)(renderTagFilter())),
-      child.maybe <-- signedInSignal
-        .combineWith(filterTagSignal)
-        .map { case (signedIn, tagId) => signedIn && tagId.isDefined }
-        .distinct
-        .map(Option.when(_)(renderTagOrderToggle())),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderMineToggle())),
       child.maybe <-- querySignal
         .map(_.filterOnly != WordQuery.default)
@@ -400,8 +405,7 @@ private class WordsPage(
   }
 
   /** Narrows to words carrying a recorded translation — the target language specifically, or any language at all — the
-    * same plain listing filter `renderTagFilter`/[[renderMineToggle]] are, so it stays visible for a visitor with no
-    * session too.
+    * same plain listing filter [[renderMineToggle]] is, so it stays visible for a visitor with no session too.
     */
   private def renderTranslationFilter(): HtmlElement = {
     label(
@@ -440,12 +444,16 @@ private class WordsPage(
   private def renderSwap(): HtmlElement = {
     span(
       // The tooltip has to be a wrapper: daisyUI's `.tooltip` is `display:inline-block`, which would undo the
-      // `inline-flex` that centres a `btn`'s icon.
-      cls             := "tooltip",
-      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
+      // `inline-flex` that centres a `btn`'s icon. It also carries the "why is this locked" tip while a collect tag
+      // holds the direction.
+      cls := "tooltip",
+      dataAttr("tip") <-- languagesLockedSignal.map(locked =>
+        I18n.t(if (locked) UiKeys.wordsLanguagesLockedHint else UiKeys.wordsSwapLanguages)
+      ),
       button(
         typ        := "button",
         cls        := "btn btn-ghost btn-sm btn-square",
+        disabled <-- languagesLockedSignal,
         // The tooltip is a `data-` attribute drawn by CSS, so it says nothing to a screen reader; this is what does.
         aria.label := I18n.t(UiKeys.wordsSwapLanguages),
         swapMark(),
@@ -456,77 +464,9 @@ private class WordsPage(
     )
   }
 
-  /** Narrows the listing to one tag, and does nothing else — in particular it does not decide where a tick files. It
-    * sits among the filters rather than in the collect card for exactly that reason, offers "all tags", and is the half
-    * of the old single control that stayed in the URL.
-    */
-  private def renderTagFilter(): HtmlElement = {
-    label(
-      cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.wordsFilterTagLabel)),
-      select(
-        cls    := "select select-sm w-52",
-        option(value := "", I18n.t(UiKeys.wordsFilterTagAny)),
-        children <-- collect.tagsSignal.map(WordCollect.tagOptionGroups),
-        controlled(
-          // Against the tag list, not the id alone: a `<select>` cannot hold a value whose `<option>` is
-          // not there yet, and the options arrive a request later than the URL does. Combining the two
-          // is what re-applies the value when they land — without it, opening a bookmarked `?tag=…`
-          // showed a listing that *was* narrowed under a control that said "all tags".
-          value <-- collect.selectedTagValue(filterTagSignal),
-          onChange.mapToValue --> Observer[String] { raw =>
-            val tagId = raw.toLongOption
-            // Going back to "all tags" takes the ordering with it: `WordSort.added` is the tick's timestamp inside one
-            // tag, so with no tag there is nothing for it to read, and leaving it in the URL would order the listing
-            // by nothing under a button that is no longer on screen.
-            change(_.reset(query => {
-              val sort = if (tagId.isEmpty && query.sort.column.contains(WordSort.added)) {
-                SortHeader.Sort.unsorted
-              } else {
-                query.sort
-              }
-              query.copy(tagId = tagId, sort = sort)
-            }))
-          },
-        ),
-      ),
-    )
-  }
-
-  /** Orders the listing by the tick that filed each word under the narrowed tag.
-    *
-    * A button rather than a `SortHeader`, because there is no column on screen for it to head: what it orders by is
-    * `word_tags.created_at`, which the table never shows. The three states are the headers' own, cycled the other way
-    * round — newest first, then oldest, then back to the listing's own order — since after an import the newest is what
-    * the reader came for. The label names what it orders by and the glyph says which way, exactly as a column heading
-    * does.
-    *
-    * Shown only while [[renderTagFilter]] holds a tag. Asked for without one the server keeps the default order, so
-    * this is the control saying what the request can actually do, not a rule the server relies on.
-    */
-  private def renderTagOrderToggle(): HtmlElement = {
-    val directionSignal = sortSignal.map(_.directionOf(WordSort.added)).distinct
-
-    button(
-      typ := "button",
-      cls := "btn btn-sm",
-      cls("btn-soft") <-- directionSignal.map(_.isEmpty),
-      cls("btn-active") <-- directionSignal.map(_.isDefined),
-      I18n.t(UiKeys.wordsSortAddedToTag),
-      span(
-        cls := "text-xs",
-        // Dimmed while it is merely offering to order, the way an unsorted column heading is.
-        cls("opacity-40") <-- directionSignal.map(_.isEmpty),
-        text <-- directionSignal.map(SortHeader.glyph),
-      ),
-      onClick.compose(_.sample(sortSignal).map(SortHeader.nextDescendingFirst(_, WordSort.added))) -->
-        Observer[SortHeader.Sort](sort => change(_.reset(_.copy(sort = sort)))),
-    )
-  }
-
   /** Narrows to rows that are not themselves a form of another word — dropping inflected/declined variants
     * (`WordSummary.mainWord`) from the listing, leaving only lemmas. A plain listing filter like
-    * [[renderTranslationFilter]]/[[renderTagFilter]], so it stays visible for a visitor with no session too.
+    * [[renderTranslationFilter]], so it stays visible for a visitor with no session too.
     */
   private def renderMainOnlyToggle(): HtmlElement = {
     label(
@@ -563,9 +503,9 @@ private class WordsPage(
   /** Every `<select>` on this page carries a literal width, and that is deliberate — leaving them to size themselves
     * moves the controls beside them as the page is used. daisyUI opts a `.select` into the browser's
     * customizable-select rendering, which sizes the box to the *selected* option rather than to the widest one, so
-    * picking "Hungarian" after "German" widens it; and the two tag selects would move anyway, since their option labels
-    * carry a word count that grows a digit. The widths fit the longest option in both catalogs; a longer tag name
-    * ellipsizes, which `.select` already does on its own.
+    * picking "Hungarian" after "German" widens it. The widths fit the longest option in both catalogs.
+    *
+    * Both language selects disable while a collect tag holds the direction, and the label carries a tooltip saying why.
     */
   private def languageSelect(
     labelKey: String,
@@ -573,10 +513,14 @@ private class WordsPage(
     onPick: Observer[WordLanguage],
   ): HtmlElement = {
     label(
-      cls := "flex flex-col gap-1",
+      cls := "flex flex-col gap-1 tooltip",
+      dataAttr("tip") <-- languagesLockedSignal.map(locked =>
+        if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else ""
+      ),
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
         cls    := "select select-sm w-28",
+        disabled <-- languagesLockedSignal,
         WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
         controlled(
           value <-- selected.map(WordLanguage.code),

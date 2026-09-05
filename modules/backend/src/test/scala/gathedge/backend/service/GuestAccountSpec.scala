@@ -46,7 +46,7 @@ object GuestAccountSpec extends ZIOSpecDefault {
 
   private def tagAWord(userId: Long, text: String): ZIO[WordService, WordFailure, Long] = {
     for {
-      tag    <- WordService.createTag("lesson1", userId).map(_.tag)
+      tag    <- WordService.createTag("lesson1", WordLanguage.De, WordLanguage.Hu, userId).map(_.tag)
       detail <- WordService.create(
                   CreateWordRequest(WordLanguage.De, text, PartOfSpeech.Noun, None, Nil, List(tag.id)),
                   userId,

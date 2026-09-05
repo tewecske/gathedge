@@ -375,8 +375,8 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
       wordCount,
       row.userId == viewerId,
       group,
-      sourceLanguage = row.sourceLanguage.flatMap(WordLanguage.fromString),
-      targetLanguage = row.targetLanguage.flatMap(WordLanguage.fromString),
+      sourceLanguage = WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.De),
+      targetLanguage = WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.Hu),
     )
   }
 

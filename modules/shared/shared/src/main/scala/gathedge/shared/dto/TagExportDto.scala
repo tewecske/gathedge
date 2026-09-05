@@ -21,19 +21,30 @@ final case class TagExportWord(
   */
 final case class TagExportEntry(word: TagExportWord, marked: List[TagExportWord]) derives JsonCodec
 
-/** One exported tag: its name and every word it holds. */
-final case class TagExportTag(name: String, entries: List[TagExportEntry]) derives JsonCodec
+/** One exported tag: its name, its mandatory language pair, and every word it holds. `sourceLanguage`/`targetLanguage`
+  * are `Option` only so a version-1 file (written before the pair existed) still decodes; import falls back to
+  * `de`/`hu` for one that carries neither.
+  */
+final case class TagExportTag(
+  name: String,
+  entries: List[TagExportEntry],
+  sourceLanguage: Option[WordLanguage] = None,
+  targetLanguage: Option[WordLanguage] = None,
+) derives JsonCodec
 
 /** A tag export file. `tags` has one element for a single-tag export and one per owned tag for "export all"; import
-  * reads both shapes the same way. `version` is `1`; import refuses anything else. `exportedAt` is epoch millis, for
-  * the reader's information only.
+  * reads both shapes the same way. `version` is `2` (a `1` file — no tag language pair — still imports, defaulting the
+  * pair); import refuses anything else. `exportedAt` is epoch millis, for the reader's information only.
   */
 final case class TagExportFile(version: Int, exportedAt: Long, tags: List[TagExportTag]) derives JsonCodec
 
 object TagExportFile {
 
-  /** The only version this build writes or reads. */
-  val currentVersion = 1
+  /** The version this build writes. Import also accepts [[minReadableVersion]]. */
+  val currentVersion = 2
+
+  /** The oldest version import still reads. A version-1 file has no per-tag language pair. */
+  val minReadableVersion = 1
 }
 
 /** What to do about one exported tag whose name the importing account already owns (compared case-insensitively).

@@ -146,7 +146,15 @@ final case class AddTranslationRequest(translation: NewTranslation) derives Json
   */
 final case class SetGenderRequest(gender: Gender) derives JsonCodec
 
-final case class CreateTagRequest(name: String) derives JsonCodec
+/** [[gathedge.shared.api.WordEndpoints.createTag]]'s body: a tag name and its mandatory language pair. The pair is
+  * fixed here and stays editable only while the tag has no `word_tag_pairs` row (see [[SetTagLanguagesRequest]]);
+  * `source` and `target` must differ.
+  */
+final case class CreateTagRequest(
+  name: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
 
 /** One side of a pair the tag-creation page is building.
   *
@@ -169,12 +177,26 @@ final case class TagPairInput(source: TagPairWord, target: TagPairWord) derives 
   * reader built. Sent once, so the tag and every pair it carries are written as one unit of work rather than a create
   * followed by N pair writes that could leave a half-built tag if one failed.
   */
-final case class CreateTagWithPairsRequest(name: String, pairs: List[TagPairInput]) derives JsonCodec
+final case class CreateTagWithPairsRequest(
+  name: String,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+  pairs: List[TagPairInput],
+) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.renameTag]]'s body: the tag's new name, validated and de-duplicated the same way
   * [[CreateTagRequest]]'s is.
   */
 final case class RenameTagRequest(name: String) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.setTagLanguages]]'s body: the pair the tag should carry. Accepted only while the
+  * tag has no `word_tag_pairs` row — once a pair exists the languages are locked and the endpoint answers 409. `source`
+  * and `target` must differ.
+  */
+final case class SetTagLanguagesRequest(
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
+) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.createTag]]/`.copyTag`'s answer: the tag itself, plus a non-fatal warning when
   * the write pushed the caller's own usage past one of `AppConfig.quotas`' *soft* thresholds — how many tags they own,

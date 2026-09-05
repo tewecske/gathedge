@@ -281,6 +281,16 @@ object ApiFailures {
           MessageRef(MessageKeys.wordPairQuotaExceeded, List(limit.toString)),
           s"You've reached the maximum of $limit practice pairs for your account",
         )
+      case WordFailure.LanguageMismatch             =>
+        ApiFailure.BadRequest(
+          MessageRef(MessageKeys.wordTagLanguageMismatch),
+          "That word is not in the tag's language",
+        )
+      case WordFailure.LanguagesLocked              =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTagLanguagesLocked),
+          "The tag already has a pair, so its languages are fixed",
+        )
     }
   }
 

@@ -20,6 +20,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
   TagImportRequest,
@@ -154,7 +155,9 @@ object WordRoutes {
   private val createTagRoute = {
     WordEndpoints.createTag.implementHandler(
       handler { (body: CreateTagRequest) =>
-        userId.flatMap(id => WordService.createTag(body.name, id).mapError(ApiFailures.word))
+        userId.flatMap(id =>
+          WordService.createTag(body.name, body.sourceLanguage, body.targetLanguage, id).mapError(ApiFailures.word)
+        )
       }
     )
   }
@@ -162,7 +165,11 @@ object WordRoutes {
   private val createTagWithPairsRoute = {
     WordEndpoints.createTagWithPairs.implementHandler(
       handler { (body: CreateTagWithPairsRequest) =>
-        userId.flatMap(id => WordService.createTagWithPairs(body.name, body.pairs, id).mapError(ApiFailures.word))
+        userId.flatMap(id => {
+          WordService
+            .createTagWithPairs(body.name, body.sourceLanguage, body.targetLanguage, body.pairs, id)
+            .mapError(ApiFailures.word)
+        })
       }
     )
   }
@@ -178,6 +185,18 @@ object WordRoutes {
   private val deleteTagRoute = {
     WordEndpoints.deleteTag.implementHandler(
       handler((tagId: Long) => userId.flatMap(id => WordService.deleteTag(tagId, id).mapError(ApiFailures.word)))
+    )
+  }
+
+  private val setTagLanguagesRoute = {
+    WordEndpoints.setTagLanguages.implementHandler(
+      handler { (tagId: Long, body: SetTagLanguagesRequest) =>
+        userId.flatMap(id => {
+          WordService
+            .setTagLanguages(tagId, body.sourceLanguage, body.targetLanguage, id)
+            .mapError(ApiFailures.word)
+        })
+      }
     )
   }
 
@@ -374,6 +393,7 @@ object WordRoutes {
       createTagRoute,
       renameTagRoute,
       deleteTagRoute,
+      setTagLanguagesRoute,
       copyTagRoute,
       exportTagRoute,
       exportOwnedTagsRoute,

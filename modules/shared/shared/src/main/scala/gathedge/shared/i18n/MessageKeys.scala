@@ -106,6 +106,20 @@ object MessageKeys {
     */
   val wordMainWordLanguageMismatch: String = key("words.mainWordLanguageMismatch")
 
+  /** A word or a translation was attached to a tag whose language pair does not admit it — only a word in the tag's
+    * source language may be attached, and only a translation in its target language may be marked. Takes no argument:
+    * the words page locks its language selects to the collect tag, so a reader never reaches this by clicking.
+    */
+  val wordTagLanguageMismatch: String = key("words.tagLanguageMismatch")
+
+  /** The tag's language pair was asked to change after the tag already had a practice pair. It is fixed at creation and
+    * editable only while the tag holds no `word_tag_pairs` row.
+    */
+  val wordTagLanguagesLocked: String = key("words.tagLanguagesLocked")
+
+  /** A tag's source and target language were given as the same language. */
+  val wordTagLanguagesEqual: String = key("words.tagLanguagesEqual")
+
   /** Setting a noun's article was refused: the word already has one, it is not a noun, or its language does not have
     * the gender asked for. One key for all three, because a caller that reached any of them sent a request the screen
     * does not offer — the control appears only on a gendered-language noun with no article yet.

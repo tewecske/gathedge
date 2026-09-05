@@ -1,6 +1,6 @@
 package gathedge.shared.validation
 
-import gathedge.shared.domain.{Group, Tag}
+import gathedge.shared.domain.{Group, Tag, WordLanguage}
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 
 /** Validation shared between the signup form (frontend) and the signup/create-user endpoints (backend), so the same
@@ -159,6 +159,19 @@ object Validation {
       else
         Right(trimmed)
     }
+  }
+
+  /** A tag's mandatory language pair: the two must differ. Same check on both sides of the wire — the create form and
+    * the create/set-languages endpoints.
+    */
+  def validateTagLanguages(
+    source: WordLanguage,
+    target: WordLanguage,
+  ): Either[MessageRef, (WordLanguage, WordLanguage)] = {
+    if (source == target)
+      Left(MessageRef(MessageKeys.wordTagLanguagesEqual))
+    else
+      Right((source, target))
   }
 
   /** A group's display name. Unlike [[validateTagName]], no reserved-name check and no per-account uniqueness — several

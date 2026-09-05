@@ -18,7 +18,7 @@ object WordQuerySpec extends ZIOSpecDefault {
         assertTrue(
           onPageFour.reset(_.copy(search = "hau")).page == Paging.firstPage,
           onPageFour.reset(_.copy(target = WordLanguage.En)).page == Paging.firstPage,
-          onPageFour.reset(_.copy(tagId = Some(3L))).page == Paging.firstPage,
+          onPageFour.reset(_.copy(mine = true)).page == Paging.firstPage,
           onPageFour.reset(_.copy(translationFilter = TranslationFilter.HasTarget)).page == Paging.firstPage,
           onPageFour.reset(_.copy(sort = SortHeader.Sort.ascending(WordSort.text))).page == Paging.firstPage,
           // Turning the page is the one write that does not go through `reset`.

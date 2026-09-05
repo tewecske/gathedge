@@ -99,6 +99,7 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   RenameGroupRequest,
   RenameTagRequest,
+  SetTagLanguagesRequest,
   ResendVerificationRequest,
   ResetPasswordRequest,
   RouteUsage,
@@ -217,6 +218,7 @@ object ApiSchemas {
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]
   given Schema[CreateTagWithPairsRequest]     = DeriveSchema.gen[CreateTagWithPairsRequest]
   given Schema[RenameTagRequest]              = DeriveSchema.gen[RenameTagRequest]
+  given Schema[SetTagLanguagesRequest]        = DeriveSchema.gen[SetTagLanguagesRequest]
   given Schema[TagResponse]                   = DeriveSchema.gen[TagResponse]
   given Schema[PairSelectionResponse]         = DeriveSchema.gen[PairSelectionResponse]
   given Schema[TagEntry]                      = DeriveSchema.gen[TagEntry]

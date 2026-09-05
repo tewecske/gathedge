@@ -154,10 +154,10 @@ object WordsPageSpec extends ZIOSpecDefault {
           changed == TranslationFilter.HasAny,
         )
       },
-      // The collect bar (where a tick files, and the way to make a tag) is shown to every visitor, session or none —
-      // the first tick mints a guest through the same detour a tag list would need a session to load. The *filter*
-      // half of the tag machinery, and "only my words", still belong to an account and stay absent.
-      test("a visitor with no session gets the words and the collect bar, but no tag filter") {
+      // The collect bar (where a tick files) is shown to every visitor, session or none — the first tick mints a guest
+      // through the same detour a tag list would need a session to load. "Only my words" still belongs to an account
+      // and stays absent.
+      test("a visitor with no session gets the words and the collect bar, but no account controls") {
         val text = withPage(WordQuery()) { (container, _) =>
           container.textContent
         }
@@ -169,24 +169,18 @@ object WordsPageSpec extends ZIOSpecDefault {
           // tag list arrives to populate it — under jsdom, a signed-out visitor never gets one.
           text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsCollectLabel),
-          !text.contains(UiKeys.wordsFilterTagLabel),
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.
           !text.contains(UiKeys.wordsOnlyMine),
         )
       },
-      // The button orders by the tick that filed each word under the narrowed tag, so it has nothing to order by
-      // until the tag filter holds one.
-      test("the in-tag order button appears only once a tag narrows the listing") {
-        val withoutTag = signedIn(withPage(WordQuery())((container, _) => container.textContent))
-        val withTag    = signedIn(withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent))
-        val visitor    = withPage(WordQuery(tagId = Some(4L)))((container, _) => container.textContent)
-
+      // Signed in, "only my words" is on offer; the collect select still waits on a tag list, which never arrives here.
+      test("a signed-in reader gets the only-mine toggle, and the collect select still waits on a tag list") {
+        val text = signedIn(withPage(WordQuery())((container, _) => container.textContent))
         assertTrue(
-          !withoutTag.contains(UiKeys.wordsSortAddedToTag),
-          withTag.contains(UiKeys.wordsSortAddedToTag),
-          // It is half of the tag machinery, so it stays with the tag filter: absent with no session.
-          !visitor.contains(UiKeys.wordsSortAddedToTag),
+          text.contains(UiKeys.wordsOnlyMine),
+          text.contains(UiKeys.wordsCollectHint),
+          !text.contains(UiKeys.wordsCollectLabel),
         )
       },
       // Every request fails under jsdom, which is the same shape as a listing that matched nothing.

@@ -93,6 +93,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/tags/{tagId}/bulk-upload/confirm",
               "/api/tags",
               "/api/tags/{tagId}",
+              "/api/tags/{tagId}/languages",
               "/api/tags/{tagId}/copy",
               "/api/tags/{tagId}/export",
               "/api/tags/export",
@@ -312,6 +313,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
               ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Sets a tag's language pair while it has no practice pair: 400 for two equal languages, 404 for a tag
+              // that is not the caller's, 409 once a pair has locked the languages.
+              ("PUT", "/api/tags/{tagId}/languages")                                      ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               // Copying seeds a tag of the caller's own from any tag's name, including one they do not own, and copies
               // its word/pair snapshot with it: 404 for a source tag that does not exist, 409 for the ordinary
               // already-have-one-by-that-name case *and* for either quota's hard threshold — checked before anything
@@ -490,7 +495,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 304,
+          declared == 308,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

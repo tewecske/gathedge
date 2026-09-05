@@ -41,10 +41,10 @@ object WordDetailPage {
     * languages, since a word is never a translation of itself.
     *
     *   1. The collect tag's own pair, taking whichever side the word is not: a `de → hu` tag offers Hungarian on a
-    *      German word and German on a Hungarian one. That pair is the tag's, decided the first time a row was added to
-    *      it (see [[gathedge.shared.domain.Tag.targetLanguage]]), so it says what the reader is collecting *into*.
-    *   2. The listing's target language ([[WordQuery.storedTarget]]), for a tag with no pair yet — a tag minted a
-    *      moment ago, or one older than the unified editor.
+    *      German word and German on a Hungarian one. That pair is the tag's mandatory language pair (see
+    *      [[gathedge.shared.domain.Tag.targetLanguage]]), so it says what the reader is collecting *into*.
+    *   2. The listing's target language ([[WordQuery.storedTarget]]), when the tag's pair does not fit this word — a
+    *      word whose languages do not include the tag's other side.
     *   3. The first language the word can take, which is where this started.
     */
   private[pages] def defaultLanguage(
@@ -53,14 +53,10 @@ object WordDetailPage {
     tag: Option[Tag],
     listingTarget: WordLanguage,
   ): Option[WordLanguage] = {
-    val fromTag = tag.flatMap(t => {
-      if (t.sourceLanguage.contains(word)) {
-        t.targetLanguage
-      } else if (t.targetLanguage.contains(word)) {
-        t.sourceLanguage
-      } else {
-        t.targetLanguage
-      }
+    val fromTag = tag.map(t => {
+      if (t.sourceLanguage == word) t.targetLanguage
+      else if (t.targetLanguage == word) t.sourceLanguage
+      else t.targetLanguage
     })
     fromTag
       .filter(allowed.contains)
@@ -107,6 +103,8 @@ private class WordDetailPage(id: Long) {
     onNotice = noticeVar.writer.contramap[String](Some(_)),
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => applyChange(change)),
+    // No listing direction here; an auto-minted "saved" tag takes the words page's remembered pair.
+    collectLanguages = Val((WordQuery.storedFilter.map(_.language).getOrElse(WordLanguage.De), WordQuery.storedTarget)),
   )
 
   /** Derived from the page's own signal rather than from the loaded value, so that changing the collect tag in the bar
