@@ -369,7 +369,15 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     extends GameService {
 
   private def toTag(row: TagRow, wordCount: Long, viewerId: Long, group: Option[GroupRef] = None): Tag = {
-    Tag(row.id, row.name, wordCount, row.userId == viewerId, group)
+    Tag(
+      row.id,
+      row.name,
+      wordCount,
+      row.userId == viewerId,
+      group,
+      sourceLanguage = row.sourceLanguage.flatMap(WordLanguage.fromString),
+      targetLanguage = row.targetLanguage.flatMap(WordLanguage.fromString),
+    )
   }
 
   /** Batched form of `WordServiceLive.resolveGroupRefs`, copied in shape: one query for every tag row's `groupId`

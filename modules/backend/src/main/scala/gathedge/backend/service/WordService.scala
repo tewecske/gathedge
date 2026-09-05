@@ -773,7 +773,16 @@ final case class WordServiceLive(
     group: Option[GroupRef] = None,
     editableByMe: Boolean = false,
   ): Tag = {
-    Tag(row.id, row.name, wordCount, ownedByMe, group, editableByMe)
+    Tag(
+      row.id,
+      row.name,
+      wordCount,
+      ownedByMe,
+      group,
+      editableByMe,
+      row.sourceLanguage.flatMap(WordLanguage.fromString),
+      row.targetLanguage.flatMap(WordLanguage.fromString),
+    )
   }
 
   /** [[toTag]]'s group resolution for a single tag, for the call sites that only ever have one row in hand
@@ -1479,7 +1488,19 @@ final case class WordServiceLive(
       _              <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
       wordCount      <- repo.countWordsInTag(tagId).orDie
       group          <- resolveGroupRef(existing.groupId)
-    } yield TagResponse(Tag(tagId, valid, wordCount, ownedByMe = true, group, editableByMe = true), None)
+    } yield TagResponse(
+      Tag(
+        tagId,
+        valid,
+        wordCount,
+        ownedByMe = true,
+        group,
+        editableByMe = true,
+        existing.sourceLanguage.flatMap(WordLanguage.fromString),
+        existing.targetLanguage.flatMap(WordLanguage.fromString),
+      ),
+      None,
+    )
   }
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {

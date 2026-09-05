@@ -2,7 +2,7 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L
 import org.scalajs.dom
-import gathedge.shared.domain.WordLanguage
+import gathedge.shared.domain.{Tag, WordLanguage}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -13,6 +13,14 @@ import zio.test._
   * With no catalog loaded a message resolves to its own key, so the assertions are on `UiKeys` constants.
   */
 object WordDetailPageSpec extends ZIOSpecDefault {
+
+  /** The two languages a word can be translated into — `WordDetailPage.otherLanguages`, which is private to the page.
+    */
+  private def others(word: WordLanguage): List[WordLanguage] = WordLanguage.all.filterNot(_ == word)
+
+  private def tag(source: Option[WordLanguage], target: Option[WordLanguage]): Tag = {
+    Tag(1L, "lesson1", 0L, ownedByMe = true, editableByMe = true, sourceLanguage = source, targetLanguage = target)
+  }
 
   private def withPage[A](id: Long)(use: dom.Element => A): A = {
     val container = dom.document.createElement("div")
@@ -52,17 +60,51 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           !text.contains(UiKeys.wordDetailFormsHeading),
         )
       },
-      // The reader came from a `de -> hu` listing, so the form opens on Hungarian rather than on whichever of the
-      // word's other two languages happens to sort first.
-      test("the add-translation form opens on the listing's target language") {
-        val onGerman    = WordDetailPage.defaultLanguage(List(WordLanguage.En, WordLanguage.Hu), WordLanguage.Hu)
-        // A word in the target language itself: it is no translation of itself, so the other language wins.
-        val onHungarian = WordDetailPage.defaultLanguage(List(WordLanguage.De, WordLanguage.En), WordLanguage.Hu)
-        val noneAtAll   = WordDetailPage.defaultLanguage(Nil, WordLanguage.Hu)
+      // The collect tag says which way round the reader is learning, so the form opens on the side of its pair the
+      // word is not.
+      test("the add-translation form opens on the collect tag's other language") {
+        val pair        = tag(Some(WordLanguage.De), Some(WordLanguage.Hu))
+        val onGerman    =
+          WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(pair), WordLanguage.En)
+        val onHungarian =
+          WordDetailPage.defaultLanguage(others(WordLanguage.Hu), WordLanguage.Hu, Some(pair), WordLanguage.En)
+        // Neither side is the word's own, so the tag's target is what it asks its answers in.
+        val onEnglish   =
+          WordDetailPage.defaultLanguage(others(WordLanguage.En), WordLanguage.En, Some(pair), WordLanguage.De)
         assertTrue(
           onGerman.contains(WordLanguage.Hu),
           onHungarian.contains(WordLanguage.De),
+          onEnglish.contains(WordLanguage.Hu),
+        )
+      },
+      // A tag minted a moment ago, or one older than the unified editor, has no pair to read.
+      test("without a tag pair the form falls back to the listing, and then to the word itself") {
+        val noPair    = tag(None, None)
+        val listing   =
+          WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(noPair), WordLanguage.En)
+        val noTag     = WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, None, WordLanguage.En)
+        // The listing's target is the word's own language, so it is no more usable than the tag was.
+        val itsOwn    = WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, None, WordLanguage.De)
+        val noneAtAll = WordDetailPage.defaultLanguage(Nil, WordLanguage.De, None, WordLanguage.En)
+        assertTrue(
+          listing.contains(WordLanguage.En),
+          noTag.contains(WordLanguage.En),
+          itsOwn == others(WordLanguage.De).headOption,
           noneAtAll.isEmpty,
+        )
+      },
+      // The pair belongs to the tag, so switching the collect tag in the bar switches the language with it.
+      test("a tag pair the word cannot take gives way to the listing's target") {
+        val spanish = tag(Some(WordLanguage.Es), Some(WordLanguage.De))
+        // A German word: the tag's other side is Spanish, which this word can take.
+        val takes   =
+          WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(spanish), WordLanguage.En)
+        // The same tag on an English word points at German, which is on offer as well.
+        val alsoDe  =
+          WordDetailPage.defaultLanguage(others(WordLanguage.En), WordLanguage.En, Some(spanish), WordLanguage.Hu)
+        assertTrue(
+          takes.contains(WordLanguage.Es),
+          alsoDe.contains(WordLanguage.De),
         )
       },
     )
