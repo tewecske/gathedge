@@ -214,8 +214,19 @@ final case class GroupMemberRow(id: Long, groupId: Long, userId: Long, role: Str
 /** `imported` marks a membership a bulk import wrote rather than one added by hand — scoped to this (word, tag) row.
   * Defaulted so positional construction (test fixtures included) keeps compiling; every row that predates the unified
   * editor reads as `false`, which is what it was.
+  *
+  * `comment` is the note the reader wrote beside the word in their own list — the `(növény)` of `levél (növény)`. It is
+  * here rather than on [[WordRow]] because `words` is shared by every account: which sense of `levél` one reader means
+  * is not a fact about the word.
   */
-final case class WordTagRow(id: Long, wordId: Long, tagId: Long, createdAt: Long, imported: Boolean = false)
+final case class WordTagRow(
+  id: Long,
+  wordId: Long,
+  tagId: Long,
+  createdAt: Long,
+  imported: Boolean = false,
+  comment: Option[String] = None,
+)
 
 /** One translation of one word, marked as a practice answer inside one tag.
   *
@@ -243,8 +254,18 @@ final case class WordTagPairRow(
 /** One row of the unified tag editor, assembled by `WordRepository.tagEntries`: the source word, its marked answer
   * (absent for an "unmatched" row), whether a bulk import wrote the membership, and whether it wrote the pair as an
   * exact match. Not a table — a projection the editor and its filters read.
+  *
+  * The two comments come from the two `word_tags` memberships, one per side, because either cell of an imported line
+  * may have carried a note and they say different things.
   */
-final case class TagEntryRow(source: WordRow, target: Option[WordRow], imported: Boolean, exact: Boolean)
+final case class TagEntryRow(
+  source: WordRow,
+  target: Option[WordRow],
+  imported: Boolean,
+  exact: Boolean,
+  comment: Option[String] = None,
+  targetComment: Option[String] = None,
+)
 
 /** A guest account's transfer code. The `code` column *is* the bearer credential, like `SessionRow.id`: it must never
   * reach a log line, and it is answered to its owner exactly once, when it is minted.

@@ -248,6 +248,9 @@ trait WordRepository {
   /** [[pairTranslation]] with the pair marked `exact` and both memberships `imported`; promotes existing rows. */
   def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit]
 
+  /** Sets (or clears) the note on one word's membership of one tag. Rows affected: `0` when it is not a member. */
+  def setTagComment(wordId: Long, tagId: Long, comment: Option[String]): Task[Long]
+
   /** One tag's memberships oldest-first (`word_tags.id` ascending), carrying the `imported` flag. */
   def tagMemberships(tagId: Long): Task[List[WordTagRow]]
 
@@ -560,6 +563,9 @@ object WordRepository {
 
   def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): RIO[WordRepository, Unit] =
     ZIO.serviceWithZIO[WordRepository](_.importPair(wordId, tagId, translationWordId, createdAt))
+
+  def setTagComment(wordId: Long, tagId: Long, comment: Option[String]): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setTagComment(wordId, tagId, comment))
 
   def tagMemberships(tagId: Long): RIO[WordRepository, List[WordTagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagMemberships(tagId))
@@ -1159,6 +1165,25 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }.unit
   }
 
+  /** Writes the note a reader wrote beside this word in this tag, over whatever the membership held.
+    *
+    * Its own statement rather than a parameter on [[linkOnce]] because a pair writes two memberships with two different
+    * notes, and almost no row has one at all: threading it through [[linkPair]] would cost every import a wider
+    * signature to carry a value that is nearly always absent. Rows affected: `0` when the word is not in the tag.
+    *
+    * The note is the reader's own prose. It must not reach the log line, so only its length is reported.
+    */
+  def setTagComment(wordId: Long, tagId: Long, comment: Option[String]): Task[Long] = {
+    val q = quote {
+      wordTags
+        .filter(link => link.wordId == lift(wordId) && link.tagId == lift(tagId))
+        .update(_.comment -> lift(comment))
+    }
+    logged(run(ctx.run(q)))(rows =>
+      s"wordTags.comment word=$wordId tag=$tagId chars=${comment.fold(0)(_.length)} rows=$rows"
+    )
+  }
+
   /** One tag's memberships, oldest first (`word_tags.id` ascending == insertion order == a bulk import's text order),
     * carrying the `imported` flag — what the editor's row list is ordered and badged by.
     */
@@ -1465,6 +1490,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val byId       = wordRows.map(w => w.id -> w).toMap
       val orderOf    = memberships.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
       val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
+      val commentOf  = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
       val srcLang    = tagRow.flatMap(_.sourceLanguage)
 
       // One row per undirected pair, keyed on the chosen source side.
@@ -1477,8 +1503,18 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                 case Some(code) if b.language == code && a.language != code => false
                 case _                                                      => a.id <= b.id
               }
-              if (aIsSource) Some(TagEntryRow(a, Some(b), importedOf.getOrElse(a.id, false), pair.exact))
-              else None
+              if (aIsSource) {
+                Some(
+                  TagEntryRow(
+                    a,
+                    Some(b),
+                    importedOf.getOrElse(a.id, false),
+                    pair.exact,
+                    commentOf.get(a.id),
+                    commentOf.get(b.id),
+                  )
+                )
+              } else None
             case _                  => None
           }
         }
@@ -1487,7 +1523,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val pairedIds = chosen.flatMap(row => row.source.id :: row.target.toList.map(_.id)).toSet
       val loose     = memberships
         .filterNot(m => pairedIds.contains(m.wordId))
-        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, exact = false)))
+        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, exact = false, m.comment)))
 
       (chosen ++ loose).sortBy(row =>
         (orderOf.getOrElse(row.source.id, Int.MaxValue), row.target.map(_.id).getOrElse(-1L))

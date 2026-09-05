@@ -57,12 +57,18 @@ object DelimitedText {
 
   /** The modal field count of `sample` under `delimiter`, when that mode is a real table: at least two columns, agreed
     * on by at least [[agreement]] of the rows.
+    *
+    * Scored on [[split]]'s '''unpadded''' rows, and on how many fields a row has rather than how many of them are
+    * filled. Both halves of that are load-bearing. A real vocabulary list leaves cells empty — an article column is
+    * blank on every adjective in the file — so counting filled cells reads a uniform three-column table as a mixture of
+    * twos and threes and drops it below [[agreement]]. Padding would break it the other way: once every row is widened
+    * to the widest, prose containing one stray comma reports two fields on every line and passes.
     */
   private def score(sample: String, delimiter: Delimiter): Option[Int] = {
-    val rows = parse(sample, delimiter)
+    val rows = split(sample, delimiter)
     if (rows.isEmpty) None
     else {
-      val widths       = rows.map(_.count(_.trim.nonEmpty))
+      val widths       = rows.map(_.size)
       val (mode, hits) = widths
         .groupBy(identity)
         .view
@@ -81,6 +87,15 @@ object DelimitedText {
     * every row can be indexed by column.
     */
   def parse(content: String, delimiter: Delimiter): List[List[String]] = {
+    val parsed = split(content, delimiter)
+    val width  = parsed.map(_.size).maxOption.getOrElse(0)
+    parsed.map(row => row.padTo(width, ""))
+  }
+
+  /** [[parse]] without the padding: every row exactly as many fields as it was written with. Only [[score]] wants this
+    * — a caller indexing by column wants the padding — but the distinction is what tells a table from prose.
+    */
+  private def split(content: String, delimiter: Delimiter): List[List[String]] = {
     val separator = Delimiter.char(delimiter)
     val rows      = List.newBuilder[List[String]]
     val fields    = List.newBuilder[String]
@@ -116,9 +131,6 @@ object DelimitedText {
       index += 1
     }
     endRow()
-
-    val parsed = rows.result()
-    val width  = parsed.map(_.size).maxOption.getOrElse(0)
-    parsed.map(row => row.padTo(width, ""))
+    rows.result()
   }
 }

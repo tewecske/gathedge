@@ -21,7 +21,7 @@ import gathedge.shared.dto.{
   TagResponse,
 }
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
-import gathedge.shared.parsing.DelimitedText
+import gathedge.shared.parsing.{ColumnHeading, DelimitedText}
 import org.scalajs.dom
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -441,10 +441,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private def offerTable(text: String): Boolean = {
     DelimitedText.sniff(text) match {
       case Some(delimiter) =>
-        val grid          = DelimitedText.parse(text, delimiter)
+        val grid             = DelimitedText.parse(text, delimiter)
+        // A first row that names the languages being imported is not a row of words: importing it mints a word called
+        // `Német` and pairs it with `Magyar`. The reader can still untick it.
+        val heading          = grid.headOption.exists(ColumnHeading.isHeaderRow)
         Var.set(
           gridVar          -> Some(grid),
-          headerVar        -> false,
+          headerVar        -> heading,
           rolesVar         -> Map.empty[Int, TagEditorPage.ColumnRole],
           guessVar         -> List.empty[ColumnLanguageGuess],
           tablePendingVar  -> None,
@@ -734,10 +737,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       colCheckBus.events
         .flatMapSwitch { grid =>
           // Every column is offered, including ones the reader will ignore — the suggestion is only useful if it can
-          // speak about a column nobody has assigned yet. The heading row is left in: one row cannot move a sample of
-          // twenty, and the reader has not said whether it is a heading at this point.
-          val columns = grid.headOption.getOrElse(Nil).indices.toList.map { index =>
-            ColumnSample(index, grid.map(_.lift(index).getOrElse("")))
+          // speak about a column nobody has assigned yet. A recognised heading row is dropped from the sample, since
+          // `Német` is not a German word and would score against the very column it labels.
+          val body    = if (grid.headOption.exists(ColumnHeading.isHeaderRow)) grid.drop(1) else grid
+          val columns = body.headOption.getOrElse(Nil).indices.toList.map { index =>
+            ColumnSample(index, body.map(_.lift(index).getOrElse("")))
           }
           WordApiClient.checkColumnLanguages(columns)
         } --> Observer[Either[ApiError, ColumnLanguageCheckResponse]] {
@@ -961,6 +965,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     )
   }
 
+  /** The reader's own note beside a word — the `(növény)` of `levél (növény)`. Muted and after the word, since it says
+    * which sense was meant and is not part of the word itself.
+    */
+  private def renderComment(comment: Option[String]): Option[HtmlElement] = {
+    comment.map(note => span(cls := "opacity-50 text-xs ml-1", s"($note)"))
+  }
+
   private def renderRow(entry: TagEntry): HtmlElement = {
     val rowKey     = TagEditorPage.rowKey(entry)
     val isEditing  = editingVar.signal.map(_.contains(rowKey)).distinct
@@ -986,7 +997,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       td(
         child <-- isEditing.map {
           case true  => editSourcePicker.render()
-          case false => span(Word.display(entry.source))
+          case false => span(Word.display(entry.source), renderComment(entry.comment))
         }
       ),
       td(
@@ -994,7 +1005,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           case true  => editTargetPicker.render()
           case false =>
             entry.target match {
-              case Some(w) => span(Word.display(w))
+              case Some(w) => span(Word.display(w), renderComment(entry.targetComment))
               case None    => span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
             }
         }
@@ -1278,7 +1289,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val readySignal: Signal[Boolean] = {
     rolesVar.signal.map(roles => {
       roles.values.exists(_ == TagEditorPage.ColumnRole.Source) &&
-        roles.values.exists(_ == TagEditorPage.ColumnRole.Target)
+      roles.values.exists(_ == TagEditorPage.ColumnRole.Target)
     })
   }
 

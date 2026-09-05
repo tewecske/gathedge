@@ -210,6 +210,10 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
   *
   * `otherTranslations` are the source word's other known translations into the tag's target language — what the target
   * picker's chip row offers when the row is edited. Ordered best-first, the marked answer excluded.
+  *
+  * `comment`/`targetComment` are the notes the reader wrote beside each side — the `(növény)` of `levél (növény)`. One
+  * per side because either cell of an imported line may have carried one and they say different things. They are the
+  * reader's own, held on `word_tags`, and never a property of the shared word.
   */
 final case class TagEntry(
   source: Word,
@@ -219,6 +223,8 @@ final case class TagEntry(
   createdByMe: Boolean,
   inMyOtherTags: Boolean,
   otherTranslations: List[TranslationOption],
+  comment: Option[String] = None,
+  targetComment: Option[String] = None,
 ) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.addPair]]/`.replacePair`'s answer: the row as it now stands, plus the same

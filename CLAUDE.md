@@ -44,7 +44,18 @@ Backend/shared specs run against a fresh, migrated SQLite DB per layer (`TestDat
 docker compose up -d postgres
 RUN_POSTGRES_TESTS=1 sbt backend/test
 ```
-`PostgresIntegrationSpec` is the only place the Postgres dialect runs (testcontainers).
+`PostgresIntegrationSpec` is the only place the Postgres dialect runs (testcontainers). It starts one container and
+gives **each test its own schema**, named after the test, migrated from nothing and dropped afterwards — so no test sees
+another's rows. Each schema is then loaded with the committed dictionary
+(`modules/backend/src/test/resources/dictionary-fixture.tsv.gz`, ~50k words), which is what makes those queries run
+against real data rather than an empty table. That is most of the spec's runtime.
+
+The fixture is data only; the structure comes from Flyway at restore time, so a migration that *adds* a column needs
+nothing. A migration that renames or drops one in `words`, `word_translations` or `word_forms` makes it stale — rebuild
+and commit it:
+```
+./scripts/build-dictionary-fixture.sh   # needs the postgres compose service and data/dictionary/seed.tsv
+```
 
 **E2E** (needs the full stack running)
 ```

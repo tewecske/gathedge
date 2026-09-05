@@ -2183,6 +2183,68 @@ object WordServiceSpec extends ZIOSpecDefault {
           result.newWords == 2,
         )
       },
+      test("a cell naming two translations becomes two rows, each paired") {
+        // `tető/padlás` is two Hungarian words on one line, not a word whose text is `tető/padlás`. The reader wrote
+        // both against `Dach`, so both are paired with it.
+        for {
+          tag    <- createTag("import", 1L)
+          result <- WordService.tabularImport(
+                      tag.id,
+                      List(row("Dach", "tető/padlás")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      1L,
+                    )
+          rows   <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text))) == List(
+            ("Dach", Some("tető")),
+            ("Dach", Some("padlás")),
+          ),
+          // One line read, two pairs written, three words minted.
+          result.rows == 1,
+          result.pairs == 1,
+          result.newWords == 3,
+        )
+      },
+      test("an ending written against a word becomes a second word, paired the same way") {
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(TabularRow("Jurist(in)", "jogász", Some("r/e"), None)),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          // `r/e` names both genders in the order written, so the counterpart takes the second one.
+          rows.map(r => (r.source.text, r.source.gender, r.target.map(_.text))) == List(
+            ("Jurist", Some(Gender.Masculine), Some("jogász")),
+            ("Juristin", Some(Gender.Feminine), Some("jogász")),
+          )
+        )
+      },
+      test("a note beside a word is kept as the reader's own, off the shared word") {
+        // `levél (növény)` names `levél` and says which sense of it. The note is per (word, tag), so a different
+        // reader's `levél` is untouched by it.
+        for {
+          tag  <- createTag("import", 1L)
+          _    <- WordService.tabularImport(
+                    tag.id,
+                    List(row("Blatt", "levél (növény)")),
+                    WordLanguage.De,
+                    WordLanguage.Hu,
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target.map(_.text), r.comment, r.targetComment)) == List(
+            ("Blatt", Some("levél"), None, Some("növény"))
+          )
+        )
+      },
       test("rows keep the reader's own order") {
         for {
           tag  <- createTag("import", 1L)

@@ -95,10 +95,18 @@ object MarkerVocabulary {
   /** German is the one that most needs its own entry: `w` (weiblich) is feminine and `s` (sächlich) is neuter, so a
     * table built only from English abbreviations misreads half of every German-written list. `f` still resolves, since
     * `feminin` is written too.
+    *
+    * `r`/`e`/`s` are the article's own last letter — de'''r''' / di'''e''' / da'''s''' — which is how a gender column
+    * is written in most German course material and in every Hungarian-schooled learner's list. They are here rather
+    * than in `LanguageProfile` because they are an abbreviation of the article, not an article: nobody writes `r Hund`
+    * and expects to read it aloud. `s` was already neuter through `sächlich`, so only two keys are new.
+    *
+    * `sich` is a relation for the same reason `es` is: the reflexive pronoun beside a verb states which form the entry
+    * is, and the word column already holds the verb.
     */
   private val german: MarkerVocabulary = vocabulary(
-    masculine = List("m", "mask", "maskulin", "männlich", "maennlich"),
-    feminine = List("w", "weiblich", "f", "fem", "feminin"),
+    masculine = List("m", "mask", "maskulin", "männlich", "maennlich", "r"),
+    feminine = List("w", "weiblich", "f", "fem", "feminin", "e"),
     neuter = List("s", "sächlich", "saechlich", "n", "neutrum"),
     relations = List(
       "genitive"     -> List("g", "gen", "genitiv"),
@@ -108,6 +116,7 @@ object MarkerVocabulary {
       "plural"       -> List("pl", "plural", "mehrzahl"),
       "singular"     -> List("sg", "singular", "einzahl"),
       "third-person" -> List("3", "es"),
+      "reflexive"    -> List("sich"),
     ),
   )
 

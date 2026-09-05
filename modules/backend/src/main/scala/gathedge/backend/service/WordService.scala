@@ -1635,6 +1635,8 @@ final case class WordServiceLive(
         createdByMe = row.source.source == WordService.userSource && row.source.createdBy.contains(viewerId),
         inMyOtherTags = otherTagWords.contains(row.source.id),
         others,
+        row.comment,
+        row.targetComment,
       )
     }
   }
@@ -2081,53 +2083,77 @@ final case class WordServiceLive(
       }
     }
 
-    /** One row's writes, or [[RowOutcome.skipped]] when the row had no source word to hang anything on. */
+    /** Every word one cell named, minted or found, with the count of the ones that were new. */
+    def ensureCells(cell: WordCell, language: WordLanguage): IO[WordFailure, (List[WordRow], Int)] = {
+      ZIO
+        .foreach(cell.words)(word => ensureCounted(language, word.text, word.partOfSpeech, word.gender, userId))
+        .map(results => (results.map(_._1), results.count(_._2)))
+    }
+
+    /** Records the reader's note against every word the side named, but only when they wrote one: a cell with no note
+      * must not clear the note a previous import or a hand edit left on the same membership.
+      */
+    def writeComment(rows: List[WordRow], comment: Option[String]): UIO[Unit] = {
+      comment match {
+        case None       =>
+          ZIO.unit
+        case Some(note) =>
+          ZIO.foreachDiscard(rows)(word => repo.setTagComment(word.id, tagId, Some(note)).orDie)
+      }
+    }
+
+    /** One row's writes, or [[RowOutcome.skipped]] when the row had no source word to hang anything on.
+      *
+      * A cell can name several words — `tető/padlás` is two translations, `Jurist(in)` is a word and its feminine
+      * counterpart — and every one of them is paired with every one the other cell named. The reader put them on one
+      * line, which is the assertion that any of them answers any of the others; splitting the line into separate rows
+      * instead would claim an alignment the file never stated.
+      */
     def writeRow(row: TabularRow, now: Long): UIO[RowOutcome] = {
       val sourceExtra = row.sourceExtra.map(WordCell.parseExtra(_, sourceLanguage, sourceMarkers))
       val targetExtra = row.targetExtra.map(WordCell.parseExtra(_, targetLanguage, targetMarkers))
 
-      // The extra column's gender is folded in before the part of speech is read: a one-word cell is a noun only once
+      // The extra column's genders are folded in before the part of speech is read: a one-word cell is a noun only once
       // a gender is known, and `ensure` discards a gender that does not belong to one.
       val sourceCell = WordCell
         .parseWord(row.source, sourceLanguage, sourceMarkers)
-        .withGender(sourceExtra.flatMap(_.gender), sourceLanguage)
+        .withExtra(sourceExtra, sourceLanguage)
       val targetCell = WordCell
         .parseWord(row.target, targetLanguage, targetMarkers)
-        .withGender(targetExtra.flatMap(_.gender), targetLanguage)
+        .withExtra(targetExtra, targetLanguage)
 
-      if (sourceCell.text.isEmpty)
+      if (sourceCell.words.isEmpty)
         ZIO.succeed(RowOutcome.skipped)
       else {
         val effect = for {
-          source         <- ensureCounted(sourceLanguage, sourceCell.text, sourceCell.partOfSpeech, sourceCell.gender, userId)
-          (src, srcIsNew) = source
-          outcome        <- if (targetCell.text.isEmpty)
-                              repo.importWord(src.id, tagId, now).orDie.as(RowOutcome(written = true))
-                            else {
-                              for {
-                                target         <- ensureCounted(
-                                                    targetLanguage,
-                                                    targetCell.text,
-                                                    targetCell.partOfSpeech,
-                                                    targetCell.gender,
-                                                    userId,
-                                                  )
-                                (tgt, tgtIsNew) = target
-                                // The reader asserted this pair by putting both cells on one line, so the edge is recorded
-                                // even for a word the dictionary has never heard of. That is the whole difference from
-                                // `bulkImport`, which can only mark a pair the dictionary already knew about.
-                                _              <- linkRows(src, tgt, now)
-                                _              <- repo.importPair(src.id, tagId, tgt.id, now).orDie
-                                forms          <- writeForms(tgt, targetExtra, targetLanguage, now)
-                              } yield RowOutcome(
-                                written = true,
-                                paired = true,
-                                minted = if (tgtIsNew) 1 else 0,
-                                forms = forms,
-                              )
-                            }
-          forms          <- writeForms(src, sourceExtra, sourceLanguage, now)
-        } yield outcome.add(minted = if (srcIsNew) 1 else 0, forms = forms)
+          sourced             <- ensureCells(sourceCell, sourceLanguage)
+          (sources, srcMinted) = sourced
+          targeted            <- ensureCells(targetCell, targetLanguage)
+          (targets, tgtMinted) = targeted
+          _                   <- if (targets.isEmpty)
+                                   ZIO.foreachDiscard(sources)(src => repo.importWord(src.id, tagId, now).orDie)
+                                 else {
+                                   // The reader asserted these pairs by putting both cells on one line, so each edge is
+                                   // recorded even for a word the dictionary has never heard of. That is the whole
+                                   // difference from `bulkImport`, which can only mark a pair the dictionary knew.
+                                   ZIO.foreachDiscard(sources)(src => {
+                                     ZIO.foreachDiscard(targets)(tgt =>
+                                       linkRows(src, tgt, now) *> repo.importPair(src.id, tagId, tgt.id, now).orDie
+                                     )
+                 })
+                                 }
+          _                   <- writeComment(sources, sourceCell.comment)
+          _                   <- writeComment(targets, targetCell.comment)
+          // Forms hang off the stem — the first word the cell named — since an ending or an alternative is a word in
+          // its own right, not something a `word_forms` row was written about.
+          srcForms            <- ZIO.foreach(sources.headOption.toList)(writeForms(_, sourceExtra, sourceLanguage, now))
+          tgtForms            <- ZIO.foreach(targets.headOption.toList)(writeForms(_, targetExtra, targetLanguage, now))
+        } yield RowOutcome(
+          written = true,
+          paired = targets.nonEmpty,
+          minted = srcMinted + tgtMinted,
+          forms = srcForms.sum + tgtForms.sum,
+        )
 
         // A row the dictionary or validation rejects is skipped, never fatal: one bad line must not cost the reader
         // the other two thousand. The same leniency `bulkImport.createAndTag` applies per token.

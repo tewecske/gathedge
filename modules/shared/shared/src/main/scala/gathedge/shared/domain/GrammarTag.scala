@@ -61,6 +61,7 @@ object GrammarTag {
       "first-person"       -> (GrammarCategory.Tense, 20),
       "second-person"      -> (GrammarCategory.Tense, 20),
       "third-person"       -> (GrammarCategory.Tense, 20),
+      "reflexive"          -> (GrammarCategory.Tense, 20),
       "auxiliary"          -> (GrammarCategory.Tense, 20),
       "causative"          -> (GrammarCategory.Tense, 20),
       "noun-from-verb"     -> (GrammarCategory.Tense, 20),
