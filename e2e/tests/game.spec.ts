@@ -202,11 +202,11 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // Starting a play is the first write, so it is what mints the guest account here — confirmed above that
   // nothing before this click did. It is also what moves the play loop onto its own route.
   await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
-  await expect(guestPage.getByRole('heading', { name: 'Your words are saved on this device' })).toBeVisible();
+  await expect(guestPage.getByRole('heading', { name: 'You have data saved as a guest' })).toBeVisible();
 
   const firstPlaySeen: string[] = [];
   for (let i = 0; i < 3; i++) {
-    // Scoped to the prompt's own heading classes: the guest banner ("Your words are saved on this device") and the
+    // Scoped to the prompt's own heading classes: the guest banner ("You have data saved as a guest") and the
     // read-only GameHeader (the quiz name) above it are both `h2`s too — GameHeader is even `h2.text-xl` — so the
     // prompt needs its full `h2.text-xl.font-semibold` to be picked out alone.
     const heading = guestPage.locator('h2.text-xl.font-semibold');

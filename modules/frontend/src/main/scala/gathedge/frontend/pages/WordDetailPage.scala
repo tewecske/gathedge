@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, GuestBanner, Labels, WordCollect}
+import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
@@ -152,9 +152,6 @@ private class WordDetailPage(id: Long) {
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
-      // The reader may have arrived here with no account at all: a tick or a chip mints them a guest, and this is what
-      // says so afterwards, exactly as on the listing.
-      child.maybe <-- AppState.currentUserSignal.map(user => Option.when(user.exists(_.isGuest))(GuestBanner.render())),
       collect.bindings,
     )
   }

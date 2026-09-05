@@ -362,8 +362,8 @@ private class SettingsPage {
     )
   }
 
-  /** Feature-checked, like `GuestBanner.copyToClipboard`: the Clipboard API is absent in jsdom and on older browsers,
-    * and a copy button that throws would take the page with it.
+  /** Feature-checked, like `AppShell.copyToClipboard`: the Clipboard API is absent in jsdom and on older browsers, and
+    * a copy button that throws would take the page with it.
     */
   private def copyShareCode(value: String): Unit = {
     try {
