@@ -380,6 +380,29 @@ object WordServiceSpec extends ZIOSpecDefault {
           byMember.items.head.pairs == List(TaggedPair(tag.id, haz)),
         )
       },
+      // The listing's chip is the only way many tags ever gain a row, so it settles the direction the collect picker
+      // reads — the word asked about is the source, the answer marked against it the target.
+      test("a chip settles the tag's language pair, and a later one the other way round leaves it") {
+        for {
+          _        <- seed
+          tag      <- createTag("chipped", 1L)
+          page     <- list(search = Some("haus"))
+          word      = page.items.head.word
+          haz       = page.items.head.translations.head.wordId
+          before   <- WordService.listTags(1L)
+          _        <- WordService.selectPair(word.id, tag.id, haz, 1L)
+          after    <- WordService.listTags(1L)
+          // The same pair marked from the Hungarian side: the tag is already directed, so nothing moves.
+          _        <- WordService.selectPair(haz, tag.id, word.id, 1L)
+          reversed <- WordService.listTags(1L)
+        } yield assertTrue(
+          before.find(_.id == tag.id).exists(t => t.sourceLanguage.isEmpty && t.targetLanguage.isEmpty),
+          after
+            .find(_.id == tag.id)
+            .exists(t => t.sourceLanguage.contains(WordLanguage.De) && t.targetLanguage.contains(WordLanguage.Hu)),
+          reversed.find(_.id == tag.id) == after.find(_.id == tag.id),
+        )
+      },
       test("listTags marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
         for {
           _        <- seed
