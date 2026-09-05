@@ -1197,7 +1197,7 @@ object UiKeys {
 
   val gameInstancePreferenceLabel: String        = key("ui.gameInstance.preference.label")
   val gameInstancePreferenceAll: String          = key("ui.gameInstance.preference.all")
-  val gameInstancePreferenceUnplayed: String     = key("ui.gameInstance.preference.unplayed")
+  val gameInstancePreferenceLeastPlayed: String  = key("ui.gameInstance.preference.leastPlayed")
   val gameInstancePreferenceMostMistakes: String = key("ui.gameInstance.preference.mostMistakes")
 
   val gameInstanceModeLabel: String          = key("ui.gameInstance.mode.label")

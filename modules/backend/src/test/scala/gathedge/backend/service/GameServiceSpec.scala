@@ -150,6 +150,29 @@ object GameServiceSpec extends ZIOSpecDefault {
     }
   }
 
+  /** Answers the play's next prompt, wrong when it is `wrongFor` and correct otherwise — the words are
+    * `$tagName-source-$i`/`$tagName-target-$i`, the pairs [[eligibleTagWithPairs]] makes. The branch is what puts a
+    * mistake against one named word without knowing which word the sample drew first.
+    */
+  private def answerOnce(
+    playId: Long,
+    tagName: String,
+    userId: Long,
+    wrongFor: String,
+  ): ZIO[GameService, GameFailure, Unit] = {
+    GameService.nextPrompt(playId, userId).flatMap { prompt =>
+      val wordText = prompt.wordText.get
+      val index    = wordText.stripPrefix(s"$tagName-source-")
+      val answer   = {
+        if (wordText == wrongFor)
+          "totally-unrelated"
+        else
+          s"$tagName-target-$index"
+      }
+      GameService.submitAnswer(playId, prompt.wordId.get, answer, userId).unit
+    }
+  }
+
   /** Marks `src -> tgt` (both directions, per `WordRepository.pairTranslation`) inside `tagId`. The building block for
     * the "same word under more than one tag" cases, where the helpers above — each assuming a single tag — do not fit.
     */
@@ -460,29 +483,72 @@ object GameServiceSpec extends ZIOSpecDefault {
           underPool.wordCount == 3,
         )
       },
-      test("Unplayed preference fills the sample from never-answered words first, in this direction only") {
+      test("LeastPlayed preference fills the sample from never-answered words first, in this direction only") {
         for {
           owner      <- newUser()
-          tagId      <- eligibleTagWithPairs(owner, "unplayedPref", WordLanguage.De, WordLanguage.Hu, count = 4)
+          tagId      <- eligibleTagWithPairs(owner, "leastPlayedPref", WordLanguage.De, WordLanguage.Hu, count = 4)
           created    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           warmup     <- GameService.startPlay(created.slug, owner, wordLimit = Some(1))
-          _          <- playThrough(warmup.playId, "unplayedPref", owner)
+          _          <- playThrough(warmup.playId, "leastPlayedPref", owner)
           warmupWord <- GameService.getResults(warmup.playId, owner).map(_.answers.head.wordText)
           narrowed   <- GameService.startPlay(
                           created.slug,
                           owner,
                           wordLimit = Some(3),
-                          wordPreference = WordPreference.Unplayed,
+                          wordPreference = WordPreference.LeastPlayed,
                         )
+          // Played through, not merely started: `getResults` lists answers, so an unplayed play answers an
+          // empty list and every assertion about which words it drew would hold vacuously.
+          _          <- playThrough(narrowed.playId, "leastPlayedPref", owner)
           results    <- GameService.getResults(narrowed.playId, owner)
         } yield assertTrue(
-          // Three of the four eligible words are sampled; the one already answered by this player, in this
-          // direction, is the one most likely left out — asserted as "never all four fit, and the previously
-          // answered word is not required to reappear" rather than a flaky exact-set check, since ties among
-          // the three never-played words are broken by shuffle.
+          // Three of the four eligible words are sampled. The three never answered each score zero and the
+          // warmup word scores one, so the warmup word is the one left out — deterministic, whichever way the
+          // shuffle breaks the tie among the three.
           results.wordCount == 3,
-          results.variant.wordPreference == WordPreference.Unplayed,
+          results.variant.wordPreference == WordPreference.LeastPlayed,
           !results.answers.exists(_.wordText == warmupWord),
+        )
+      },
+      test("LeastPlayed preference ranks by answer count, not merely by whether a word was answered at all") {
+        // The state the old never-answered-first rule could not express: every word has been answered, so a
+        // "have I played this?" flag ties them all and the order falls back to the pool's own. Asserted through
+        // the picker's preview, which orders by the same rule without the play draw's shuffle, so the ranking
+        // itself is what is under test.
+        //
+        // The word answered twice is deliberately the alphabetically *first* one: the preview breaks ties
+        // alphabetically, so a rule that cannot tell one answer from two would leave it first and pass by
+        // accident.
+        val first  = "leastCount-source-0"
+        val second = "leastCount-source-1"
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "leastCount", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          warmup  <- GameService.startPlay(created.slug, owner)
+          // Both words answered once, and `first` answered wrong — which is what lets the next play draw it
+          // deterministically rather than by shuffle.
+          _       <- answerOnce(warmup.playId, "leastCount", owner, wrongFor = first)
+          _       <- answerOnce(warmup.playId, "leastCount", owner, wrongFor = first)
+          extra   <- GameService.startPlay(
+                       created.slug,
+                       owner,
+                       wordLimit = Some(1),
+                       wordPreference = WordPreference.MostMistakes,
+                     )
+          drawn   <- GameService.nextPrompt(extra.playId, owner).map(_.wordText.get)
+          _       <- playThrough(extra.playId, "leastCount", owner)
+          preview <- GameService.playSetupPreview(
+                       created.slug,
+                       Some(owner),
+                       swapDirection = false,
+                       WordPreference.LeastPlayed,
+                     )
+        } yield assertTrue(
+          // MostMistakes drew the only word with a mistake, so that word now carries two answers to the other's
+          // one.
+          drawn == first,
+          preview.map(_.text) == List(second, first),
         )
       },
       test("MostMistakes preference ranks by this player's wrong-answer count, in this direction only") {
@@ -542,12 +608,17 @@ object GameServiceSpec extends ZIOSpecDefault {
       },
       test("playSetupPreview answers the same pool for an anonymous caller, with no play history to prefer by") {
         for {
-          owner    <- newUser()
-          tagId    <- eligibleTagWithPairs(owner, "previewAnon", WordLanguage.De, WordLanguage.Hu, count = 3)
-          created  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          anon     <- GameService.playSetupPreview(created.slug, None, swapDirection = false, WordPreference.All)
-          unplayed <- GameService.playSetupPreview(created.slug, None, swapDirection = false, WordPreference.Unplayed)
-        } yield assertTrue(anon.size == 3, unplayed.size == 3)
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "previewAnon", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          anon    <- GameService.playSetupPreview(created.slug, None, swapDirection = false, WordPreference.All)
+          least   <- GameService.playSetupPreview(
+                       created.slug,
+                       None,
+                       swapDirection = false,
+                       WordPreference.LeastPlayed,
+                     )
+        } yield assertTrue(anon.size == 3, least.size == 3)
       },
       test("starting a play when the game's tags currently carry nothing eligible fails") {
         for {

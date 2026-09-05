@@ -435,7 +435,7 @@
   "ui.gameInstance.includeArticles.hint": "Show the definite article with a gendered noun in the quiz",
   "ui.gameInstance.preference.label": "Which words",
   "ui.gameInstance.preference.all": "All words",
-  "ui.gameInstance.preference.unplayed": "Words I haven't played",
+  "ui.gameInstance.preference.leastPlayed": "Words I played the least",
   "ui.gameInstance.preference.mostMistakes": "Words I've made the most mistakes with",
   "ui.gameInstance.mode.label": "How to answer",
   "ui.gameInstance.mode.typing": "Type the answer",

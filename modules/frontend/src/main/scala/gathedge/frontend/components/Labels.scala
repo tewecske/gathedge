@@ -145,8 +145,8 @@ object Labels {
     preference match {
       case WordPreference.All          =>
         I18n.t(UiKeys.gameInstancePreferenceAll)
-      case WordPreference.Unplayed     =>
-        I18n.t(UiKeys.gameInstancePreferenceUnplayed)
+      case WordPreference.LeastPlayed  =>
+        I18n.t(UiKeys.gameInstancePreferenceLeastPlayed)
       case WordPreference.MostMistakes =>
         I18n.t(UiKeys.gameInstancePreferenceMostMistakes)
     }

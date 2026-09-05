@@ -151,8 +151,8 @@ object GameEndpoints {
   /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
     * from for the same `swapDirection`/`wordPreference` — see `GameService.playSetupPreview`. Anonymous-capable, the
     * same reasoning [[get]] applies: a visitor opening a shared quiz link must be able to preview the picker before any
-    * guest is minted. For a signed-in caller the `Unplayed`/`MostMistakes` ordering still uses their own play history
-    * in this game; an anonymous caller has none, so both preferences degrade to the same order as `All`.
+    * guest is minted. For a signed-in caller the `LeastPlayed`/`MostMistakes` ordering still uses their own play
+    * history in this game; an anonymous caller has none, so both preferences degrade to the same order as `All`.
     */
   val playSetup = {
     Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / "setup")

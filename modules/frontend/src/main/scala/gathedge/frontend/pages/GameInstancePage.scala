@@ -572,7 +572,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       select(
         cls    := "select select-sm w-full max-w-xs",
         option(value := "all", I18n.t(UiKeys.gameInstancePreferenceAll)),
-        option(value := "unplayed", I18n.t(UiKeys.gameInstancePreferenceUnplayed)),
+        option(value := "unplayed", I18n.t(UiKeys.gameInstancePreferenceLeastPlayed)),
         option(value := "mostMistakes", I18n.t(UiKeys.gameInstancePreferenceMostMistakes)),
         controlled(
           value <-- wordPreferenceVar.signal.map(WordPreference.code),
