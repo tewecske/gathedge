@@ -95,6 +95,22 @@ object WordCollect {
     }
   }
 
+  /** Which tag a reader should be collecting into, given the one this browser remembers and the tag list just fetched
+    * for the account now signed in.
+    *
+    * A remembered id is a *browser* fact, not an account fact: `localStorage` outlives a sign-out, a guest mint and an
+    * account swept away, so an id left there may name a tag this reader cannot write to — a write against it fails with
+    * `TagNotFound`, which is exactly the "No such tag" a guest with no tags of their own hits. It is therefore kept
+    * only where the fetched list confirms it, and otherwise replaced by one of the reader's own, then by any tag a
+    * group has opened to them, then by nothing — `None` meaning "make one on the first click".
+    */
+  def keptCollectTag(remembered: Option[Long], tags: List[Tag]): Option[Long] = {
+    remembered
+      .filter(id => tags.exists(tag => tag.id == id && tag.editableByMe))
+      .orElse(tags.find(_.ownedByMe).map(_.id))
+      .orElse(tags.find(_.editableByMe).map(_.id))
+  }
+
   /** Folds a tag the reader just gained into a list they already had, replacing any existing entry for the same id
     * rather than appending beside it.
     *
@@ -171,6 +187,16 @@ final class WordCollect(
     */
   private val collectTagVar = Var(WordCollect.storedCollectTag)
 
+  /** Whether [[tagsVar]] holds a list fetched for whoever is signed in *now* — i.e. whether [[collectTagVar]] has been
+    * through [[reconcileCollectTag]] against that list.
+    *
+    * The remembered id is read from `localStorage` before any request is made, so between the first render and the tag
+    * list landing it is only a guess: it may name a previous account's tag, and a click in that window would write
+    * against it and fail with `TagNotFound`. [[collectTagOrDefault]] therefore fetches the list first whenever this is
+    * `false`, rather than assuming the mount-time fetch has already answered.
+    */
+  private val tagsLoadedVar = Var(false)
+
   val collectTagSignal: Signal[Option[Long]] = collectTagVar.signal
 
   /** Mirrors who the reader is at the moment a word is *clicked*. Signals cannot be read outside a subscription, and a
@@ -213,9 +239,13 @@ final class WordCollect(
         Observer[Either[ApiError, List[Tag]]] {
           case Right(tags) =>
             setTags(tags)
+            tagsLoadedVar.set(true)
             reconcileCollectTag(tags)
           case Left(_)     =>
             tagsVar.set(Nil)
+            // Left unloaded deliberately: a list that never arrived has confirmed nothing, so the next write fetches
+            // it again rather than writing against a remembered id nothing has checked.
+            tagsLoadedVar.set(false)
         },
       newTagBus.events
         .map(_ => newTagVar.now().trim)
@@ -291,13 +321,7 @@ final class WordCollect(
     * under somebody else's classroom.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
-    val kept = {
-      collectTagVar
-        .now()
-        .filter(id => tags.exists(t => t.id == id && t.editableByMe))
-        .orElse(tags.find(_.ownedByMe).map(_.id))
-        .orElse(tags.find(_.editableByMe).map(_.id))
-    }
+    val kept = WordCollect.keptCollectTag(collectTagVar.now(), tags)
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
     }
@@ -323,6 +347,9 @@ final class WordCollect(
             // failing with `TagNotFound`. `reconcileCollectTag` would fix this too, but only once the tag list it
             // reacts to has actually come back, which is later than the `write()` below.
             setCollectTag(None)
+            // The list in hand was fetched for nobody (or for whoever was here before), so it says nothing about this
+            // account's tags either — the write below fetches a fresh one rather than reading it.
+            tagsLoadedVar.set(false)
             // The banner appears from here on: the reader now has an account, and nothing else has told them so.
             onNotice.onNext(I18n.t(UiKeys.guestBannerHint))
             tagsBus.emit(())
@@ -414,6 +441,25 @@ final class WordCollect(
     * the same way.
     */
   def collectTagOrDefault: EventStream[Either[ApiError, Long]] = {
+    if (tagsLoadedVar.now()) {
+      resolvedCollectTag
+    } else {
+      // The remembered id has not been checked against this account yet — see [[tagsLoadedVar]]. A click landing in
+      // that window (the moment after a page load, or right after a guest was minted) must not write against it.
+      WordApiClient.listTags.flatMapSwitch {
+        case Right(tags) =>
+          setTags(tags)
+          tagsLoadedVar.set(true)
+          reconcileCollectTag(tags)
+          resolvedCollectTag
+        case Left(err)   =>
+          EventStream.fromValue(Left(err))
+      }
+    }
+  }
+
+  /** [[collectTagOrDefault]] once the tag list is known to be this account's. */
+  private def resolvedCollectTag: EventStream[Either[ApiError, Long]] = {
     collectTagVar.now() match {
       case Some(id) =>
         EventStream.fromValue(Right(id))
@@ -426,6 +472,9 @@ final class WordCollect(
               .createTag(WordCollect.defaultTagName)
               .map(_.map(response => {
                 response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
+                // Held locally as well, the way the new-tag form holds its own: the select has the tag at once, and a
+                // tag list fetched a moment later cannot reconcile the reader off a tag that exists.
+                tagsVar.update(existing => Tag.sorted(WordCollect.withTag(existing, response.tag)))
                 setCollectTag(Some(response.tag.id))
                 response.tag.id
               }))

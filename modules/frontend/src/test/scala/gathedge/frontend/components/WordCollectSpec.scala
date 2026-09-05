@@ -46,6 +46,24 @@ object WordCollectSpec extends ZIOSpecDefault {
           !WordCollect.isTagged(Nil, None),
         )
       },
+      test("a remembered tag this account cannot write to is dropped, not written against") {
+        val mine     = Tag(10L, "mine", 0L, ownedByMe = true, editableByMe = true)
+        val theirs   = Tag(11L, "theirs", 0L, ownedByMe = false, editableByMe = false)
+        val classTag = Tag(12L, "lesson1", 0L, ownedByMe = false, editableByMe = true)
+        assertTrue(
+          // The whole of the guest bug: `localStorage` outlives an account, so an id left there may name a tag the
+          // reader cannot write to. Kept, it fails with "No such tag"; dropped, the first click makes a tag instead.
+          WordCollect.keptCollectTag(Some(11L), List(theirs)) == None,
+          WordCollect.keptCollectTag(Some(11L), Nil) == None,
+          // A tag they may write to is kept, group tag or own.
+          WordCollect.keptCollectTag(Some(10L), List(mine, theirs)) == Some(10L),
+          WordCollect.keptCollectTag(Some(12L), List(classTag, theirs)) == Some(12L),
+          // With nothing remembered, their own comes before a group's, and a group's before nothing.
+          WordCollect.keptCollectTag(None, List(classTag, mine)) == Some(10L),
+          WordCollect.keptCollectTag(None, List(theirs, classTag)) == Some(12L),
+          WordCollect.keptCollectTag(None, List(theirs)) == None,
+        )
+      },
       test("marking a translation adds the tag and the pair") {
         val empty   = WordSummary(
           word = summary.word,
