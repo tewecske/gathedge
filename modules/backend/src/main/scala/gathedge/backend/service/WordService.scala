@@ -240,6 +240,10 @@ trait WordService {
     * of the pair quota. A pair already marked is nothing new to write, so it never counts against the quota, and a
     * write that only crosses the *soft* threshold succeeds with [[gathedge.shared.dto.PairSelectionResponse.warning]]
     * set.
+    *
+    * On the first mark it also fixes the tag's language pair — word as source, answer as target — which locks from then
+    * on, exactly as [[addPair]] does for the editor's first row. It is the same claim about the same tag, and without
+    * it a tag collected entirely from the listing would carry no direction at all.
     */
   def selectPair(
     wordId: Long,
@@ -1566,17 +1570,21 @@ final case class WordServiceLive(
   /** The translation has to be one the word actually has: an arbitrary pair of word ids is not a translation, and the
     * practice screen would be asking a question with nothing behind it. Reuses `allTranslationsOf`, which also proves
     * the translation word exists, so there is no second lookup.
+    *
+    * Answers the translation's own row, which that same read already carried — [[selectPair]] needs its language to
+    * settle the tag's direction, and re-reading it by id would be a second query for a row in hand.
     */
-  private def requireTranslationOf(wordId: Long, translationWordId: Long): IO[WordFailure, Unit] = {
+  private def requireTranslationOf(wordId: Long, translationWordId: Long): IO[WordFailure, WordRow] = {
     repo
       .allTranslationsOf(wordId)
       .orDie
       .flatMap(edges => {
-        ZIO.unless(edges.exists { case (edge, _) => edge.targetWordId == translationWordId })(
-          ZIO.fail(WordFailure.NotFound)
-        )
+        ZIO
+          .fromOption(edges.collectFirst {
+            case (edge, target) if edge.targetWordId == translationWordId => target
+          })
+          .orElseFail(WordFailure.NotFound)
       })
-      .unit
   }
 
   /** The write itself, with the checks already done — shared with [[create]], which has just inserted the edge it would
@@ -1609,14 +1617,18 @@ final case class WordServiceLive(
   ): IO[WordFailure, PairSelectionResponse] = {
     for {
       tag     <- requireEditableTag(tagId, userId)
-      _       <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      _       <- requireTranslationOf(wordId, translationWordId)
+      word    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      target  <- requireTranslationOf(wordId, translationWordId)
       already <- pairAlreadyMarked(userId, wordId, tagId, translationWordId)
       // `pairTranslation` writes one row per direction, so a genuinely new mark adds two. Charged against the tag's
       // *owner* (`tag.userId`), not the caller — quotas stay per-account regardless of who in the group is doing the
       // marking, per the classroom write-access rule.
       warning <- if (already) ZIO.succeed(None) else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
       _       <- pairInTag(wordId, tagId, translationWordId)
+      // A chip settles the tag's direction the same way the editor's first row does: the word being asked about is the
+      // source, the answer marked against it the target. `setTagLanguages` fills a tag that has none and nothing else,
+      // so a second chip the other way round leaves the pair as the first one left it.
+      _       <- repo.setTagLanguages(tagId, word.language, target.language).orDie
     } yield PairSelectionResponse(warning)
   }
 
