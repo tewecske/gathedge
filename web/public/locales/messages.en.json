@@ -530,6 +530,7 @@
   "ui.words.collectNone": "No tag",
   "ui.words.pairHint": "Click a translation to tag the word with it.",
   "ui.words.languagesLockedHint": "Fixed once the tag has a pair.",
+  "ui.words.languagesCollectHint": "Set by the collect tag. Pick \"No tag\" to change them, or swap to read the pair the other way.",
   "ui.words.resetFilters": "Reset filters",
   "ui.words.tagRenameButton": "Rename tag",
   "ui.words.tagDeleteButton": "Delete tag",

@@ -530,6 +530,7 @@
   "ui.words.collectNone": "Nincs címke",
   "ui.words.pairHint": "Kattints egy fordításra, hogy megjelöld vele a szót.",
   "ui.words.languagesLockedHint": "Rögzítve, amint a címkének van szópárja.",
+  "ui.words.languagesCollectHint": "A gyűjtőcímke állítja be. Válaszd a „Nincs címke” lehetőséget a módosításhoz, vagy fordítsd meg a párt a cserével.",
   "ui.words.resetFilters": "Szűrők törlése",
   "ui.words.tagRenameButton": "Címke átnevezése",
   "ui.words.tagDeleteButton": "Címke törlése",

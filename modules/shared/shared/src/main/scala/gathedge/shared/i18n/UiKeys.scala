@@ -636,6 +636,11 @@ object UiKeys {
   /** On the tag editor's two language selects once the tag has a practice pair: says the pair is fixed. */
   val wordsLanguagesLockedHint: String = key("ui.words.languagesLockedHint")
 
+  /** On the words page's two language selects while a collect tag is chosen: they follow the tag's pair. The swap
+    * button stays live, so the pair can still be read the other way round.
+    */
+  val wordsLanguagesCollectHint: String = key("ui.words.languagesCollectHint")
+
   /** The second half of that hint: clicking a translation is the other thing this screen's rows can do. */
   val wordsPairHint: String = key("ui.words.pairHint")
 

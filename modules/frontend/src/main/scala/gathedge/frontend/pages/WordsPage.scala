@@ -133,11 +133,16 @@ private class WordsPage(
   )
 
   /** The collect tag resolved to a [[Tag]], or `None` before the tag list arrives or for a visitor with no tags.
-    * Choosing one *sets* the two language selects to its pair; the selects stay editable, and either order of that pair
-    * is a valid direction to collect in.
+    * Choosing one *sets* the two language selects to its pair and then holds them there; only the swap button stays
+    * live, since either order of that pair is a valid direction to collect in.
     */
   private val collectTagSignal: Signal[Option[Tag]] =
     collect.collectTagSignal.combineWithFn(collect.tagsSignal)((id, tags) => id.flatMap(tid => tags.find(_.id == tid)))
+
+  /** True while a collect tag is chosen: the two language selects are disabled, so the reader cannot drift off the
+    * tag's pair. The swap button ignores this — it only reorders the same pair.
+    */
+  private val languagesLockedSignal: Signal[Boolean] = collectTagSignal.map(_.isDefined)
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
@@ -348,7 +353,7 @@ private class WordsPage(
 
   /** Which language is being read, and which one the translations are in. Two selects rather than one "de → hu"
     * control, so a reader can flip either half without the other becoming impossible. Choosing a collect tag sets both
-    * to its pair, but leaves them editable.
+    * to its pair and disables them; the swap button between them stays live, so the pair can still be read either way.
     */
   private def renderDirection(): HtmlElement = {
     div(
@@ -357,12 +362,14 @@ private class WordsPage(
         UiKeys.wordsLanguageLabel,
         querySignal.map(_.language),
         Observer[WordLanguage](language => change(_.reset(_.copy(language = language)))),
+        languagesLockedSignal,
       ),
       renderSwap(),
       languageSelect(
         UiKeys.wordsTargetLabel,
         targetSignal,
         Observer[WordLanguage](language => change(_.reset(_.copy(target = language)))),
+        languagesLockedSignal,
       ),
       label(
         cls := "flex flex-col gap-1",
@@ -506,19 +513,32 @@ private class WordsPage(
     labelKey: String,
     selected: Signal[WordLanguage],
     onPick: Observer[WordLanguage],
+    locked: Signal[Boolean],
   ): HtmlElement = {
     label(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
-      select(
-        cls    := "select select-sm w-28",
-        WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
-        controlled(
-          value <-- selected.map(WordLanguage.code),
-          onChange.mapToValue --> onPick.contramap[String](code =>
-            WordLanguage.fromString(code).getOrElse(WordQuery.default.language)
+      span(
+        // The tooltip has to be a wrapper — daisyUI's `.tooltip` is `display:inline-block` — and it carries a class
+        // only while locked, so nothing draws around a live select.
+        cls("tooltip") <-- locked,
+        dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.wordsLanguagesCollectHint) else ""),
+        select(
+          cls := "select select-sm w-28",
+          disabled <-- locked,
+          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+          controlled(
+            value <-- selected.map(WordLanguage.code),
+            onChange.mapToValue --> onPick.contramap[String](code =>
+              WordLanguage.fromString(code).getOrElse(WordQuery.default.language)
+            ),
           ),
         ),
+      ),
+      // The tooltip is CSS-drawn from a `data-` attribute, so it says nothing to a screen reader; this does.
+      span(
+        cls    := "sr-only",
+        child.text <-- locked.map(on => if (on) I18n.t(UiKeys.wordsLanguagesCollectHint) else ""),
       ),
     )
   }
