@@ -285,6 +285,72 @@ object AuthServiceSpec extends ZIOSpecDefault {
         )
       }
     },
+    test("an account signs in by the username it chose, whatever case it is typed in") {
+      for {
+        signedUp <- AuthService.signup("named@example.com", "password123")
+        updated  <- AuthService.updateProfile(signedUp._1.id, Some("  Levente_01 "), Some("  Levente  "))
+        byName   <- AuthService.login("levente_01", "password123")
+        byCase   <- AuthService.login("Levente_01", "password123")
+        byEmail  <- AuthService.login("named@example.com", "password123")
+      } yield assertTrue(
+        // Stored lowercased and trimmed; the display name keeps the casing it was typed in.
+        updated.username.contains("levente_01"),
+        updated.name.contains("Levente"),
+        byName._1.id == signedUp._1.id,
+        byCase._1.id == signedUp._1.id,
+        byEmail._1.id == signedUp._1.id,
+      )
+    },
+    test("a username another account already holds is refused") {
+      for {
+        first  <- AuthService.signup("holder@example.com", "password123")
+        second <- AuthService.signup("latecomer@example.com", "password123")
+        _      <- AuthService.updateProfile(first._1.id, Some("taken-name"), None)
+        // The same account may save its own username again; only somebody else's is refused.
+        again  <- AuthService.updateProfile(first._1.id, Some("TAKEN-NAME"), None).either
+        clash  <- AuthService.updateProfile(second._1.id, Some("taken-name"), None).either
+      } yield assertTrue(again.isRight, clash == Left(ProfileFailure.UsernameTaken))
+    },
+    test("an empty box clears the username, and the name it used to sign in by stops working") {
+      for {
+        signedUp <- AuthService.signup("temporary@example.com", "password123")
+        _        <- AuthService.updateProfile(signedUp._1.id, Some("temporary"), Some("Temp"))
+        cleared  <- AuthService.updateProfile(signedUp._1.id, Some("  "), None)
+        byName   <- AuthService.login("temporary", "password123").either
+        byEmail  <- AuthService.login("temporary@example.com", "password123").either
+      } yield assertTrue(
+        cleared.username.isEmpty,
+        cleared.name.isEmpty,
+        byName == Left(AuthFailure.InvalidCredentials),
+        byEmail.isRight,
+      )
+    },
+    test("a username fails validation as a field error rather than a bare refusal") {
+      for {
+        signedUp <- AuthService.signup("picky@example.com", "password123")
+        result   <- AuthService.updateProfile(signedUp._1.id, Some("no"), None).either
+      } yield assertTrue(
+        result ==
+          Left(
+            ProfileFailure.ValidationError(
+              Map("username" -> MessageRef(MessageKeys.usernameTooShort, List(Validation.minUsernameLength.toString)))
+            )
+          )
+      )
+    },
+    // The budget is keyed on the account, not on what was typed at it. Keying on the string would hand an attacker a
+    // second full budget against the same account for the price of knowing its username.
+    test("failures spent against a username lock the address out too") {
+      for {
+        signedUp <- AuthService.signup("onebudget@example.com", "password123")
+        _        <- AuthService.updateProfile(signedUp._1.id, Some("onebudget"), None)
+        _        <-
+          ZIO.foreachDiscard(1 to InMemoryRateLimiter.maxAttempts) { _ =>
+            AuthService.login("onebudget", "nope12345").either
+          }
+        result   <- AuthService.login("onebudget@example.com", "password123").either
+      } yield assertTrue(result == Left(AuthFailure.RateLimited))
+    },
   ).provide(authServiceLayer(requireEmailVerification = false))
 
   /** The gate itself. Everything here runs with `require-email-verification` on except the two tests that pin what

@@ -41,7 +41,7 @@ async function untranslatedText(page: Page): Promise<string[]> {
 
 async function signIn(page: Page, prefix: string): Promise<void> {
   await page.goto(`${prefix}/sign-in`);
-  await page.locator('input[type=email]').fill(adminEmail);
+  await page.locator('input[name=identifier]').fill(adminEmail);
   await page.locator('input[type=password]').fill(adminPassword);
   await page.locator('button[type=submit]').click();
   await expect(page).toHaveURL(new RegExp(`${prefix}/$`));

@@ -130,9 +130,14 @@ object UiKeys {
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
-  val signInVerified: String       = key("ui.signin.verified")
-  val signInPasswordReset: String  = key("ui.signin.passwordReset")
-  val signInNoAccount: String      = key("ui.signin.noAccount")
+  val signInVerified: String      = key("ui.signin.verified")
+  val signInPasswordReset: String = key("ui.signin.passwordReset")
+  val signInNoAccount: String     = key("ui.signin.noAccount")
+
+  /** The sign-in form's first field takes an address or a username, so it is labelled for both rather than borrowing
+    * `MessageKeys.fieldEmail`.
+    */
+  val signInIdentifier: String     = key("ui.signin.identifier")
   val signInForgotPassword: String = key("ui.signin.forgotPassword")
   val signUpTitle: String          = key("ui.signup.title")
   val signUpHaveAccount: String    = key("ui.signup.haveAccount")
@@ -240,6 +245,14 @@ object UiKeys {
   val settingsUnlinked: String         = key("ui.settings.unlinked")
   val settingsPasswordSaved: String    = key("ui.settings.passwordSaved")
   val settingsVerificationSent: String = key("ui.settings.verificationSent")
+  val settingsProfileCard: String      = key("ui.settings.profileCard")
+  val settingsProfileHint: String      = key("ui.settings.profileHint")
+  val settingsProfileSave: String      = key("ui.settings.profileSave")
+  val settingsProfileSaved: String     = key("ui.settings.profileSaved")
+
+  /** `{0}` is `Validation.minUsernameLength`, `{1}` is `Validation.maxUsernameLength`. */
+  val settingsUsernameHint: String = key("ui.settings.usernameHint")
+  val settingsNameHint: String     = key("ui.settings.nameHint")
 
   // -- Administration: user list ---------------------------------------------------------------
 

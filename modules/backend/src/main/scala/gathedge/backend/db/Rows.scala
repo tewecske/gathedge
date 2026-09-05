@@ -7,6 +7,10 @@ package gathedge.backend.db
   * `email` is `None` exactly when `isGuest` is true — an account minted without credentials so that the vocabulary
   * needs no sign-up. A NULL address is what lets any number of guests coexist under the column's `UNIQUE` index, and it
   * is why `findByEmail` cannot accidentally return one: nothing equals NULL.
+  *
+  * `username` is the account's other name to sign in by, stored lowercased and unique across every account — a guest
+  * gets a random one when it is minted. `displayName` is what the account is called on screen and is matched on by
+  * nothing at all. Both are `None` for an account that has never filled them in.
   */
 final case class UserRow(
   id: Long,
@@ -18,6 +22,8 @@ final case class UserRow(
   createdAt: Long,
   emailVerifiedAt: Option[Long],
   isGuest: Boolean,
+  username: Option[String] = None,
+  displayName: Option[String] = None,
 )
 
 /** One external identity linked to a user. `provider` holds [[gathedge.backend.service.OAuthProvider]]'s wire name and

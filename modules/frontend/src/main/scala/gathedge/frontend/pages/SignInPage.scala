@@ -19,10 +19,14 @@ object SignInPage {
 }
 
 private class SignInPage {
-  private val emailVar       = Var("")
-  private val emailSignal    = emailVar.signal
-  private val passwordVar    = Var("")
-  private val passwordSignal = passwordVar.signal
+
+  /** An address *or* a username: the server resolves either, so the field is neither `typ := "email"` (which would
+    * refuse a username before the form was ever posted) nor named after one half of what it takes.
+    */
+  private val identifierVar    = Var("")
+  private val identifierSignal = identifierVar.signal
+  private val passwordVar      = Var("")
+  private val passwordSignal   = passwordVar.signal
 
   /** Seeded from `?error=` so a failed OAuth round trip explains itself: the callback redirects here on failure, and
     * without this the user lands back on a blank form with no idea why.
@@ -110,12 +114,15 @@ private class SignInPage {
           child.maybe <-- canResendVar.signal.map(Option.when(_)(resendBlock)),
           fieldSet(
             cls  := "fieldset",
-            legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
+            legend(cls    := "fieldset-legend", I18n.t(UiKeys.signInIdentifier)),
             input(
               cls         := "input w-full",
-              typ         := "email",
+              typ         := "text",
+              // Named, unlike the other fields on this form: `type=text` no longer tells this box apart from the
+              // transfer-code box further down, and the e2e suite has to be able to say which one it means.
+              nameAttr    := "identifier",
               placeholder := "you@example.com",
-              controlled(value <-- emailSignal, onInput.mapToValue --> emailVar.writer),
+              controlled(value <-- identifierSignal, onInput.mapToValue --> identifierVar.writer),
             ),
             legend(cls    := "fieldset-legend", I18n.t(MessageKeys.fieldPassword)),
             input(
@@ -178,7 +185,7 @@ private class SignInPage {
             captchaResetBus.writer.onNext(())
             refreshCaptchaBus.writer.onNext(())
         },
-      resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(emailVar.now(), captchaTokenVar.now())) -->
+      resendBus.events.flatMapSwitch(_ => ApiClient.resendVerification(identifierVar.now(), captchaTokenVar.now())) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             Var.set(
@@ -222,7 +229,7 @@ private class SignInPage {
   }
 
   private def login(): EventStream[Either[ApiError, AuthResponse]] = {
-    ApiClient.login(LoginRequest(emailVar.now(), passwordVar.now(), captchaTokenVar.now()))
+    ApiClient.login(LoginRequest(identifierVar.now(), passwordVar.now(), captchaTokenVar.now()))
   }
 
   private def renderError(message: String): HtmlElement = {

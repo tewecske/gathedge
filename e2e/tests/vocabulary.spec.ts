@@ -138,7 +138,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await page.getByRole('button', { name: 'Log out' }).click();
   await expect(page).toHaveURL(/\/en\/sign-in$/);
 
-  await page.locator('input[type=email]').fill(email);
+  await page.locator('input[name=identifier]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   // Wait for the sign-in to land: navigating while the request is in flight cancels it, and the page

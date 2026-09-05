@@ -72,6 +72,19 @@ enum AuthFailure {
   case InvalidPasswordResetToken
 }
 
+/** Editing the account's own username and name.
+  *
+  * Its own enum rather than a pair of cases on [[AuthFailure]], for the reason recorded on the guest enums below: a
+  * mapping returns the union of what it can produce, so putting these on `AuthFailure` would force a 429 onto the
+  * profile endpoint and a 409 onto every path that maps through `ApiFailures.auth`.
+  */
+enum ProfileFailure {
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+
+  /** Some other account already signs in by that username. */
+  case UsernameTaken
+}
+
 /** The guest paths' failures, in three enums rather than one.
   *
   * Not tidiness: an endpoint declares exactly the statuses it can answer, and `ApiFailures` mappings return the *union*
@@ -130,8 +143,14 @@ trait AuthService {
     locale: Locale = Locale.default,
     captchaToken: Option[String] = None,
   ): IO[AuthFailure, (User, Option[String])]
+
+  /** `identifier` is an address or a username: an account may be named by either, and the two are told apart by the `@`
+    * a username may not contain. Whichever was typed, the rate-limit budget and the recorded attempt are keyed on the
+    * account's *address* once it resolves — otherwise alternating the two identifiers would buy an attacker two budgets
+    * against one account.
+    */
   def login(
-    email: String,
+    identifier: String,
     password: String,
     clientIp: Option[String] = None,
     captchaToken: Option[String] = None,
@@ -217,6 +236,15 @@ trait AuthService {
     */
   def updateLocale(userId: Long, locale: Locale): Task[User]
 
+  /** Replaces the account's username and display name, both wholesale: `None` clears the column rather than leaving it
+    * alone, which is what lets the settings form empty a field by sending an empty box.
+    */
+  def updateProfile(
+    userId: Long,
+    username: Option[String],
+    name: Option[String],
+  ): IO[ProfileFailure, User]
+
   /** Mints an account with no address and no password, and a session to go with it.
     *
     * Called on a visitor's first *write*, never on a page view: a session per visit would be a row per crawler. The
@@ -268,12 +296,12 @@ object AuthService {
     ZIO.serviceWithZIO[AuthService](_.signup(email, password, clientIp, locale, captchaToken))
 
   def login(
-    email: String,
+    identifier: String,
     password: String,
     clientIp: Option[String] = None,
     captchaToken: Option[String] = None,
   ): ZIO[AuthService, AuthFailure, (User, String)] =
-    ZIO.serviceWithZIO[AuthService](_.login(email, password, clientIp, captchaToken))
+    ZIO.serviceWithZIO[AuthService](_.login(identifier, password, clientIp, captchaToken))
 
   def verifyEmail(token: String): ZIO[AuthService, AuthFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.verifyEmail(token))
@@ -334,6 +362,13 @@ object AuthService {
 
   def updateLocale(userId: Long, locale: Locale): RIO[AuthService, User] =
     ZIO.serviceWithZIO[AuthService](_.updateLocale(userId, locale))
+
+  def updateProfile(
+    userId: Long,
+    username: Option[String],
+    name: Option[String],
+  ): ZIO[AuthService, ProfileFailure, User] =
+    ZIO.serviceWithZIO[AuthService](_.updateProfile(userId, username, name))
 
   def createGuest(
     clientIp: Option[String],
@@ -470,6 +505,8 @@ final case class AuthServiceLive(
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
       row.isGuest,
+      row.username,
+      row.displayName,
     )
   }
 
@@ -498,6 +535,19 @@ final case class AuthServiceLive(
       ZIO.fail(AuthFailure.ValidationError(errors))
     else
       ZIO.unit
+  }
+
+  /** The account a sign-in named, by address or by username.
+    *
+    * The `@` decides which lookup runs: an address always has one and `Validation.validateUsername` refuses a username
+    * that does. One lookup rather than an `OR` over both columns, so neither index is given up and neither column can
+    * shadow the other.
+    */
+  private def findByIdentifier(normalizedIdentifier: String): UIO[Option[UserRow]] = {
+    if (normalizedIdentifier.contains("@"))
+      userRepo.findByEmail(normalizedIdentifier).orDie
+    else
+      userRepo.findByUsername(normalizedIdentifier).orDie
   }
 
   /** The two dimensions [[login]] is limited on. Both are the un-namespaced keys, which is what makes
@@ -676,38 +726,42 @@ final case class AuthServiceLive(
   }
 
   def login(
-    email: String,
+    identifier: String,
     password: String,
     clientIp: Option[String],
     captchaToken: Option[String],
   ): IO[AuthFailure, (User, String)] = {
-    val normalizedEmail                                           = email.trim.toLowerCase
-    val keys                                                      = loginRateLimitKeys(normalizedEmail, clientIp)
-    // Every exit from this method records exactly one `login_attempts` row, including the successful one — an
-    // administrator looking at "why can this person not sign in" needs the successes to tell a forgotten password
-    // apart from an account nobody has touched in a month.
-    def attempt(userId: Option[Long], outcome: String): UIO[Unit] = {
-      recordAttempt(normalizedEmail, userId, clientIp, outcome)
-    }
-
+    val normalizedIdentifier = identifier.trim.toLowerCase
     for {
+      // Ahead of the lockout check, unlike every other step: the budget has to be keyed on the *account*, and
+      // nothing but this lookup can say which account a username names. It reveals nothing to the caller — what
+      // could is the branch on `maybeRow` far below, which still sits behind the captcha.
+      maybeRow      <- findByIdentifier(normalizedIdentifier)
+      // The account's address when there is one, else whatever was typed. That is what keeps one budget per
+      // account: signing in by username and by address spends the same counter, and `AdminService.lockoutKeysFor`
+      // can still rebuild the key from the address it has stored.
+      keyedOn        = maybeRow.flatMap(_.email).getOrElse(normalizedIdentifier)
+      keys           = loginRateLimitKeys(keyedOn, clientIp)
+      // Every exit from this method records exactly one `login_attempts` row, including the successful one — an
+      // administrator looking at "why can this person not sign in" needs the successes to tell a forgotten password
+      // apart from an account nobody has touched in a month.
+      attempt        = (userId: Option[Long], outcome: String) => recordAttempt(keyedOn, userId, clientIp, outcome)
       blocked       <- anyKeyBlocked(keys)
       _             <-
         ZIO.when(blocked) {
-          attempt(None, LoginOutcome.rateLimited) *> logRateLimited(normalizedEmail) *>
+          attempt(None, LoginOutcome.rateLimited) *> logRateLimited(keyedOn) *>
             ZIO.fail(AuthFailure.RateLimited)
         }
-      // After the lockout check: a hard-locked address is told "rate limited", not "solve a captcha". Before the
-      // email lookup: the captcha is the gate that stops an automated spray from enumerating addresses, so it must
-      // sit ahead of anything that reveals whether one exists.
+      // After the lockout check: a hard-locked address is told "rate limited", not "solve a captcha". Before
+      // anything is said about the account: the captcha is the gate that stops an automated spray from enumerating
+      // addresses, so it must sit ahead of everything that reveals whether one exists.
       captchaNeeded <- loginCaptchaRequired(clientIp)
       _             <- ZIO.when(captchaNeeded)(verifyCaptchaToken(captchaToken, clientIp))
-      maybeRow      <- userRepo.findByEmail(normalizedEmail).orDie
       row           <-
         maybeRow match {
           case None    =>
             equalizeTiming *> recordFailure(keys) *> attempt(None, LoginOutcome.unknownEmail) *>
-              logFailedAttempt(normalizedEmail, "no such account") *> ZIO.fail(AuthFailure.InvalidCredentials)
+              logFailedAttempt(keyedOn, "no such account") *> ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(r) =>
             ZIO.succeed(r)
         }
@@ -715,7 +769,7 @@ final case class AuthServiceLive(
         row.passwordHash match {
           case None       =>
             equalizeTiming *> recordFailure(keys) *> attempt(Some(row.id), LoginOutcome.noPassword) *>
-              logFailedAttempt(normalizedEmail, "no password set (Google-only account)") *>
+              logFailedAttempt(keyedOn, "no password set (Google-only account)") *>
               ZIO.fail(AuthFailure.InvalidCredentials)
           case Some(hash) =>
             hasher
@@ -726,7 +780,7 @@ final case class AuthServiceLive(
                   ZIO.unit
                 else {
                   recordFailure(keys) *> attempt(Some(row.id), LoginOutcome.badPassword) *>
-                    logFailedAttempt(normalizedEmail, "wrong password") *> ZIO.fail(AuthFailure.InvalidCredentials)
+                    logFailedAttempt(keyedOn, "wrong password") *> ZIO.fail(AuthFailure.InvalidCredentials)
                 }
               }
         }
@@ -737,7 +791,7 @@ final case class AuthServiceLive(
           // Recorded, but still not counted against the rate limit: the credentials were right, and the account is
           // being told to go and read its email, not being defended against.
           attempt(Some(row.id), LoginOutcome.emailNotVerified) *>
-            logFailedAttempt(normalizedEmail, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
+            logFailedAttempt(keyedOn, "email not verified") *> ZIO.fail(AuthFailure.EmailNotVerified)
         }
       sessionId     <- createSession(row.id)
       _             <- clearFailures(keys)
@@ -1058,6 +1112,43 @@ final case class AuthServiceLive(
     } yield toDomain(row)
   }
 
+  /** Validates both halves, refuses a username another account holds, and writes them together.
+    *
+    * The taken check is a read before a write, so two accounts claiming the same username in the same instant would
+    * race — which the unique index on `users.username` then refuses, exactly as signup's address check leans on the one
+    * over `users.email`. The check is what makes that a story nobody has to live through, not what guarantees it.
+    */
+  def updateProfile(userId: Long, username: Option[String], name: Option[String]): IO[ProfileFailure, User] = {
+    // A blank box means "clear it", not "you have left a required field empty": the form sends both fields on every
+    // save, and emptying one is how a reader drops a username or a name they no longer want.
+    val requestedUsername = username.map(_.trim).filter(_.nonEmpty).map(Validation.validateUsername)
+    val requestedName     = name.map(_.trim).filter(_.nonEmpty).map(Validation.validateDisplayName)
+    val errors            = {
+      List(
+        requestedUsername.flatMap(_.left.toOption).map("username" -> _),
+        requestedName.flatMap(_.left.toOption).map("name" -> _),
+      ).flatten.toMap
+    }
+    for {
+      _         <- ZIO.when(errors.nonEmpty)(ZIO.fail(ProfileFailure.ValidationError(errors)))
+      normalized = requestedUsername.flatMap(_.toOption)
+      trimmed    = requestedName.flatMap(_.toOption)
+      _         <- ZIO.foreachDiscard(normalized) { candidate =>
+                     userRepo
+                       .findByUsername(candidate)
+                       .orDie
+                       .flatMap(found => ZIO.when(found.exists(_.id != userId))(ZIO.fail(ProfileFailure.UsernameTaken)))
+                   }
+      _         <- userRepo.updateUsernameAndName(userId, normalized, trimmed).orDie
+      // The caller holds a session for this account, so a missing row is a deleted account mid-request: a defect
+      // rather than something the form can act on, the same call `updateTheme` makes one line further down.
+      row       <- userRepo
+                     .findById(userId)
+                     .orDie
+                     .someOrElseZIO(ZIO.die(new RuntimeException(s"user $userId not found")))
+    } yield toDomain(row)
+  }
+
   // -- Guest accounts ---------------------------------------------------------------------------
 
   /** The row, if it is a guest. Everything below refuses to act on a real account rather than quietly doing something
@@ -1081,10 +1172,35 @@ final case class AuthServiceLive(
                    }
       _         <- recordFailure(keys)
       now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row       <- userRepo.insertGuest(theme.toString.toLowerCase, locale.code, now).orDie
+      username  <- mintGuestUsername
+      row       <- userRepo.insertGuest(theme.toString.toLowerCase, locale.code, now, username).orDie
       sessionId <- createSession(row.id, SessionAuth.guestSessionDuration)
       _         <- SecurityLog.info(s"Minted guest account ${row.id}")
     } yield (toDomain(row), sessionId)
+  }
+
+  /** How many names [[mintGuestUsername]] tries before minting the account without one. */
+  private val guestUsernameAttempts = 5
+
+  /** A random username no account holds yet.
+    *
+    * `None` after [[guestUsernameAttempts]] collisions, which mints the guest with no username rather than failing the
+    * write: a name is a convenience, and refusing to mint the account would cost the visitor the word they were
+    * tagging. At 30 bits a collision is already rare; five of them is a signal that something else is wrong.
+    */
+  private def mintGuestUsername: UIO[Option[String]] = {
+    def attempt(remaining: Int): UIO[Option[String]] = {
+      if (remaining <= 0)
+        ZIO.succeed(None)
+      else {
+        for {
+          candidate <- Tokens.guestUsername()
+          taken     <- userRepo.findByUsername(candidate).orDie.map(_.isDefined)
+          result    <- if (taken) attempt(remaining - 1) else ZIO.succeed(Some(candidate))
+        } yield result
+      }
+    }
+    attempt(guestUsernameAttempts)
   }
 
   def issueClaimCode(userId: Long): IO[GuestCodeFailure, String] = {

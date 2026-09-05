@@ -33,7 +33,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       ZLayer.succeed(fixedWordList: GameWordList) >+> GameService.live
   }
 
-  private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L).map(_.id)
+  private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L, None).map(_.id)
 
   private def dictionaryWord(
     language: WordLanguage,

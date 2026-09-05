@@ -15,6 +15,7 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   UpdateLocaleRequest,
+  UpdateProfileRequest,
   UpdateThemeRequest,
   UpgradeRequest,
   VerifyEmailRequest,
@@ -163,6 +164,19 @@ object AuthEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** The account's own username and name. 409 is `ProfileFailure.UsernameTaken` — a username is unique across accounts,
+    * since a sign-in resolves one — and 400 covers both a username that fails validation and a body the codec rejects.
+    * Unlike [[updateTheme]] and [[updateLocale]] the service call is not `.orDie`'d: both failures are things the
+    * caller can act on by typing something else.
+    */
+  val updateProfile = {
+    Endpoint(Method.PUT / "api" / "me" / "profile")
+      .in[UpdateProfileRequest]
+      .withCodecError
+      .out[AuthResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
+  }
+
   /** Which social providers this deployment has credentials for, so the sign-in form only offers buttons whose flow can
     * actually complete.
     *
@@ -297,6 +311,7 @@ object AuthEndpoints {
       me,
       updateTheme,
       updateLocale,
+      updateProfile,
       providers,
       captchaStatus,
       identities,

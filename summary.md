@@ -57,6 +57,14 @@ Returning users sign in the same two ways.
   and must look like an address.
 - An email address identifies exactly one account. A second sign-up with the same address is
   rejected as a duplicate.
+- A user may also sign in with a username instead of an address. A username is optional: an
+  account that has none signs in with its address, as before.
+- A username is 3 to 32 characters of lowercase letters, digits, hyphen and underscore, and starts
+  and ends with a letter or a digit. It may not contain `@`, which is what tells the two apart.
+- A username identifies exactly one account, without regard to case. A name another account holds
+  is refused.
+- The failure count is the same whichever of the two was typed, so knowing an account's username
+  buys no extra attempts against it.
 - Email addresses are compared without regard to case or surrounding spaces.
 - A wrong password and an unknown address produce the same answer, so the sign-in form cannot be
   used to discover which addresses have accounts.
@@ -125,6 +133,11 @@ account from the settings screen.
 
 ## Account settings
 
+- A user sets an optional username and an optional name. The username is a second way to sign in;
+  the name is what the account is called on screen. Emptying either box clears it.
+- The account menu shows the name, else the username, else the address.
+- A guest account is minted with a random username, since it has no address to be called by. The
+  guest may replace it like anybody else.
 - Shows which social accounts are attached, whether a password is set, and which providers this
   deployment offers.
 - A user with no password can set one; a user with a password can change it by supplying the

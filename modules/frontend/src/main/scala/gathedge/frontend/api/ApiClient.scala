@@ -21,6 +21,7 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   UpdateLocaleRequest,
+  UpdateProfileRequest,
   UpdateThemeRequest,
   UpgradeRequest,
   VerifyEmailRequest,
@@ -92,6 +93,13 @@ object ApiClient {
     */
   def updateLocale(locale: Locale): EventStream[Either[ApiError, AuthResponse]] = {
     run(executor(AuthEndpoints.updateLocale(UpdateLocaleRequest(locale))))
+  }
+
+  /** Replaces the account's username and name. Both are sent on every save, and an empty box arrives as `None`, which
+    * is what clears the column — see `dto.UpdateProfileRequest`.
+    */
+  def updateProfile(request: UpdateProfileRequest): EventStream[Either[ApiError, AuthResponse]] = {
+    run(executor(AuthEndpoints.updateProfile(request)))
   }
 
   // --- Guest accounts -----------------------------------------------------------------------------------------
