@@ -62,6 +62,10 @@ object WordCollectSpec extends ZIOSpecDefault {
           WordCollect.keptCollectTag(None, List(classTag, mine)) == Some(10L),
           WordCollect.keptCollectTag(None, List(theirs, classTag)) == Some(12L),
           WordCollect.keptCollectTag(None, List(theirs)) == None,
+          // "No tag" chosen deliberately is respected — not replaced by one of the reader's own on the next refresh.
+          WordCollect.keptCollectTag(None, List(mine, classTag), explicitNone = true) == None,
+          // A confirmed remembered id still wins over the explicit-none flag (they re-picked a real tag).
+          WordCollect.keptCollectTag(Some(10L), List(mine), explicitNone = true) == Some(10L),
         )
       },
       test("marking a translation adds the tag and the pair") {

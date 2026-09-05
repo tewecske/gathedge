@@ -132,13 +132,12 @@ private class WordsPage(
     collectLanguages = querySignal.map(query => (query.language, query.target)),
   )
 
-  /** The collect tag resolved to a [[Tag]], or `None` before the tag list arrives or for a visitor with no tags. When
-    * it is set, its language pair drives — and locks — the two language selects.
+  /** The collect tag resolved to a [[Tag]], or `None` before the tag list arrives or for a visitor with no tags.
+    * Choosing one *sets* the two language selects to its pair; the selects stay editable, and either order of that pair
+    * is a valid direction to collect in.
     */
   private val collectTagSignal: Signal[Option[Tag]] =
     collect.collectTagSignal.combineWithFn(collect.tagsSignal)((id, tags) => id.flatMap(tid => tags.find(_.id == tid)))
-
-  private val languagesLockedSignal = collectTagSignal.map(_.isDefined).distinct
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
@@ -276,11 +275,13 @@ private class WordsPage(
           }
         }
       },
-      // Choosing a collect tag sets the browsing direction to its language pair (and the selects below lock to it).
+      // Choosing a collect tag sets the browsing direction to its language pair — unless the reader is already on that
+      // pair the other way round, which is just as valid a direction to collect in, so it is left alone.
       collectTagSignal.updates.withCurrentValueOf(querySignal) --> Observer[(Option[Tag], WordQuery)] {
-        case (Some(tag), current) if current.language != tag.sourceLanguage || current.target != tag.targetLanguage =>
+        case (Some(tag), current)
+            if Set(current.language, current.target) != Set(tag.sourceLanguage, tag.targetLanguage) =>
           change(_.reset(_.copy(language = tag.sourceLanguage, target = tag.targetLanguage)))
-        case _                                                                                                      => ()
+        case _ => ()
       },
       onMountCallback(_ => { reloadBus.emit(()); restoreBus.emit(()) }),
       collect.bindings,
@@ -346,8 +347,8 @@ private class WordsPage(
   }
 
   /** Which language is being read, and which one the translations are in. Two selects rather than one "de → hu"
-    * control, so a reader can flip either half without the other becoming impossible — except while a collect tag is
-    * chosen, when both lock to the tag's own pair.
+    * control, so a reader can flip either half without the other becoming impossible. Choosing a collect tag sets both
+    * to its pair, but leaves them editable.
     */
   private def renderDirection(): HtmlElement = {
     div(
@@ -444,16 +445,12 @@ private class WordsPage(
   private def renderSwap(): HtmlElement = {
     span(
       // The tooltip has to be a wrapper: daisyUI's `.tooltip` is `display:inline-block`, which would undo the
-      // `inline-flex` that centres a `btn`'s icon. It also carries the "why is this locked" tip while a collect tag
-      // holds the direction.
-      cls := "tooltip",
-      dataAttr("tip") <-- languagesLockedSignal.map(locked =>
-        I18n.t(if (locked) UiKeys.wordsLanguagesLockedHint else UiKeys.wordsSwapLanguages)
-      ),
+      // `inline-flex` that centres a `btn`'s icon.
+      cls             := "tooltip",
+      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
       button(
         typ        := "button",
         cls        := "btn btn-ghost btn-sm btn-square",
-        disabled <-- languagesLockedSignal,
         // The tooltip is a `data-` attribute drawn by CSS, so it says nothing to a screen reader; this is what does.
         aria.label := I18n.t(UiKeys.wordsSwapLanguages),
         swapMark(),
@@ -504,8 +501,6 @@ private class WordsPage(
     * moves the controls beside them as the page is used. daisyUI opts a `.select` into the browser's
     * customizable-select rendering, which sizes the box to the *selected* option rather than to the widest one, so
     * picking "Hungarian" after "German" widens it. The widths fit the longest option in both catalogs.
-    *
-    * Both language selects disable while a collect tag holds the direction, and the label carries a tooltip saying why.
     */
   private def languageSelect(
     labelKey: String,
@@ -513,14 +508,10 @@ private class WordsPage(
     onPick: Observer[WordLanguage],
   ): HtmlElement = {
     label(
-      cls := "flex flex-col gap-1 tooltip",
-      dataAttr("tip") <-- languagesLockedSignal.map(locked =>
-        if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else ""
-      ),
+      cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
         cls    := "select select-sm w-28",
-        disabled <-- languagesLockedSignal,
         WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
         controlled(
           value <-- selected.map(WordLanguage.code),

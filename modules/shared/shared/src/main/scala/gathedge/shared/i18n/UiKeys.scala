@@ -630,13 +630,14 @@ object UiKeys {
   val wordsCollectLabel: String = key("ui.words.collectLabel")
   val wordsCollectHint: String  = key("ui.words.collectHint")
 
+  /** The first entry of the collect select: clears the collect tag, which frees the two language selects. */
+  val wordsCollectNone: String = key("ui.words.collectNone")
+
+  /** On the tag editor's two language selects once the tag has a practice pair: says the pair is fixed. */
+  val wordsLanguagesLockedHint: String = key("ui.words.languagesLockedHint")
+
   /** The second half of that hint: clicking a translation is the other thing this screen's rows can do. */
   val wordsPairHint: String = key("ui.words.pairHint")
-
-  /** On the words page's two language selects while a collect tag holds the direction: says they are locked because the
-    * chosen tag fixes its own language pair. Also the tooltip on the (disabled) swap button.
-    */
-  val wordsLanguagesLockedHint: String = key("ui.words.languagesLockedHint")
 
   /** Clears every filter above back to its default, remembered per browser — shown only once a filter differs from it.
     * See `listing.WordQuery.filterOnly`/`.storedFilter`.
