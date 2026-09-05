@@ -624,8 +624,8 @@ object UiKeys {
     */
   val wordsNoPair: String = key("ui.words.noPair")
 
-  /** The tag a tick files a word into. Deliberately worded as an action rather than as "Tag": the control next to it
-    * narrows the listing instead, and the two used to be one select that did both.
+  /** The tag a tick files a word into. Worded as an action ("Collect into"), since the control says where words go, not
+    * which words are shown.
     */
   val wordsCollectLabel: String = key("ui.words.collectLabel")
   val wordsCollectHint: String  = key("ui.words.collectHint")
@@ -633,33 +633,22 @@ object UiKeys {
   /** The second half of that hint: clicking a translation is the other thing this screen's rows can do. */
   val wordsPairHint: String = key("ui.words.pairHint")
 
-  /** The other half of that pair: which tag the listing is narrowed to, which changes nothing about where a tick files.
+  /** On the words page's two language selects while a collect tag holds the direction: says they are locked because the
+    * chosen tag fixes its own language pair. Also the tooltip on the (disabled) swap button.
     */
-  val wordsFilterTagLabel: String = key("ui.words.filterTagLabel")
-  val wordsFilterTagAny: String   = key("ui.words.filterTagAny")
-
-  /** Names what the listing's three-state order button orders by: the tick that filed each word under the narrowed tag
-    * — see `dto.WordSort`. Which way round is the button's glyph, as it is on a column heading. Shown only while the
-    * filter above holds a tag, since it is the only thing it can order by.
-    */
-  val wordsSortAddedToTag: String = key("ui.words.sortAddedToTag")
+  val wordsLanguagesLockedHint: String = key("ui.words.languagesLockedHint")
 
   /** Clears every filter above back to its default, remembered per browser — shown only once a filter differs from it.
     * See `listing.WordQuery.filterOnly`/`.storedFilter`.
     */
   val wordsResetFilters: String = key("ui.words.resetFilters")
 
-  val wordsTagNew: String            = key("ui.words.tagNew")
-  val wordsTagNewPlaceholder: String = key("ui.words.tagNewPlaceholder")
-
-  /** The two icon buttons beside the collect select, acting on whichever tag it currently holds — see
-    * `WordCollect.renderCollectSelect`. Both the button's accessible label and its tooltip, since neither carries
-    * visible text of its own.
+  /** The rename control on `TagEditorPage`'s title, and the delete icon beside it — both the accessible label and the
+    * tooltip, since neither carries visible text of its own.
     */
   val wordsTagRenameButton: String = key("ui.words.tagRenameButton")
   val wordsTagDeleteButton: String = key("ui.words.tagDeleteButton")
 
-  val wordsTagRenameTitle: String = key("ui.words.tagRenameTitle")
   val wordsTagRenameLabel: String = key("ui.words.tagRenameLabel")
 
   val wordsTagDeleteTitle: String = key("ui.words.tagDeleteTitle")
@@ -670,9 +659,6 @@ object UiKeys {
   /** The two groups both tag dropdowns split into, own tags first — see `Tag.sorted`. */
   val wordsTagsMineGroup: String   = key("ui.words.tagsMineGroup")
   val wordsTagsOthersGroup: String = key("ui.words.tagsOthersGroup")
-
-  /** Opens `TagsPage` — every tag the reader may edit, laid out as a table rather than a dropdown. */
-  val wordsTagsListButton: String = key("ui.words.tagsListButton")
 
   /** Offered on the collect select when the chosen tag is not the reader's own: seeds an empty tag of theirs with the
     * same name, since only an owner may file words under it. `{0}` is the tag's name.

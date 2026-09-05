@@ -215,11 +215,12 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val tagNameSignal: Signal[String] =
     tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))).distinct
 
-  // The language pair is inferred from the rows once there are any, and locked then; an empty tag lets the reader
-  // choose, and the first added pair persists the choice server-side.
+  // The tag's mandatory language pair. It is set at creation and stays editable here only while the tag has no practice
+  // pair (`TagEntry.target` present on some row); a change is saved through `WordApiClient.setTagLanguages`.
   private val sourceLangVar                = Var(WordLanguage.De)
   private val targetLangVar                = Var(WordLanguage.Hu)
-  private val langsLocked: Signal[Boolean] = entriesVar.signal.map(_.nonEmpty)
+  private val langsLocked: Signal[Boolean] = entriesVar.signal.map(_.exists(_.target.isDefined)).distinct
+  private val langBus                      = new EventBus[(WordLanguage, WordLanguage)]()
 
   // -- Filters --------------------------------------------------------------------------------
 
@@ -578,9 +579,10 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     case _                             => None
   }
 
-  private def applyLangsFrom(entries: List[TagEntry]): Unit = {
-    entries.headOption.foreach(e => sourceLangVar.set(e.source.language))
-    entries.flatMap(_.target).headOption.foreach(w => targetLangVar.set(w.language))
+  /** Puts the two language selects on the tag's own stored pair — the tag is the source of truth now, not the rows. */
+  private def applyLangsFrom(tag: Tag): Unit = {
+    sourceLangVar.set(tag.sourceLanguage)
+    targetLangVar.set(tag.targetLanguage)
   }
 
   def render(): HtmlElement = {
@@ -624,13 +626,28 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       ),
       // -- data --
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
-        case Right(tags) => tagVar.set(tags.find(_.id == tagId))
+        case Right(tags) =>
+          val found = tags.find(_.id == tagId)
+          tagVar.set(found)
+          found.foreach(applyLangsFrom)
         case Left(err)   => errorVar.set(Some(err.message))
       },
       entriesBus.events
         .flatMapSwitch(_ => WordApiClient.tagEntries(tagId)) --> Observer[Either[ApiError, List[TagEntry]]] {
-        case Right(rows) => entriesVar.set(rows); applyLangsFrom(rows)
+        case Right(rows) => entriesVar.set(rows)
         case Left(err)   => errorVar.set(Some(err.message))
+      },
+      // Saving a language change while the tag has no pair; a failure (someone raced a pair in) reverts the selects.
+      langBus.events.flatMapSwitch { case (source, target) =>
+        WordApiClient.setTagLanguages(tagId, source, target)
+      } --> Observer[Either[ApiError, TagResponse]] {
+        case Right(response) =>
+          errorVar.set(None)
+          tagVar.set(Some(response.tag))
+          applyLangsFrom(response.tag)
+        case Left(err)       =>
+          errorVar.set(Some(err.message))
+          tagVar.now().foreach(applyLangsFrom)
       },
       inlineRename.bindings(onSaved = Observer[TagResponse](response => tagVar.set(Some(response.tag)))),
       deleteBus.events.flatMapSwitch(_ => WordApiClient.deleteTag(tagId)) --> Observer[Either[ApiError, Unit]] {
@@ -843,7 +860,8 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   private def languageSelect(labelKey: String, langVar: Var[WordLanguage]): HtmlElement = {
     label(
-      cls := "flex flex-col gap-1",
+      cls := "flex flex-col gap-1 tooltip",
+      dataAttr("tip") <-- langsLocked.map(locked => if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else ""),
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
         cls    := "select select-sm w-28",
@@ -851,9 +869,10 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         WordLanguage.all.map(l => option(value := WordLanguage.code(l), Labels.language(l))),
         controlled(
           value <-- langVar.signal.map(WordLanguage.code),
-          onChange.mapToValue --> Observer[String](code =>
+          onChange.mapToValue --> Observer[String] { code =>
             langVar.set(WordLanguage.fromString(code).getOrElse(WordLanguage.En))
-          ),
+            langBus.emit((sourceLangVar.now(), targetLangVar.now()))
+          },
         ),
       ),
     )

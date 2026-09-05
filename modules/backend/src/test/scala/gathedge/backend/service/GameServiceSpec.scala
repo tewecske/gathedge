@@ -67,7 +67,7 @@ object GameServiceSpec extends ZIOSpecDefault {
     targetLanguage: WordLanguage,
   ): RIO[WordRepository, Long] = {
     for {
-      tag    <- WordRepository.insertTag(ownerId, name, name, 0L)
+      tag    <- WordRepository.insertTag(ownerId, name, name, 0L, "de", "hu")
       source <- WordRepository.ensureWord(dictionaryWord(sourceLanguage, s"$name-source"))
       target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target"))
       _      <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -86,7 +86,7 @@ object GameServiceSpec extends ZIOSpecDefault {
     count: Int,
   ): RIO[WordRepository, Long] = {
     for {
-      tag <- WordRepository.insertTag(ownerId, name, name, 0L)
+      tag <- WordRepository.insertTag(ownerId, name, name, 0L, "de", "hu")
       _   <- ZIO.foreachDiscard(0 until count) { i =>
                for {
                  source <- WordRepository.ensureWord(dictionaryWord(sourceLanguage, s"$name-source-$i"))
@@ -109,7 +109,7 @@ object GameServiceSpec extends ZIOSpecDefault {
     count: Int = 2,
   ): RIO[WordRepository, Long] = {
     for {
-      tag    <- WordRepository.insertTag(ownerId, name, name, 0L)
+      tag    <- WordRepository.insertTag(ownerId, name, name, 0L, "de", "hu")
       target <- WordRepository.ensureWord(dictionaryWord(targetLanguage, s"$name-target"))
       _      <- ZIO.foreachDiscard(0 until count) { i =>
                   for {
@@ -554,7 +554,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("MostMistakes preference ranks by this player's wrong-answer count, in this direction only") {
         for {
           owner       <- newUser()
-          tag         <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L)
+          tag         <- WordRepository.insertTag(owner, "mistakePref", "mistakePref", 0L, "de", "hu")
           mistakeWord <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "mistake-source"))
           mistakeTgt  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "mistake-target"))
           _           <- WordRepository.pairTranslation(mistakeWord.id, tag.id, mistakeTgt.id, 0L)
@@ -623,7 +623,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("starting a play when the game's tags currently carry nothing eligible fails") {
         for {
           owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "emptied", "emptied", 0L)
+          tag     <- WordRepository.insertTag(owner, "emptied", "emptied", 0L, "de", "hu")
           source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "emptied-source"))
           target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "emptied-target"))
           _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -651,7 +651,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("submitAnswer answers with the graded row, the same one the results screen later shows") {
         for {
           owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "feedback", "feedback", 0L)
+          tag     <- WordRepository.insertTag(owner, "feedback", "feedback", 0L, "de", "hu")
           source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "feedback-source"))
           target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "feedback-target"))
           _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -677,7 +677,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("a gendered source word's prompt and results carry its article, an ungendered one is unaffected") {
         for {
           owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "genderedSource", "genderedSource", 0L)
+          tag     <- WordRepository.insertTag(owner, "genderedSource", "genderedSource", 0L, "de", "hu")
           source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
           target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
           _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -698,7 +698,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("a word with more than one marked translation accepts any of them") {
         for {
           owner    <- newUser()
-          tag      <- WordRepository.insertTag(owner, "multi", "multi", 0L)
+          tag      <- WordRepository.insertTag(owner, "multi", "multi", 0L, "de", "hu")
           source   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "multi-source"))
           target1  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "multi-target-1"))
           target2  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "multi-target-2"))
@@ -724,7 +724,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("two words spelled alike are asked separately, each carrying its own part of speech") {
         for {
           owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "homonym", "homonym", 0L)
+          tag     <- WordRepository.insertTag(owner, "homonym", "homonym", 0L, "de", "hu")
           // `words` is unique on (language, text_norm, part_of_speech, gender), so these are two rows, not one.
           noun    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "lauf"))
           verb    <-
@@ -758,7 +758,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("a gendered expected answer requires its article to score as correct") {
         for {
           owner       <- newUser()
-          tag         <- WordRepository.insertTag(owner, "genderedTarget", "genderedTarget", 0L)
+          tag         <- WordRepository.insertTag(owner, "genderedTarget", "genderedTarget", 0L, "de", "hu")
           source      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
           target      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
           _           <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
@@ -785,7 +785,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("includeDefiniteArticles defaults to true and, when false, strips the article everywhere") {
         for {
           owner          <- newUser()
-          tag            <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L)
+          tag            <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L, "de", "hu")
           source         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "szekreny"))
           target         <-
             WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Schrank", gender = Some(Gender.Masculine)))
@@ -974,8 +974,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           w     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "haus"))
           t1    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
           t2    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "otthon"))
-          tagA  <- WordRepository.insertTag(owner, "combA", "combA", 0L).map(_.id)
-          tagB  <- WordRepository.insertTag(owner, "combB", "combB", 0L).map(_.id)
+          tagA  <- WordRepository.insertTag(owner, "combA", "combA", 0L, "de", "hu").map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "combB", "combB", 0L, "de", "hu").map(_.id)
           _     <- markPair(tagA, w, t1)
           _     <- markPair(tagB, w, t2)
 
@@ -1019,8 +1019,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           owner <- newUser()
           w     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "buch"))
           t     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "konyv"))
-          tagA  <- WordRepository.insertTag(owner, "dupA", "dupA", 0L).map(_.id)
-          tagB  <- WordRepository.insertTag(owner, "dupB", "dupB", 0L).map(_.id)
+          tagA  <- WordRepository.insertTag(owner, "dupA", "dupA", 0L, "de", "hu").map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "dupB", "dupB", 0L, "de", "hu").map(_.id)
           _     <- markPair(tagA, w, t)
           _     <- markPair(tagB, w, t)
 
@@ -1057,9 +1057,9 @@ object GameServiceSpec extends ZIOSpecDefault {
           a     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "nap"))
           b     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "napszak"))
           c     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "datum"))
-          tagA  <- WordRepository.insertTag(owner, "triA", "triA", 0L).map(_.id)
-          tagB  <- WordRepository.insertTag(owner, "triB", "triB", 0L).map(_.id)
-          tagC  <- WordRepository.insertTag(owner, "triC", "triC", 0L).map(_.id)
+          tagA  <- WordRepository.insertTag(owner, "triA", "triA", 0L, "de", "hu").map(_.id)
+          tagB  <- WordRepository.insertTag(owner, "triB", "triB", 0L, "de", "hu").map(_.id)
+          tagC  <- WordRepository.insertTag(owner, "triC", "triC", 0L, "de", "hu").map(_.id)
           _     <- markPair(tagA, w, a)
           _     <- markPair(tagB, w, a)
           _     <- markPair(tagB, w, b)
@@ -1182,7 +1182,7 @@ object GameServiceSpec extends ZIOSpecDefault {
       test("a German answer offers its own forms and its other articles") {
         for {
           owner   <- newUser()
-          tag     <- WordRepository.insertTag(owner, "hunde", "hunde", 0L)
+          tag     <- WordRepository.insertTag(owner, "hunde", "hunde", 0L, "de", "hu")
           source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kutya"))
           lemma   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
           plural  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hunde", gender = Some(Gender.Feminine)))

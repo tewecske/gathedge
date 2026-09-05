@@ -182,11 +182,10 @@ final case class WordFormRow(
   * content; see `WordService.requireEditableTag`. `userId` is unaffected either way: the tag still has exactly one
   * owner, who alone may rename or delete it.
   */
-/** `sourceLanguage`/`targetLanguage` are the tag's fixed language pair (`WordLanguage.code` strings), decided the first
-  * time a row is added and locked afterwards — see `WordRepository.setTagLanguages`. They tell the editor and a later
-  * import which side of a bidirectional `word_tag_pairs` row is the "source". `None` on a freshly minted empty tag and
-  * on every tag that predates the unified editor. Defaulted, like `groupId`, so positional construction keeps
-  * compiling.
+/** `sourceLanguage`/`targetLanguage` are the tag's mandatory language pair (`WordLanguage.code` strings, `NOT NULL`
+  * since migration V24). They are chosen when the tag is created, editable only while it has no `word_tag_pairs` row
+  * (see `WordRepository.setTagLanguages`), and locked afterwards. They tell the editor and a later import which side of
+  * a bidirectional `word_tag_pairs` row is the "source", and gate which words may be attached to the tag.
   */
 final case class TagRow(
   id: Long,
@@ -195,8 +194,8 @@ final case class TagRow(
   nameNorm: String,
   createdAt: Long,
   groupId: Option[Long] = None,
-  sourceLanguage: Option[String] = None,
-  targetLanguage: Option[String] = None,
+  sourceLanguage: String,
+  targetLanguage: String,
 )
 
 /** A classroom-style group of accounts collaborating on shared tags. `inviteCode` is a bearer credential — like

@@ -126,7 +126,6 @@ object AppRouterSpec extends ZIOSpecDefault {
             language = WordLanguage.De,
             target = WordLanguage.En,
             partOfSpeech = Some(PartOfSpeech.Noun),
-            tagId = Some(4L),
             mine = true,
           )
         )
@@ -136,7 +135,6 @@ object AppRouterSpec extends ZIOSpecDefault {
           url.startsWith(s"$prefix/words?"),
           url.contains("target=en"),
           url.contains("pos=noun"),
-          url.contains("tag=4"),
           url.contains("mine=true"),
           // The browsed language is the default here, so it writes no parameter at all.
           !url.contains("lang="),
@@ -152,22 +150,22 @@ object AppRouterSpec extends ZIOSpecDefault {
           // A language nobody has heard of reads as the default rather than as Not Found: a stale link should still
           // open a list of words.
           AppRouter.router.pageForRelativeUrl(s"$prefix/words?lang=xx").contains(Page.Words()),
+          // A dropped filter param does not break the route.
           AppRouter.router.pageForRelativeUrl(s"$prefix/words?tag=nonsense").contains(Page.Words()),
-          // "Newest in tag" is a sort value like any other on the wire, so it round trips with its tag.
           AppRouter.router
             .relativeUrlForPage(
-              Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.added), tagId = Some(4L)))
-            ) == s"$prefix/words?sort=added&dir=desc&tag=4",
+              Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.text)))
+            ) == s"$prefix/words?sort=text&dir=desc",
           AppRouter.router
-            .pageForRelativeUrl(s"$prefix/words?sort=added&dir=desc&tag=4")
-            .contains(Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.added), tagId = Some(4L)))),
+            .pageForRelativeUrl(s"$prefix/words?sort=text&dir=desc")
+            .contains(Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.text)))),
         )
       },
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the
       // query would answer the back button with the filter silently gone.
       test("the history tag carries the listing state too") {
         val page    = Page.Admin(UserQuery(page = 2, search = "a&b=c"))
-        val words   = Page.Words(WordQuery(search = "haus", target = WordLanguage.En, tagId = Some(9L)))
+        val words   = Page.Words(WordQuery(search = "haus", target = WordLanguage.En, mine = true))
         val results = Page.GameResults(
           "brave-otter",
           GamePlayQuery(page = 2, sort = SortHeader.Sort.descending(GamePlaySort.score), search = "alice"),

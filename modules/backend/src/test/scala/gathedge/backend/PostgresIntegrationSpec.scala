@@ -273,7 +273,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                           OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", target.email, 0L)
                         )
           // The vocabulary's three per-account tables, and the one table it shares with everybody.
-          tag        <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L)
+          tag        <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L, "de", "hu")
           word       <- WordRepository.ensureWord(
                           WordRow(
                             0L,
@@ -342,7 +342,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("deleting a group detaches its tags rather than deleting them") {
         for {
           owner <- AuthService.signup("pggroupowner@example.com", "password123").map(_._1)
-          tag   <- WordRepository.insertTag(owner.id, "pggrouptag", "pggrouptag", 0L)
+          tag   <- WordRepository.insertTag(owner.id, "pggrouptag", "pggrouptag", 0L, "de", "hu")
           group <- GroupRepository.insertGroup("PG Group", "pg group", "PGGR-OUP0-CODE-0001", owner.id, 0L)
           _     <- GroupRepository.insertMembership(group.id, owner.id, "admin", 0L)
           _     <- WordRepository.setTagGroup(tag.id, Some(group.id))
@@ -375,7 +375,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           admin      <- AdminService.createUser(AdminActor.system, "pgwladmin@example.com", "password123", isAdmin = true)
           signup     <- AuthService.signup("pgwltarget@example.com", "password123")
           (target, _) = signup
-          tag        <- WordRepository.insertTag(target.id, "pgwordlimit", "pgwordlimit", 0L)
+          tag        <- WordRepository.insertTag(target.id, "pgwordlimit", "pgwordlimit", 0L, "de", "hu")
           source     <- WordRepository.ensureWord(
                           WordRow(0L, "de", "Pgword", "pgword", "noun", "", 1, "user", Some(target.id), 0L, "pgword")
                         )
@@ -421,7 +421,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           owner         <- AuthService.signup("pgowner@example.com", "password123").map(_._1)
           alice         <- AuthService.signup("pgalice@example.com", "password123").map(_._1)
           bob           <- AuthService.signup("pgbob@example.com", "password123").map(_._1)
-          tag           <- WordRepository.insertTag(owner.id, "pgtracked", "pgtracked", 0L)
+          tag           <- WordRepository.insertTag(owner.id, "pgtracked", "pgtracked", 0L, "de", "hu")
           source        <- WordRepository.ensureWord(
                              WordRow(0L, "de", "Pgtrack", "pgtrack", "noun", "", 1, "user", Some(owner.id), 0L, "pgtrack")
                            )
@@ -609,7 +609,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("marking and unmarking a practice answer round-trips on the real dialect") {
         for {
           reader  <- AuthService.createGuest(Some("10.9.2.1")).map(_._1)
-          tag     <- WordService.createTag("pglesson", reader.id).map(_.tag)
+          tag     <- WordService.createTag("pglesson", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           word    <- WordRepository.ensureWord(
                        WordRow(0L, "de", "Gabel", "gabel", "noun", "feminine", 1, "user", Some(reader.id), 0L, "gabel")
                      )
@@ -642,7 +642,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("the tag editor's add / bulk-import / replace / remove round-trip on the real dialect") {
         for {
           reader   <- AuthService.createGuest(Some("10.9.2.4")).map(_._1)
-          tag      <- WordService.createTag("pgeditor", reader.id).map(_.tag)
+          tag      <- WordService.createTag("pgeditor", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           haus     <- WordRepository.ensureWord(
                         WordRow(0L, "de", "Pghaus", "pghaus", "noun", "neuter", 1, "user", None, 0L, "pghaus")
                       )
@@ -686,7 +686,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("removePair drops one translation's row on the real dialect and keeps the word's others") {
         for {
           reader <- AuthService.createGuest(Some("10.9.2.9")).map(_._1)
-          tag    <- WordService.createTag("pgremovepair", reader.id).map(_.tag)
+          tag    <- WordService.createTag("pgremovepair", WordLanguage.En, WordLanguage.De, reader.id).map(_.tag)
           dog    <- WordRepository.ensureWord(
                       WordRow(0L, "en", "Pgdog", "pgdog", "noun", "", 1, "user", None, 0L, "pgdog")
                     )
@@ -723,8 +723,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("the editor's cross-tag lookup and bulk delete round-trip on the real dialect") {
         for {
           reader <- AuthService.createGuest(Some("10.9.2.11")).map(_._1)
-          t1     <- WordService.createTag("pgfilters1", reader.id).map(_.tag)
-          t2     <- WordService.createTag("pgfilters2", reader.id).map(_.tag)
+          t1     <- WordService.createTag("pgfilters1", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
+          t2     <- WordService.createTag("pgfilters2", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           haus   <- WordRepository.ensureWord(
                       WordRow(0L, "de", "Pghaus", "pghaus", "noun", "neuter", 1, "user", None, 0L, "pghaus")
                     )
@@ -798,7 +798,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       pgTest("newest in tag orders the listing by the tick on the real dialect") {
         for {
           reader <- AuthService.createGuest(Some("10.9.2.9")).map(_._1)
-          tag    <- WordService.createTag("pgrecent", reader.id).map(_.tag)
+          tag    <- WordService.createTag("pgrecent", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           first  <-
             WordRepository.ensureWord(
               WordRow(0L, "de", "Pgerste", "pgerste", "noun", "feminine", 1, "user", Some(reader.id), 0L, "pgerste")
@@ -844,7 +844,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         for {
           empty      <- AuthService.createGuest(Some("10.9.1.1")).map(_._1)
           keeper     <- AuthService.createGuest(Some("10.9.1.2")).map(_._1)
-          tag        <- WordRepository.insertTag(keeper.id, "keep", "keep", 0L)
+          tag        <- WordRepository.insertTag(keeper.id, "keep", "keep", 0L, "de", "hu")
           _           = tag
           now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
           // Both are minutes old, so a cutoff in the future is what makes them sweepable at all.
@@ -996,7 +996,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         )
         for {
           reader    <- AuthService.createGuest(Some("10.9.3.1")).map(_._1)
-          tag       <- WordService.createTag("pgtabular", reader.id).map(_.tag)
+          tag       <- WordService.createTag("pgtabular", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           first     <- WordService.tabularImport(tag.id, rows, WordLanguage.De, WordLanguage.Hu, reader.id)
           entries   <- WordService.tagEntries(tag.id, reader.id)
           helfen    <- WordRepository.findWordsByKeys("de", List("pgtabhelfen")).map(_.headOption)
@@ -1221,6 +1221,121 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                 playId,
               )
           } yield assertTrue(backfilled == (("de", "hu", Some(5), false, "all")))
+        }
+      },
+      // V24 makes `tags.source_language` / `target_language` NOT NULL, backfilling every existing row first: from a
+      // practice pair where one exists, else from a membership word's language for the source, else `de`/`hu`. Every
+      // other test here runs against a schema already at latest, so the backfill never sees a NULL — this builds its
+      // own container, stops Flyway at V23, hand-inserts three language-less tags in the shapes the backfill has to
+      // cover, then lets V24 run for real and asserts each landed on the right pair and that a NULL insert now fails.
+      test("V24 backfills tags' language pair and then forbids a null one") {
+        def rawInsert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt = conn.prepareStatement(sql)
+              try {
+                params.zipWithIndex.foreach { case (p, idx) =>
+                  p match {
+                    case s: String => stmt.setString(idx + 1, s)
+                    case l: Long   => stmt.setLong(idx + 1, l)
+                    case n: Int    => stmt.setInt(idx + 1, n)
+                  }
+                }
+                val rs = stmt.executeQuery()
+                try { rs.next(); rs.getLong(1) }
+                finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        def rawLangs(ds: DataSource, schema: String, tagId: Long): Task[(String, String)] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt =
+                conn.prepareStatement(s"SELECT source_language, target_language FROM $schema.tags WHERE id = ?")
+              try {
+                stmt.setLong(1, tagId)
+                val rs = stmt.executeQuery()
+                try { rs.next(); (rs.getString(1), rs.getString(2)) }
+                finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        val testSchema = "gathedge"
+
+        def word(ds: DataSource, language: String, text: String): Task[Long] = {
+          rawInsert(
+            ds,
+            s"""INSERT INTO $testSchema.words (language, text, text_norm, part_of_speech, source, created_at)
+               |VALUES (?, ?, ?, 'noun', 'user', 0) RETURNING id""".stripMargin,
+            List(language, text, text.toLowerCase),
+          )
+        }
+
+        def tag(ds: DataSource, userId: Long, name: String): Task[Long] = {
+          rawInsert(
+            ds,
+            s"INSERT INTO $testSchema.tags (user_id, name, name_norm, created_at) VALUES (?, ?, ?, 0) RETURNING id",
+            List(userId, name, name.toLowerCase),
+          )
+        }
+
+        ZIO.scoped {
+          for {
+            container   <-
+              ZIO.acquireRelease(
+                ZIO.attempt(
+                  PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:16-alpine")).start()
+                )
+              )(c => ZIO.attempt(c.stop()).orDie)
+            ds          <- ZIO.acquireRelease(ZIO.attempt {
+                             val config = new HikariConfig()
+                             config.setJdbcUrl(container.jdbcUrl)
+                             config.setDriverClassName("org.postgresql.Driver")
+                             config.setUsername(container.username)
+                             config.setPassword(container.password)
+                             config.setSchema(testSchema)
+                             new HikariDataSource(config)
+                           })(ds => ZIO.attempt(ds.close()).orDie)
+            _           <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema), target = Some("23"))
+            userId      <- rawInsert(
+                             ds,
+                             s"INSERT INTO $testSchema.users (email, created_at) VALUES (?, ?) RETURNING id",
+                             List("pgv24backfill@example.com", 0L),
+                           )
+            de          <- word(ds, "de", "Haus")
+            hu          <- word(ds, "hu", "haz")
+            en          <- word(ds, "en", "house")
+            paired      <- tag(ds, userId, "pgv24-paired")
+            _           <- rawInsert(
+                             ds,
+                             s"""INSERT INTO $testSchema.word_tag_pairs (word_id, tag_id, translation_word_id, created_at)
+                                |VALUES (?, ?, ?, 0) RETURNING id""".stripMargin,
+                             List(de, paired, hu),
+                           )
+            member      <- tag(ds, userId, "pgv24-member")
+            _           <- rawInsert(
+                             ds,
+                             s"INSERT INTO $testSchema.word_tags (word_id, tag_id, created_at) VALUES (?, ?, 0) RETURNING id",
+                             List(en, member),
+                           )
+            empty       <- tag(ds, userId, "pgv24-empty")
+            _           <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema))
+            pairedLangs <- rawLangs(ds, testSchema, paired)
+            memberLangs <- rawLangs(ds, testSchema, member)
+            emptyLangs  <- rawLangs(ds, testSchema, empty)
+            nullInsert  <- tag(ds, userId, "pgv24-null").either
+          } yield assertTrue(
+            pairedLangs == (("de", "hu")),
+            memberLangs._1 == "en",
+            emptyLangs == (("de", "hu")),
+            nullInsert.isLeft,
+          )
         }
       },
     ).provideShared(server) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential

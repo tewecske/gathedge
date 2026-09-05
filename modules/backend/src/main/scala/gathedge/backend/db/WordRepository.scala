@@ -128,17 +128,27 @@ trait WordRepository {
   def listTags(viewerId: Long): Task[List[(TagRow, Long, Boolean)]]
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]]
   def findTagById(id: Long): Task[Option[TagRow]]
-  def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): Task[TagRow]
+  def insertTag(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[TagRow]
 
-  /** One unit of work: seeds `name`/`nameNorm` as a new tag owned by `userId` and writes every resolved pair into it —
-    * the tag row and its `word_tags`/`word_tag_pairs` rows in a single transaction, so the pair rows' foreign keys see
-    * the new tag and a failure writes nothing. `pairs` are already-resolved `(wordId, translationWordId)` pairs.
+  /** One unit of work: seeds `name`/`nameNorm` as a new tag owned by `userId`, with its mandatory `sourceLanguage`/
+    * `targetLanguage` pair, and writes every resolved pair into it — the tag row and its `word_tags`/`word_tag_pairs`
+    * rows in a single transaction, so the pair rows' foreign keys see the new tag and a failure writes nothing. `pairs`
+    * are already-resolved `(wordId, translationWordId)` pairs.
     */
   def createTagWithPairs(
     userId: Long,
     name: String,
     nameNorm: String,
     createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
     pairs: List[(Long, Long)],
   ): Task[TagRow]
 
@@ -265,7 +275,9 @@ trait WordRepository {
     */
   def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): Task[Unit]
 
-  /** Fills a tag's language pair, but only while it has none — the pair locks after the first row. Rows affected. */
+  /** Rewrites a tag's language pair, but only while the tag has no `word_tag_pairs` row — the pair locks once a
+    * practice pair exists. Rows affected: `1` on a tag still open to it, `0` on a locked or missing one.
+    */
   def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long]
 
   /** The editor's rows: each source word, its marked answer if any, and the two import flags — ordered by
@@ -481,17 +493,29 @@ object WordRepository {
   def findTagById(id: Long): RIO[WordRepository, Option[TagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findTagById(id))
 
-  def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): RIO[WordRepository, TagRow] =
-    ZIO.serviceWithZIO[WordRepository](_.insertTag(userId, name, nameNorm, createdAt))
+  def insertTag(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): RIO[WordRepository, TagRow] =
+    ZIO.serviceWithZIO[WordRepository](_.insertTag(userId, name, nameNorm, createdAt, sourceLanguage, targetLanguage))
 
   def createTagWithPairs(
     userId: Long,
     name: String,
     nameNorm: String,
     createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
     pairs: List[(Long, Long)],
-  ): RIO[WordRepository, TagRow] =
-    ZIO.serviceWithZIO[WordRepository](_.createTagWithPairs(userId, name, nameNorm, createdAt, pairs))
+  ): RIO[WordRepository, TagRow] = {
+    ZIO.serviceWithZIO[WordRepository](
+      _.createTagWithPairs(userId, name, nameNorm, createdAt, sourceLanguage, targetLanguage, pairs)
+    )
+  }
 
   def updateTag(id: Long, userId: Long, name: String, nameNorm: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.updateTag(id, userId, name, nameNorm))
@@ -1028,8 +1052,16 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def insertTag(userId: Long, name: String, nameNorm: String, createdAt: Long): Task[TagRow] = {
-    val row      = TagRow(0L, userId, name, nameNorm, createdAt)
+  def insertTag(
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+  ): Task[TagRow] = {
+    val row      =
+      TagRow(0L, userId, name, nameNorm, createdAt, sourceLanguage = sourceLanguage, targetLanguage = targetLanguage)
     val inserted = run(ctx.run(quote(tags.insertValue(lift(row)).returningGenerated(_.id))))
     logged(inserted.map(id => row.copy(id = id)))(tag => s"tags.insert id=${tag.id} user=$userId")
   }
@@ -1091,8 +1123,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                          name,
                          nameNorm,
                          createdAt,
-                         sourceLanguage = source.flatMap(_.sourceLanguage),
-                         targetLanguage = source.flatMap(_.targetLanguage),
+                         sourceLanguage = source.map(_.sourceLanguage).getOrElse(WordLanguage.code(WordLanguage.De)),
+                         targetLanguage = source.map(_.targetLanguage).getOrElse(WordLanguage.code(WordLanguage.Hu)),
                        )
         newId       <- ctx.run(quote(tags.insertValue(lift(newTag)).returningGenerated(_.id)))
         sourceWords <- ctx.run(quote(wordTags.filter(_.tagId == lift(sourceId))))
@@ -1192,14 +1224,14 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"wordTags.memberships tag=$tagId rows=${rows.size}")
   }
 
-  /** Fills a tag's language pair, but only while it has none — the pair locks after the first row is added. Rows
-    * affected: `0` when the tag already has languages (or does not exist), `1` on the first write.
+  /** Rewrites a tag's language pair, but only while the tag has no `word_tag_pairs` row — the pair locks once a
+    * practice pair exists. Rows affected: `0` when the tag is locked (or does not exist), `1` while it is still open.
     */
   def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long] = {
     val q = quote {
       tags
-        .filter(tag => tag.id == lift(tagId) && tag.sourceLanguage.isEmpty && tag.targetLanguage.isEmpty)
-        .update(_.sourceLanguage -> lift(Option(sourceLanguage)), _.targetLanguage -> lift(Option(targetLanguage)))
+        .filter(tag => tag.id == lift(tagId) && wordTagPairs.filter(_.tagId == lift(tagId)).isEmpty)
+        .update(_.sourceLanguage -> lift(sourceLanguage), _.targetLanguage -> lift(targetLanguage))
     }
     logged(run(ctx.run(q)))(rows => s"tags.setLanguages id=$tagId rows=$rows")
   }
@@ -1474,9 +1506,10 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   /** One tag's rows for the editor: each source word, its marked answer (if any) and the pair's `exact` flag, plus
-    * whether the source membership was `imported`. Bidirectional `word_tag_pairs` are collapsed to one row on the
-    * `sourceLanguage` side (or the lower word id when the tag has no language pair yet); memberships that no pair names
-    * become their own answer-less rows. Ordered by `word_tags.id`, so a bulk import's text order survives.
+    * whether the source membership was `imported`. Bidirectional `word_tag_pairs` are collapsed to one row on the tag's
+    * `sourceLanguage` side (falling back to the lower word id only for a pair both of whose words are in that
+    * language); memberships that no pair names become their own answer-less rows. Ordered by `word_tags.id`, so a bulk
+    * import's text order survives.
     */
   def tagEntries(tagId: Long): Task[List[TagEntryRow]] = {
     val assembled = for {
@@ -1491,7 +1524,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val orderOf    = memberships.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
       val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
       val commentOf  = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
-      val srcLang    = tagRow.flatMap(_.sourceLanguage)
+      val srcLang    = tagRow.map(_.sourceLanguage)
 
       // One row per undirected pair, keyed on the chosen source side.
       val chosen = pairRows
@@ -1600,9 +1633,12 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     name: String,
     nameNorm: String,
     createdAt: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
     pairs: List[(Long, Long)],
   ): Task[TagRow] = {
-    val row     = TagRow(0L, userId, name, nameNorm, createdAt)
+    val row     =
+      TagRow(0L, userId, name, nameNorm, createdAt, sourceLanguage = sourceLanguage, targetLanguage = targetLanguage)
     val written = transaction(
       for {
         id <- ctx.run(quote(tags.insertValue(lift(row)).returningGenerated(_.id)))

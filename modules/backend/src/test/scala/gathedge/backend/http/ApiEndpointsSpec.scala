@@ -137,7 +137,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
     for {
       signedUp       <- orDieWithFailure(AuthService.signup(email, "password123"))
       (user, session) = signedUp
-      tag            <- WordRepository.insertTag(user.id, "wire", "wire", 0L).orDie
+      tag            <- WordRepository.insertTag(user.id, "wire", "wire", 0L, "de", "hu").orDie
       source         <- WordRepository
                           .ensureWord(
                             WordRow(
@@ -621,7 +621,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("tagging answers a genuinely empty 204") {
           for {
             session <- signUp("words-tag@example.com")
-            tagReq   = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
+            tagReq   = Request.post(
+                         "/api/tags",
+                         Body.fromString(CreateTagRequest("lesson1", WordLanguage.De, WordLanguage.Hu).toJson),
+                       )
             tag     <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
             tagRaw  <- body(tag)
             tagId    = tagRaw.fromJson[TagResponse].map(_.tag.id).getOrElse(0L)
@@ -649,7 +652,10 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         test("marking a translation for practice answers 200 with no warning, and the row carries the mark back") {
           for {
             session   <- signUp("words-pair@example.com")
-            tagReq     = Request.post("/api/tags", Body.fromString(CreateTagRequest("lesson1").toJson))
+            tagReq     = Request.post(
+                           "/api/tags",
+                           Body.fromString(CreateTagRequest("lesson1", WordLanguage.De, WordLanguage.Hu).toJson),
+                         )
             tag       <- runRoutes(WordRoutes.routes, withCsrf(withSession(tagReq, session)))
             tagRaw    <- body(tag)
             tagId      = tagRaw.fromJson[TagResponse].map(_.tag.id).getOrElse(0L)
@@ -709,7 +715,12 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             read  <- runRoutes(WordRoutes.routes, Request.get("/api/words"))
             write <- runRoutes(
                        WordRoutes.routes,
-                       withCsrf(Request.post("/api/tags", Body.fromString(CreateTagRequest("nope").toJson))),
+                       withCsrf(
+                         Request.post(
+                           "/api/tags",
+                           Body.fromString(CreateTagRequest("nope", WordLanguage.De, WordLanguage.Hu).toJson),
+                         )
+                       ),
                      )
           } yield assertTrue(read.status == Status.Ok, write.status == Status.Unauthorized)
         },

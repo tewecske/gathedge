@@ -12,13 +12,11 @@ import gathedge.shared.dto.{Paging, WordSort}
   *
   * Two of its fields are not filters at all. `language` is which language is being *browsed* and `target` which one the
   * translations are shown in; together they are the direction a reader is learning, and putting them in the URL is what
-  * makes `de → hu` a link somebody can bookmark or send.
+  * makes `de → hu` a link somebody can bookmark or send. When a collect tag is chosen, the words page locks these two
+  * to the tag's own language pair.
   *
-  * `tagId` narrows the listing to one tag, and that is '''all''' it does. Where a tick files a word is a separate,
-  * page-local choice remembered in `localStorage` (see `WordCollect.storedCollectTag`) — the two were one field, and
-  * one select, until narrowing to `lesson1` was found to silently redirect every subsequent tick into it. The filter is
-  * in the URL because it is a view of the data worth bookmarking and sending; the collect tag is working state nobody
-  * wants to send anybody.
+  * There is no "filter by tag" field: which tag a tick files into is a page-local choice remembered in `localStorage`
+  * (see `WordCollect.storedCollectTag`), and browsing one tag's words is what the Tags screen is for.
   */
 final case class WordQuery(
   page: Int = Paging.firstPage,
@@ -28,7 +26,6 @@ final case class WordQuery(
   language: WordLanguage = WordLanguage.De,
   target: WordLanguage = WordLanguage.Hu,
   partOfSpeech: Option[PartOfSpeech] = None,
-  tagId: Option[Long] = None,
   mine: Boolean = false,
   translationFilter: TranslationFilter = TranslationFilter.All,
   mainOnly: Boolean = false,
@@ -50,10 +47,10 @@ final case class WordQuery(
     copy(search = "") == previous.copy(search = "")
   }
 
-  /** This query's filters alone — direction, part of speech, tag, ownership, translation completeness, main-word-only —
-    * with paging, sorting and the search term reset to their defaults. What [[WordQuery.storeFilter]] persists: a stale
-    * page number or a stale search term is worse than none, but the direction and filters a reader left the listing in
-    * are worth remembering the next time they open it cold.
+  /** This query's filters alone — direction, part of speech, ownership, translation completeness, main-word-only — with
+    * paging, sorting and the search term reset to their defaults. What [[WordQuery.storeFilter]] persists: a stale page
+    * number or a stale search term is worse than none, but the direction and filters a reader left the listing in are
+    * worth remembering the next time they open it cold.
     */
   def filterOnly: WordQuery =
     copy(page = Paging.firstPage, pageSize = Paging.defaultPageSize, sort = SortHeader.Sort.unsorted, search = "")
@@ -114,13 +111,12 @@ object WordQuery {
     Option[String],
     Option[String],
     Option[String],
-    Option[String],
   )
 
   private val codec: Codec[Args, WordQuery] = {
     Codec.factory(
       (args: Args) => {
-        val (page, size, sort, direction, search, language, target, pos, tag, mine, tr, main) = args
+        val (page, size, sort, direction, search, language, target, pos, mine, tr, main) = args
         WordQuery(
           page = ListingParams.decodePage(page),
           pageSize = ListingParams.decodePageSize(size),
@@ -131,9 +127,6 @@ object WordQuery {
           language = language.flatMap(WordLanguage.fromString).getOrElse(default.language),
           target = target.flatMap(WordLanguage.fromString).getOrElse(default.target),
           partOfSpeech = pos.flatMap(PartOfSpeech.fromString),
-          // Carried as a string because url-dsl has no `FromString[Long, ?]`, so `?tag=nonsense` opens the unfiltered
-          // page instead of no page at all — the arrangement `AuditQuery` uses for its actor filter.
-          tagId = tag.flatMap(_.toLongOption),
           mine = mine.contains("true"),
           translationFilter = tr.flatMap(TranslationFilter.fromString).getOrElse(default.translationFilter),
           mainOnly = main.contains("true"),
@@ -150,7 +143,6 @@ object WordQuery {
           Option.when(query.language != default.language)(WordLanguage.code(query.language)),
           Option.when(query.target != default.target)(WordLanguage.code(query.target)),
           query.partOfSpeech.map(PartOfSpeech.code),
-          query.tagId.map(_.toString),
           Option.when(query.mine)("true"),
           Option.when(query.translationFilter != default.translationFilter)(
             TranslationFilter.code(query.translationFilter)
@@ -165,8 +157,7 @@ object WordQuery {
   val params = {
     (
       ListingParams.common & param[String]("q").? & param[String]("lang").? & param[String]("target").? &
-        param[String]("pos").? & param[String]("tag").? & param[String]("mine").? & param[String]("tr").? &
-        param[String]("main").?
+        param[String]("pos").? & param[String]("mine").? & param[String]("tr").? & param[String]("main").?
     ).as[WordQuery](using codec)
   }
 }

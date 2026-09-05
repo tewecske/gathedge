@@ -31,6 +31,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetTagLanguagesRequest,
   TagEntry,
   TagEntryResponse,
   TagExportFile,
@@ -63,7 +64,6 @@ object WordApiClient {
     language: Option[WordLanguage] = None,
     target: Option[WordLanguage] = None,
     partOfSpeech: Option[PartOfSpeech] = None,
-    tagId: Option[Long] = None,
     mine: Option[Boolean] = None,
     translationFilter: Option[TranslationFilter] = None,
     mainOnly: Option[Boolean] = None,
@@ -79,7 +79,8 @@ object WordApiClient {
           language.map(WordLanguage.code),
           target.map(WordLanguage.code),
           partOfSpeech.map(PartOfSpeech.code),
-          tagId,
+          // The words page no longer offers a "filter by tag" control; the endpoint keeps the query param for now.
+          None,
           mine,
           translationFilter.map(TranslationFilter.code),
           mainOnly,
@@ -115,8 +116,12 @@ object WordApiClient {
     run(executor(WordEndpoints.listTags(())))
   }
 
-  def createTag(name: String): EventStream[Either[ApiError, TagResponse]] = {
-    run(executor(WordEndpoints.createTag(CreateTagRequest(name))))
+  def createTag(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): EventStream[Either[ApiError, TagResponse]] = {
+    run(executor(WordEndpoints.createTag(CreateTagRequest(name, sourceLanguage, targetLanguage))))
   }
 
   /** Creates a tag together with every bilingual pair the tag-creation page assembled, as one request. */
@@ -126,6 +131,15 @@ object WordApiClient {
 
   def renameTag(tagId: Long, name: String): EventStream[Either[ApiError, TagResponse]] = {
     run(executor(WordEndpoints.renameTag(tagId, RenameTagRequest(name))))
+  }
+
+  /** Sets a tag's language pair — the editor's language selects, usable only before the tag has a practice pair. */
+  def setTagLanguages(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+  ): EventStream[Either[ApiError, TagResponse]] = {
+    run(executor(WordEndpoints.setTagLanguages(tagId, SetTagLanguagesRequest(sourceLanguage, targetLanguage))))
   }
 
   def deleteTag(tagId: Long): EventStream[Either[ApiError, Unit]] = {

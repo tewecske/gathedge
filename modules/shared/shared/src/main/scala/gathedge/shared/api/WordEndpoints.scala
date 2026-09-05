@@ -22,6 +22,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetTagLanguagesRequest,
   TagEntry,
   TagEntryResponse,
   TagExportFile,
@@ -236,6 +237,18 @@ object WordEndpoints {
     Endpoint(Method.DELETE / "api" / "tags" / tagId).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Sets a tag's language pair — the editor's language selects, usable only before the tag has a practice pair. 400 is
+    * a pair whose two languages are the same; 404 is a tag that is not the caller's; 409 (`error.key`
+    * `words.tagLanguagesLocked`) is a tag that already has a `word_tag_pairs` row, whose pair is fixed for good.
+    */
+  val setTagLanguages = {
+    Endpoint(Method.PUT / "api" / "tags" / tagId / "languages")
+      .in[SetTagLanguagesRequest]
+      .withCodecError
+      .out[TagResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Seeds a tag of the caller's own from any tag's name, including one they do not own — the only write in this
@@ -530,6 +543,7 @@ object WordEndpoints {
       createTagWithPairs,
       renameTag,
       deleteTag,
+      setTagLanguages,
       copyTag,
       exportTag,
       exportOwnedTags,

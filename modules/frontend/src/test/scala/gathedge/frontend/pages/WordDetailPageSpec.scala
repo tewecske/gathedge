@@ -18,7 +18,7 @@ object WordDetailPageSpec extends ZIOSpecDefault {
     */
   private def others(word: WordLanguage): List[WordLanguage] = WordLanguage.all.filterNot(_ == word)
 
-  private def tag(source: Option[WordLanguage], target: Option[WordLanguage]): Tag = {
+  private def tag(source: WordLanguage, target: WordLanguage): Tag = {
     Tag(1L, "lesson1", 0L, ownedByMe = true, editableByMe = true, sourceLanguage = source, targetLanguage = target)
   }
 
@@ -63,7 +63,7 @@ object WordDetailPageSpec extends ZIOSpecDefault {
       // The collect tag says which way round the reader is learning, so the form opens on the side of its pair the
       // word is not.
       test("the add-translation form opens on the collect tag's other language") {
-        val pair        = tag(Some(WordLanguage.De), Some(WordLanguage.Hu))
+        val pair        = tag(WordLanguage.De, WordLanguage.Hu)
         val onGerman    =
           WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(pair), WordLanguage.En)
         val onHungarian =
@@ -77,17 +77,13 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           onEnglish.contains(WordLanguage.Hu),
         )
       },
-      // A tag minted a moment ago, or one older than the unified editor, has no pair to read.
-      test("without a tag pair the form falls back to the listing, and then to the word itself") {
-        val noPair    = tag(None, None)
-        val listing   =
-          WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(noPair), WordLanguage.En)
+      // With no collect tag the form falls back to the listing, and then to the word itself.
+      test("with no collect tag the form falls back to the listing, and then to the word itself") {
         val noTag     = WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, None, WordLanguage.En)
         // The listing's target is the word's own language, so it is no more usable than the tag was.
         val itsOwn    = WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, None, WordLanguage.De)
         val noneAtAll = WordDetailPage.defaultLanguage(Nil, WordLanguage.De, None, WordLanguage.En)
         assertTrue(
-          listing.contains(WordLanguage.En),
           noTag.contains(WordLanguage.En),
           itsOwn == others(WordLanguage.De).headOption,
           noneAtAll.isEmpty,
@@ -95,7 +91,7 @@ object WordDetailPageSpec extends ZIOSpecDefault {
       },
       // The pair belongs to the tag, so switching the collect tag in the bar switches the language with it.
       test("a tag pair the word cannot take gives way to the listing's target") {
-        val spanish = tag(Some(WordLanguage.Es), Some(WordLanguage.De))
+        val spanish = tag(WordLanguage.Es, WordLanguage.De)
         // A German word: the tag's other side is Spanish, which this word can take.
         val takes   =
           WordDetailPage.defaultLanguage(others(WordLanguage.De), WordLanguage.De, Some(spanish), WordLanguage.En)

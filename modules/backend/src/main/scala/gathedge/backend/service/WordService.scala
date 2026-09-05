@@ -109,6 +109,17 @@ enum WordFailure {
     * (`AppConfig.quotas.wordPairsPerUserHard`) allows.
     */
   case PairQuotaExceeded(limit: Int)
+
+  /** A word or a translation was attached to a tag whose language pair does not admit it: only a word in the tag's
+    * source language may be tagged, and only a translation in its target language may be marked. The words page locks
+    * its language selects to the collect tag, so a reader reaches this only past that.
+    */
+  case LanguageMismatch
+
+  /** The tag's language pair was asked to change after the tag already held a `word_tag_pairs` row. It is fixed at
+    * creation and editable only while the tag has no practice pair.
+    */
+  case LanguagesLocked
 }
 
 /** [[WordService.bulkUploadPreview]]/[[WordService.bulkUploadConfirm]]'s shared failure surface — separate from
@@ -198,18 +209,31 @@ trait WordService {
   def listTags(userId: Long): UIO[List[Tag]]
 
   /** `TagQuotaExceeded` is the hard half of the tag quota; a write that only crosses the soft threshold succeeds with
-    * [[gathedge.shared.dto.TagResponse.warning]] set instead.
+    * [[gathedge.shared.dto.TagResponse.warning]] set instead. `LanguageMismatch` (raised as a 400) is `source` and
+    * `target` being the same language.
     */
-  def createTag(name: String, userId: Long): IO[WordFailure, TagResponse]
+  def createTag(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[WordFailure, TagResponse]
 
   /** Creates a tag and every bilingual pair the tag-creation page assembled, as one logical write.
     *
     * `DuplicateTag`/`TagQuotaExceeded`/`PairQuotaExceeded` follow [[createTag]]/[[copyTag]]'s own rules; `NotFound` is
-    * a `TagPairWord.Existing` naming no word. Both quotas are checked before anything is written, and every word on
-    * either side is checked — an `Existing` id resolved, a `New` word's text validated — before the first `New` word is
-    * created, so a request that fails does so having written nothing.
+    * a `TagPairWord.Existing` naming no word; `LanguageMismatch` is `source == target` or a pair whose sides are not in
+    * the tag's `sourceLanguage` / `targetLanguage`. Both quotas are checked before anything is written, and every word
+    * on either side is checked — an `Existing` id resolved, a `New` word's text validated — before the first `New` word
+    * is created, so a request that fails does so having written nothing.
     */
-  def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse]
+  def createTagWithPairs(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    pairs: List[TagPairInput],
+    userId: Long,
+  ): IO[WordFailure, TagResponse]
 
   /** `TagNotFound` covers a tag that does not exist or is not the caller's, the same as every other tag-scoped write.
     * `DuplicateTag` is the new name colliding with a *different* tag of the caller's own, compared case-insensitively —
@@ -218,6 +242,17 @@ trait WordService {
   def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse]
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Rewrites a tag's language pair — the editor's language selects. `TagNotFound` is a tag that is not the caller's;
+    * `LanguageMismatch` is `source == target`; `LanguagesLocked` (a 409) is a tag that already holds a `word_tag_pairs`
+    * row, whose pair is fixed for good.
+    */
+  def setTagLanguages(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[WordFailure, TagResponse]
 
   /** Seeds a new tag of the caller's own from another account's name, and copies the source tag's word memberships and
     * practice pairs into it as a snapshot — independent of the source from the moment this returns. `TagNotFound`
@@ -482,21 +517,36 @@ object WordService {
   def listTags(userId: Long): URIO[WordService, List[Tag]] =
     ZIO.serviceWithZIO[WordService](_.listTags(userId))
 
-  def createTag(name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
-    ZIO.serviceWithZIO[WordService](_.createTag(name, userId))
+  def createTag(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagResponse] =
+    ZIO.serviceWithZIO[WordService](_.createTag(name, sourceLanguage, targetLanguage, userId))
 
   def createTagWithPairs(
     name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
     pairs: List[TagPairInput],
     userId: Long,
   ): ZIO[WordService, WordFailure, TagResponse] =
-    ZIO.serviceWithZIO[WordService](_.createTagWithPairs(name, pairs, userId))
+    ZIO.serviceWithZIO[WordService](_.createTagWithPairs(name, sourceLanguage, targetLanguage, pairs, userId))
 
   def renameTag(tagId: Long, name: String, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.renameTag(tagId, name, userId))
 
   def deleteTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deleteTag(tagId, userId))
+
+  def setTagLanguages(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagResponse] =
+    ZIO.serviceWithZIO[WordService](_.setTagLanguages(tagId, sourceLanguage, targetLanguage, userId))
 
   def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, TagResponse] =
     ZIO.serviceWithZIO[WordService](_.copyTag(tagId, userId))
@@ -773,15 +823,17 @@ final case class WordServiceLive(
     group: Option[GroupRef] = None,
     editableByMe: Boolean = false,
   ): Tag = {
-    Tag(
-      row.id,
-      row.name,
-      wordCount,
-      ownedByMe,
-      group,
-      editableByMe,
-      row.sourceLanguage.flatMap(WordLanguage.fromString),
-      row.targetLanguage.flatMap(WordLanguage.fromString),
+    val (source, target) = tagLanguages(row)
+    Tag(row.id, row.name, wordCount, ownedByMe, group, editableByMe, source, target)
+  }
+
+  /** The tag's language pair as an enum pair. The column is `NOT NULL` and only ever holds a `WordLanguage.code`, but
+    * it is free text, so an unreadable value falls back to the deployment default rather than failing the read.
+    */
+  private def tagLanguages(row: TagRow): (WordLanguage, WordLanguage) = {
+    (
+      WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.De),
+      WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.Hu),
     )
   }
 
@@ -1378,14 +1430,34 @@ final case class WordServiceLive(
     }
   }
 
-  def createTag(name: String, userId: Long): IO[WordFailure, TagResponse] = {
+  /** `source` and `target` must differ — the same check on both sides of the wire
+    * ([[Validation.validateTagLanguages]]). Its `MessageRef` is surfaced as a plain 400, not a field error, since
+    * neither box on the form owns it.
+    */
+  private def requireDistinctLanguages(source: WordLanguage, target: WordLanguage): IO[WordFailure, Unit] = {
+    ZIO
+      .fromEither(Validation.validateTagLanguages(source, target))
+      .mapError(_ => WordFailure.LanguageMismatch)
+      .unit
+  }
+
+  def createTag(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[WordFailure, TagResponse] = {
     for {
+      _              <- requireDistinctLanguages(sourceLanguage, targetLanguage)
       prepared       <- prepareTagName(name, userId)
       (valid, normal) = prepared
       owned          <- repo.countTagsOwnedBy(userId).orDie
       warning        <- tagQuota(owned, 1)
       now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      row            <- repo.insertTag(userId, valid, normal, now).orDie
+      row            <-
+        repo
+          .insertTag(userId, valid, normal, now, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+          .orDie
     } yield TagResponse(toTag(row, 0L, ownedByMe = true, editableByMe = true), warning)
   }
 
@@ -1394,18 +1466,35 @@ final case class WordServiceLive(
     * while pair one's new word was already in the dictionary would leave that word behind on a request that answered
     * 404.
     */
-  def createTagWithPairs(name: String, pairs: List[TagPairInput], userId: Long): IO[WordFailure, TagResponse] = {
+  def createTagWithPairs(
+    name: String,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    pairs: List[TagPairInput],
+    userId: Long,
+  ): IO[WordFailure, TagResponse] = {
     for {
+      _              <- requireDistinctLanguages(sourceLanguage, targetLanguage)
       prepared       <- prepareTagName(name, userId)
       (valid, normal) = prepared
       ownedTags      <- repo.countTagsOwnedBy(userId).orDie
       tagWarning     <- tagQuota(ownedTags, 1)
       ownedPairs     <- repo.countPairsOwnedBy(userId).orDie
       pairWarning    <- pairQuota(ownedPairs, pairs.size * 2)
-      checked        <- ZIO.foreach(pairs)(checkPair)
+      checked        <- ZIO.foreach(pairs)(checkPair(_, sourceLanguage, targetLanguage))
       resolved       <- ZIO.foreach(checked)(createPair(_, userId))
       now            <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      tagRow         <- repo.createTagWithPairs(userId, valid, normal, now, resolved).orDie
+      tagRow         <- repo
+                          .createTagWithPairs(
+                            userId,
+                            valid,
+                            normal,
+                            now,
+                            WordLanguage.code(sourceLanguage),
+                            WordLanguage.code(targetLanguage),
+                            resolved,
+                          )
+                          .orDie
       wordCount       = resolved.flatMap { case (s, t) => List(s, t) }.toSet.size
     } yield TagResponse(toTag(tagRow, wordCount.toLong, ownedByMe = true), tagWarning.orElse(pairWarning))
   }
@@ -1415,25 +1504,38 @@ final case class WordServiceLive(
     */
   private type CheckedWord = Either[Long, TagPairWord.New]
 
-  /** Both sides of one pair, checked and not yet written. */
-  private def checkPair(pair: TagPairInput): IO[WordFailure, (CheckedWord, CheckedWord)] = {
+  /** Both sides of one pair, checked and not yet written, against the tag's language pair: the source side must be in
+    * `source`, the target side in `target`.
+    */
+  private def checkPair(
+    pair: TagPairInput,
+    source: WordLanguage,
+    target: WordLanguage,
+  ): IO[WordFailure, (CheckedWord, CheckedWord)] = {
     for {
-      source <- checkWord(pair.source)
-      target <- checkWord(pair.target)
-    } yield (source, target)
+      s <- checkWord(pair.source, source)
+      t <- checkWord(pair.target, target)
+    } yield (s, t)
   }
 
   /** Every way one side can fail, decided without writing: an `Existing` side must name a real word, a `New` side must
-    * carry text [[ensure]] would accept.
+    * carry text [[ensure]] would accept, and either must be in `expected` — the language the tag admits on that side.
     */
-  private def checkWord(ref: TagPairWord): IO[WordFailure, CheckedWord] = {
+  private def checkWord(ref: TagPairWord, expected: WordLanguage): IO[WordFailure, CheckedWord] = {
+    val expectedCode = WordLanguage.code(expected)
     ref match {
       case TagPairWord.Existing(id) =>
-        repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound).map(row => Left(row.id))
+        repo
+          .findWordById(id)
+          .orDie
+          .someOrFail(WordFailure.NotFound)
+          .filterOrFail(_.language == expectedCode)(WordFailure.LanguageMismatch)
+          .map(row => Left(row.id))
       case word: TagPairWord.New    =>
         ZIO
           .fromEither(Validation.validateWordText(word.text.trim))
           .mapError(error => WordFailure.ValidationError(Map("text" -> error)))
+          .filterOrFail(_ => word.language == expected)(WordFailure.LanguageMismatch)
           .as(Right(word))
     }
   }
@@ -1481,23 +1583,46 @@ final case class WordServiceLive(
 
   def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse] = {
     for {
-      existing       <- requireOwnTag(tagId, userId)
-      prepared       <- prepareTagName(name, userId, excludeTagId = Some(tagId))
-      (valid, normal) = prepared
-      rows           <- repo.updateTag(tagId, userId, valid, normal).orDie
-      _              <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
-      wordCount      <- repo.countWordsInTag(tagId).orDie
-      group          <- resolveGroupRef(existing.groupId)
+      existing        <- requireOwnTag(tagId, userId)
+      prepared        <- prepareTagName(name, userId, excludeTagId = Some(tagId))
+      (valid, normal)  = prepared
+      rows            <- repo.updateTag(tagId, userId, valid, normal).orDie
+      _               <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
+      wordCount       <- repo.countWordsInTag(tagId).orDie
+      group           <- resolveGroupRef(existing.groupId)
+      (source, target) = tagLanguages(existing)
+    } yield TagResponse(
+      Tag(tagId, valid, wordCount, ownedByMe = true, group, editableByMe = true, source, target),
+      None,
+    )
+  }
+
+  def setTagLanguages(
+    tagId: Long,
+    sourceLanguage: WordLanguage,
+    targetLanguage: WordLanguage,
+    userId: Long,
+  ): IO[WordFailure, TagResponse] = {
+    for {
+      existing  <- requireOwnTag(tagId, userId)
+      _         <- requireDistinctLanguages(sourceLanguage, targetLanguage)
+      rows      <- repo
+                     .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
+                     .orDie
+      // `0` rows on a tag that exists means it already holds a `word_tag_pairs` row — the pair is locked.
+      _         <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.LanguagesLocked))
+      wordCount <- repo.countWordsInTag(tagId).orDie
+      group     <- resolveGroupRef(existing.groupId)
     } yield TagResponse(
       Tag(
         tagId,
-        valid,
+        existing.name,
         wordCount,
         ownedByMe = true,
         group,
         editableByMe = true,
-        existing.sourceLanguage.flatMap(WordLanguage.fromString),
-        existing.targetLanguage.flatMap(WordLanguage.fromString),
+        sourceLanguage,
+        targetLanguage,
       ),
       None,
     )
@@ -1548,10 +1673,12 @@ final case class WordServiceLive(
 
   def tagWord(wordId: Long, tagId: Long, userId: Long): IO[WordFailure, Unit] = {
     for {
-      _   <- requireEditableTag(tagId, userId)
-      _   <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      now <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _   <- repo.tagWord(wordId, tagId, now).orDie
+      tag  <- requireEditableTag(tagId, userId)
+      word <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      // Only a word in the tag's source language may be attached — the tag's whole point is a one-language vocabulary.
+      _    <- ZIO.unless(word.language == tag.sourceLanguage)(ZIO.fail(WordFailure.LanguageMismatch))
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _    <- repo.tagWord(wordId, tagId, now).orDie
     } yield ()
   }
 
@@ -1609,8 +1736,13 @@ final case class WordServiceLive(
   ): IO[WordFailure, PairSelectionResponse] = {
     for {
       tag     <- requireEditableTag(tagId, userId)
-      _       <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      word    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
       _       <- requireTranslationOf(wordId, translationWordId)
+      // The pair has to run the tag's own direction: source word in `sourceLanguage`, marked answer in `targetLanguage`.
+      answer  <- repo.findWordById(translationWordId).orDie.someOrFail(WordFailure.NotFound)
+      _       <- ZIO.unless(word.language == tag.sourceLanguage && answer.language == tag.targetLanguage)(
+                   ZIO.fail(WordFailure.LanguageMismatch)
+                 )
       already <- pairAlreadyMarked(userId, wordId, tagId, translationWordId)
       // `pairTranslation` writes one row per direction, so a genuinely new mark adds two. Charged against the tag's
       // *owner* (`tag.userId`), not the caller — quotas stay per-account regardless of who in the group is doing the
@@ -1637,14 +1769,10 @@ final case class WordServiceLive(
     * filters read. Two batch queries for the whole list.
     */
   private def toTagEntries(tag: TagRow, rows: List[TagEntryRow], viewerId: Long): UIO[List[TagEntry]] = {
-    val targetLang = tag.targetLanguage.flatMap(WordLanguage.fromString)
+    val targetLang = tagLanguages(tag)._2
     val sourceIds  = rows.map(_.source.id).distinct
-    val knownZ     = targetLang match {
-      case Some(language) => translationsInto(sourceIds, language)
-      case None           => ZIO.succeed(Map.empty[Long, List[TranslationOption]])
-    }
     for {
-      known         <- knownZ
+      known         <- translationsInto(sourceIds, targetLang)
       otherTagWords <- repo.sourceWordsInMyOtherTags(viewerId, tag.id, sourceIds).orDie
     } yield rows.map { row =>
       val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
@@ -1709,25 +1837,23 @@ final case class WordServiceLive(
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
       tag                 <- requireEditableTag(tagId, userId)
-      checked             <- checkPair(pair)
+      (source, target)     = tagLanguages(tag)
+      checked             <- checkPair(pair, source, target)
       resolved            <- createPair(checked, userId)
       (sourceId, targetId) = resolved
       already             <- pairAlreadyMarked(userId, sourceId, tagId, targetId)
       warning             <- if (already) ZIO.succeed(None)
                              else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
       _                   <- pairInTag(sourceId, tagId, targetId)
-      sourceRow           <- repo.findWordById(sourceId).orDie.someOrFail(WordFailure.NotFound)
-      targetRow           <- repo.findWordById(targetId).orDie.someOrFail(WordFailure.NotFound)
-      _                   <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
-      refreshed           <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
-      entry               <- entryAfterWrite(refreshed, sourceId, Some(targetId), userId)
+      entry               <- entryAfterWrite(tag, sourceId, Some(targetId), userId)
     } yield TagEntryResponse(entry, warning)
   }
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
       tag                       <- requireEditableTag(tagId, userId)
-      checked                   <- checkPair(TagPairInput(request.next.source, request.next.target))
+      (source, target)           = tagLanguages(tag)
+      checked                   <- checkPair(TagPairInput(request.next.source, request.next.target), source, target)
       resolved                  <- createPair(checked, userId)
       (newSourceId, newTargetId) = resolved
       already                   <- pairAlreadyMarked(userId, newSourceId, tagId, newTargetId)
@@ -1738,11 +1864,7 @@ final case class WordServiceLive(
       _                         <- repo
                                      .replacePair(tagId, request.oldSourceWordId, request.oldTargetWordId, newSourceId, newTargetId, now)
                                      .orDie
-      sourceRow                 <- repo.findWordById(newSourceId).orDie.someOrFail(WordFailure.NotFound)
-      targetRow                 <- repo.findWordById(newTargetId).orDie.someOrFail(WordFailure.NotFound)
-      _                         <- repo.setTagLanguages(tagId, sourceRow.language, targetRow.language).orDie
-      refreshed                 <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
-      entry                     <- entryAfterWrite(refreshed, newSourceId, Some(newTargetId), userId)
+      entry                     <- entryAfterWrite(tag, newSourceId, Some(newTargetId), userId)
     } yield TagEntryResponse(entry, warning)
   }
 
@@ -1921,10 +2043,12 @@ final case class WordServiceLive(
     targetLanguage: WordLanguage,
     userId: Long,
   ): IO[BulkUploadFailure, BulkImportResponse] = {
-    val invalidFile =
+    val invalidFile   =
       BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
-    val languages   = List(sourceLanguage, targetLanguage)
-    val bareIn      = (language: WordLanguage) => (s: String) => stripArticle(s, language)._1.toLowerCase
+    val languageClash =
+      BulkUploadFailure.ValidationError(Map("sourceLanguage" -> MessageRef(MessageKeys.wordTagLanguageMismatch)))
+    val languages     = List(sourceLanguage, targetLanguage)
+    val bareIn        = (language: WordLanguage) => (s: String) => stripArticle(s, language)._1.toLowerCase
 
     def tagAnswerless(wordId: Long, now: Long): UIO[List[Long]] =
       repo.importWord(wordId, tagId, now).orDie.as(List(wordId))
@@ -1943,7 +2067,13 @@ final case class WordServiceLive(
     }
 
     for {
-      _                       <- bulkUploadGuard(tagId, userId)
+      tag                     <- bulkUploadGuard(tagId, userId)
+      // The import must run the tag's own direction — its language pair is fixed, and words are only ever created in
+      // `sourceLanguage`.
+      _                       <- ZIO.when(
+                                   WordLanguage.code(sourceLanguage) != tag.sourceLanguage ||
+                                     WordLanguage.code(targetLanguage) != tag.targetLanguage
+                                 )(ZIO.fail(languageClash))
       trimmed                  = content.trim
       _                       <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
                                    ZIO.fail(invalidFile)
@@ -1989,9 +2119,6 @@ final case class WordServiceLive(
                                    .sortBy(_._1)
                                    .map(_._2)
       written                 <- ZIO.foreach(ordered)(identity)
-      _                       <- repo
-                                   .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
-                                   .orDie
     } yield BulkImportResponse(written.flatten.toSet.size, exactBySource.size, unmatched.size)
   }
 
@@ -2042,8 +2169,10 @@ final case class WordServiceLive(
     targetLanguage: WordLanguage,
     userId: Long,
   ): IO[BulkUploadFailure, TabularImportResponse] = {
-    val invalidFile =
+    val invalidFile   =
       BulkUploadFailure.ValidationError(Map("rows" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+    val languageClash =
+      BulkUploadFailure.ValidationError(Map("sourceLanguage" -> MessageRef(MessageKeys.wordTagLanguageMismatch)))
 
     // One vocabulary per side, each with its own language winning a collision: German `w` must read as feminine on
     // the German column even when the other column is Hungarian, whose `nn` must still be understood there too.
@@ -2183,7 +2312,11 @@ final case class WordServiceLive(
     }
 
     for {
-      _       <- bulkUploadGuard(tagId, userId)
+      tag     <- bulkUploadGuard(tagId, userId)
+      _       <- ZIO.when(
+                   WordLanguage.code(sourceLanguage) != tag.sourceLanguage ||
+                     WordLanguage.code(targetLanguage) != tag.targetLanguage
+                 )(ZIO.fail(languageClash))
       _       <- ZIO.when(rows.isEmpty || rows.size > WordService.maxTabularRows)(ZIO.fail(invalidFile))
       _       <- ZIO.when(Validation.utf8Length(rows.map(cells).mkString) > WordService.maxBulkUploadBytes)(
                    ZIO.fail(invalidFile)
@@ -2192,9 +2325,6 @@ final case class WordServiceLive(
       // Strictly sequential: `tagMemberships` answers in insertion order, and that order is the reader's own row
       // order, which the editor shows back to them.
       written <- ZIO.foreach(rows)(row => writeRow(row, now))
-      _       <- repo
-                   .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
-                   .orDie
     } yield {
       val totals = written.foldLeft(RowOutcome.skipped)((acc, row) => acc.merge(row))
       TabularImportResponse(
@@ -2540,7 +2670,7 @@ final case class WordServiceLive(
                        .mapValues(_.flatMap(pair => targetById.get(pair.translationWordId)))
                        .toMap
     } yield {
-      val entries = members
+      val entries          = members
         .sortBy(row => (row.language, row.textNorm, row.partOfSpeech, row.gender))
         .map(row => {
           val marked = markedByWord
@@ -2549,7 +2679,8 @@ final case class WordServiceLive(
             .map(exportWord)
           TagExportEntry(exportWord(row), marked)
         })
-      TagExportTag(tag.name, entries)
+      val (source, target) = tagLanguages(tag)
+      TagExportTag(tag.name, entries, Some(source), Some(target))
     }
   }
 
@@ -2655,7 +2786,9 @@ final case class WordServiceLive(
     val badFile = TagImportFailure.ValidationError(Map("file" -> MessageRef(MessageKeys.wordTagImportInvalidFile)))
     for {
       _            <- importGuard(userId)
-      _            <- ZIO.when(file.version != TagExportFile.currentVersion)(ZIO.fail(badFile))
+      _            <- ZIO.when(
+                        file.version < TagExportFile.minReadableVersion || file.version > TagExportFile.currentVersion
+                      )(ZIO.fail(badFile))
       ownedRows    <- repo.listTags(userId).orDie
       ownedByNorm   = ownedRows.collect { case (tag, _, true) => tag.nameNorm -> tag }.toMap
       // Decide each file tag: rename target, merge target, or a plain new tag. A clashing name with no entry in
@@ -2734,16 +2867,34 @@ final case class WordServiceLive(
     userId: Long,
   ): IO[TagImportFailure, TagImportResult] = {
     val fileTag = plan.fileTag
+    // A version-1 file carried no pair; default it to this deployment's direction.
+    val source  = fileTag.sourceLanguage.getOrElse(WordLanguage.De)
+    val target  = fileTag.targetLanguage.getOrElse(WordLanguage.Hu)
     for {
       tagRow <- plan match {
                   case WordService.ImportPlan.Merge(existing, _) => ZIO.succeed(existing)
                   case WordService.ImportPlan.Create(name, _)    =>
-                    repo.insertTag(userId, name, Tag.normalize(name), now).orDie
+                    repo
+                      .insertTag(
+                        userId,
+                        name,
+                        Tag.normalize(name),
+                        now,
+                        WordLanguage.code(source),
+                        WordLanguage.code(target),
+                      )
+                      .orDie
                 }
       _      <- ZIO.foreachDiscard(fileTag.entries)(entry => {
                   val (memberRow, _) = resolved(entry.word)
-                  repo.tagWord(memberRow.id, tagRow.id, now).orDie *>
-                    ZIO.foreachDiscard(entry.marked)(mark => importMark(memberRow, mark, tagRow.id, userId))
+                  // Keep the tag's one-language rule even on a hand-edited file: skip an entry, or a mark, in the wrong
+                  // language rather than letting it in.
+                  ZIO.when(memberRow.language == tagRow.sourceLanguage) {
+                    repo.tagWord(memberRow.id, tagRow.id, now).orDie *>
+                      ZIO.foreachDiscard(
+                        entry.marked.filter(mark => resolved(mark)._1.language == tagRow.targetLanguage)
+                      )(mark => importMark(memberRow, mark, tagRow.id, userId))
+                  }
                 })
     } yield {
       val words   = fileTag.entries.map(_.word).distinct

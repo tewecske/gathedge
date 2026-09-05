@@ -15,7 +15,7 @@ import gathedge.backend.db.{
 }
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
-import gathedge.shared.domain.GroupRole
+import gathedge.shared.domain.{GroupRole, WordLanguage}
 import zio._
 import zio.test._
 
@@ -44,7 +44,10 @@ object GroupServiceSpec extends ZIOSpecDefault {
   }
 
   private def tagId(name: String, owner: Long): ZIO[WordService, Nothing, Long] = {
-    WordService.createTag(name, owner).orDieWith(failure => new RuntimeException(failure.toString)).map(_.tag.id)
+    WordService
+      .createTag(name, WordLanguage.De, WordLanguage.Hu, owner)
+      .orDieWith(failure => new RuntimeException(failure.toString))
+      .map(_.tag.id)
   }
 
   def spec = {
