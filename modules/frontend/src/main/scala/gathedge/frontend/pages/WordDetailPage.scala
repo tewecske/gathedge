@@ -37,18 +37,35 @@ object WordDetailPage {
     AppShell.render(Page.WordDetail(id), new WordDetailPage(id).render())
   }
 
-  /** Which language the add-a-translation form starts on: the listing's target language when the word can take it, and
-    * otherwise the first language it can.
+  /** Which language the add-a-translation form starts on, in three tiers, each held to `allowed` — the word's two other
+    * languages, since a word is never a translation of itself.
     *
-    * `target` is what the reader last set on the listing (see [[WordQuery.storedTarget]]), so clicking a word in a
-    * `de → hu` listing opens a form that already says Hungarian. A Hungarian word is not a translation of itself, so
-    * `allowed` — the word's two other languages — still has the last word.
+    *   1. The collect tag's own pair, taking whichever side the word is not: a `de → hu` tag offers Hungarian on a
+    *      German word and German on a Hungarian one. That pair is the tag's, decided the first time a row was added to
+    *      it (see [[gathedge.shared.domain.Tag.targetLanguage]]), so it says what the reader is collecting *into*.
+    *   2. The listing's target language ([[WordQuery.storedTarget]]), for a tag with no pair yet — a tag minted a
+    *      moment ago, or one older than the unified editor.
+    *   3. The first language the word can take, which is where this started.
     */
   private[pages] def defaultLanguage(
     allowed: List[WordLanguage],
-    target: WordLanguage,
+    word: WordLanguage,
+    tag: Option[Tag],
+    listingTarget: WordLanguage,
   ): Option[WordLanguage] = {
-    Some(target).filter(allowed.contains).orElse(allowed.headOption)
+    val fromTag = tag.flatMap(t => {
+      if (t.sourceLanguage.contains(word)) {
+        t.targetLanguage
+      } else if (t.targetLanguage.contains(word)) {
+        t.sourceLanguage
+      } else {
+        t.targetLanguage
+      }
+    })
+    fromTag
+      .filter(allowed.contains)
+      .orElse(Some(listingTarget).filter(allowed.contains))
+      .orElse(allowed.headOption)
   }
 }
 
@@ -115,6 +132,22 @@ private class WordDetailPage(id: Long) {
     */
   private val languageVar = Var(Option.empty[WordLanguage])
 
+  /** Whether the reader has picked the language themselves. Until they have, the select follows the collect tag — see
+    * [[keepLanguageValid]] — and changing the tag in the bar re-points it. A pick of their own ends that: it is an
+    * answer to "which language", and a later tag change must not overrule it.
+    */
+  private val languageTouchedVar = Var(false)
+
+  /** The collect tag itself, not its id — what [[WordDetailPage.defaultLanguage]] reads the language pair off. Built
+    * from the two signals `WordCollect` already publishes, so it follows both the bar's select and the arrival of the
+    * tag list.
+    */
+  private val collectTagSignal: Signal[Option[Tag]] = {
+    collect.collectTagSignal
+      .combineWithFn(collect.tagsSignal)((id, tags) => id.flatMap(tagId => tags.find(_.id == tagId)))
+      .distinct
+  }
+
   /** Mirrors the tag list so applyChange can read it when adding a tag. */
   private val tagsVar = Var(List.empty[Tag])
 
@@ -133,8 +166,9 @@ private class WordDetailPage(id: Long) {
       EventStream.unit().mergeWith(loadBus.events).flatMapSwitch(_ => WordApiClient.get(id)) -->
         Observer[Either[ApiError, WordDetail]] {
           case Right(detail) =>
+            // The language the form opens on is decided by the binding below, which needs the collect tag as well as
+            // the word, and the tag list may not have arrived yet.
             Var.set(detailVar -> Some(detail), missingVar -> false, errorVar -> None)
-            keepLanguageValid(detail)
           case Left(err)     =>
             // A word that is not there is a different thing from a request that failed, and reads differently.
             if (err.status == 404)
@@ -143,6 +177,12 @@ private class WordDetailPage(id: Long) {
               errorVar.set(Some(err.message))
         },
       collect.tagsSignal --> tagsVar.writer,
+      detailSignal.combineWith(collectTagSignal) --> Observer[(Option[WordDetail], Option[Tag])] {
+        case (Some(detail), tag) =>
+          keepLanguageValid(detail, tag)
+        case (None, _)           =>
+          ()
+      },
       addStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // The form stays where it is and keeps its language: adding one translation is usually the first of two.
@@ -173,16 +213,19 @@ private class WordDetailPage(id: Long) {
   /** The languages this word can be translated into: the two that are not its own. */
   private def otherLanguages(word: Word): List[WordLanguage] = WordLanguage.all.filterNot(_ == word.language)
 
-  /** Keeps the form's language on one the word can actually take. It starts empty, and a word whose own language the
-    * reader had selected on the previous word would otherwise submit a pair the server refuses.
+  /** Points the form's language at [[WordDetailPage.defaultLanguage]] whenever the word or the collect tag changes,
+    * unless the reader has picked a language themselves and the word can still take it.
     *
-    * What it falls back to is the listing's target language — see [[WordDetailPage.defaultLanguage]]. A language the
-    * reader has already chosen is left alone, so adding a second translation in a row keeps the box where it was.
+    * The reader's own pick is the only thing that survives: it stays across an added translation, so a second one in a
+    * row keeps the box where it was, but a word whose own language they had selected on the previous word would
+    * otherwise submit a pair the server refuses, so it is dropped rather than kept.
     */
-  private def keepLanguageValid(detail: WordDetail): Unit = {
+  private def keepLanguageValid(detail: WordDetail, tag: Option[Tag]): Unit = {
     val allowed = otherLanguages(detail.word)
-    if (!languageVar.now().exists(allowed.contains)) {
-      languageVar.set(WordDetailPage.defaultLanguage(allowed, WordQuery.storedTarget))
+    val kept    = languageTouchedVar.now() && languageVar.now().exists(allowed.contains)
+    if (!kept) {
+      val wanted = WordDetailPage.defaultLanguage(allowed, detail.word.language, tag, WordQuery.storedTarget)
+      Var.set(languageVar -> wanted, languageTouchedVar -> false)
     }
   }
 
@@ -468,8 +511,8 @@ private class WordDetailPage(id: Long) {
   }
 
   /** The only place a word gains a translation in a language the listing was not showing, so it names itself and its
-    * language select offers both of the word's other languages rather than all three. It opens on the listing's target
-    * language, which is the one a reader arriving from there means nine times out of ten.
+    * language select offers both of the word's other languages rather than all three. It opens on the language the
+    * collect tag asks its answers in — see [[WordDetailPage.defaultLanguage]].
     */
   private def renderAddForm(word: Word): HtmlElement = {
     val languages = otherLanguages(word)
@@ -489,13 +532,12 @@ private class WordDetailPage(id: Long) {
             languages.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
             controlled(
               value <-- languageVar.signal.map(_.map(WordLanguage.code).getOrElse("")),
+              // The select offers nothing but these, so an unreadable code is left alone rather than counted as a
+              // pick: `controlled` writes the current value straight back.
               onChange.mapToValue --> Observer[String] { code =>
-                languageVar.set(
-                  WordLanguage
-                    .fromString(code)
-                    .filter(languages.contains)
-                    .orElse(WordDetailPage.defaultLanguage(languages, WordQuery.storedTarget))
-                )
+                WordLanguage.fromString(code).filter(languages.contains).foreach { language =>
+                  Var.set(languageVar -> Some(language), languageTouchedVar -> true)
+                }
               },
             ),
           ),

@@ -1868,6 +1868,24 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows.forall(r => !r.imported && !r.exact),
         )
       },
+      // The pair is what the browser's collect picker reads to open a word's add-a-translation form on the language
+      // the tag asks its answers in; a tag with no rows has none to read.
+      test("a tag carries the language pair its first row settled, and nothing before that") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          tag    <- createTag("directed", 1L)
+          empty  <- WordService.listTags(1L)
+          _      <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          filled <- WordService.listTags(1L)
+        } yield assertTrue(
+          empty.find(_.id == tag.id).exists(t => t.sourceLanguage.isEmpty && t.targetLanguage.isEmpty),
+          filled
+            .find(_.id == tag.id)
+            .exists(t => t.sourceLanguage.contains(WordLanguage.De) && t.targetLanguage.contains(WordLanguage.Hu)),
+        )
+      },
       test("addPair creates a brand-new word on the fly") {
         for {
           tag  <- createTag("editor", 1L)

@@ -25,6 +25,15 @@ import zio.json.*
   *   `ownedByMe`, purely because a case class default cannot read a sibling parameter. This is what the collect picker
   *   in `WordCollect` offers a tick or a chip against; it is never itself the authority — every write is re-checked
   *   server-side by `WordService.requireEditableTag`.
+  * @param sourceLanguage
+  *   the first half of the tag's language pair, decided the first time a row is added to it and locked afterwards —
+  *   `WordRepository.setTagLanguages` writes it once and never again. It says which side of a bidirectional
+  *   `word_tag_pairs` row is the "source". `None` on a tag with no rows yet, and on every tag older than the unified
+  *   editor.
+  * @param targetLanguage
+  *   the other half — the language the tag asks its answers in. `WordDetailPage` opens its add-a-translation form on
+  *   the side of this pair the word is not, so a reader collecting into a `de → hu` tag is offered Hungarian on a
+  *   German word and German on a Hungarian one.
   */
 final case class Tag(
   id: Long,
@@ -33,6 +42,8 @@ final case class Tag(
   ownedByMe: Boolean,
   group: Option[GroupRef] = None,
   editableByMe: Boolean = false,
+  sourceLanguage: Option[WordLanguage] = None,
+  targetLanguage: Option[WordLanguage] = None,
 ) derives JsonCodec
 
 object Tag {
