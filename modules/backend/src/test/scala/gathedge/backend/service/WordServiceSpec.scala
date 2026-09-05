@@ -1904,6 +1904,23 @@ object WordServiceSpec extends ZIOSpecDefault {
             .exists(t => t.sourceLanguage == WordLanguage.De && t.targetLanguage == WordLanguage.Hu),
         )
       },
+      // A locked tag refuses a *different* pair, but reversing the one it carries is always allowed and flips every row.
+      test("a locked tag's pair can still be reversed, and the entries follow") {
+        for {
+          haus     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          tag      <- createTag("reversible", 1L, WordLanguage.De, WordLanguage.Hu)
+          _        <-
+            WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
+          before   <- WordService.tagEntries(tag.id, 1L)
+          reversed <- WordService.setTagLanguages(tag.id, WordLanguage.Hu, WordLanguage.De, 1L)
+          after    <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          before.map(e => (e.source.text, e.target.map(_.text))) == List(("Haus", Some("ház"))),
+          reversed.tag.sourceLanguage == WordLanguage.Hu && reversed.tag.targetLanguage == WordLanguage.De,
+          after.map(e => (e.source.text, e.target.map(_.text))) == List(("ház", Some("Haus"))),
+        )
+      },
       test("a word in neither of the tag's languages cannot be paired") {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))

@@ -280,6 +280,12 @@ trait WordRepository {
     */
   def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long]
 
+  /** Reverses a tag's language pair unconditionally — the two words of every bidirectional `word_tag_pairs` row already
+    * exist, so [[tagEntries]] renders each row the other way round on the next read. Used only for a genuine swap of
+    * the pair the tag already carries, never to relanguage it. Rows affected: `1`, or `0` on a missing tag.
+    */
+  def swapTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long]
+
   /** The editor's rows: each source word, its marked answer if any, and the two import flags — ordered by
     * `word_tags.id` so a bulk import's text order survives, bidirectional pairs collapsed to one row.
     */
@@ -602,6 +608,9 @@ object WordRepository {
 
   def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.setTagLanguages(tagId, sourceLanguage, targetLanguage))
+
+  def swapTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.swapTagLanguages(tagId, sourceLanguage, targetLanguage))
 
   def tagEntries(tagId: Long): RIO[WordRepository, List[TagEntryRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId))
@@ -1234,6 +1243,15 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         .update(_.sourceLanguage -> lift(sourceLanguage), _.targetLanguage -> lift(targetLanguage))
     }
     logged(run(ctx.run(q)))(rows => s"tags.setLanguages id=$tagId rows=$rows")
+  }
+
+  def swapTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): Task[Long] = {
+    val q = quote {
+      tags
+        .filter(_.id == lift(tagId))
+        .update(_.sourceLanguage -> lift(sourceLanguage), _.targetLanguage -> lift(targetLanguage))
+    }
+    logged(run(ctx.run(q)))(rows => s"tags.swapLanguages id=$tagId rows=$rows")
   }
 
   def untagWord(wordId: Long, tagId: Long): Task[Long] = {
