@@ -7,7 +7,7 @@ import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{AnswerOutcome, GameMode, LanguageProfile}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, GameScoring, LanguageProfile}
 import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -213,7 +213,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       case Phase.Playing(prompt)          =>
         renderPrompt(prompt, playState, renderAnswerArea(prompt, playState))
       case Phase.Feedback(prompt, result) =>
-        renderPrompt(prompt, playState, renderFeedback(result))
+        renderPrompt(prompt, playState, renderFeedbackArea(prompt, playState, result))
       case Phase.Finished                 =>
         renderFinished()
     }
@@ -248,8 +248,25 @@ private class GamePlayPage(slug: String, playId: Long) {
     }
   }
 
-  /** How the answer just given was graded. The accepted answer is shown only for a mistake — a player who got it right
-    * has nothing to read there, and it is the same word they typed anyway.
+  /** The graded counterpart of [[renderAnswerArea]], forking on the same two modes. A typed answer leaves nothing on
+    * screen to grade, so it is told what was accepted; a clicked one still has its buttons, so the grade is shown on
+    * them.
+    */
+  private def renderFeedbackArea(
+    prompt: GamePrompt,
+    playState: PlayHandoff,
+    result: GameAnswerResult,
+  ): HtmlElement = {
+    playState.variant.mode match {
+      case GameMode.Typing         =>
+        renderFeedback(result)
+      case GameMode.MultipleChoice =>
+        renderChoiceFeedback(prompt, result)
+    }
+  }
+
+  /** How a typed answer was graded. The accepted answer is shown only for a mistake — a player who got it right has
+    * nothing to read there, and it is the same word they typed anyway.
     *
     * Kept deliberately plain: no table (the results screen's own is what `e2e/tests/game.spec.ts` counts rows in) and
     * no `btn-outline` (that class is how the same suite counts a multiple-choice play's options).
@@ -269,15 +286,99 @@ private class GamePlayPage(slug: String, playId: Long) {
           )
         },
       ),
-      button(
-        cls := "btn btn-sm btn-primary",
-        typ := "button",
-        I18n.t(UiKeys.gameInstanceFeedbackNext),
-        onClick.mapToUnit --> advanceBus.writer,
-        // Focused on mount so a second Enter — the same key that sent the answer — moves on without waiting the hold
-        // out. A focused button is activated by Enter natively, so no key listener of our own is needed.
-        onMountFocus,
-      ),
+      nextButton(),
+    )
+  }
+
+  /** How a clicked answer was graded: the same options, in the same order and the same place, now disabled and marked.
+    * The accepted option is outlined as correct whether or not it was the one clicked, the clicked option carries a
+    * check or a cross, and there is no separate "accepted answer" line — the answer is already one of the buttons on
+    * screen.
+    *
+    * The "Next" button is the only thing added, and it is deliberately not a `btn-outline`: that class is how
+    * `e2e/tests/game.spec.ts` counts a multiple-choice play's options, and it must still count four here.
+    */
+  private def renderChoiceFeedback(prompt: GamePrompt, result: GameAnswerResult): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-2",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceChooseLabel)),
+      prompt.options.map(option => renderGradedChoice(option, result)),
+      nextButton(),
+    )
+  }
+
+  /** One graded option. A disabled daisyUI `btn` clears its own colour — both `--btn-border` and `color` — so the
+    * outline is a Tailwind `border-*` utility (a later layer, so it wins) and the label sits in a span of its own,
+    * whose colour beats what it would otherwise inherit from the button.
+    *
+    * The class names are written out rather than built from a tone: Tailwind reads these sources for literal class
+    * names, so an interpolated `border-$tone` would compile with no CSS behind it.
+    */
+  private def renderGradedChoice(option: String, result: GameAnswerResult): HtmlElement = {
+    val accepted                  = result.expectedTexts.exists(sameOption(_, option))
+    val chosen                    = sameOption(result.givenText, option)
+    val (borderCls, textCls)      = {
+      if (accepted) {
+        ("border-2 border-success", "text-success")
+      } else if (chosen) {
+        ("border-2 border-error", "text-error")
+      } else {
+        ("", "text-base-content/70")
+      }
+    }
+    button(
+      cls      := s"btn btn-outline justify-start $borderCls",
+      typ      := "button",
+      disabled := true,
+      span(cls := textCls, option),
+      if (chosen) choiceMark(result.outcome) else emptyNode,
+    )
+  }
+
+  /** The check or cross on the option that was clicked. Its colour is set here rather than inherited, for the reason
+    * [[renderGradedChoice]] gives, and the outcome is also spelled out for a screen reader — in the same words the
+    * results table's badge uses, so an answer never reads one way mid-play and another way in the history.
+    */
+  private def choiceMark(outcome: AnswerOutcome): HtmlElement = {
+    val correct = outcome == AnswerOutcome.Correct
+    span(
+      cls := (if (correct) "ml-auto text-success" else "ml-auto text-error"),
+      span(cls := "sr-only", Labels.gameOutcome(outcome)),
+      markIcon(correct),
+    )
+  }
+
+  private def markIcon(correct: Boolean): SvgElement = {
+    svg.svg(
+      svg.cls            := "size-5",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := (if (correct) "M5 13l4 4 10-10" else "M6 6l12 12M6 18L18 6")),
+    )
+  }
+
+  /** Whether two option texts are the same answer, decided by the very rule the server graded the click with. A browser
+    * comparing on `==` instead would leave an option unmarked exactly where the server saw a match.
+    */
+  private def sameOption(a: String, b: String): Boolean = {
+    GameScoring.scoreChoice(a, b).outcome == AnswerOutcome.Correct
+  }
+
+  /** Leaves [[Phase.Feedback]] before the hold runs out. Focused on mount so a second Enter — the same key that sent
+    * the answer — moves on without waiting. A focused button is activated by Enter natively, so no key listener of our
+    * own is needed. `self-start` keeps it to its own width under the full-width column of options.
+    */
+  private def nextButton(): HtmlElement = {
+    button(
+      cls := "btn btn-sm btn-primary self-start",
+      typ := "button",
+      I18n.t(UiKeys.gameInstanceFeedbackNext),
+      onClick.mapToUnit --> advanceBus.writer,
+      onMountFocus,
     )
   }
 

@@ -379,6 +379,13 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
     // to run out on its own, which is what the assertions below then wait for.
     await expect(clickPage.getByRole('button', { name: 'Next' })).toBeVisible();
 
+    if (i === 0) {
+      // The options stay in place, all four of them disabled, and the one that was clicked is marked correct.
+      // Kept to two assertions: a correct answer is only held for 1.5s before the play moves on by itself.
+      await expect(clickPage.locator('button.btn-outline:disabled')).toHaveCount(4);
+      await expect(clickPage.locator('button.border-success .sr-only')).toHaveText('Correct');
+    }
+
     if (i < words.length - 1) {
       await expect(heading).not.toHaveText(promptText);
     } else {
@@ -389,6 +396,24 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
   // One point a word clicked, against two typed — four words, so four out of four.
   await expect(clickPage.getByText('Score: 4 / 4')).toBeVisible();
   await expect(clickPage.getByText('German → Hungarian · All words · Pick from four')).toBeVisible();
+
+  // The other half of the click feedback: a wrong answer. One play again, one deliberate mistake, then the context
+  // is dropped — the mistake is held for 4s, which is what makes this the comfortable place to read the marks.
+  await clickPage.getByRole('button', { name: 'Play again' }).click();
+  await expect(clickPage.getByText('Pick the translation')).toBeVisible();
+  const missPrompt = (await heading.textContent())?.trim() ?? '';
+  const missMatch = words.find((w) => w.term === missPrompt);
+  expect(missMatch, `unexpected quiz prompt: "${missPrompt}"`).toBeTruthy();
+  const wrongOption = clickPage.locator('button.btn-outline').filter({ hasNotText: missMatch!.hu }).first();
+  const wrongText = (await wrongOption.textContent())?.trim() ?? '';
+  await wrongOption.click();
+
+  // The clicked button is marked wrong, the accepted one is still outlined as correct beside it, and nothing spells
+  // the answer out in a row of its own.
+  await expect(clickPage.locator('button.border-error')).toContainText(wrongText);
+  await expect(clickPage.locator('button.border-error .sr-only')).toHaveText('Wrong');
+  await expect(clickPage.locator('button.border-success')).toContainText(missMatch!.hu);
+  await expect(clickPage.getByText('Accepted answer:')).toHaveCount(0);
 
   await clickContext.close();
 });
