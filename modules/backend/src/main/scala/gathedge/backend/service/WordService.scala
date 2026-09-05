@@ -1713,17 +1713,21 @@ final case class WordServiceLive(
   /** The translation has to be one the word actually has: an arbitrary pair of word ids is not a translation, and the
     * practice screen would be asking a question with nothing behind it. Reuses `allTranslationsOf`, which also proves
     * the translation word exists, so there is no second lookup.
+    *
+    * Answers that word's own row rather than `Unit`, since the read already carried it: [[selectPair]] needs its
+    * language to check the pair against the tag's, and reading it back by id would query for a row in hand.
     */
-  private def requireTranslationOf(wordId: Long, translationWordId: Long): IO[WordFailure, Unit] = {
+  private def requireTranslationOf(wordId: Long, translationWordId: Long): IO[WordFailure, WordRow] = {
     repo
       .allTranslationsOf(wordId)
       .orDie
       .flatMap(edges => {
-        ZIO.unless(edges.exists { case (edge, _) => edge.targetWordId == translationWordId })(
-          ZIO.fail(WordFailure.NotFound)
-        )
+        ZIO
+          .fromOption(edges.collectFirst {
+            case (edge, target) if edge.targetWordId == translationWordId => target
+          })
+          .orElseFail(WordFailure.NotFound)
       })
-      .unit
   }
 
   /** The write itself, with the checks already done — shared with [[create]], which has just inserted the edge it would
@@ -1757,9 +1761,9 @@ final case class WordServiceLive(
     for {
       tag     <- requireEditableTag(tagId, userId)
       word    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      _       <- requireTranslationOf(wordId, translationWordId)
-      // The two words have to be the tag's two languages, one each — whichever way round.
-      answer  <- repo.findWordById(translationWordId).orDie.someOrFail(WordFailure.NotFound)
+      // The two words have to be the tag's two languages, one each — whichever way round. The check that the answer
+      // is a translation at all hands its row back, so its language costs no read of its own.
+      answer  <- requireTranslationOf(wordId, translationWordId)
       _       <- ZIO.unless(Set(word.language, answer.language) == Set(tag.sourceLanguage, tag.targetLanguage))(
                    ZIO.fail(WordFailure.LanguageMismatch)
                  )
