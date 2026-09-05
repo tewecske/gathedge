@@ -243,9 +243,10 @@ trait WordService {
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit]
 
-  /** Rewrites a tag's language pair — the editor's language selects. `TagNotFound` is a tag that is not the caller's;
-    * `LanguageMismatch` is `source == target`; `LanguagesLocked` (a 409) is a tag that already holds a `word_tag_pairs`
-    * row, whose pair is fixed for good.
+  /** Rewrites a tag's language pair — the editor's language selects. Reversing the pair the tag already carries always
+    * goes through; any other change is refused once the tag holds a `word_tag_pairs` row. `TagNotFound` is a tag that
+    * is not the caller's; `LanguageMismatch` is `source == target`; `LanguagesLocked` (a 409) is a locked tag being
+    * given a different pair, not its own reversed.
     */
   def setTagLanguages(
     tagId: Long,
@@ -1607,15 +1608,29 @@ final case class WordServiceLive(
     userId: Long,
   ): IO[WordFailure, TagResponse] = {
     for {
-      existing  <- requireOwnTag(tagId, userId)
-      _         <- requireDistinctLanguages(sourceLanguage, targetLanguage)
-      rows      <- repo
-                     .setTagLanguages(tagId, WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage))
-                     .orDie
+      existing        <- requireOwnTag(tagId, userId)
+      _               <- requireDistinctLanguages(sourceLanguage, targetLanguage)
+      (current, other) = tagLanguages(existing)
+      // Reversing the pair the tag already carries is not a relanguaging: the two words of every stored pair exist
+      // both ways round, so it goes through even once the pair is locked. Any other change stays locked.
+      isReversal       = sourceLanguage == other && targetLanguage == current
+      rows            <- (if (isReversal) {
+                            repo.swapTagLanguages(
+                              tagId,
+                              WordLanguage.code(sourceLanguage),
+                              WordLanguage.code(targetLanguage),
+                            )
+                          } else {
+                            repo.setTagLanguages(
+                              tagId,
+                              WordLanguage.code(sourceLanguage),
+                              WordLanguage.code(targetLanguage),
+                            )
+                          }).orDie
       // `0` rows on a tag that exists means it already holds a `word_tag_pairs` row — the pair is locked.
-      _         <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.LanguagesLocked))
-      wordCount <- repo.countWordsInTag(tagId).orDie
-      group     <- resolveGroupRef(existing.groupId)
+      _               <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.LanguagesLocked))
+      wordCount       <- repo.countWordsInTag(tagId).orDie
+      group           <- resolveGroupRef(existing.groupId)
     } yield TagResponse(
       Tag(
         tagId,

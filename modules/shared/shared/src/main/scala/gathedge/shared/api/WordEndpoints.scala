@@ -239,9 +239,10 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
-  /** Sets a tag's language pair — the editor's language selects, usable only before the tag has a practice pair. 400 is
-    * a pair whose two languages are the same; 404 is a tag that is not the caller's; 409 (`error.key`
-    * `words.tagLanguagesLocked`) is a tag that already has a `word_tag_pairs` row, whose pair is fixed for good.
+  /** Sets a tag's language pair — the editor's language selects. A fresh pair is accepted only before the tag has a
+    * practice pair, but *reversing* the pair the tag already carries is allowed for good, since the stored pairs exist
+    * both ways round. 400 is a pair whose two languages are the same; 404 is a tag that is not the caller's; 409
+    * (`error.key` `words.tagLanguagesLocked`) is a locked tag being given a different pair, not its own reversed.
     */
   val setTagLanguages = {
     Endpoint(Method.PUT / "api" / "tags" / tagId / "languages")

@@ -637,7 +637,8 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case Right(rows) => entriesVar.set(rows)
         case Left(err)   => errorVar.set(Some(err.message))
       },
-      // Saving a language change while the tag has no pair; a failure (someone raced a pair in) reverts the selects.
+      // Saving a language change: a new pair while the tag has none, or a reversal of the pair it already carries. A
+      // failure (someone raced a pair in) reverts the selects; success re-fetches the rows, which the reversal flips.
       langBus.events.flatMapSwitch { case (source, target) =>
         WordApiClient.setTagLanguages(tagId, source, target)
       } --> Observer[Either[ApiError, TagResponse]] {
@@ -645,6 +646,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           errorVar.set(None)
           tagVar.set(Some(response.tag))
           applyLangsFrom(response.tag)
+          entriesBus.emit(())
         case Left(err)       =>
           errorVar.set(Some(err.message))
           tagVar.now().foreach(applyLangsFrom)
@@ -853,8 +855,46 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     div(
       cls := "flex flex-wrap items-end gap-3 mt-3",
       languageSelect(UiKeys.wordsLanguageLabel, sourceLangVar),
-      span("→"),
+      child <-- canEditSignal.map(can => if (can) renderLangSwap() else span(cls := "pb-2", "→")),
       languageSelect(UiKeys.wordsTargetLabel, targetLangVar),
+    )
+  }
+
+  /** Reverses the tag's language pair. Live even once the pair is locked: a reversal is not a relanguaging, and
+    * [[WordApiClient.setTagLanguages]] lets the two sides trade places whatever the tag holds. The entry list is
+    * re-fetched on success, so every row shows its two words the new way round.
+    */
+  private def renderLangSwap(): HtmlElement = {
+    span(
+      cls             := "tooltip pb-1",
+      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
+      button(
+        typ        := "button",
+        cls        := "btn btn-ghost btn-sm btn-square",
+        aria.label := I18n.t(UiKeys.wordsSwapLanguages),
+        swapMark(),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          val source = targetLangVar.now()
+          val target = sourceLangVar.now()
+          sourceLangVar.set(source)
+          targetLangVar.set(target)
+          langBus.emit((source, target))
+        },
+      ),
+    )
+  }
+
+  private def swapMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "2",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M4 9h15m0 0l-4-4m4 4l-4 4"),
+      svg.path(svg.d := "M20 15H5m0 0l4-4m-4 4l4 4"),
     )
   }
 
