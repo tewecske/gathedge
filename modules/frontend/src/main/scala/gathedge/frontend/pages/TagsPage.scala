@@ -13,7 +13,8 @@ import zio.json._
 
 /** Every tag the caller may edit — their own, plus any tag a group they belong to has opened to them — the same set
   * `WordCollect.mineOptions` offers a tick or a chip, laid out here as a table instead of a dropdown. Reached from the
-  * collection bar's "All tags" button.
+  * navigation bar and from the collection bar's "All tags" button. The "New tag" button is here rather than on the bar:
+  * a tag is minted from the list of the tags there already, which is what shows the reader whether one fits.
   */
 object TagsPage {
 
@@ -61,6 +62,11 @@ private class TagsPage {
             h1(cls := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
             div(
               cls  := "flex gap-2",
+              a(
+                cls := "btn btn-sm btn-primary",
+                AppRouter.router.navigateTo(Page.TagCreate),
+                I18n.t(UiKeys.tagsCreate),
+              ),
               button(
                 cls := "btn btn-sm",
                 typ := "button",

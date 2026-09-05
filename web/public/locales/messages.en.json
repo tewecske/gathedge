@@ -360,6 +360,7 @@
   "ui.format.minutes.one": "{0} minute",
   "ui.format.minutes.other": "{0} minutes",
   "ui.nav.words": "Words",
+  "ui.nav.tags": "Tags",
   "ui.nav.about": "About",
   "ui.nav.games": "Games",
   "ui.nav.groups": "Groups",
