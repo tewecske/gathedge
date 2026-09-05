@@ -1504,39 +1504,42 @@ final case class WordServiceLive(
     */
   private type CheckedWord = Either[Long, TagPairWord.New]
 
-  /** Both sides of one pair, checked and not yet written, against the tag's language pair: the source side must be in
-    * `source`, the target side in `target`.
+  /** Both sides of one pair, checked and not yet written, against the tag's language pair — order-independent: the two
+    * sides must be the tag's two languages, one each, whichever way round.
     */
   private def checkPair(
     pair: TagPairInput,
     source: WordLanguage,
     target: WordLanguage,
   ): IO[WordFailure, (CheckedWord, CheckedWord)] = {
+    val pairLanguages = Set(source, target)
     for {
-      s <- checkWord(pair.source, source)
-      t <- checkWord(pair.target, target)
-    } yield (s, t)
+      s <- checkWord(pair.source, pairLanguages)
+      t <- checkWord(pair.target, pairLanguages)
+      _ <- ZIO.unless(Set(s._2, t._2) == pairLanguages)(ZIO.fail(WordFailure.LanguageMismatch))
+    } yield (s._1, t._1)
   }
 
   /** Every way one side can fail, decided without writing: an `Existing` side must name a real word, a `New` side must
-    * carry text [[ensure]] would accept, and either must be in `expected` — the language the tag admits on that side.
+    * carry text [[ensure]] would accept, and either must be in one of the tag's two languages. Answers the resolved
+    * side together with its language, so [[checkPair]] can then require the two sides to cover both.
     */
-  private def checkWord(ref: TagPairWord, expected: WordLanguage): IO[WordFailure, CheckedWord] = {
-    val expectedCode = WordLanguage.code(expected)
+  private def checkWord(ref: TagPairWord, allowed: Set[WordLanguage]): IO[WordFailure, (CheckedWord, WordLanguage)] = {
+    val allowedCodes = allowed.map(WordLanguage.code)
     ref match {
       case TagPairWord.Existing(id) =>
         repo
           .findWordById(id)
           .orDie
           .someOrFail(WordFailure.NotFound)
-          .filterOrFail(_.language == expectedCode)(WordFailure.LanguageMismatch)
-          .map(row => Left(row.id))
+          .filterOrFail(row => allowedCodes.contains(row.language))(WordFailure.LanguageMismatch)
+          .map(row => (Left(row.id), WordLanguage.fromString(row.language).getOrElse(WordLanguage.En)))
       case word: TagPairWord.New    =>
         ZIO
           .fromEither(Validation.validateWordText(word.text.trim))
           .mapError(error => WordFailure.ValidationError(Map("text" -> error)))
-          .filterOrFail(_ => word.language == expected)(WordFailure.LanguageMismatch)
-          .as(Right(word))
+          .filterOrFail(_ => allowed.contains(word.language))(WordFailure.LanguageMismatch)
+          .as((Right(word), word.language))
     }
   }
 
@@ -1675,8 +1678,10 @@ final case class WordServiceLive(
     for {
       tag  <- requireEditableTag(tagId, userId)
       word <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      // Only a word in the tag's source language may be attached — the tag's whole point is a one-language vocabulary.
-      _    <- ZIO.unless(word.language == tag.sourceLanguage)(ZIO.fail(WordFailure.LanguageMismatch))
+      // The word has to be in one of the tag's two languages — either side is fine.
+      _    <- ZIO.unless(word.language == tag.sourceLanguage || word.language == tag.targetLanguage)(
+                ZIO.fail(WordFailure.LanguageMismatch)
+              )
       now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _    <- repo.tagWord(wordId, tagId, now).orDie
     } yield ()
@@ -1738,9 +1743,9 @@ final case class WordServiceLive(
       tag     <- requireEditableTag(tagId, userId)
       word    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
       _       <- requireTranslationOf(wordId, translationWordId)
-      // The pair has to run the tag's own direction: source word in `sourceLanguage`, marked answer in `targetLanguage`.
+      // The two words have to be the tag's two languages, one each — whichever way round.
       answer  <- repo.findWordById(translationWordId).orDie.someOrFail(WordFailure.NotFound)
-      _       <- ZIO.unless(word.language == tag.sourceLanguage && answer.language == tag.targetLanguage)(
+      _       <- ZIO.unless(Set(word.language, answer.language) == Set(tag.sourceLanguage, tag.targetLanguage))(
                    ZIO.fail(WordFailure.LanguageMismatch)
                  )
       already <- pairAlreadyMarked(userId, wordId, tagId, translationWordId)
@@ -2068,11 +2073,11 @@ final case class WordServiceLive(
 
     for {
       tag                     <- bulkUploadGuard(tagId, userId)
-      // The import must run the tag's own direction — its language pair is fixed, and words are only ever created in
+      // The import's two languages have to be the tag's two, whichever way round; new words are minted in
       // `sourceLanguage`.
       _                       <- ZIO.when(
-                                   WordLanguage.code(sourceLanguage) != tag.sourceLanguage ||
-                                     WordLanguage.code(targetLanguage) != tag.targetLanguage
+                                   Set(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)) !=
+                                     Set(tag.sourceLanguage, tag.targetLanguage)
                                  )(ZIO.fail(languageClash))
       trimmed                  = content.trim
       _                       <- ZIO.when(trimmed.isEmpty || Validation.utf8Length(trimmed) > WordService.maxBulkUploadBytes)(
@@ -2314,8 +2319,8 @@ final case class WordServiceLive(
     for {
       tag     <- bulkUploadGuard(tagId, userId)
       _       <- ZIO.when(
-                   WordLanguage.code(sourceLanguage) != tag.sourceLanguage ||
-                     WordLanguage.code(targetLanguage) != tag.targetLanguage
+                   Set(WordLanguage.code(sourceLanguage), WordLanguage.code(targetLanguage)) !=
+                     Set(tag.sourceLanguage, tag.targetLanguage)
                  )(ZIO.fail(languageClash))
       _       <- ZIO.when(rows.isEmpty || rows.size > WordService.maxTabularRows)(ZIO.fail(invalidFile))
       _       <- ZIO.when(Validation.utf8Length(rows.map(cells).mkString) > WordService.maxBulkUploadBytes)(

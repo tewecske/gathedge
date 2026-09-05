@@ -39,6 +39,11 @@ object WordCollect {
     */
   private val collectStorageKey = "words.tag"
 
+  /** The sentinel stored for a tag the reader *deliberately* cleared, so [[keptCollectTag]] does not just pick one of
+    * their tags again on the next tag-list refresh. A never-touched browser has no entry at all.
+    */
+  private val noneMarker = "none"
+
   /** Wrapped like `AppState`'s theme access, and for the same reason: the storage API throws rather than returns null
     * when the browser has it disabled, and a remembered tag is not worth failing a page load over.
     */
@@ -47,13 +52,19 @@ object WordCollect {
     catch { case _: Throwable => None }
   }
 
+  /** Whether the reader has explicitly chosen "no tag" (as opposed to never having chosen). */
+  def storedCollectExplicitNone: Boolean = {
+    try dom.window.localStorage.getItem(collectStorageKey) == noneMarker
+    catch { case _: Throwable => false }
+  }
+
   def storeCollectTag(tagId: Option[Long]): Unit = {
     try {
       tagId match {
         case Some(id) =>
           dom.window.localStorage.setItem(collectStorageKey, id.toString)
         case None     =>
-          dom.window.localStorage.removeItem(collectStorageKey)
+          dom.window.localStorage.setItem(collectStorageKey, noneMarker)
       }
     } catch { case _: Throwable => () }
   }
@@ -98,11 +109,10 @@ object WordCollect {
     * only where the fetched list confirms it, and otherwise replaced by one of the reader's own, then by any tag a
     * group has opened to them, then by nothing — `None` meaning "make one on the first click".
     */
-  def keptCollectTag(remembered: Option[Long], tags: List[Tag]): Option[Long] = {
-    remembered
-      .filter(id => tags.exists(tag => tag.id == id && tag.editableByMe))
-      .orElse(tags.find(_.ownedByMe).map(_.id))
-      .orElse(tags.find(_.editableByMe).map(_.id))
+  def keptCollectTag(remembered: Option[Long], tags: List[Tag], explicitNone: Boolean = false): Option[Long] = {
+    val confirmed = remembered.filter(id => tags.exists(tag => tag.id == id && tag.editableByMe))
+    if (confirmed.isEmpty && explicitNone) None
+    else confirmed.orElse(tags.find(_.ownedByMe).map(_.id)).orElse(tags.find(_.editableByMe).map(_.id))
   }
 
   /** Folds a tag the reader just gained into a list they already had, replacing any existing entry for the same id
@@ -266,7 +276,7 @@ final class WordCollect(
     * under somebody else's classroom.
     */
   private def reconcileCollectTag(tags: List[Tag]): Unit = {
-    val kept = WordCollect.keptCollectTag(collectTagVar.now(), tags)
+    val kept = WordCollect.keptCollectTag(collectTagVar.now(), tags, WordCollect.storedCollectExplicitNone)
     if (kept != collectTagVar.now()) {
       setCollectTag(kept)
     }
@@ -464,9 +474,9 @@ final class WordCollect(
     )
   }
 
-  /** The collect tag itself. No "none" option: a tick has to go somewhere, so the page picks a tag rather than leaving
-    * the reader to discover that the empty entry silently meant "the first one". Offers every tag the reader may edit —
-    * see [[WordCollect.mineOptions]] — since a tick against any other would fail with `TagNotFound`.
+  /** The collect tag itself. Offers a "no tag" entry — picking it clears the collect tag, which frees the words page's
+    * language selects — then every tag the reader may edit (see [[WordCollect.mineOptions]]); a tick against any other
+    * would fail with `TagNotFound`. With no tag chosen, a tick still mints "saved" through `collectTagOrDefault`.
     */
   private def renderCollectSelect(): HtmlElement = {
     label(
@@ -474,6 +484,7 @@ final class WordCollect(
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
       select(
         cls    := "select select-sm select-primary w-52",
+        option(value := "", I18n.t(UiKeys.wordsCollectNone)),
         children <-- tagsSignal.map(WordCollect.mineOptions),
         controlled(
           value <-- selectedTagValue(collectTagSignal),

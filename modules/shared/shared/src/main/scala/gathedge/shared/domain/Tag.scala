@@ -28,11 +28,12 @@ import zio.json.*
   * @param sourceLanguage
   *   the first half of the tag's language pair. Mandatory: chosen when the tag is created, editable only while the tag
   *   has no `word_tag_pairs` row, and locked for good after. It says which side of a bidirectional `word_tag_pairs` row
-  *   is the "source", and only a word in this language may be attached to the tag.
+  *   is the "source". A word may be attached to the tag if it is in either of the tag's two languages, and a pair if
+  *   its two words are the tag's two languages, one each — whichever way round.
   * @param targetLanguage
-  *   the other half — the language the tag asks its answers in. Only a translation in this language may be marked as a
-  *   pair. `WordDetailPage` opens its add-a-translation form on the side of this pair the word is not, so a reader
-  *   collecting into a `de → hu` tag is offered Hungarian on a German word and German on a Hungarian one.
+  *   the other half — the language the tag asks its answers in by default. `WordDetailPage` opens its add-a-translation
+  *   form on the side of this pair the word is not, so a reader collecting into a `de → hu` tag is offered Hungarian on
+  *   a German word and German on a Hungarian one.
   */
 final case class Tag(
   id: Long,

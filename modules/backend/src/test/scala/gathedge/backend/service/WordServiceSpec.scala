@@ -1904,7 +1904,7 @@ object WordServiceSpec extends ZIOSpecDefault {
             .exists(t => t.sourceLanguage == WordLanguage.De && t.targetLanguage == WordLanguage.Hu),
         )
       },
-      test("a word whose language is not the tag's source cannot be paired") {
+      test("a word in neither of the tag's languages cannot be paired") {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
@@ -1913,6 +1913,29 @@ object WordServiceSpec extends ZIOSpecDefault {
                     .addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
                     .either
         } yield assertTrue(bad == Left(WordFailure.LanguageMismatch))
+      },
+      test("the tag's pair may be run either way round — source and target swapped is still a match") {
+        for {
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          tag  <- createTag("swap", 1L, WordLanguage.De, WordLanguage.Hu)
+          // Hungarian on the source side, German on the target — the tag's pair reversed.
+          ok   <- WordService
+                    .addPair(tag.id, TagPairInput(TagPairWord.Existing(haz.id), TagPairWord.Existing(haus.id)), 1L)
+                    .either
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(ok.isRight, rows.length == 1)
+      },
+      test("tagWord takes a word in either of the tag's languages") {
+        for {
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          en   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "house"))
+          tag  <- createTag("either", 1L, WordLanguage.De, WordLanguage.Hu)
+          src  <- WordService.tagWord(haus.id, tag.id, 1L).either
+          tgt  <- WordService.tagWord(haz.id, tag.id, 1L).either
+          out  <- WordService.tagWord(en.id, tag.id, 1L).either
+        } yield assertTrue(src.isRight, tgt.isRight, out == Left(WordFailure.LanguageMismatch))
       },
       test("addPair creates a brand-new word on the fly") {
         for {
