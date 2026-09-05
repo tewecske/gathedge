@@ -15,6 +15,14 @@ object Validation {
 
   private val emailPattern = "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$".r
 
+  /** What a username may be made of, once [[normalizeUsername]] has lowercased it: letters, digits, hyphen and
+    * underscore, starting and ending on a letter or a digit.
+    *
+    * No `@`, which is what lets a sign-in tell an address from a username by looking for one rather than by trying both
+    * lookups. No leading or trailing separator, so two usernames cannot differ only by a character nobody can see.
+    */
+  private val usernamePattern = "^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$".r
+
   val minPasswordLength = 8
 
   /** jbcrypt ignores everything past the 72nd byte of a password, so a longer one would only look stronger than it is.
@@ -56,6 +64,9 @@ object Validation {
   // the database and come back as a constraint violation (a 500), instead of a field error.
   val maxEmailLength = 255 // users.email
 
+  val minUsernameLength = 3
+  val maxUsernameLength = 32 // users.username
+
   // No column in the skeleton's own schema is this wide; both are here as the conventional ceilings a
   // feature's VARCHAR should be declared at, so a form and its column agree from the start.
   val maxNameLength = 255
@@ -81,6 +92,41 @@ object Validation {
       Left(MessageRef(MessageKeys.emailInvalid))
     else
       Right(email.trim)
+  }
+
+  /** The stored form of a username: trimmed and lowercased, the same rule an address follows.
+    *
+    * Casing is not part of the identity — `Levente` and `levente` are one account — so folding it here is what makes
+    * the unique index and every lookup case-insensitive with no `lower()` in the SQL. What the reader wanted to see is
+    * the display name, which nothing normalises.
+    */
+  def normalizeUsername(username: String): String = {
+    username.trim.toLowerCase
+  }
+
+  /** A username as typed, answering the normalised form. Blank is *not* accepted here: clearing a username is the
+    * caller passing `None`, not passing an empty string.
+    */
+  def validateUsername(username: String): Either[MessageRef, String] = {
+    val normalized = normalizeUsername(username)
+    if (normalized.isEmpty)
+      Left(MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(MessageKeys.fieldUsername))))
+    else if (normalized.length < minUsernameLength)
+      Left(MessageRef(MessageKeys.usernameTooShort, List(minUsernameLength.toString)))
+    else if (normalized.length > maxUsernameLength)
+      Left(MessageRef(MessageKeys.usernameTooLong, List(maxUsernameLength.toString)))
+    else if (!usernamePattern.matches(normalized))
+      Left(MessageRef(MessageKeys.usernameInvalid))
+    else
+      Right(normalized)
+  }
+
+  /** The name an account is called by on screen. Bounded by `users.display_name VARCHAR(255)`, and otherwise anything:
+    * a name is not an identifier, nothing matches on it, and telling people how to spell their own name is not this
+    * application's business.
+    */
+  def validateDisplayName(name: String): Either[MessageRef, String] = {
+    validateNonBlank(name, MessageKeys.fieldName, maxNameLength)
   }
 
   def validatePassword(password: String): Either[MessageRef, String] = {

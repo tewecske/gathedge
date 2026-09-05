@@ -72,7 +72,7 @@ test('log out returns to sign-in', async () => {
 });
 
 test('log back in with the same credentials', async () => {
-  await page.locator('input[type=email]').fill(email);
+  await page.locator('input[name=identifier]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/en\/$/);
@@ -96,7 +96,7 @@ test.describe('administrator flows', () => {
     await page.getByRole('button', { name: 'Account menu' }).click();
     await page.getByRole('button', { name: 'Log out' }).click();
     await expect(page).toHaveURL(/\/en\/sign-in$/);
-    await page.locator('input[type=email]').fill(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com');
+    await page.locator('input[name=identifier]').fill(process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com');
     await page.locator('input[type=password]').fill(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123');
     await page.getByRole('button', { name: 'Sign in' }).click();
     await page.getByRole('link', { name: 'Admin' }).click();

@@ -134,6 +134,7 @@ import gathedge.shared.dto.{
   TranslationEntry,
   TranslationOption,
   UpdateLocaleRequest,
+  UpdateProfileRequest,
   UpdateThemeRequest,
   UpdateUserRequest,
   UpgradeRequest,
@@ -191,6 +192,7 @@ object ApiSchemas {
   given Schema[LoginRequest]              = DeriveSchema.gen[LoginRequest]
   given Schema[UpdateThemeRequest]        = DeriveSchema.gen[UpdateThemeRequest]
   given Schema[UpdateLocaleRequest]       = DeriveSchema.gen[UpdateLocaleRequest]
+  given Schema[UpdateProfileRequest]      = DeriveSchema.gen[UpdateProfileRequest]
   given Schema[LinkedIdentity]            = DeriveSchema.gen[LinkedIdentity]
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]

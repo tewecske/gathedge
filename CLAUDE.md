@@ -168,6 +168,26 @@ Providers are `OAuthClient` implementations behind `OAuthClients.forProvider` (r
 
 Config lives under `oauth.{google,microsoft}`; `MICROSOFT_TENANT` defaults to `common`.
 
+### Username and display name
+
+`users.username` and `users.display_name` are both nullable and both the account's own. The username is a **second
+thing a sign-in may name an account by**: `AuthService.login` takes an `identifier`, and the `@` decides which lookup
+runs — an address always has one, and `Validation.validateUsername` refuses a username that does.
+
+Three rules hold it together:
+
+- **The username is stored lowercased**, the rule `users.email` already follows, so the unique index over the column is
+  the whole of the case-insensitive uniqueness and no `lower()` has to mean the same thing in two dialects.
+- **The rate-limit budget and the `login_attempts` row are keyed on the account's address**, not on what was typed.
+  That is why `login` resolves the row *before* the lockout check: keying on the string would hand an attacker a second
+  full budget per account for the price of knowing its username. `AdminService.lockoutKeysFor` still rebuilds the key
+  from the stored address.
+- **A guest is minted with a random username** (`Tokens.guestUsername`, checked for collisions and dropped after five),
+  since a guest has no address for the account menu to show.
+
+`PUT /api/me/profile` replaces both wholesale — an empty box clears the column — and answers 409 `UsernameTaken`
+through `ProfileFailure`, its own enum for the reason the guest enums are theirs.
+
 ### Email verification
 
 `users.email_verified_at` plus single-use tokens in `email_verification_tokens`. Tokens are 32 `SecureRandom` bytes, plaintext, 24-hour expiry; `SessionReaper` prunes expired ones.

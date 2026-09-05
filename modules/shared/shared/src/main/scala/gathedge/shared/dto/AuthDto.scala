@@ -10,12 +10,25 @@ import gathedge.shared.i18n.MessageRef
   */
 final case class SignupRequest(email: String, password: String, captchaToken: Option[String] = None) derives JsonCodec
 
-/** `captchaToken` is optional for the opposite reason: login only demands a captcha once the same client address has
-  * made `captcha.login-threshold` failed attempts. Until then it is absent.
+/** `identifier` is the address *or* the username — a sign-in may name the account either way, and the two are told
+  * apart by the `@` a username may not contain. It is not called `email` any more precisely because it is no longer
+  * always one.
+  *
+  * `captchaToken` is optional for the opposite reason to signup's: login only demands a captcha once the same client
+  * address has made `captcha.login-threshold` failed attempts. Until then it is absent.
   */
-final case class LoginRequest(email: String, password: String, captchaToken: Option[String] = None) derives JsonCodec
+final case class LoginRequest(identifier: String, password: String, captchaToken: Option[String] = None)
+    derives JsonCodec
 
 final case class UpdateThemeRequest(theme: Theme) derives JsonCodec
+
+/** The account's own profile, both halves optional and both replaced wholesale: `None` clears the field rather than
+  * leaving it alone, so the settings form can empty a username by sending an empty box.
+  *
+  * The username is normalised server-side (`Validation.normalizeUsername`), so what comes back on the `AuthResponse`
+  * may differ in case from what was sent.
+  */
+final case class UpdateProfileRequest(username: Option[String], name: Option[String]) derives JsonCodec
 
 /** Records the language the account has chosen. Note this does *not* change what the caller sees: the language of a
   * page is decided by the URL prefix it was loaded under, and switching languages is a navigation to the other prefix.

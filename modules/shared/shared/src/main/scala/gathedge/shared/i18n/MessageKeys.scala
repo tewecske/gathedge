@@ -39,6 +39,9 @@ object MessageKeys {
   val passwordRequired: String         = key("validation.password.required")
   val passwordTooShort: String         = key("validation.password.tooShort")
   val passwordTooLong: String          = key("validation.password.tooLong")
+  val usernameTooShort: String         = key("validation.username.tooShort")
+  val usernameTooLong: String          = key("validation.username.tooLong")
+  val usernameInvalid: String          = key("validation.username.invalid")
   val fieldRequired: String            = key("validation.field.required")
   val fieldTooLong: String             = key("validation.field.tooLong")
   val currentPasswordRequired: String  = key("validation.currentPassword.required")
@@ -50,6 +53,8 @@ object MessageKeys {
   // already exists here renders this key rather than minting a second one in `UiKeys`.
 
   val fieldEmail: String     = key("field.email")
+  val fieldUsername: String  = key("field.username")
+  val fieldName: String      = key("field.name")
   val fieldPassword: String  = key("field.password")
   val fieldWord: String      = key("field.word")
   val fieldTag: String       = key("field.tag")
@@ -60,6 +65,7 @@ object MessageKeys {
 
   val invalidCredentials: String        = key("auth.invalidCredentials")
   val emailAlreadyRegistered: String    = key("auth.emailAlreadyRegistered")
+  val usernameTaken: String             = key("auth.usernameTaken")
   val rateLimited: String               = key("auth.rateLimited")
   val emailNotVerified: String          = key("auth.emailNotVerified")
   val verificationTokenInvalid: String  = key("auth.verificationTokenInvalid")

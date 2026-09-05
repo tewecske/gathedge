@@ -7,6 +7,7 @@ import gathedge.frontend.state.AppState
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.Branding
 import gathedge.shared.domain.Theme
+import gathedge.shared.domain.User.displayLabel
 import gathedge.shared.i18n.UiKeys
 import gathedge.shared.dto.{AuthResponse, ClaimCodeResponse}
 import org.scalajs.dom
@@ -61,17 +62,18 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
   private val isAdminSignal     = currentUserSignal.map(_.exists(_.isAdmin)).distinct
   private val themeSignal       = AppState.themeSignal
 
-  /** What the account menu is labelled with. A guest has no address, so it says so instead — the menu still has to name
-    * *something*, and "guest" is the true answer rather than an empty tooltip.
+  /** What the account menu is labelled with: the name the account chose, else its username, else its address — see
+    * `User.displayLabel`. A guest that has somehow lost its minted username has none of the three, so the menu says
+    * "guest" instead: it still has to name *something*, and that is the true answer rather than an empty tooltip.
     */
-  private val emailSignal = {
+  private val accountLabelSignal = {
     currentUserSignal
-      .map(_.map(user => user.email.getOrElse(I18n.t(UiKeys.guestAccountLabel))).getOrElse(""))
+      .map(_.map(user => user.displayLabel.getOrElse(I18n.t(UiKeys.guestAccountLabel))).getOrElse(""))
       .distinct
   }
 
   private val initialSignal = {
-    emailSignal.map(email => email.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
+    accountLabelSignal.map(label => label.headOption.map(_.toUpper.toString).getOrElse("?")).distinct
   }
 
   private val (menuId, menuAnchor)       = Popover.nextIds("user-menu")
@@ -388,7 +390,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       cls                := "btn btn-ghost btn-circle avatar avatar-placeholder",
       typ                := "button",
       aria.label         := I18n.t(UiKeys.navAccountMenu),
-      title <-- emailSignal,
+      title <-- accountLabelSignal,
       Popover.targetAttr := menuId,
       styleAttr          := s"anchor-name:$menuAnchor",
       div(cls := "bg-neutral text-neutral-content w-8 rounded-full", span(cls := "text-xs", text <-- initialSignal)),

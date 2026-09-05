@@ -38,6 +38,7 @@ import gathedge.backend.service.{
   EmailSender,
   GameService,
   GameWordList,
+  ProfileFailure,
   RateLimiter,
   SessionReaper,
   WordFailure,
@@ -576,6 +577,30 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           upgraded.email.contains("pgguest@example.com"),
           signedIn._1.id == guest.id,
           codeGone.isLeft,
+        )
+      },
+      // Two more quoted lambdas over `users`, for the reason above: `findByUsername`'s `WHERE` and
+      // `updateUsernameAndName`'s `UPDATE ... SET username = ?, display_name = ?`. The unique index on the column is
+      // exercised too — a race the service's taken check loses is what it exists to refuse.
+      pgTest("a username is saved, resolves a sign-in and stays unique, on the real dialect") {
+        for {
+          owner     <- AuthService.signup("pgprofile@example.com", "password123").map(_._1)
+          rival     <- AuthService.signup("pgrival@example.com", "password123").map(_._1)
+          saved     <- AuthService.updateProfile(owner.id, Some("PgReader"), Some("Pg Reader"))
+          byName    <- AuthService.login("pgreader", "password123")
+          taken     <- AuthService.updateProfile(rival.id, Some("pgreader"), None).either
+          collision <- UserRepository.updateUsernameAndName(rival.id, Some("pgreader"), None).either
+          cleared   <- AuthService.updateProfile(owner.id, None, None)
+          freed     <- AuthService.updateProfile(rival.id, Some("pgreader"), None)
+        } yield assertTrue(
+          saved.username.contains("pgreader"),
+          saved.name.contains("Pg Reader"),
+          byName._1.id == owner.id,
+          taken == Left(ProfileFailure.UsernameTaken),
+          // Straight past the service's check: the index is what actually holds the line.
+          collision.isLeft,
+          cleared.username.isEmpty,
+          freed.username.contains("pgreader"),
         )
       },
       // Three SQL shapes reach the real dialect here for the first time: `pairTranslation`'s four-statement transaction

@@ -60,6 +60,28 @@ object Tokens {
     }
   }
 
+  /** The prefix every minted guest username carries, so a name a reader has not chosen reads as one. */
+  private val guestUsernamePrefix = "guest-"
+
+  private val guestUsernameSuffixLength = 6
+
+  /** A guest account's starting username: [[guestUsernamePrefix]] plus [[guestUsernameSuffixLength]] symbols of
+    * [[claimAlphabet]], lowercased — 30 bits, which is what makes a collision rare enough for the caller's retry to be
+    * a safety net rather than the normal path.
+    *
+    * '''Not a credential.''' Nothing signs in with a username alone, so this needs no secrecy; it is generated here
+    * because this is where the one `SecureRandom` lives, and because a name minted from `scala.util.Random` would
+    * repeat across a restart. It satisfies `Validation.validateUsername`, so the reader can keep it or type another.
+    */
+  def guestUsername(): UIO[String] = {
+    ZIO.succeed {
+      val bytes   = new Array[Byte](guestUsernameSuffixLength)
+      secureRandom.nextBytes(bytes)
+      val symbols = bytes.map(byte => claimAlphabet((byte & 0x1f).toInt)).mkString
+      guestUsernamePrefix + symbols.toLowerCase
+    }
+  }
+
   /** The canonical form of a code somebody has typed back in: upper-cased, regrouped, and with the four characters
     * Crockford treats as confusable folded onto the symbol they are mistaken for.
     *

@@ -22,6 +22,7 @@ import gathedge.shared.dto.{
   SignupRequest,
   SignupResponse,
   UpdateLocaleRequest,
+  UpdateProfileRequest,
   UpdateThemeRequest,
   UpgradeRequest,
   VerifyEmailRequest,
@@ -93,7 +94,7 @@ object AuthRoutes {
         handler { (body: LoginRequest) =>
           withContext { (context: RequestContext, cfg: AppConfig) =>
             AuthService
-              .login(body.email, body.password, context.clientIp, body.captchaToken)
+              .login(body.identifier, body.password, context.clientIp, body.captchaToken)
               .mapError(ApiFailures.authLogin)
               .map { case (user, sessionId) => (AuthResponse(user), sessionCookie(sessionId, cfg)) }
           }
@@ -250,6 +251,22 @@ object AuthRoutes {
             // Persisting only. The page the caller is looking at is already in some language, chosen
             // by its URL prefix; the picker navigates to the other prefix separately.
             AuthService.updateLocale(user.id, body.locale).orDie.map(AuthResponse(_))
+          }
+        }
+      )
+  }
+
+  private val updateProfileRoute = {
+    AuthEndpoints.updateProfile
+      .implementHandler(
+        handler { (body: UpdateProfileRequest) =>
+          withContext { (user: User) =>
+            // Not `.orDie`'d, unlike the theme and locale routes above: a username somebody else holds and one that
+            // fails validation are both answers the form can act on by offering another.
+            AuthService
+              .updateProfile(user.id, body.username, body.name)
+              .mapError(ApiFailures.profile)
+              .map(AuthResponse(_))
           }
         }
       )
@@ -597,8 +614,15 @@ object AuthRoutes {
   }
 
   private val sessionRoutes = {
-    Routes(meRoute, updateThemeRoute, updateLocaleRoute, identitiesRoute, unlinkIdentityRoute, setPasswordRoute) @@
-      RouteSupport.authenticated
+    Routes(
+      meRoute,
+      updateThemeRoute,
+      updateLocaleRoute,
+      updateProfileRoute,
+      identitiesRoute,
+      unlinkIdentityRoute,
+      setPasswordRoute,
+    ) @@ RouteSupport.authenticated
   }
 
   /** The two guest routes that need a session *and* the request context — the upgrade writes a verification email, so

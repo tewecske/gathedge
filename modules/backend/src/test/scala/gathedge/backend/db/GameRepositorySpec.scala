@@ -9,7 +9,7 @@ object GameRepositorySpec extends ZIOSpecDefault {
 
   private val layer = TestDataSource.sqlite >>> (UserRepository.test ++ WordRepository.test ++ GameRepository.test)
 
-  private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L).map(_.id)
+  private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L, None).map(_.id)
 
   /** A dictionary word, shaped like `GameServiceSpec.dictionaryWord` — the distractor cases below need real `words`
     * rows to read back by id and by text.

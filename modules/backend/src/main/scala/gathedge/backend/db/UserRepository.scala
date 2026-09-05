@@ -23,8 +23,10 @@ trait UserRepository {
     emailVerifiedAt: Option[Long],
   ): Task[UserRow]
 
-  /** An account with no address and no password, minted the first time a visitor tags a word. */
-  def insertGuest(theme: String, locale: String, createdAt: Long): Task[UserRow]
+  /** An account with no address and no password, minted the first time a visitor tags a word. `username` is the random
+    * one the service picked for it, so an account with no address still has something to be called.
+    */
+  def insertGuest(theme: String, locale: String, createdAt: Long, username: Option[String]): Task[UserRow]
 
   /** Gives a guest account an address and a password, in place. Nothing it owns moves, which is the whole point.
     * Returns rows affected, so a caller can tell a lost race from a success.
@@ -33,6 +35,11 @@ trait UserRepository {
 
   /** Cannot return a guest: their address is NULL, and nothing equals NULL. */
   def findByEmail(email: String): Task[Option[UserRow]]
+
+  /** The other half of resolving a sign-in. `username` is stored lowercased, so this is an equality test on the
+    * normalised form rather than a `lower()` the two dialects would spell differently.
+    */
+  def findByUsername(username: String): Task[Option[UserRow]]
   def findById(id: Long): Task[Option[UserRow]]
 
   /** Batch form of [[findById]] — what `ProgressShareService` resolves a page of shares' other-side accounts with, the
@@ -67,6 +74,11 @@ trait UserRepository {
   /** How many accounts [[listPage]] would return across every page, which is what the page buttons are counted off. */
   def countMatching(emailContains: Option[String]): Task[Long]
 
+  /** The account's own username and display name, both replaced wholesale — `None` clears the column. Returns rows
+    * affected, so a caller can tell a lost race from a success.
+    */
+  def updateUsernameAndName(id: Long, username: Option[String], displayName: Option[String]): Task[Long]
+
   /** Updates email/admin flag only if the row exists. Returns rows affected. */
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long]
   def updatePasswordHash(id: Long, passwordHash: String): Task[Unit]
@@ -97,8 +109,13 @@ object UserRepository {
     )
   }
 
-  def insertGuest(theme: String, locale: String, createdAt: Long): RIO[UserRepository, UserRow] =
-    ZIO.serviceWithZIO[UserRepository](_.insertGuest(theme, locale, createdAt))
+  def insertGuest(
+    theme: String,
+    locale: String,
+    createdAt: Long,
+    username: Option[String],
+  ): RIO[UserRepository, UserRow] =
+    ZIO.serviceWithZIO[UserRepository](_.insertGuest(theme, locale, createdAt, username))
 
   def upgradeGuest(
     id: Long,
@@ -110,6 +127,16 @@ object UserRepository {
 
   def findByEmail(email: String): RIO[UserRepository, Option[UserRow]] =
     ZIO.serviceWithZIO[UserRepository](_.findByEmail(email))
+
+  def findByUsername(username: String): RIO[UserRepository, Option[UserRow]] =
+    ZIO.serviceWithZIO[UserRepository](_.findByUsername(username))
+
+  def updateUsernameAndName(
+    id: Long,
+    username: Option[String],
+    displayName: Option[String],
+  ): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.updateUsernameAndName(id, username, displayName))
 
   def findAbandonedGuests(createdBefore: Long, limit: Int): RIO[UserRepository, List[Long]] =
     ZIO.serviceWithZIO[UserRepository](_.findAbandonedGuests(createdBefore, limit))
@@ -209,8 +236,8 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def insertGuest(theme: String, locale: String, createdAt: Long): Task[UserRow] = {
-    val row = UserRow(0L, None, None, false, theme, locale, createdAt, None, true)
+  def insertGuest(theme: String, locale: String, createdAt: Long, username: Option[String]): Task[UserRow] = {
+    val row = UserRow(0L, None, None, false, theme, locale, createdAt, None, true, username)
     logged(run(ctx.run(quote(users.insertValue(lift(row)).returningGenerated(_.id)))).map(id => row.copy(id = id))) {
       user => s"users.insertGuest id=${user.id}"
     }
@@ -238,6 +265,14 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   def findByEmail(email: String): Task[Option[UserRow]] = {
     logged(run(ctx.run(quote(users.filter(_.email.contains(lift(email)))))).map(_.headOption)) { found =>
       s"users.findByEmail found=${found.isDefined}"
+    }
+  }
+
+  def findByUsername(username: String): Task[Option[UserRow]] = {
+    // The username is not a secret, but it is one of the two things a sign-in is named by, so it stays out
+    // of the message for the same reason an address does.
+    logged(run(ctx.run(quote(users.filter(_.username.contains(lift(username)))))).map(_.headOption)) { found =>
+      s"users.findByUsername found=${found.isDefined}"
     }
   }
 
@@ -359,6 +394,15 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   def countMatching(emailContains: Option[String]): Task[Long] = {
     logged(run(ctx.run(matching(emailContains).size)))(count => s"users.countMatching count=$count")
+  }
+
+  def updateUsernameAndName(id: Long, username: Option[String], displayName: Option[String]): Task[Long] = {
+    val q = quote(
+      users.filter(_.id == lift(id)).update(_.username -> lift(username), _.displayName -> lift(displayName))
+    )
+    logged(run(ctx.run(q))) { rows =>
+      s"users.updateUsernameAndName id=$id username=${username.isDefined} name=${displayName.isDefined} rows=$rows"
+    }
   }
 
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long] = {

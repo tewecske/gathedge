@@ -16,6 +16,7 @@ import gathedge.backend.db.{
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.dto.{CreateWordRequest, Paging}
+import gathedge.shared.validation.Validation
 import gathedge.shared.domain.{PartOfSpeech, Theme, TranslationFilter, WordLanguage}
 import zio._
 import zio.test._
@@ -101,6 +102,23 @@ object GuestAccountSpec extends ZIOSpecDefault {
           // Two devices, two sessions.
           first._2 != second._2,
           onSecond.items.map(_.word.id) == List(word),
+        )
+      },
+      // A guest has no address, so without this the account menu would have nothing to call it by. The name is a
+      // starting point, not a fixture: it is an ordinary username the reader may replace.
+      test("a minted guest is given a random username it can then change") {
+        for {
+          first    <- AuthService.createGuest(Some("10.0.0.7"))
+          second   <- AuthService.createGuest(Some("10.0.0.8"))
+          minted    = first._1.username
+          renamed  <- AuthService.updateProfile(first._1.id, Some("Wanderer"), None)
+          signedIn <- AuthService.currentUser(first._2)
+        } yield assertTrue(
+          minted.exists(_.startsWith("guest-")),
+          minted.exists(name => Validation.validateUsername(name) == Right(name)),
+          minted != second._1.username,
+          renamed.username.contains("wanderer"),
+          signedIn.flatMap(_.username).contains("wanderer"),
         )
       },
       test("minting a guest seeds it with the visitor's current theme rather than a hardcoded default") {

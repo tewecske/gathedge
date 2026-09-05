@@ -2140,7 +2140,7 @@ final case class WordServiceLive(
                                      ZIO.foreachDiscard(targets)(tgt =>
                                        linkRows(src, tgt, now) *> repo.importPair(src.id, tagId, tgt.id, now).orDie
                                      )
-                 })
+                                   })
                                  }
           _                   <- writeComment(sources, sourceCell.comment)
           _                   <- writeComment(targets, targetCell.comment)

@@ -7,15 +7,17 @@ import gathedge.frontend.components.{AppShell, CaptchaField, OAuthButtons, OAuth
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.OAuthProvider
 import gathedge.shared.dto.{
+  AuthResponse,
   CaptchaStatusResponse,
   IdentitiesResponse,
   LinkedIdentity,
   SetPasswordRequest,
   SharedViewer,
+  UpdateProfileRequest,
   ShareCodeResponse,
 }
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.i18n.UiKeys
+import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.validation.Validation
 import org.scalajs.dom
 
@@ -48,6 +50,13 @@ private class SettingsPage {
         available.filterNot(p => linked.exists(_.provider == p))
       }
   }
+
+  /** The profile form, seeded from the session the page was opened with. It follows nothing after that: a form that
+    * re-seeded itself from every `setUser` would overwrite what the reader is in the middle of typing.
+    */
+  private val usernameVar      = Var(AppState.currentUser.flatMap(_.username).getOrElse(""))
+  private val nameVar          = Var(AppState.currentUser.flatMap(_.name).getOrElse(""))
+  private val profileSubmitBus = new EventBus[Unit]()
 
   private val currentPasswordVar             = Var("")
   private val newPasswordVar                 = Var("")
@@ -95,6 +104,7 @@ private class SettingsPage {
   }
 
   private val passwordStream = passwordSubmitBus.events.filterWith(inFlightSignal.not)
+  private val profileStream  = profileSubmitBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
@@ -103,6 +113,7 @@ private class SettingsPage {
       child.maybe <-- noticeVar.signal.map(_.map(renderNotice)),
       child.maybe <-- errorVar.signal.map(_.map(renderError)),
       renderEmail(),
+      renderProfileForm(),
       renderIdentities(),
       renderShareCard(),
       renderPasswordForm(),
@@ -124,6 +135,21 @@ private class SettingsPage {
             reloadBus.emit(())
           case Left(err) =>
             Var.set(errorVar -> Some(err.message), noticeVar -> None)
+        },
+      profileStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
+      profileStream.flatMapSwitch(_ => submitProfile()) -->
+        Observer[Either[ApiError, AuthResponse]] {
+          case Right(res) =>
+            Var.set(inFlightVar -> false, noticeVar -> Some(I18n.t(UiKeys.settingsProfileSaved)))
+            // The server normalises the username, so the boxes are rewritten from its answer rather than from
+            // what was typed — otherwise `Levente` would stay on screen while `levente` was what got stored.
+            Var.set(
+              usernameVar       -> res.user.username.getOrElse(""),
+              nameVar           -> res.user.name.getOrElse(""),
+            )
+            AppState.setUser(res.user)
+          case Left(err)  =>
+            Var.set(inFlightVar -> false, errorVar -> Some(err.message))
         },
       passwordStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
       passwordStream.flatMapSwitch(_ => submitPassword()) -->
@@ -373,6 +399,55 @@ private class SettingsPage {
         noticeVar.set(Some(I18n.t(UiKeys.settingsShareCopied)))
       }
     } catch { case _: Throwable => () }
+  }
+
+  /** Username and name, saved together. Both may be emptied: an empty box is sent as `None`, which clears the column
+    * rather than failing validation — see `AuthService.updateProfile`.
+    */
+  private def renderProfileForm(): HtmlElement = {
+    form(
+      cls := "card bg-base-100 shadow",
+      onSubmit.preventDefault.mapToUnit --> profileSubmitBus.writer,
+      div(
+        cls := "card-body",
+        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsProfileCard)),
+        p(cls  := "text-sm opacity-70", I18n.t(UiKeys.settingsProfileHint)),
+        fieldSet(
+          cls  := "fieldset",
+          label(cls := "fieldset-legend", I18n.t(MessageKeys.fieldUsername)),
+          input(
+            cls     := "input w-full",
+            typ     := "text",
+            controlled(value <-- usernameVar.signal, onInput.mapToValue --> usernameVar.writer),
+          ),
+          p(
+            cls     := "label",
+            I18n.t(UiKeys.settingsUsernameHint, Validation.minUsernameLength, Validation.maxUsernameLength),
+          ),
+          label(cls := "fieldset-legend", I18n.t(MessageKeys.fieldName)),
+          input(
+            cls     := "input w-full",
+            typ     := "text",
+            controlled(value <-- nameVar.signal, onInput.mapToValue --> nameVar.writer),
+          ),
+          p(cls     := "label", I18n.t(UiKeys.settingsNameHint)),
+        ),
+        div(
+          cls  := "card-actions justify-end mt-4",
+          button(
+            cls := "btn btn-primary",
+            typ := "submit",
+            disabled <-- inFlightSignal,
+            I18n.t(UiKeys.settingsProfileSave),
+          ),
+        ),
+      ),
+    )
+  }
+
+  private def submitProfile(): EventStream[Either[ApiError, AuthResponse]] = {
+    def entered(value: String): Option[String] = Option(value.trim).filter(_.nonEmpty)
+    ApiClient.updateProfile(UpdateProfileRequest(entered(usernameVar.now()), entered(nameVar.now())))
   }
 
   private def renderPasswordForm(): HtmlElement = {

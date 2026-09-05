@@ -10,6 +10,7 @@ import gathedge.backend.service.{
   GuestClaimFailure,
   GuestCodeFailure,
   GuestMintFailure,
+  ProfileFailure,
   ProgressShareFailure,
   TagImportFailure,
   WordFailure,
@@ -125,6 +126,19 @@ object ApiFailures {
           MessageRef(MessageKeys.captchaFailed),
           "Captcha verification failed. Please try again.",
         )
+    }
+  }
+
+  /** The account's own username and name. Two cases, two statuses, and neither of them one `auth` answers — which is
+    * why `ProfileFailure` is its own enum: mapping through `auth` would put a 429 on an endpoint that has no rate
+    * limiter and a 409 on every endpoint that shares that mapping.
+    */
+  def profile(failure: ProfileFailure): ApiFailure.BadRequest | ApiFailure.Conflict = {
+    failure match {
+      case ProfileFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case ProfileFailure.UsernameTaken                =>
+        ApiFailure.Conflict(MessageRef(MessageKeys.usernameTaken), "That username is taken")
     }
   }
 
