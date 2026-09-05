@@ -85,6 +85,14 @@ object WordQuery {
     } catch { case _: Throwable => None }
   }
 
+  /** The target language the listing was last left in, or the one it shows on a browser that remembers nothing.
+    *
+    * Read by `WordDetailPage`, which has no query of its own: a reader browsing `de → hu` who clicks a word finds the
+    * add-a-translation form already set to Hungarian, rather than to whichever of the word's two other languages
+    * happens to come first.
+    */
+  def storedTarget: WordLanguage = storedFilter.map(_.target).getOrElse(default.target)
+
   /** Remembers this query's filters (see [[WordQuery.filterOnly]]) for the next cold visit. Called on every listing
     * change, not only a filter one — paging and searching produce the same [[filterOnly]] as before, so this simply
     * rewrites the same value until a filter actually changes.

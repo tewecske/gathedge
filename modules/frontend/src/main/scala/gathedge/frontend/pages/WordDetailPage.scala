@@ -36,6 +36,20 @@ object WordDetailPage {
   def render(id: Long): HtmlElement = {
     AppShell.render(Page.WordDetail(id), new WordDetailPage(id).render())
   }
+
+  /** Which language the add-a-translation form starts on: the listing's target language when the word can take it, and
+    * otherwise the first language it can.
+    *
+    * `target` is what the reader last set on the listing (see [[WordQuery.storedTarget]]), so clicking a word in a
+    * `de → hu` listing opens a form that already says Hungarian. A Hungarian word is not a translation of itself, so
+    * `allowed` — the word's two other languages — still has the last word.
+    */
+  private[pages] def defaultLanguage(
+    allowed: List[WordLanguage],
+    target: WordLanguage,
+  ): Option[WordLanguage] = {
+    Some(target).filter(allowed.contains).orElse(allowed.headOption)
+  }
 }
 
 private class WordDetailPage(id: Long) {
@@ -161,11 +175,14 @@ private class WordDetailPage(id: Long) {
 
   /** Keeps the form's language on one the word can actually take. It starts empty, and a word whose own language the
     * reader had selected on the previous word would otherwise submit a pair the server refuses.
+    *
+    * What it falls back to is the listing's target language — see [[WordDetailPage.defaultLanguage]]. A language the
+    * reader has already chosen is left alone, so adding a second translation in a row keeps the box where it was.
     */
   private def keepLanguageValid(detail: WordDetail): Unit = {
     val allowed = otherLanguages(detail.word)
     if (!languageVar.now().exists(allowed.contains)) {
-      languageVar.set(allowed.headOption)
+      languageVar.set(WordDetailPage.defaultLanguage(allowed, WordQuery.storedTarget))
     }
   }
 
@@ -451,7 +468,8 @@ private class WordDetailPage(id: Long) {
   }
 
   /** The only place a word gains a translation in a language the listing was not showing, so it names itself and its
-    * language select offers both of the word's other languages rather than all three.
+    * language select offers both of the word's other languages rather than all three. It opens on the listing's target
+    * language, which is the one a reader arriving from there means nine times out of ten.
     */
   private def renderAddForm(word: Word): HtmlElement = {
     val languages = otherLanguages(word)
@@ -472,7 +490,12 @@ private class WordDetailPage(id: Long) {
             controlled(
               value <-- languageVar.signal.map(_.map(WordLanguage.code).getOrElse("")),
               onChange.mapToValue --> Observer[String] { code =>
-                languageVar.set(WordLanguage.fromString(code).filter(languages.contains).orElse(languages.headOption))
+                languageVar.set(
+                  WordLanguage
+                    .fromString(code)
+                    .filter(languages.contains)
+                    .orElse(WordDetailPage.defaultLanguage(languages, WordQuery.storedTarget))
+                )
               },
             ),
           ),

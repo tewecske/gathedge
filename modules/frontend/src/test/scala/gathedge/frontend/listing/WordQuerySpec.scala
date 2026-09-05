@@ -41,6 +41,18 @@ object WordQuerySpec extends ZIOSpecDefault {
           !typed.copy(mine = true).refines(WordQuery(search = "ha")),
         )
       },
+      // What `WordDetailPage` reads to open its add-a-translation form on the language the reader is learning into.
+      test("the remembered target language is the listing's, whatever else was stored with it") {
+        WordQuery.storeFilter(WordQuery(target = WordLanguage.En, page = 4, search = "hau"))
+        val stored = WordQuery.storedTarget
+        // Left as the listing's own default, so no other spec inherits this one's browser.
+        WordQuery.storeFilter(WordQuery.default)
+        val plain  = WordQuery.storedTarget
+        assertTrue(
+          stored == WordLanguage.En,
+          plain == WordQuery.default.target,
+        )
+      },
       test("the default query is the one the bare path addresses") {
         assertTrue(
           WordQuery.default == WordQuery(),

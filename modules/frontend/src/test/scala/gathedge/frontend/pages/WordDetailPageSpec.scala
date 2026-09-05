@@ -2,6 +2,7 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L
 import org.scalajs.dom
+import gathedge.shared.domain.WordLanguage
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -49,6 +50,19 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           // The Main word block and Forms section are gated on the word arriving too, the same as Translations/Tags.
           !text.contains(UiKeys.wordDetailMainWordLabel),
           !text.contains(UiKeys.wordDetailFormsHeading),
+        )
+      },
+      // The reader came from a `de -> hu` listing, so the form opens on Hungarian rather than on whichever of the
+      // word's other two languages happens to sort first.
+      test("the add-translation form opens on the listing's target language") {
+        val onGerman    = WordDetailPage.defaultLanguage(List(WordLanguage.En, WordLanguage.Hu), WordLanguage.Hu)
+        // A word in the target language itself: it is no translation of itself, so the other language wins.
+        val onHungarian = WordDetailPage.defaultLanguage(List(WordLanguage.De, WordLanguage.En), WordLanguage.Hu)
+        val noneAtAll   = WordDetailPage.defaultLanguage(Nil, WordLanguage.Hu)
+        assertTrue(
+          onGerman.contains(WordLanguage.Hu),
+          onHungarian.contains(WordLanguage.De),
+          noneAtAll.isEmpty,
         )
       },
     )
