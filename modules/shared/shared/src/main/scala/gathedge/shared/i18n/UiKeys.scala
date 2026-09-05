@@ -114,6 +114,7 @@ object UiKeys {
   val navLanguage: String = key("ui.nav.language")
 
   val navWords: String           = key("ui.nav.words")
+  val navTags: String            = key("ui.nav.tags")
   val navAbout: String           = key("ui.nav.about")
   val navGames: String           = key("ui.nav.games")
   val navGroups: String          = key("ui.nav.groups")
