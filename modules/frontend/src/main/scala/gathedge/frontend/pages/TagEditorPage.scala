@@ -386,15 +386,19 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val editSourceVar = Var(Option.empty[TagPairWord])
   private val editTargetVar = Var(Option.empty[TagPairWord])
   private val editSourcePos = Var(Option.empty[PartOfSpeech])
+  private val editTargetPos = Var(Option.empty[PartOfSpeech])
 
+  // Each edit box, like the add boxes, is held to the *other* box's committed part of speech and offers that word's
+  // translations — so editing one side keeps searching in step with the side that is staying.
   private lazy val editSourcePicker: WordPicker = new WordPicker(
     language = sourceLangVar.signal,
-    partOfSpeech = Val(None),
+    partOfSpeech = editTargetPos.signal,
     onCommit = Observer[TagPairWord] { ref =>
       editSourceVar.set(Some(ref)); editSourcePos.set(posOf(ref)); editTargetPicker.focus()
     },
     onCommitWord = Observer[Option[Word]](_.foreach(w => editSourcePos.set(Some(w.partOfSpeech)))),
     placeholderSignal = sourceLangVar.signal.map(l => I18n.t(UiKeys.tagsSourcePlaceholder, Labels.language(l))),
+    translateFrom = editTargetVar.signal.map(existingId),
   )
 
   private lazy val editTargetPicker: WordPicker = new WordPicker(
@@ -402,7 +406,10 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     partOfSpeech = editSourcePos.signal,
     // Committing the answer is the whole edit: save it and leave edit mode, the same way Enter on the add row's target
     // adds the pair. The explicit Save button stays for a mouse-only edit and does the same thing.
-    onCommit = Observer[TagPairWord] { ref => editTargetVar.set(Some(ref)); replaceBus.emit(()) },
+    onCommit = Observer[TagPairWord] { ref =>
+      editTargetVar.set(Some(ref)); editTargetPos.set(posOf(ref)); replaceBus.emit(())
+    },
+    onCommitWord = Observer[Option[Word]](_.foreach(w => editTargetPos.set(Some(w.partOfSpeech)))),
     placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
     translateFrom = editSourceVar.signal.map(existingId),
   )
@@ -466,14 +473,19 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     val (left, right) = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
     editSourceVar.set(left.map(s => TagPairWord.Existing(s.word.id)))
     editTargetVar.set(right.map(s => TagPairWord.Existing(s.word.id)))
+    // A pair shares one part of speech; a lone word carries its own. Seed both sides so each picker's search is held to
+    // the other box from the first keystroke, even when only one side has a word.
     editSourcePos.set(left.orElse(right).map(_.word.partOfSpeech))
+    editTargetPos.set(right.orElse(left).map(_.word.partOfSpeech))
     editSourcePicker.setText(left.map(s => Word.display(s.word)).getOrElse(""))
     editTargetPicker.setText(right.map(s => Word.display(s.word)).getOrElse(""))
+    // The two cells become pickers on the next render; focus the first once it is mounted.
+    dom.window.setTimeout(() => editSourcePicker.focus(), 0)
   }
 
   private def cancelEdit(): Unit = {
     editingVar.set(None)
-    editSourceVar.set(None); editTargetVar.set(None); editSourcePos.set(None)
+    editSourceVar.set(None); editTargetVar.set(None); editSourcePos.set(None); editTargetPos.set(None)
     editSourcePicker.clear(); editTargetPicker.clear()
   }
 
