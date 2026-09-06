@@ -40,11 +40,12 @@ private class LanguagePicker {
     */
   private def renderTrigger(): HtmlElement = {
     button(
-      cls                := "btn btn-sm btn-ghost",
+      cls                := "btn btn-sm btn-ghost gap-1.5",
       typ                := "button",
       aria.label         := I18n.t(UiKeys.navLanguage),
       Popover.targetAttr := menuId,
       styleAttr          := s"anchor-name:$menuAnchor",
+      flagIcon(CurrentLocale.value),
       CurrentLocale.value.code.toUpperCase,
       chevronIcon(),
     )
@@ -72,6 +73,7 @@ private class LanguagePicker {
     val isCurrent = locale == CurrentLocale.value
     li(
       a(
+        cls          := "flex items-center gap-2",
         cls          := (
           if (isCurrent)
             "menu-active"
@@ -79,6 +81,7 @@ private class LanguagePicker {
             ""
         ),
         href         := CurrentLocale.urlUnder(locale),
+        flagIcon(locale),
         // Marks the current choice for a screen reader, which cannot see "this entry looks selected".
         aria.current := (
           if (isCurrent)
@@ -91,6 +94,40 @@ private class LanguagePicker {
         onClick.mapTo(locale) --> Observer[Locale](CurrentLocale.store),
         s"${locale.code.toUpperCase} - ${locale.display}",
       )
+    )
+  }
+
+  /** The interface language's own flag, drawn inline so no asset has to load. A rounded 3:2 rectangle, sized by CSS so
+    * it tracks the button text. `role="img"` plus a `<title>` give it an accessible name; the menu entry still spells
+    * the language out beside it, and the trigger keeps its two-letter code.
+    *
+    * A fifth interface language adds a case here, the same way [[Locale]] itself grows.
+    */
+  private def flagIcon(locale: Locale): SvgElement = {
+    val stripes     = locale match {
+      case Locale.Hu =>
+        List(
+          svg.rect(svg.x := "0", svg.y := "0", svg.width  := "60", svg.height := "10", svg.fill := "#CD2A3E"),
+          svg.rect(svg.x := "0", svg.y := "10", svg.width := "60", svg.height := "10", svg.fill := "#FFFFFF"),
+          svg.rect(svg.x := "0", svg.y := "20", svg.width := "60", svg.height := "10", svg.fill := "#436F4D"),
+        )
+      case Locale.En =>
+        List(
+          svg.rect(svg.x := "0", svg.y                            := "0", svg.width             := "60", svg.height := "30", svg.fill := "#012169"),
+          svg.path(svg.d := "M0,0 L60,30 M60,0 L0,30", svg.stroke := "#FFFFFF", svg.strokeWidth := "6"),
+          svg.path(svg.d := "M0,0 L60,30 M60,0 L0,30", svg.stroke := "#C8102E", svg.strokeWidth := "2"),
+          svg.rect(svg.x := "25", svg.y                           := "0", svg.width             := "10", svg.height := "30", svg.fill := "#FFFFFF"),
+          svg.rect(svg.x := "0", svg.y                            := "10", svg.width            := "60", svg.height := "10", svg.fill := "#FFFFFF"),
+          svg.rect(svg.x := "27", svg.y                           := "0", svg.width             := "6", svg.height  := "30", svg.fill := "#C8102E"),
+          svg.rect(svg.x := "0", svg.y                            := "12", svg.width            := "60", svg.height := "6", svg.fill  := "#C8102E"),
+        )
+    }
+    svg.svg(
+      svg.cls     := "inline-block h-4 w-6 rounded-sm shrink-0 ring-1 ring-base-content/10",
+      svg.viewBox := "0 0 60 30",
+      svg.role    := "img",
+      svg.titleTag(locale.display),
+      stripes,
     )
   }
 

@@ -523,7 +523,12 @@ private class WordDetailPage(id: Long) {
           span(cls := "label-text text-xs", I18n.t(UiKeys.wordDetailAddLanguage)),
           select(
             cls    := "select select-sm",
-            languages.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+            languages.map(language => {
+              option(
+                value := WordLanguage.code(language),
+                s"${Labels.langCode(language)} — ${Labels.language(language)}",
+              )
+            }),
             controlled(
               value <-- languageVar.signal.map(_.map(WordLanguage.code).getOrElse("")),
               // The select offers nothing but these, so an unreadable code is left alone rather than counted as a

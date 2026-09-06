@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, TagImportDialog}
+import gathedge.frontend.components.{Alert, AppShell, Labels, TagImportDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{GroupRef, Tag}
@@ -143,11 +143,12 @@ private class TagsPage {
   private def renderRow(tag: Tag): HtmlElement = {
     tr(
       td(
+        span(cls := "font-mono text-xs opacity-70 mr-2", Labels.tagCodes(tag)),
         a(
-          cls := "link link-hover",
+          cls    := "link link-hover",
           AppRouter.router.navigateTo(Page.TagDetail(tag.id)),
           tag.name,
-        )
+        ),
       ),
       td(tag.wordCount.toString),
     )

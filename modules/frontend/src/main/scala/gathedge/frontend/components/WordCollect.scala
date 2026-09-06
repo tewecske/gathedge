@@ -175,7 +175,8 @@ object WordCollect {
     mineOpts ++ groupOpts
   }
 
-  private def tagOption(tag: Tag): HtmlElement = option(value := tag.id.toString, s"${tag.name} (${tag.wordCount})")
+  private def tagOption(tag: Tag): HtmlElement =
+    option(value := tag.id.toString, s"${Labels.tagCodes(tag)} ${tag.name} (${tag.wordCount})")
 }
 
 /** @param onError

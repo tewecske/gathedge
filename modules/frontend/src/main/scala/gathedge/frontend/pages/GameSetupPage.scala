@@ -327,9 +327,11 @@ private class GameSetupPage {
         cls("tooltip") <-- locked,
         dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.gameSetupLanguagesLockedHint) else ""),
         select(
-          cls := "select select-sm w-28",
+          cls := "select select-sm w-40",
           disabled <-- locked,
-          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+          WordLanguage.all.map(language =>
+            option(value := WordLanguage.code(language), s"${Labels.langCode(language)} — ${Labels.language(language)}")
+          ),
           controlled(
             value <-- selected.map(WordLanguage.code),
             onChange.mapToValue --> onPick.contramap[String](code =>
@@ -375,8 +377,8 @@ private class GameSetupPage {
     label(
       cls := "label gap-2 justify-start cursor-pointer",
       input(
-        typ    := "checkbox",
-        cls    := "checkbox checkbox-sm",
+        typ := "checkbox",
+        cls := "checkbox checkbox-sm",
         controlled(
           checked <-- selectedTagIdsVar.signal.map(_.contains(tag.id)),
           onClick.mapToChecked --> Observer[Boolean] { on =>
@@ -384,7 +386,11 @@ private class GameSetupPage {
           },
         ),
       ),
-      span(cls := "label-text text-sm", s"${tag.name} (${tag.wordCount})"),
+      span(
+        cls := "label-text text-sm",
+        span(cls := "font-mono text-xs opacity-70 mr-1", Labels.tagCodes(tag)),
+        s"${tag.name} (${tag.wordCount})",
+      ),
     )
   }
 
