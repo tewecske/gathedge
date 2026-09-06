@@ -74,9 +74,6 @@ private class GameSetupPage {
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal                   = errorVar.signal
 
-  private val noticeVar: Var[Option[String]] = Var(None)
-  private val noticeSignal                   = noticeVar.signal
-
   private val createdVar = Var(Option.empty[GameCreated])
 
   private val userSignal = AppState.currentUserSignal
@@ -103,7 +100,6 @@ private class GameSetupPage {
         ApiClient.createGuest.flatMapSwitch {
           case Right(response) =>
             AppState.setUser(response.user)
-            noticeVar.set(Some(I18n.t(UiKeys.guestBannerHint)))
             write()
           case Left(err)       =>
             EventStream.fromValue(Left(err))
@@ -115,7 +111,6 @@ private class GameSetupPage {
     div(
       cls := "max-w-4xl mx-auto",
       Alert.maybeError(errorSignal),
-      Alert.maybeInfo(noticeSignal),
       child.maybe <-- createdVar.signal.map(
         _.map(created => Alert.success(I18n.t(UiKeys.gameSetupCreated, created.name)))
       ),

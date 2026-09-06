@@ -214,7 +214,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         ApiClient.createGuest.flatMapSwitch {
           case Right(response) =>
             AppState.setUser(response.user)
-            noticeVar.set(Some(I18n.t(UiKeys.guestBannerHint)))
             write()
           case Left(err)       =>
             EventStream.fromValue(Left(err))
