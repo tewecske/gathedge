@@ -89,6 +89,15 @@ object TagEditorPage {
     bucketOk && mineOk && uniqueOk
   }
 
+  /** A word earns the "New word" badge when this reader minted it (`createdByMe`) and it is in no other tag of theirs
+    * (`!inMyOtherTags`) — the dictionary did not have it before. Read per side: `sourceIsNew` off the row's own flags,
+    * `targetIsNew` off the `target*` mirror, which is `false` for a row with no answer.
+    */
+  private[pages] def sourceIsNew(entry: TagEntry): Boolean = entry.createdByMe && !entry.inMyOtherTags
+
+  private[pages] def targetIsNew(entry: TagEntry): Boolean =
+    entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
+
   // -- Tabular import --------------------------------------------------------------------------
 
   /** What one column of a delimited paste is used for. The two "extra" roles carry the gender and grammar markers
@@ -1043,6 +1052,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     comment.map(note => span(cls := "opacity-50 text-xs ml-1", s"($note)"))
   }
 
+  /** The "New word" badge, shown beside a source or answer word this reader minted that no other tag of theirs holds.
+    */
+  private def newBadge(): HtmlElement =
+    span(cls := "badge badge-accent badge-xs ml-1", I18n.t(UiKeys.tagsEditorNewBadge))
+
   private def renderRow(entry: TagEntry): HtmlElement = {
     val rowKey     = TagEditorPage.rowKey(entry)
     val isEditing  = editingVar.signal.map(_.contains(rowKey)).distinct
@@ -1068,7 +1082,12 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       td(
         child <-- isEditing.map {
           case true  => editSourcePicker.render()
-          case false => span(Word.display(entry.source), renderComment(entry.comment))
+          case false =>
+            span(
+              Word.display(entry.source),
+              renderComment(entry.comment),
+              Option.when(TagEditorPage.sourceIsNew(entry))(newBadge()),
+            )
         }
       ),
       td(
@@ -1076,7 +1095,12 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           case true  => editTargetPicker.render()
           case false =>
             entry.target match {
-              case Some(w) => span(Word.display(w), renderComment(entry.targetComment))
+              case Some(w) =>
+                span(
+                  Word.display(w),
+                  renderComment(entry.targetComment),
+                  Option.when(TagEditorPage.targetIsNew(entry))(newBadge()),
+                )
               case None    => span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
             }
         }

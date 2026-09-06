@@ -42,6 +42,8 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     matchKind: PairMatch = PairMatch.Manual,
     createdByMe: Boolean = false,
     inMyOtherTags: Boolean = false,
+    targetCreatedByMe: Boolean = false,
+    targetInMyOtherTags: Boolean = false,
   ): TagEntry = {
     TagEntry(
       source = Word(sourceId, WordLanguage.De, s"w$sourceId", PartOfSpeech.Noun, None),
@@ -50,6 +52,8 @@ object TagEditorPageSpec extends ZIOSpecDefault {
       matchKind = matchKind,
       createdByMe = createdByMe,
       inMyOtherTags = inMyOtherTags,
+      targetCreatedByMe = targetCreatedByMe,
+      targetInMyOtherTags = targetInMyOtherTags,
       otherTranslations = Nil,
     )
   }
@@ -175,6 +179,20 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             TagEditorPage.rowVisible(onlyHere, Set.empty, importedByMe = false, uniqueToTag = true),
             !TagEditorPage.rowVisible(alsoOther, Set.empty, importedByMe = false, uniqueToTag = true),
           )
+        },
+      ),
+      suite("New word badge")(
+        test("a side is new when the reader minted the word and no other tag of theirs holds it") {
+          assertTrue(
+            TagEditorPage.sourceIsNew(entry(1, Some(2), createdByMe = true, inMyOtherTags = false)),
+            !TagEditorPage.sourceIsNew(entry(1, Some(2), createdByMe = true, inMyOtherTags = true)),
+            !TagEditorPage.sourceIsNew(entry(1, Some(2), createdByMe = false, inMyOtherTags = false)),
+            TagEditorPage.targetIsNew(entry(1, Some(2), targetCreatedByMe = true, targetInMyOtherTags = false)),
+            !TagEditorPage.targetIsNew(entry(1, Some(2), targetCreatedByMe = true, targetInMyOtherTags = true)),
+          )
+        },
+        test("a row with no answer never marks its target new") {
+          assertTrue(!TagEditorPage.targetIsNew(entry(1, None, targetCreatedByMe = true)))
         },
       ),
       suite("suggestRoles")(
