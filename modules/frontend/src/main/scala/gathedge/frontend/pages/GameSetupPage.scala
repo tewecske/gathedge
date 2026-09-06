@@ -30,24 +30,6 @@ object GameSetupPage {
     val needle = filter.trim.toLowerCase
     if (needle.isEmpty) tags else tags.filter(_.name.toLowerCase.contains(needle))
   }
-
-  /** The eligible-word preview flipped: every `text -> translations` row becomes the reverse edges, regrouped so each
-    * former translation is now a source row with its own accepted answers. A swap of the language pair is the same pair
-    * the other way round, so the preview is re-oriented in the browser rather than refetched.
-    *
-    * `wordId` is not carried back (a translation string has none) and `partOfSpeech` is dropped; the page renders the
-    * pristine fetched list again on an even number of swaps (`wordsInvertedVar`), so nothing is lost by swapping twice.
-    */
-  def swapWords(words: List[GameSetupWord]): List[GameSetupWord] = {
-    words
-      .flatMap(word => word.translations.map(translation => translation -> word.text))
-      .groupBy { case (translation, _) => translation }
-      .map { case (translation, pairs) =>
-        GameSetupWord(wordId = 0L, text = translation, translations = pairs.map(_._2).distinct.sorted)
-      }
-      .toList
-      .sortBy(_.text)
-  }
 }
 
 private class GameSetupPage {
@@ -62,7 +44,7 @@ private class GameSetupPage {
 
   /** The language pair with its order ignored. Swapping source and target is the same pair, so neither the tag list nor
     * the word-list preview is refetched for it: the eligible set is identical either way (`word_tag_pairs` rows are
-    * stored in both directions), and a swap only re-orients what is already on screen.
+    * stored in both directions), and a swap only toggles which of the two already-fetched directions the preview shows.
     */
   private val languagePairSignal = formSignal.distinctBy { case (source, target) => Set(source, target) }
 
@@ -87,8 +69,8 @@ private class GameSetupPage {
 
   /** The setup screen's word-list preview, refetched whenever the language pair (order ignored) or the tag selection
     * changes — see `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word
-    * list is trivially empty, the same shortcut the backend itself takes. A pure swap does not refetch; `wordsView`
-    * re-orients the loaded rows through `GameSetupPage.swapWords` instead.
+    * list is trivially empty, the same shortcut the backend itself takes. A pure swap does not refetch: both directions
+    * of the current tags are fetched together and a swap toggles between them (`wordsShowReverseVar`).
     */
   private val wordsQuerySignal = {
     formSignal.combineWith(selectedTagIdsVar.signal).distinctBy { case (source, target, tagIds) =>
@@ -96,18 +78,21 @@ private class GameSetupPage {
     }
   }
 
+  /** The preview in the direction it was fetched in, and the same tags the other way round. Both are loaded on every
+    * real word-list fetch so a swap is a toggle between two ready lists — each keeps its own words' part of speech,
+    * which a client-side flip of one list could not reconstruct.
+    */
   private val wordsVar        = Var(List.empty[GameSetupWord])
+  private val wordsReverseVar = Var(List.empty[GameSetupWord])
   private val wordsLoadingVar = Var(false)
 
-  /** `true` after an odd number of swaps since the last fetch: `wordsVar` holds the rows as fetched, and the preview
-    * shows them flipped. Reset on every real word-list fetch.
-    */
-  private val wordsInvertedVar = Var(false)
+  /** Which of the two fetched directions the preview shows. A swap toggles it; every real word-list fetch resets it. */
+  private val wordsShowReverseVar = Var(false)
 
-  /** What the preview column renders: the fetched rows, or `swapWords` of them after a swap. */
+  /** What the preview column renders: whichever of the two fetched directions the swap state selects. */
   private val wordsView: Signal[List[GameSetupWord]] = {
-    wordsVar.signal.combineWith(wordsInvertedVar.signal).map { case (words, inverted) =>
-      if (inverted) GameSetupPage.swapWords(words) else words
+    wordsVar.signal.combineWith(wordsReverseVar.signal, wordsShowReverseVar.signal).map {
+      case (forward, reverse, showReverse) => if (showReverse) reverse else forward
     }
   }
 
@@ -200,18 +185,30 @@ private class GameSetupPage {
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
       wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ =>
-        Var.set(wordsLoadingVar -> true, wordsInvertedVar -> false)
+        Var.set(wordsLoadingVar -> true, wordsShowReverseVar -> false)
       ),
       wordsQuerySignal.updates.flatMapSwitch { case (source, target, tagIds) =>
         if (tagIds.isEmpty)
-          EventStream.fromValue(Right(Nil))
-        else
-          asReader(() => GameApiClient.setupWords(source, target, tagIds))
+          EventStream.fromValue(Right((List.empty[GameSetupWord], List.empty[GameSetupWord])))
+        else {
+          // Fetch both directions of the same tags, so a later swap toggles between two ready lists and needs no
+          // request. The reverse call runs after the forward one and without the guest detour: whatever session the
+          // forward `asReader` established (minting a guest if need be) is already in place for it.
+          asReader(() => GameApiClient.setupWords(source, target, tagIds)).flatMapSwitch {
+            case Left(err)      =>
+              EventStream.fromValue(Left(err))
+            case Right(forward) =>
+              GameApiClient.setupWords(target, source, tagIds).map {
+                case Left(err)      => Left(err)
+                case Right(reverse) => Right((forward, reverse))
+              }
+          }
+        }
       } -->
-        Observer[Either[ApiError, List[GameSetupWord]]] {
-          case Right(words) =>
-            Var.set(wordsVar -> words, wordsLoadingVar -> false)
-          case Left(err)    =>
+        Observer[Either[ApiError, (List[GameSetupWord], List[GameSetupWord])]] {
+          case Right((forward, reverse)) =>
+            Var.set(wordsVar -> forward, wordsReverseVar -> reverse, wordsLoadingVar -> false)
+          case Left(err)                 =>
             Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
         },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
@@ -274,8 +271,8 @@ private class GameSetupPage {
 
   /** Copied from `WordsPage.renderSwap`/`swapMark`: reuse the pattern, not the (page-private) function. Swaps both vars
     * in one `Var.set` call so `formSignal` fires once, not twice. A swap is the same pair the other way round, so it
-    * refetches nothing: it flips `wordsInvertedVar`, and `wordsView` re-orients the loaded preview rows. Stays enabled
-    * while the language selects are locked — the one language control a picked tag does not freeze.
+    * refetches nothing: it toggles `wordsShowReverseVar`, and `wordsView` shows the other already-fetched direction.
+    * Stays enabled while the language selects are locked — the one language control a picked tag does not freeze.
     */
   private def renderSwap(): HtmlElement = {
     span(
@@ -288,9 +285,9 @@ private class GameSetupPage {
         swapMark(),
         onClick.mapToUnit --> Observer[Unit] { _ =>
           Var.set(
-            sourceVar        -> targetVar.now(),
-            targetVar        -> sourceVar.now(),
-            wordsInvertedVar -> !wordsInvertedVar.now(),
+            sourceVar           -> targetVar.now(),
+            targetVar           -> sourceVar.now(),
+            wordsShowReverseVar -> !wordsShowReverseVar.now(),
           )
         },
       ),
