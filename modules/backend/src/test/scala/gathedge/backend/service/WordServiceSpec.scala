@@ -102,7 +102,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       group <- GroupRepository.insertGroup("group", "group", s"code-$tagId-$ownerId-$memberId", ownerId, now).orDie
       _     <- GroupRepository.insertMembership(group.id, ownerId, "admin", now).orDie
       _     <- GroupRepository.insertMembership(group.id, memberId, "member", now).orDie
-      _     <- WordRepository.setTagGroup(tagId, Some(group.id)).orDie
+      // The tag is freshly created and never renamed here, so its version is still 0.
+      _     <- WordRepository.setTagGroup(tagId, Some(group.id), expectedVersion = 0L).orDie
     } yield ()
   }
 
@@ -445,6 +446,26 @@ object WordServiceSpec extends ZIOSpecDefault {
           denied == Left(WordFailure.TagNotFound),
           tags.map(_.name).toSet == Set("Renamed", "lesson2"),
         )
+      },
+      test("a version-guarded tag write refuses a stale version and advances the counter") {
+        for {
+          lesson <- createTag("lesson1", 1L)
+          v0     <- WordRepository.findTagById(lesson.id).map(_.get.version)
+          hit    <- WordRepository.updateTag(lesson.id, 1L, "renamed", "renamed", v0)
+          v1     <- WordRepository.findTagById(lesson.id).map(_.get.version)
+          stale  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v0)
+          name   <- WordRepository.findTagById(lesson.id).map(_.get.name)
+          fresh  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v1)
+        } yield assertTrue(v0 == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "renamed", fresh == 1L)
+      },
+      test("renameTag and deleteTag pass the version they read, so a plain edit advances the counter") {
+        for {
+          lesson <- createTag("lesson1", 1L)
+          _      <- WordService.renameTag(lesson.id, "renamed", 1L)
+          bumped <- WordRepository.findTagById(lesson.id).map(_.get.version)
+          _      <- WordService.deleteTag(lesson.id, 1L)
+          gone   <- WordRepository.findTagById(lesson.id)
+        } yield assertTrue(bumped == 1L, gone.isEmpty)
       },
       test("listing tags answers every account's, own first, each marked whether the caller owns it") {
         for {

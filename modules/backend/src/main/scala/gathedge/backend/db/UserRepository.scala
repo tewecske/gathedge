@@ -74,10 +74,16 @@ trait UserRepository {
   /** How many accounts [[listPage]] would return across every page, which is what the page buttons are counted off. */
   def countMatching(emailContains: Option[String]): Task[Long]
 
-  /** The account's own username and display name, both replaced wholesale — `None` clears the column. Returns rows
-    * affected, so a caller can tell a lost race from a success.
+  /** The account's own username and display name, both replaced wholesale — `None` clears the column. Written only
+    * while the row's `version` still matches `expectedVersion`; bumps it. Returns rows affected, so a caller can tell a
+    * lost race (or a stale write) from a success.
     */
-  def updateUsernameAndName(id: Long, username: Option[String], displayName: Option[String]): Task[Long]
+  def updateUsernameAndName(
+    id: Long,
+    username: Option[String],
+    displayName: Option[String],
+    expectedVersion: Long,
+  ): Task[Long]
 
   /** Updates email/admin flag only if the row exists. Returns rows affected. */
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long]
@@ -135,8 +141,9 @@ object UserRepository {
     id: Long,
     username: Option[String],
     displayName: Option[String],
+    expectedVersion: Long,
   ): RIO[UserRepository, Long] =
-    ZIO.serviceWithZIO[UserRepository](_.updateUsernameAndName(id, username, displayName))
+    ZIO.serviceWithZIO[UserRepository](_.updateUsernameAndName(id, username, displayName, expectedVersion))
 
   def findAbandonedGuests(createdBefore: Long, limit: Int): RIO[UserRepository, List[Long]] =
     ZIO.serviceWithZIO[UserRepository](_.findAbandonedGuests(createdBefore, limit))
@@ -253,10 +260,11 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       users
         .filter(row => row.id == lift(id) && row.isGuest)
         .update(
-          _.email           -> lift(Option(email)),
-          _.passwordHash    -> lift(Option(passwordHash)),
-          _.emailVerifiedAt -> lift(emailVerifiedAt),
-          _.isGuest         -> lift(false),
+          _.email            -> lift(Option(email)),
+          _.passwordHash     -> lift(Option(passwordHash)),
+          _.emailVerifiedAt  -> lift(emailVerifiedAt),
+          _.isGuest          -> lift(false),
+          row => row.version -> (row.version + 1),
         )
     )
     logged(run(ctx.run(q)))(rows => s"users.upgradeGuest id=$id verified=${emailVerifiedAt.isDefined} rows=$rows")
@@ -288,19 +296,25 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def updateTheme(userId: Long, theme: String): Task[Unit] = {
-    logged(run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.theme -> lift(theme))))).unit) { _ =>
-      s"users.updateTheme id=$userId theme=$theme"
-    }
+    val q = quote(
+      users.filter(_.id == lift(userId)).update(_.theme -> lift(theme), row => row.version -> (row.version + 1))
+    )
+    logged(run(ctx.run(q)).unit)(_ => s"users.updateTheme id=$userId theme=$theme")
   }
 
   def updateLocale(userId: Long, locale: String): Task[Unit] = {
-    logged(run(ctx.run(quote(users.filter(_.id == lift(userId)).update(_.locale -> lift(locale))))).unit) { _ =>
-      s"users.updateLocale id=$userId locale=$locale"
-    }
+    val q = quote(
+      users.filter(_.id == lift(userId)).update(_.locale -> lift(locale), row => row.version -> (row.version + 1))
+    )
+    logged(run(ctx.run(q)).unit)(_ => s"users.updateLocale id=$userId locale=$locale")
   }
 
   def markEmailVerified(userId: Long, verifiedAt: Long): Task[Unit] = {
-    val q = quote(users.filter(_.id == lift(userId)).update(_.emailVerifiedAt -> lift(Option(verifiedAt))))
+    val q = quote(
+      users
+        .filter(_.id == lift(userId))
+        .update(_.emailVerifiedAt -> lift(Option(verifiedAt)), row => row.version -> (row.version + 1))
+    )
     logged(run(ctx.run(q)).unit)(_ => s"users.markEmailVerified id=$userId")
   }
 
@@ -396,9 +410,20 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(matching(emailContains).size)))(count => s"users.countMatching count=$count")
   }
 
-  def updateUsernameAndName(id: Long, username: Option[String], displayName: Option[String]): Task[Long] = {
+  def updateUsernameAndName(
+    id: Long,
+    username: Option[String],
+    displayName: Option[String],
+    expectedVersion: Long,
+  ): Task[Long] = {
     val q = quote(
-      users.filter(_.id == lift(id)).update(_.username -> lift(username), _.displayName -> lift(displayName))
+      users
+        .filter(row => row.id == lift(id) && row.version == lift(expectedVersion))
+        .update(
+          _.username         -> lift(username),
+          _.displayName      -> lift(displayName),
+          row => row.version -> (row.version + 1),
+        )
     )
     logged(run(ctx.run(q))) { rows =>
       s"users.updateUsernameAndName id=$id username=${username.isDefined} name=${displayName.isDefined} rows=$rows"
@@ -406,25 +431,43 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long] = {
-    val q = quote(users.filter(_.id == lift(id)).update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin)))
+    val q = quote(
+      users
+        .filter(_.id == lift(id))
+        .update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin), row => row.version -> (row.version + 1))
+    )
     logged(run(ctx.run(q)))(rows => s"users.updateProfile id=$id admin=$isAdmin rows=$rows")
   }
 
   def updatePasswordHash(id: Long, passwordHash: String): Task[Unit] = {
-    val q = quote(users.filter(_.id == lift(id)).update(_.passwordHash -> lift(Option(passwordHash))))
+    val q = quote(
+      users
+        .filter(_.id == lift(id))
+        .update(_.passwordHash -> lift(Option(passwordHash)), row => row.version -> (row.version + 1))
+    )
     logged(run(ctx.run(q)).unit)(_ => s"users.updatePasswordHash id=$id")
   }
 
   def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long] = {
     val profile = ctx.run(
-      quote(users.filter(_.id == lift(id)).update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin)))
+      quote(
+        users
+          .filter(_.id == lift(id))
+          .update(_.email -> lift(Option(email)), _.isAdmin -> lift(isAdmin), row => row.version -> (row.version + 1))
+      )
     )
     val updated = {
       passwordHash match {
         case None       =>
           run(profile)
         case Some(hash) =>
-          val password = ctx.run(quote(users.filter(_.id == lift(id)).update(_.passwordHash -> lift(Option(hash)))))
+          val password = ctx.run(
+            quote(
+              users
+                .filter(_.id == lift(id))
+                .update(_.passwordHash -> lift(Option(hash)), row => row.version -> (row.version + 1))
+            )
+          )
           // One unit of work: an admin edit must not be able to land the new password while leaving
           // the email/role change behind, or the other way round.
           transaction(password *> profile)

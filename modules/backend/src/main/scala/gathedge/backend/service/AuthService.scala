@@ -83,6 +83,11 @@ enum ProfileFailure {
 
   /** Some other account already signs in by that username. */
   case UsernameTaken
+
+  /** The account was changed by someone else (another tab, an administrator) between this request's read and its write.
+    * The caller should reload and retry.
+    */
+  case StaleWrite
 }
 
 /** The guest paths' failures, in three enums rather than one.
@@ -1139,9 +1144,20 @@ final case class AuthServiceLive(
                        .orDie
                        .flatMap(found => ZIO.when(found.exists(_.id != userId))(ZIO.fail(ProfileFailure.UsernameTaken)))
                    }
-      _         <- userRepo.updateUsernameAndName(userId, normalized, trimmed).orDie
-      // The caller holds a session for this account, so a missing row is a deleted account mid-request: a defect
-      // rather than something the form can act on, the same call `updateTheme` makes one line further down.
+      current   <- userRepo
+                     .findById(userId)
+                     .orDie
+                     .someOrElseZIO(ZIO.die(new RuntimeException(s"user $userId not found")))
+      rows      <- userRepo.updateUsernameAndName(userId, normalized, trimmed, current.version).orDie
+      // Zero rows: either the account was changed between the read above and this write (another tab, an
+      // administrator) -- a conflict the form can act on -- or it was deleted mid-request while its own session was
+      // still live, which stays a defect the way it was before.
+      _         <- ZIO.when(rows == 0L) {
+                     userRepo.findById(userId).orDie.flatMap {
+                       case Some(_) => ZIO.fail(ProfileFailure.StaleWrite)
+                       case None    => ZIO.die(new RuntimeException(s"user $userId not found"))
+                     }
+                   }
       row       <- userRepo
                      .findById(userId)
                      .orDie

@@ -45,6 +45,7 @@
   "error.notAuthenticated": "Nem vagy bejelentkezve",
   "error.notAdministrator": "Be vagy jelentkezve, de nincs adminisztrátori jogosultságod",
   "error.invalidRedirect": "Érvénytelen átirányítási cél",
+  "error.staleWrite": "Ezt módosították, amíg szerkesztetted. Töltsd újra, és próbáld újra.",
   "error.requestFailed": "A szerver nem érhető el. Ellenőrizd a kapcsolatot, és próbáld újra.",
   "email.verify.subject": "Erősítsd meg az e-mail címedet",
   "email.verify.body": "Erősítsd meg az e-mail címedet ezen a linken: {0}\n\nA link {1} óra múlva lejár.",

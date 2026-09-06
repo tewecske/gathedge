@@ -56,6 +56,9 @@ enum GameFailure {
   case NoEligibleWords
 
   case ValidationError(fieldErrors: Map[String, MessageRef])
+
+  /** The game was renamed or deleted by someone else between this request's read and its write. */
+  case StaleWrite
 }
 
 /** Creating, reading and renaming a vocabulary quiz — which tags it may be built from, minting its `slug`/`name` — plus
@@ -634,7 +637,13 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                   .fromEither(Validation.validateGameName(newName))
                   .mapError(error => GameFailure.ValidationError(Map("name" -> error)))
       now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _      <- repo.rename(row.id, valid, now).orDie
+      rows   <- repo.rename(row.id, valid, now, row.version).orDie
+      _      <- OptimisticLock.resolve(
+                  rows,
+                  repo.findBySlug(slug).orDie.map(_.isDefined),
+                  GameFailure.StaleWrite,
+                  GameFailure.NotFound,
+                )
       detail <- detailOf(row.copy(name = valid))
     } yield detail
   }

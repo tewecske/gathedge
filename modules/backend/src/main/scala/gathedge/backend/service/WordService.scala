@@ -122,6 +122,11 @@ enum WordFailure {
     * creation and editable only while the tag has no practice pair.
     */
   case LanguagesLocked
+
+  /** The tag was renamed, deleted, re-languaged or moved between groups by someone else between this request's read of
+    * it and its write. The caller should reload and retry.
+    */
+  case StaleWrite
 }
 
 /** [[WordService.bulkUploadPreview]]/[[WordService.bulkUploadConfirm]]'s shared failure surface — separate from
@@ -1609,8 +1614,13 @@ final case class WordServiceLive(
       existing        <- requireOwnTag(tagId, userId)
       prepared        <- prepareTagName(name, userId, excludeTagId = Some(tagId))
       (valid, normal)  = prepared
-      rows            <- repo.updateTag(tagId, userId, valid, normal).orDie
-      _               <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound))
+      rows            <- repo.updateTag(tagId, userId, valid, normal, existing.version).orDie
+      _               <- OptimisticLock.resolve(
+                           rows,
+                           repo.findTagById(tagId).orDie.map(_.exists(_.userId == userId)),
+                           WordFailure.StaleWrite,
+                           WordFailure.TagNotFound,
+                         )
       wordCount       <- repo.countWordsInTag(tagId).orDie
       group           <- resolveGroupRef(existing.groupId)
       (source, target) = tagLanguages(existing)
@@ -1666,11 +1676,16 @@ final case class WordServiceLive(
   }
 
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {
-    repo
-      .deleteTag(tagId, userId)
-      .orDie
-      .flatMap(rows => ZIO.when(rows == 0L)(ZIO.fail(WordFailure.TagNotFound)))
-      .unit
+    for {
+      existing <- requireOwnTag(tagId, userId)
+      rows     <- repo.deleteTag(tagId, userId, existing.version).orDie
+      _        <- OptimisticLock.resolve(
+                    rows,
+                    repo.findTagById(tagId).orDie.map(_.exists(_.userId == userId)),
+                    WordFailure.StaleWrite,
+                    WordFailure.TagNotFound,
+                  )
+    } yield ()
   }
 
   /** Renaming/deleting a tag: checks the tag belongs to the caller, and answers `TagNotFound` when it does not — whose

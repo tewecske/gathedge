@@ -27,6 +27,9 @@ enum GroupFailure {
   case TagAlreadyInGroup
   case TagNotInGroup
   case RateLimited
+
+  /** The group or membership was changed by someone else between this request's read and its write. */
+  case StaleWrite
 }
 
 /** Classroom-style tag groups. A group has two roles (`admin`/`member`); attaching one of the caller's own tags to a
@@ -228,18 +231,30 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
     for {
       membership <- repo.findMembership(groupId, userId).orDie.someOrFail(GroupFailure.NotFound)
       _          <- guardNotLastAdmin(groupId, membership)
-      _          <- repo.deleteMembership(groupId, userId).orDie
+      rows       <- repo.deleteMembership(groupId, userId, membership.version).orDie
+      _          <- OptimisticLock.resolve(
+                      rows,
+                      repo.findMembership(groupId, userId).orDie.map(_.isDefined),
+                      GroupFailure.StaleWrite,
+                      GroupFailure.NotFound,
+                    )
     } yield ()
   }
 
   def renameGroup(groupId: Long, name: String, userId: Long): IO[GroupFailure, GroupDetail] = {
     for {
-      _      <- requireAdmin(groupId, userId)
+      group  <- requireAdmin(groupId, userId)
       valid  <- ZIO
                   .fromEither(Validation.validateGroupName(name))
                   .mapError(error => GroupFailure.ValidationError(Map("name" -> error)))
       normal  = Group.normalize(valid)
-      _      <- repo.updateGroupName(groupId, valid, normal).orDie
+      rows   <- repo.updateGroupName(groupId, valid, normal, group.version).orDie
+      _      <- OptimisticLock.resolve(
+                  rows,
+                  repo.findGroupById(groupId).orDie.map(_.isDefined),
+                  GroupFailure.StaleWrite,
+                  GroupFailure.NotFound,
+                )
       result <- detail(groupId, userId)
     } yield result
   }
@@ -262,8 +277,13 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       _       <- requireAdmin(groupId, actingUserId)
       target  <- repo.findMembership(groupId, targetUserId).orDie.someOrFail(GroupFailure.NotFound)
       _       <- ZIO.when(role == GroupRole.Member)(guardNotLastAdmin(groupId, target))
-      rows    <- repo.updateMemberRole(groupId, targetUserId, GroupRole.code(role)).orDie
-      _       <- ZIO.when(rows == 0L)(ZIO.fail(GroupFailure.NotFound))
+      rows    <- repo.updateMemberRole(groupId, targetUserId, GroupRole.code(role), target.version).orDie
+      _       <- OptimisticLock.resolve(
+                   rows,
+                   repo.findMembership(groupId, targetUserId).orDie.map(_.isDefined),
+                   GroupFailure.StaleWrite,
+                   GroupFailure.NotFound,
+                 )
       members <- repo.membersWithUsers(groupId).orDie
       updated <- ZIO
                    .fromOption(members.find { case (member, _) => member.userId == targetUserId })
@@ -276,7 +296,13 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       _      <- requireAdmin(groupId, actingUserId)
       target <- repo.findMembership(groupId, targetUserId).orDie.someOrFail(GroupFailure.NotFound)
       _      <- guardNotLastAdmin(groupId, target)
-      _      <- repo.deleteMembership(groupId, targetUserId).orDie
+      rows   <- repo.deleteMembership(groupId, targetUserId, target.version).orDie
+      _      <- OptimisticLock.resolve(
+                  rows,
+                  repo.findMembership(groupId, targetUserId).orDie.map(_.isDefined),
+                  GroupFailure.StaleWrite,
+                  GroupFailure.NotFound,
+                )
     } yield ()
   }
 
@@ -288,7 +314,13 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       tag        <- wordRepo.findTagById(tagId).orDie.someOrFail(GroupFailure.TagNotFound)
       _          <- ZIO.unless(tag.userId == userId)(ZIO.fail(GroupFailure.TagNotOwned))
       _          <- ZIO.when(tag.groupId.isDefined)(ZIO.fail(GroupFailure.TagAlreadyInGroup))
-      _          <- wordRepo.setTagGroup(tagId, Some(groupId)).orDie
+      rows       <- wordRepo.setTagGroup(tagId, Some(groupId), tag.version).orDie
+      _          <- OptimisticLock.resolve(
+                      rows,
+                      wordRepo.findTagById(tagId).orDie.map(_.isDefined),
+                      GroupFailure.StaleWrite,
+                      GroupFailure.TagNotFound,
+                    )
     } yield ()
   }
 
@@ -299,7 +331,13 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       membership <- repo.findMembership(groupId, userId).orDie
       isAdmin     = membership.exists(_.role == adminCode)
       _          <- ZIO.unless(tag.userId == userId || isAdmin)(ZIO.fail(GroupFailure.NotAdmin))
-      _          <- wordRepo.setTagGroup(tagId, None).orDie
+      rows       <- wordRepo.setTagGroup(tagId, None, tag.version).orDie
+      _          <- OptimisticLock.resolve(
+                      rows,
+                      wordRepo.findTagById(tagId).orDie.map(_.isDefined),
+                      GroupFailure.StaleWrite,
+                      GroupFailure.TagNotFound,
+                    )
     } yield ()
   }
 }

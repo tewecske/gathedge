@@ -234,10 +234,11 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
+  /** 409 is a stale write: the tag was changed by someone else between this caller's read of it and this delete. */
   val deleteTag = {
     Endpoint(Method.DELETE / "api" / "tags" / tagId).withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Sets a tag's language pair — the editor's language selects. A fresh pair is accepted only before the tag has a

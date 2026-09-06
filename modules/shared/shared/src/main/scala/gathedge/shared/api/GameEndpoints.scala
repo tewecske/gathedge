@@ -128,12 +128,13 @@ object GameEndpoints {
       .outFailure(failure.notFound)
   }
 
+  /** 409 is a stale write: the game was renamed by someone else between this caller's read and this write. */
   val rename = {
     Endpoint(Method.PATCH / "api" / "games" / gameSlug)
       .in[RenameGameRequest]
       .withCodecError
       .out[GameDetail]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Starts a fresh attempt at `slug` under the variant `body` describes — see [[StartPlayRequest]]. `badRequest`

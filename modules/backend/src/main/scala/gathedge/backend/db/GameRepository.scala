@@ -37,8 +37,10 @@ trait GameRepository {
 
   def tagsOf(gameId: Long): Task[List[TagRow]]
 
-  /** Rows affected — `0` means `id` does not exist. Ownership is the service's job: this only writes. */
-  def rename(id: Long, name: String, updatedAt: Long): Task[Long]
+  /** Rows affected — `0` means `id` does not exist, or its `version` no longer matches `expectedVersion`. Ownership is
+    * the service's job: this only writes. Bumps `version`.
+    */
+  def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): Task[Long]
 
   /** One page of every account's games, most recent first unless `sort` says otherwise — the games listing's source
     * rows. `nameContains` narrows to games whose name contains it, case-insensitively. `favoritesOf`, when set, keeps
@@ -207,8 +209,8 @@ object GameRepository {
   def tagsOf(gameId: Long): RIO[GameRepository, List[TagRow]] =
     ZIO.serviceWithZIO[GameRepository](_.tagsOf(gameId))
 
-  def rename(id: Long, name: String, updatedAt: Long): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt))
+  def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt, expectedVersion))
 
   def listAllGamesPage(
     nameContains: Option[String],
@@ -415,9 +417,11 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"games.tagsOf id=$gameId rows=${rows.size}")
   }
 
-  def rename(id: Long, name: String, updatedAt: Long): Task[Long] = {
+  def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): Task[Long] = {
     val q = quote {
-      games.filter(_.id == lift(id)).update(_.name -> lift(name), _.updatedAt -> lift(updatedAt))
+      games
+        .filter(game => game.id == lift(id) && game.version == lift(expectedVersion))
+        .update(_.name -> lift(name), _.updatedAt -> lift(updatedAt), game => game.version -> (game.version + 1))
     }
     logged(run(ctx.run(q)))(rows => s"games.rename id=$id rows=$rows")
   }

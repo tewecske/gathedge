@@ -91,7 +91,7 @@ object GroupEndpoints {
       .in[RenameGroupRequest]
       .withCodecError
       .out[GroupDetail]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Admin-only. Mints a fresh invite code and immediately invalidates the old one. */
@@ -133,7 +133,7 @@ object GroupEndpoints {
   val detachTag = {
     Endpoint(Method.DELETE / "api" / "groups" / groupId / "tags" / tagId).withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection. */
