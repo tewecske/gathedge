@@ -20,6 +20,7 @@ import gathedge.backend.db.{
 }
 import gathedge.backend.i18n.Messages
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
+import gathedge.backend.telemetry.Telemetry
 import zio.*
 import zio.http.*
 import zio.test.*
@@ -59,7 +60,7 @@ object UsageTrackerSpec extends ZIOSpecDefault {
   private val layer = {
     (
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ AppConfig.live ++
-        RecordingEmailSender.live ++ Messages.live ++ TestCaptchaService.live ++ GameWordList.live >+>
+        RecordingEmailSender.live ++ Messages.live ++ TestCaptchaService.live ++ GameWordList.live ++ Telemetry.live >+>
         (AuthService.live ++ AuditTrail.live ++ GameService.live)
     ) >+> (AdminService.live ++ UsageTracker.live)
   }

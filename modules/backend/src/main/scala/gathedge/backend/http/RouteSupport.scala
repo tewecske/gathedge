@@ -185,7 +185,8 @@ object RouteSupport {
 
   /** Wraps every request in a `SpanKind.SERVER` span — the parent, in the finished trace, of the request log line, the
     * handler, and every SQL span the OpenTelemetry Java agent opens beneath it. The `usage_events` insert is not among
-    * them: it runs on `UsageTracker`'s drain fiber, off the request path. `Main` attaches this aspect outermost.
+    * them: it runs on `UsageTracker`'s drain fiber, off the request path, in its own trace — joined to this span by a
+    * span link, since the write outlives the request. `Main` attaches this aspect outermost.
     *
     * Built like [[requestLogging]], with `interceptHandlerStateful` carrying the open span from before the handler to
     * after it, because — as the note there says — the handler cannot be called directly across the `Scope` its response
