@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkImportResponse,
   ColumnLanguageCheckResponse,
@@ -33,9 +33,9 @@ import scala.util.{Failure, Success}
   *
   * Rows are shown the plain way `TagWordsList` showed them, with an edit icon beside the delete icon. Editing a row
   * swaps its two cells for the same [[WordPicker]] the add-a-row control uses; committing it calls `replacePair`. The
-  * three filters (exact / non-exact / unmatched) narrow the list by each row's import provenance; with none selected
-  * every row shows. The bulk-import panel feeds straight into this list — it writes every token as a row, in the pasted
-  * order, and the reader sorts them out here.
+  * four filters (verified / paired / other / unmatched) narrow the list by each row's import provenance; with none
+  * selected every row shows. The bulk-import panel feeds straight into this list — it writes every token as a row, in
+  * the pasted order, and the reader sorts them out here.
   */
 object TagEditorPage {
   def render(tagId: Long, recognize: ImageOcr.Recognize): HtmlElement = {
@@ -53,14 +53,25 @@ object TagEditorPage {
   private[pages] def isDuplicate(existing: List[TagEntry], entry: TagEntry): Boolean =
     existing.exists(row => rowKey(row) == rowKey(entry))
 
-  /** The three mutually-exclusive provenance buckets, read off a row's import flags. */
-  private[pages] enum EntryFilter { case Exact, NonExact, Unmatched }
+  /** The four mutually-exclusive provenance buckets, read off a row's import flags. `Verified` and `Paired` are the two
+    * kinds of pair an import writes — one the dictionary already linked, one the imported row asserted — and `Other` is
+    * an imported row whose pair the reader marked by hand.
+    */
+  private[pages] enum EntryFilter { case Verified, Paired, Other, Unmatched }
 
   private[pages] def stateOf(entry: TagEntry): Option[EntryFilter] = {
-    if (entry.exact) Some(EntryFilter.Exact)
-    else if (entry.imported && entry.target.isDefined) Some(EntryFilter.NonExact)
-    else if (entry.imported) Some(EntryFilter.Unmatched)
-    else None
+    entry.matchKind match {
+      case PairMatch.Verified                                           =>
+        Some(EntryFilter.Verified)
+      case PairMatch.Paired                                             =>
+        Some(EntryFilter.Paired)
+      case PairMatch.Manual if entry.imported && entry.target.isDefined =>
+        Some(EntryFilter.Other)
+      case PairMatch.Manual if entry.imported                           =>
+        Some(EntryFilter.Unmatched)
+      case PairMatch.Manual                                             =>
+        None
+    }
   }
 
   /** Whether the filters show a row: the selected buckets are OR'd (none = every bucket), and "imported by me" / "only
@@ -742,7 +753,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
               I18n.t(
                 UiKeys.tagsEditorBulkResult,
                 result.added.toString,
-                result.exactPairs.toString,
+                result.verifiedPairs.toString,
                 result.unmatched.toString,
               )
             )
@@ -940,8 +951,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     div(
       cls := "flex flex-wrap items-center gap-2 mt-3",
       span(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsEditorFilterHeading)),
-      chip(EntryFilter.Exact, UiKeys.tagsEditorFilterExact),
-      chip(EntryFilter.NonExact, UiKeys.tagsEditorFilterNonExact),
+      chip(EntryFilter.Verified, UiKeys.tagsEditorFilterVerified),
+      chip(EntryFilter.Paired, UiKeys.tagsEditorFilterPaired),
+      chip(EntryFilter.Other, UiKeys.tagsEditorFilterOther),
       chip(EntryFilter.Unmatched, UiKeys.tagsEditorFilterUnmatched),
       toggle(importedByMeVar, UiKeys.tagsEditorFilterImportedByMe),
       toggle(uniqueToTagVar, UiKeys.tagsEditorFilterUniqueToTag),
@@ -1080,10 +1092,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       td(
         div(
           cls := "flex gap-1",
-          Option.when(entry.exact)(
-            span(cls := "badge badge-success badge-xs", I18n.t(UiKeys.wordsBulkUploadExactBadge))
+          Option.when(entry.matchKind == PairMatch.Verified)(
+            span(cls := "badge badge-success badge-xs", I18n.t(UiKeys.tagsEditorVerifiedBadge))
           ),
-          Option.when(entry.imported && !entry.exact)(
+          Option.when(entry.matchKind == PairMatch.Paired)(
+            span(cls := "badge badge-info badge-xs", I18n.t(UiKeys.tagsEditorPairedBadge))
+          ),
+          Option.when(entry.imported && entry.matchKind == PairMatch.Manual)(
             span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.tagsEditorImportedBadge))
           ),
         )

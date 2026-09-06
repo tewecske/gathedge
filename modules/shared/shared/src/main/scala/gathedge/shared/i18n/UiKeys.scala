@@ -950,13 +950,20 @@ object UiKeys {
   /** Badge on a row whose membership a bulk import wrote. */
   val tagsEditorImportedBadge: String = key("ui.tags.editor.importedBadge")
 
-  /** The multi-select filter above the rows; with none selected every row shows. The first three are mutually-exclusive
+  /** Badges on a row whose pair an import wrote: the dictionary already linked the two words (`PairMatch.Verified`), or
+    * the imported row put them together and nothing has checked it (`PairMatch.Paired`).
+    */
+  val tagsEditorVerifiedBadge: String = key("ui.tags.editor.verifiedBadge")
+  val tagsEditorPairedBadge: String   = key("ui.tags.editor.pairedBadge")
+
+  /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
     * in this tag" is a word in none of the reader's other tags.
     */
   val tagsEditorFilterHeading: String      = key("ui.tags.editor.filterHeading")
-  val tagsEditorFilterExact: String        = key("ui.tags.editor.filterExact")
-  val tagsEditorFilterNonExact: String     = key("ui.tags.editor.filterNonExact")
+  val tagsEditorFilterVerified: String     = key("ui.tags.editor.filterVerified")
+  val tagsEditorFilterPaired: String       = key("ui.tags.editor.filterPaired")
+  val tagsEditorFilterOther: String        = key("ui.tags.editor.filterOther")
   val tagsEditorFilterUnmatched: String    = key("ui.tags.editor.filterUnmatched")
   val tagsEditorFilterImportedByMe: String = key("ui.tags.editor.filterImportedByMe")
   val tagsEditorFilterUniqueToTag: String  = key("ui.tags.editor.filterUniqueToTag")

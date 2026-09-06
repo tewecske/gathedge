@@ -81,3 +81,49 @@ object Tag {
     */
   def sorted(tags: List[Tag]): List[Tag] = tags.sortBy(tag => (!tag.ownedByMe, tag.name.toLowerCase))
 }
+
+/** Where a practice pair inside a tag came from — `word_tag_pairs.match_kind`.
+  *
+  * The two import paths make different claims, and the editor has to be able to say which one a row carries. The
+  * free-text path can only mark a pair `word_translations` already links, so the dictionary has checked it. The tabular
+  * path writes the pair its row asserts, for words the dictionary may never have heard of. Marking both the same way
+  * claimed a check that had not happened.
+  */
+enum PairMatch derives JsonCodec, CanEqual {
+
+  /** The reader marked this pair themselves — a chip on the words page, an editor row, a copied tag. */
+  case Manual
+
+  /** Both words were in the dictionary and already each other's translation. */
+  case Verified
+
+  /** An import wrote the pair from a row that put the two cells on one line. Nothing has checked it. */
+  case Paired
+}
+
+object PairMatch {
+
+  val all: List[PairMatch] = List(Manual, Verified, Paired)
+
+  /** What `word_tag_pairs.match_kind` stores. [[Manual]] is `''`, the `words.gender` rule: absent is one of the values,
+    * not the absence of one. Written out rather than derived from `toString`, so renaming a case cannot orphan stored
+    * rows.
+    */
+  def code(kind: PairMatch): String = {
+    kind match {
+      case Manual   =>
+        ""
+      case Verified =>
+        "verified"
+      case Paired   =>
+        "paired"
+    }
+  }
+
+  /** Anything unrecognised reads as [[Manual]] — a row whose provenance is not known is not a claim about one. */
+  def fromString(value: String): PairMatch = all.find(kind => code(kind) == value.toLowerCase).getOrElse(Manual)
+
+  extension (kind: PairMatch) {
+    def wireCode: String = code(kind)
+  }
+}

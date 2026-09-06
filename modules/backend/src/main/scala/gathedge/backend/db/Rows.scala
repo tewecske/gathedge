@@ -1,5 +1,7 @@
 package gathedge.backend.db
 
+import gathedge.shared.domain.PairMatch
+
 /** `emailVerifiedAt` is `None` until the address is proven — either by following a verification link or by arriving
   * from a provider that asserts `email_verified`. Whether that actually blocks a password login is
   * `app.require-email-verification`; the column is filled in either way.
@@ -243,9 +245,11 @@ final case class WordTagRow(
   * pair whose answer is not itself collected is a question with a missing half — which is why this is written through
   * `WordRepository.pairTranslation` rather than a bare insert.
   *
-  * `exact` marks a pair a bulk import matched exactly — the word and its dictionary translation were both in the
-  * uploaded text. History, not state; defaulted `false` for every hand-marked pair and every pair that predates the
-  * unified editor.
+  * `matchKind` is what wrote the pair, as `PairMatch.code` spells it: `''` for a hand-marked one, `'verified'` for a
+  * free-text import that found the two words already linked in the dictionary, `'paired'` for a tabular import writing
+  * the pair its row asserted. History, not state; `''` for every pair that predates the unified editor. Held as the
+  * stored string rather than the enum because that is what the column is — `PairMatch.fromString` is applied where the
+  * projection is built.
   */
 final case class WordTagPairRow(
   id: Long,
@@ -253,12 +257,12 @@ final case class WordTagPairRow(
   tagId: Long,
   translationWordId: Long,
   createdAt: Long,
-  exact: Boolean = false,
+  matchKind: String = "",
 )
 
 /** One row of the unified tag editor, assembled by `WordRepository.tagEntries`: the source word, its marked answer
-  * (absent for an "unmatched" row), whether a bulk import wrote the membership, and whether it wrote the pair as an
-  * exact match. Not a table — a projection the editor and its filters read.
+  * (absent for an "unmatched" row), whether a bulk import wrote the membership, and what wrote the pair. Not a table —
+  * a projection the editor and its filters read.
   *
   * The two comments come from the two `word_tags` memberships, one per side, because either cell of an imported line
   * may have carried a note and they say different things.
@@ -267,7 +271,7 @@ final case class TagEntryRow(
   source: WordRow,
   target: Option[WordRow],
   imported: Boolean,
-  exact: Boolean,
+  matchKind: PairMatch,
   comment: Option[String] = None,
   targetComment: Option[String] = None,
 )

@@ -3,7 +3,7 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import gathedge.shared.domain.{LanguageProfile, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{LanguageProfile, PairMatch, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.WordSort
 import zio.*
 
@@ -255,8 +255,14 @@ trait WordRepository {
   /** [[tagWord]] with the membership marked `imported`; promotes an existing hand-added row's flag. */
   def importWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit]
 
-  /** [[pairTranslation]] with the pair marked `exact` and both memberships `imported`; promotes existing rows. */
-  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit]
+  /** [[pairTranslation]] with the pair carrying `matchKind` and both memberships `imported`; promotes existing rows. */
+  def importPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+    matchKind: PairMatch,
+  ): Task[Unit]
 
   /** Sets (or clears) the note on one word's membership of one tag. Rows affected: `0` when it is not a member. */
   def setTagComment(wordId: Long, tagId: Long, comment: Option[String]): Task[Long]
@@ -591,8 +597,14 @@ object WordRepository {
   def importWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Unit] =
     ZIO.serviceWithZIO[WordRepository](_.importWord(wordId, tagId, createdAt))
 
-  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): RIO[WordRepository, Unit] =
-    ZIO.serviceWithZIO[WordRepository](_.importPair(wordId, tagId, translationWordId, createdAt))
+  def importPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+    matchKind: PairMatch,
+  ): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.importPair(wordId, tagId, translationWordId, createdAt, matchKind))
 
   def setTagComment(wordId: Long, tagId: Long, comment: Option[String]): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.setTagComment(wordId, tagId, comment))
@@ -1326,15 +1338,16 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   // -- Practice pairs ---------------------------------------------------------------------------
 
-  /** One pair row, inserted only if it is not already there. A `ZIO[DataSource, …]` for the reason [[linkOnce]] is.
-    * `exact` promotes an existing row's flag the same way [[linkOnce]]'s `imported` does; nothing clears it.
+  /** One pair row, inserted only if it is not already there. A `ZIO[DataSource, …]` for the reason [[linkOnce]] is. An
+    * import's `matchKind` promotes an existing hand-marked row the same way [[linkOnce]]'s `imported` does; nothing
+    * clears it, and nothing overwrites one import's claim with the other's.
     */
   private def pairOnce(
     wordId: Long,
     tagId: Long,
     translationWordId: Long,
     createdAt: Long,
-    exact: Boolean = false,
+    matchKind: PairMatch = PairMatch.Manual,
   ): ZIO[DataSource, Throwable, Unit] = {
     val existing = quote(
       wordTagPairs.filter(pair => {
@@ -1342,17 +1355,18 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
         pair.translationWordId == lift(translationWordId)
       })
     )
-    val row      = WordTagPairRow(0L, wordId, tagId, translationWordId, createdAt, exact)
+    val code     = PairMatch.code(matchKind)
+    val row      = WordTagPairRow(0L, wordId, tagId, translationWordId, createdAt, code)
     ctx.run(existing).map(_.headOption).flatMap {
       case Some(pair) =>
-        if (exact && !pair.exact) {
+        if (matchKind != PairMatch.Manual && PairMatch.fromString(pair.matchKind) == PairMatch.Manual) {
           ctx
             .run(quote {
               wordTagPairs
                 .filter(p =>
                   p.wordId == lift(wordId) && p.tagId == lift(tagId) && p.translationWordId == lift(translationWordId)
                 )
-                .update(_.exact -> true)
+                .update(_.matchKind -> lift(code))
             })
             .unit
         } else ZIO.unit
@@ -1363,21 +1377,21 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   /** The four rows a bilingual pair adds inside one tag, in both directions, each inserted only if it is not already
     * there. A `ZIO[DataSource, …]` so both [[pairTranslation]] and [[createTagWithPairs]] can run it inside their own
-    * transaction. `exact`/`imported` mark a pair a bulk import matched exactly and the memberships it wrote.
+    * transaction. `matchKind`/`imported` say what wrote the pair and mark the memberships an import wrote.
     */
   private def linkPair(
     wordId: Long,
     tagId: Long,
     translationWordId: Long,
     createdAt: Long,
-    exact: Boolean = false,
+    matchKind: PairMatch = PairMatch.Manual,
     imported: Boolean = false,
   ): ZIO[DataSource, Throwable, Unit] = {
     for {
       _ <- linkOnce(wordId, tagId, createdAt, imported)
       _ <- linkOnce(translationWordId, tagId, createdAt, imported)
-      _ <- pairOnce(wordId, tagId, translationWordId, createdAt, exact)
-      _ <- pairOnce(translationWordId, tagId, wordId, createdAt, exact)
+      _ <- pairOnce(wordId, tagId, translationWordId, createdAt, matchKind)
+      _ <- pairOnce(translationWordId, tagId, wordId, createdAt, matchKind)
     } yield ()
   }
 
@@ -1388,12 +1402,20 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(marked)(_ => s"wordTagPairs.pair word=$wordId tag=$tagId translation=$translationWordId")
   }
 
-  /** [[pairTranslation]], but the pair is marked `exact` and both memberships `imported` — a bulk import's exact match.
-    * Existing rows are promoted, never re-inserted.
+  /** [[pairTranslation]], but the pair carries `matchKind` and both memberships are `imported` — a bulk import's own
+    * write. Existing rows are promoted, never re-inserted.
     */
-  def importPair(wordId: Long, tagId: Long, translationWordId: Long, createdAt: Long): Task[Unit] = {
-    val marked = transaction(linkPair(wordId, tagId, translationWordId, createdAt, exact = true, imported = true))
-    logged(marked)(_ => s"wordTagPairs.import word=$wordId tag=$tagId translation=$translationWordId")
+  def importPair(
+    wordId: Long,
+    tagId: Long,
+    translationWordId: Long,
+    createdAt: Long,
+    matchKind: PairMatch,
+  ): Task[Unit] = {
+    val marked = transaction(linkPair(wordId, tagId, translationWordId, createdAt, matchKind, imported = true))
+    logged(marked)(_ =>
+      s"wordTagPairs.import word=$wordId tag=$tagId translation=$translationWordId kind=${PairMatch.code(matchKind)}"
+    )
   }
 
   /** Replaces one editor row's pair in a single transaction. Drops the old pair in both directions, drops the old
@@ -1523,8 +1545,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  /** One tag's rows for the editor: each source word, its marked answer (if any) and the pair's `exact` flag, plus
-    * whether the source membership was `imported`. Bidirectional `word_tag_pairs` are collapsed to one row on the tag's
+  /** One tag's rows for the editor: each source word, its marked answer (if any) and what wrote the pair, plus whether
+    * the source membership was `imported`. Bidirectional `word_tag_pairs` are collapsed to one row on the tag's
     * `sourceLanguage` side (falling back to the lower word id only for a pair both of whose words are in that
     * language); memberships that no pair names become their own answer-less rows. Ordered by `word_tags.id`, so a bulk
     * import's text order survives.
@@ -1560,7 +1582,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                     a,
                     Some(b),
                     importedOf.getOrElse(a.id, false),
-                    pair.exact,
+                    PairMatch.fromString(pair.matchKind),
                     commentOf.get(a.id),
                     commentOf.get(b.id),
                   )
@@ -1574,7 +1596,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val pairedIds = chosen.flatMap(row => row.source.id :: row.target.toList.map(_.id)).toSet
       val loose     = memberships
         .filterNot(m => pairedIds.contains(m.wordId))
-        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, exact = false, m.comment)))
+        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, PairMatch.Manual, m.comment)))
 
       (chosen ++ loose).sortBy(row =>
         (orderOf.getOrElse(row.source.id, Int.MaxValue), row.target.map(_.id).getOrElse(-1L))

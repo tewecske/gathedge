@@ -9,6 +9,7 @@ import gathedge.shared.domain.{
   GroupRole,
   Locale,
   OAuthProvider,
+  PairMatch,
   PartOfSpeech,
   Tag,
   Theme,
@@ -176,6 +177,7 @@ object ApiSchemas {
   given Schema[WordPreference] = DeriveSchema.gen[WordPreference]
   given Schema[GameMode]       = DeriveSchema.gen[GameMode]
   given Schema[GroupRole]      = DeriveSchema.gen[GroupRole]
+  given Schema[PairMatch]      = DeriveSchema.gen[PairMatch]
 
   given Schema[User]     = DeriveSchema.gen[User]
   given Schema[Word]     = DeriveSchema.gen[Word]

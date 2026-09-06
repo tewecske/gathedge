@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.i18n.MessageRef
 import zio.json.*
 
@@ -217,12 +217,14 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
 
 /** One row of the unified tag editor ([[gathedge.shared.api.WordEndpoints.tagEntries]]): a source word, the answer
   * translation marked for it inside this tag (absent for an "unmatched" row that has no pair yet), and the provenance
-  * flags. `imported` is on the source word's membership, `exact` on the pair; `createdByMe` and `inMyOtherTags` are
+  * flags. `imported` is on the source word's membership, `matchKind` on the pair; `createdByMe` and `inMyOtherTags` are
   * computed per reader (they are not stored).
   *
-  * Three of the editor's filters are mutually-exclusive buckets read off `imported`/`exact`, OR'd together: `exact` =
-  * `exact`; `non-exact` = `imported` with a `target` but not `exact`; `unmatched` = `imported` with no `target`. A row
-  * with `imported = false` was added by hand and shows only when no bucket is active. Two more filters AND on top:
+  * Four of the editor's filters are mutually-exclusive buckets read off `imported`/`matchKind`, OR'd together:
+  * `verified` = [[gathedge.shared.domain.PairMatch.Verified]]; `paired` = [[gathedge.shared.domain.PairMatch.Paired]];
+  * `other` = `imported` with a `target` but a [[gathedge.shared.domain.PairMatch.Manual]] pair; `unmatched` =
+  * `imported` with no `target`. A row with `imported = false` was added by hand and shows only when no bucket is
+  * active. Two more filters AND on top:
   * "imported by me" = `createdByMe && imported` (a word this reader minted that a bulk import wrote); "only in this tag"
   * = `!inMyOtherTags`.
   *
@@ -241,7 +243,7 @@ final case class TagEntry(
   source: Word,
   target: Option[Word],
   imported: Boolean,
-  exact: Boolean,
+  matchKind: PairMatch,
   createdByMe: Boolean,
   inMyOtherTags: Boolean,
   otherTranslations: List[TranslationOption],
@@ -292,9 +294,10 @@ final case class BulkImportRequest(
 ) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.bulkImport]]'s answer: how many distinct words the import tagged or created, how
-  * many exact pairs it marked, and how many tokens matched no dictionary word (created as answer-less rows).
+  * many verified pairs it marked (both words in the dictionary, already each other's translation), and how many tokens
+  * matched no dictionary word (created as answer-less rows).
   */
-final case class BulkImportResponse(added: Int, exactPairs: Int, unmatched: Int) derives JsonCodec
+final case class BulkImportResponse(added: Int, verifiedPairs: Int, unmatched: Int) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.languageCheck]]'s body: the free text a reader is about to bulk-import, and the
   * tag's two declared languages. The server samples a fixed number of distinct words from the text and looks each one
