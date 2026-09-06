@@ -16,7 +16,8 @@
 #
 # (each is then bumped past anything already listening). The worktree `.env` is
 # copied from the main checkout's `.env` with SERVER_PORT, VITE_PORT,
-# PUBLIC_BASE_URL, DB_SCHEMA (= gathedge_wt<n>) and DB_URL (pinned to localhost)
+# PUBLIC_BASE_URL, DB_SCHEMA (= gathedge_wt<n>), DB_URL (pinned to localhost) and
+# OTEL_SERVICE_NAME (suffixed `-wt-<n>`, so its traces are told apart in Jaeger)
 # overridden. `.env` is git-ignored and per-worktree.
 #
 # `npm install` then runs in the worktree (its root postinstall installs web/
@@ -222,6 +223,7 @@ main() {
   DB_PASSWORD=$(env_value "$env_src" DB_PASSWORD); DB_PASSWORD=${DB_PASSWORD:-gathedge}
   DB_PORT=$(env_value "$env_src" DB_PORT);     DB_PORT=${DB_PORT:-5432}
   SRC_SCHEMA=$(env_value "$env_src" DB_SCHEMA); SRC_SCHEMA=${SRC_SCHEMA:-$SRC_SCHEMA_DEFAULT}
+  OTEL_SERVICE_NAME=$(env_value "$env_src" OTEL_SERVICE_NAME); OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-gathedge-backend}
 
   local n slug wt_dir server_port vite_port schema
   n=$(pick_slot)
@@ -246,6 +248,7 @@ main() {
   set_key "$wt_dir/.env" PUBLIC_BASE_URL "http://localhost:$vite_port"
   set_key "$wt_dir/.env" DB_SCHEMA       "$schema"
   set_key "$wt_dir/.env" DB_URL          "jdbc:postgresql://localhost:$DB_PORT/$DB_NAME"
+  set_key "$wt_dir/.env" OTEL_SERVICE_NAME "${OTEL_SERVICE_NAME}-wt-$n"
   ok "wrote $wt_dir/.env"
 
   clone_schema "$schema"
