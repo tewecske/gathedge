@@ -231,6 +231,9 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
   *   - `createdByMe` — the source word's `source` is `user` and its `created_by` is this reader (a word never in the
   *     dictionary, minted by them either by hand or by their own import).
   *   - `inMyOtherTags` — the source word is also a member of at least one other tag this reader owns.
+  *   - `targetCreatedByMe` / `targetInMyOtherTags` — the same two facts about the answer word, both `false` for a row
+  *     with no `target`. `createdByMe && !inMyOtherTags` on a side is what the editor shows a "New word" badge for: a
+  *     word this reader minted that no other tag of theirs holds.
   *
   * `otherTranslations` are the source word's other known translations into the tag's target language — what the target
   * picker's chip row offers when the row is edited. Ordered best-first, the marked answer excluded.
@@ -246,6 +249,8 @@ final case class TagEntry(
   matchKind: PairMatch,
   createdByMe: Boolean,
   inMyOtherTags: Boolean,
+  targetCreatedByMe: Boolean = false,
+  targetInMyOtherTags: Boolean = false,
   otherTranslations: List[TranslationOption],
   comment: Option[String] = None,
   targetComment: Option[String] = None,

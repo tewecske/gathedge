@@ -630,6 +630,7 @@
   "ui.tags.editor.importedBadge": "importált",
   "ui.tags.editor.verifiedBadge": "Ellenőrzött",
   "ui.tags.editor.pairedBadge": "Párosított",
+  "ui.tags.editor.newBadge": "Új szó",
   "ui.tags.editor.filterHeading": "Megjelenítés",
   "ui.tags.editor.filterVerified": "Ellenőrzött találatok",
   "ui.tags.editor.filterPaired": "Párosított sorok",

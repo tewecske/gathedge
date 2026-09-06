@@ -956,6 +956,11 @@ object UiKeys {
   val tagsEditorVerifiedBadge: String = key("ui.tags.editor.verifiedBadge")
   val tagsEditorPairedBadge: String   = key("ui.tags.editor.pairedBadge")
 
+  /** Badge beside a source or answer word this reader minted that no other tag of theirs holds — a word the dictionary
+    * did not have before the reader added or imported it.
+    */
+  val tagsEditorNewBadge: String = key("ui.tags.editor.newBadge")
+
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
     * in this tag" is a word in none of the reader's other tags.

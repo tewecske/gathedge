@@ -1799,9 +1799,11 @@ final case class WordServiceLive(
   private def toTagEntries(tag: TagRow, rows: List[TagEntryRow], viewerId: Long): UIO[List[TagEntry]] = {
     val targetLang = tagLanguages(tag)._2
     val sourceIds  = rows.map(_.source.id).distinct
+    val targetIds  = rows.flatMap(_.target.map(_.id)).distinct
+    val mintedByMe = (word: WordRow) => word.source == WordService.userSource && word.createdBy.contains(viewerId)
     for {
       known         <- translationsInto(sourceIds, targetLang)
-      otherTagWords <- repo.sourceWordsInMyOtherTags(viewerId, tag.id, sourceIds).orDie
+      otherTagWords <- repo.sourceWordsInMyOtherTags(viewerId, tag.id, (sourceIds ++ targetIds).distinct).orDie
     } yield rows.map { row =>
       val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
       TagEntry(
@@ -1809,8 +1811,10 @@ final case class WordServiceLive(
         row.target.map(toDomain),
         row.imported,
         row.matchKind,
-        createdByMe = row.source.source == WordService.userSource && row.source.createdBy.contains(viewerId),
+        createdByMe = mintedByMe(row.source),
         inMyOtherTags = otherTagWords.contains(row.source.id),
+        targetCreatedByMe = row.target.exists(mintedByMe),
+        targetInMyOtherTags = row.target.exists(word => otherTagWords.contains(word.id)),
         others,
         row.comment,
         row.targetComment,
@@ -1847,7 +1851,7 @@ final case class WordServiceLive(
                         PairMatch.Manual,
                         createdByMe = false,
                         inMyOtherTags = false,
-                        Nil,
+                        otherTranslations = Nil,
                       )
                     )
                 }
@@ -2320,7 +2324,7 @@ final case class WordServiceLive(
                                      ZIO.foreachDiscard(targets)(tgt => {
                                        linkRows(src, tgt, now) *>
                                          repo.importPair(src.id, tagId, tgt.id, now, PairMatch.Paired).orDie
-                   })
+                                     })
                                    })
                                  }
           _                   <- writeComment(sources, sourceCell.comment)
