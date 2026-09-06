@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   TagExportEntry,
@@ -1876,7 +1876,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows <- WordService.tagEntries(tag.id, 1L)
         } yield assertTrue(
           rows.map(r => (r.source.text, r.target.map(_.text))) == List(("Haus", Some("ház"))),
-          rows.forall(r => !r.imported && !r.exact),
+          rows.forall(r => !r.imported && r.matchKind == PairMatch.Manual),
         )
       },
       // The pair is mandatory at creation, editable while the tag has no practice pair, and locked once it does.
@@ -2184,7 +2184,7 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def bulkImportSpec = {
     suite("bulk import")(
-      test("an exact pair is marked exact, with both memberships imported, and shown as one row") {
+      test("a pair the dictionary already links is marked verified, both memberships imported, shown as one row") {
         for {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
@@ -2193,10 +2193,10 @@ object WordServiceSpec extends ZIOSpecDefault {
           result <- WordService.bulkImport(tag.id, "Haus ház", WordLanguage.De, WordLanguage.Hu, 1L)
           rows   <- WordService.tagEntries(tag.id, 1L)
         } yield assertTrue(
-          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) == List(
-            ("Haus", Some("ház"), true, true)
+          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.matchKind)) == List(
+            ("Haus", Some("ház"), true, PairMatch.Verified)
           ),
-          result.exactPairs == 1,
+          result.verifiedPairs == 1,
           result.added == 2,
         )
       },
@@ -2207,7 +2207,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           _    <- WordService.bulkImport(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
           rows <- WordService.tagEntries(tag.id, 1L)
         } yield assertTrue(
-          rows.map(r => (r.source.text, r.target, r.imported, r.exact)) == List(("Haus", None, true, false))
+          rows.map(r => (r.source.text, r.target, r.imported, r.matchKind)) ==
+            List(("Haus", None, true, PairMatch.Manual))
         )
       },
       test("a token in neither dictionary is created in the source language, imported, with no answer") {
@@ -2261,8 +2262,9 @@ object WordServiceSpec extends ZIOSpecDefault {
                     )
           rows   <- WordService.tagEntries(tag.id, 1L)
         } yield assertTrue(
-          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) == List(
-            ("brandneu", Some("vadonatúj"), true, true)
+          // Marked `Paired`, never `Verified`: the file asserted this pair, the dictionary never saw it.
+          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.matchKind)) == List(
+            ("brandneu", Some("vadonatúj"), true, PairMatch.Paired)
           ),
           result.rows == 1,
           result.pairs == 1,

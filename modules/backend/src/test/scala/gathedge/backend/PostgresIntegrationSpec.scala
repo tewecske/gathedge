@@ -44,7 +44,7 @@ import gathedge.backend.service.{
   WordFailure,
   WordService,
 }
-import gathedge.shared.domain.{Gender, PartOfSpeech, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   ColumnSample,
   PairRef,
@@ -652,7 +652,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           _        <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
           _        <- WordService.bulkImport(tag.id, "Pghaus Pghaz brandneu", WordLanguage.De, WordLanguage.Hu, reader.id)
           imported <- WordService.tagEntries(tag.id, reader.id)
-          // Replace the exact row's answer with a fresh word.
+          // Replace the verified row's answer with a fresh word.
           neu      <- WordRepository.ensureWord(
                         WordRow(0L, "hu", "Pgotthon", "pgotthon", "noun", "", 1, "user", None, 0L, "pgotthon")
                       )
@@ -670,12 +670,16 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterRm  <- WordService.tagEntries(tag.id, reader.id)
           pairsRm  <- WordRepository.pairsInTag(tag.id)
         } yield assertTrue(
-          // Text order kept; exact pair collapsed to one row, the unmatched token its own answerless row.
-          imported.map(r => (r.source.text, r.target.map(_.text), r.imported, r.exact)) ==
-            List(("Pghaus", Some("Pghaz"), true, true), ("brandneu", None, true, false)),
-          // The swap landed and cleared the exact flag; the old answer no longer shows as a stray row.
-          replaced.map(r => (r.source.text, r.target.map(_.text), r.exact)) ==
-            List(("Pghaus", Some("Pgotthon"), false), ("brandneu", None, false)),
+          // Text order kept; the dictionary-linked pair collapsed to one row, the unmatched token its own
+          // answerless row.
+          imported.map(r => (r.source.text, r.target.map(_.text), r.imported, r.matchKind)) ==
+            List(
+              ("Pghaus", Some("Pghaz"), true, PairMatch.Verified),
+              ("brandneu", None, true, PairMatch.Manual),
+            ),
+          // The swap landed and left a hand-marked pair; the old answer no longer shows as a stray row.
+          replaced.map(r => (r.source.text, r.target.map(_.text), r.matchKind)) ==
+            List(("Pghaus", Some("Pgotthon"), PairMatch.Manual), ("brandneu", None, PairMatch.Manual)),
           // Removing the row took its pair and the now-orphaned answer with it; the unmatched row is untouched.
           afterRm.map(_.source.text) == List("brandneu"),
           pairsRm.isEmpty,
@@ -1016,7 +1020,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         } yield assertTrue(
           // Four rows, four asserted pairs, eight words minted (both sides of each row), one form.
           first == TabularImportResponse(rows = 4, pairs = 4, newWords = 8, forms = 1),
-          // Row order is the reader's own; the pair is `exact` because the file asserted it, not the dictionary.
+          // Row order is the reader's own; the pair is `Paired` because the file asserted it, not the dictionary.
           // The reader's note lands on `word_tags`, not on the shared `words` row, and comes back off the join.
           entries.map(entry => (entry.comment, entry.targetComment)) == List(
             (None, Some("pgtabnoveny")),
@@ -1024,11 +1028,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             (None, None),
             (None, None),
           ),
-          entries.map(entry => (entry.source.text, entry.target.map(_.text), entry.exact)) == List(
-            ("Pgtabhund", Some("pgtabkutya"), true),
-            ("Pgtabkatze", Some("pgtabmacska"), true),
-            ("pgtabhelfen", Some("pgtabsegit"), true),
-            ("guten Pgtabtag", Some("jo pgtabnapot"), true),
+          entries.map(entry => (entry.source.text, entry.target.map(_.text), entry.matchKind)) == List(
+            ("Pgtabhund", Some("pgtabkutya"), PairMatch.Paired),
+            ("Pgtabkatze", Some("pgtabmacska"), PairMatch.Paired),
+            ("pgtabhelfen", Some("pgtabsegit"), PairMatch.Paired),
+            ("guten Pgtabtag", Some("jo pgtabnapot"), PairMatch.Paired),
           ),
           // The article and the German `w` both land as gender; a two-word cell is one `Phrase` row on either side.
           entries.map(entry => (entry.source.gender, entry.source.partOfSpeech)) == List(

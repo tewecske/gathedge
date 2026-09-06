@@ -19,6 +19,7 @@ import gathedge.shared.domain.{
   GrammarTag,
   GroupRef,
   LanguageProfile,
+  PairMatch,
   PartOfSpeech,
   Tag,
   TranslationFilter,
@@ -302,8 +303,8 @@ trait WordService {
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse]
 
   /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
-    * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair's `exact`
-    * flag is cleared: a hand-edited pair is no longer an exact import match.
+    * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair is
+    * [[gathedge.shared.domain.PairMatch.Manual]]: a hand-edited pair carries no import's claim.
     */
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse]
 
@@ -326,9 +327,10 @@ trait WordService {
   def deleteWords(tagId: Long, wordIds: List[Long], userId: Long): IO[WordFailure, Unit]
 
   /** Tokenizes `content`, matches it against the dictionary in both languages, and writes the result into the tag in
-    * text order: an exact pair (a word and its dictionary translation both present) is marked with an "exact" flag;
-    * every other token becomes an answer-less row — a dictionary word tagged as-is, or a new `sourceLanguage` word.
-    * Every membership it writes is flagged "imported". No preview: the reader reviews on the editor with its filters.
+    * text order: a pair the dictionary already links (a word and its translation both present in the text) is marked
+    * [[gathedge.shared.domain.PairMatch.Verified]]; every other token becomes an answer-less row — a dictionary word
+    * tagged as-is, or a new `sourceLanguage` word. Every membership it writes is flagged "imported". No preview: the
+    * reader reviews on the editor with its filters.
     *
     * Not pair-quota-gated, for the same reason [[bulkUploadConfirm]] is not — a batch a reader confirmed is not the
     * place to refuse half of it. Shares [[bulkUploadPreview]]'s rate-limit budget and token cap.
@@ -356,7 +358,9 @@ trait WordService {
   /** Writes a delimited paste into the tag one row at a time, '''taking each row's pairing as given''' rather than
     * inferring it the way [[bulkImport]] must — the reader put the two cells on one line, so they are marked as a
     * practice pair whether or not `word_translations` already links them. A word the dictionary has never seen pairs
-    * just as well as one it has, which is the whole point of the tabular path.
+    * just as well as one it has, which is the whole point of the tabular path. Nothing has checked such a pair, so it
+    * is marked [[gathedge.shared.domain.PairMatch.Paired]] and never `Verified` — that word is the free-text path's,
+    * where the dictionary itself made the match.
     *
     * Each cell goes through `shared.parsing.WordCell`, so a marker never reaches `text_norm`, an article yields the
     * gender, and a cell holding two or more words becomes one `PartOfSpeech.Phrase` entry. An extra column may add the
@@ -1804,7 +1808,7 @@ final case class WordServiceLive(
         toDomain(row.source),
         row.target.map(toDomain),
         row.imported,
-        row.exact,
+        row.matchKind,
         createdByMe = row.source.source == WordService.userSource && row.source.createdBy.contains(viewerId),
         inMyOtherTags = otherTagWords.contains(row.source.id),
         others,
@@ -1819,8 +1823,8 @@ final case class WordServiceLive(
   }
 
   /** The row `(sourceId, targetId)` as the editor will show it after a write — read back from
-    * [[gathedge.backend.db.WordRepository.tagEntries]] so `imported`/`exact` are whatever the write left them, with a
-    * plain fallback for the rare stale-read case.
+    * [[gathedge.backend.db.WordRepository.tagEntries]] so `imported`/`matchKind` are whatever the write left them, with
+    * a plain fallback for the rare stale-read case.
     */
   private def entryAfterWrite(tag: TagRow, sourceId: Long, targetId: Option[Long], viewerId: Long): UIO[TagEntry] = {
     for {
@@ -1831,7 +1835,7 @@ final case class WordServiceLive(
                   case None     => ZIO.succeed(None)
                 }
       found   = rows.find(row => row.source.id == sourceId && row.target.map(_.id) == targetId)
-      row     = found.orElse(source.map(s => TagEntryRow(s, target, imported = false, exact = false)))
+      row     = found.orElse(source.map(s => TagEntryRow(s, target, imported = false, PairMatch.Manual)))
       entry  <- row match {
                   case Some(r) => oneTagEntry(tag, r, viewerId)
                   case None    =>
@@ -1840,7 +1844,7 @@ final case class WordServiceLive(
                         Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None),
                         None,
                         imported = false,
-                        exact = false,
+                        PairMatch.Manual,
                         createdByMe = false,
                         inMyOtherTags = false,
                         Nil,
@@ -2054,11 +2058,11 @@ final case class WordServiceLive(
   }
 
   /** Tokenizes `content` and writes every token into the tag in text order — the review-free replacement for the
-    * [[bulkUploadPreview]]/[[bulkUploadConfirm]] round-trip. An exact pair (a source word and its dictionary
-    * translation into the target language both present in the text) is marked with the pair's `exact` flag; a source-
-    * or target-language match with no such pair is tagged answer-less; a token in neither dictionary becomes a new
-    * `sourceLanguage` word, tagged answer-less. Every membership carries the `imported` flag. Homonyms are collapsed
-    * the same way [[bulkUploadPreview]] collapses them.
+    * [[bulkUploadPreview]]/[[bulkUploadConfirm]] round-trip. A pair the dictionary already links (a source word and its
+    * translation into the target language both present in the text) is marked
+    * [[gathedge.shared.domain.PairMatch.Verified]]; a source- or target-language match with no such pair is tagged
+    * answer-less; a token in neither dictionary becomes a new `sourceLanguage` word, tagged answer-less. Every
+    * membership carries the `imported` flag. Homonyms are collapsed the same way [[bulkUploadPreview]] collapses them.
     */
   def bulkImport(
     tagId: Long,
@@ -2077,8 +2081,8 @@ final case class WordServiceLive(
     def tagAnswerless(wordId: Long, now: Long): UIO[List[Long]] =
       repo.importWord(wordId, tagId, now).orDie.as(List(wordId))
 
-    def markExact(sourceId: Long, targetWordId: Long, now: Long): UIO[List[Long]] =
-      repo.importPair(sourceId, tagId, targetWordId, now).orDie.as(List(sourceId, targetWordId))
+    def markVerified(sourceId: Long, targetWordId: Long, now: Long): UIO[List[Long]] =
+      repo.importPair(sourceId, tagId, targetWordId, now, PairMatch.Verified).orDie.as(List(sourceId, targetWordId))
 
     def createAndTag(display: String, now: Long): UIO[List[Long]] = {
       val (bare, gender) = stripArticle(display, sourceLanguage)
@@ -2113,23 +2117,23 @@ final case class WordServiceLive(
       sourceMatches            = collapseHomonyms(sourceMatchesRaw, sourceTranslations)
       targetMatches            = collapseHomonyms(targetMatchesRaw, targetTranslations)
       importedTargetIds        = targetMatches.map(_.id).toSet
-      exactBySource            = sourceMatches.flatMap { row =>
+      verifiedBySource         = sourceMatches.flatMap { row =>
                                    sourceTranslations
                                      .getOrElse(row.id, Nil)
                                      .find(option => importedTargetIds.contains(option.wordId))
                                      .map(option => row.id -> option.wordId)
                                  }.toMap
-      dupTargetIds             = exactBySource.values.toSet
+      dupTargetIds             = verifiedBySource.values.toSet
       now                     <- Clock.currentTime(TimeUnit.MILLISECONDS)
       tokenPos                 = (row: WordRow, language: WordLanguage) =>
                                    tokens.indexWhere(token => stripArticle(token, language)._1 == row.textNorm)
-      exactActions             = exactBySource.toList.flatMap { case (sourceId, targetWordId) =>
+      verifiedActions          = verifiedBySource.toList.flatMap { case (sourceId, targetWordId) =>
                                    sourceMatches
                                      .find(_.id == sourceId)
-                                     .map(row => tokenPos(row, sourceLanguage) -> markExact(sourceId, targetWordId, now))
+                                     .map(row => tokenPos(row, sourceLanguage) -> markVerified(sourceId, targetWordId, now))
                                  }
       sourceWordActions        = sourceMatches
-                                   .filterNot(row => exactBySource.contains(row.id))
+                                   .filterNot(row => verifiedBySource.contains(row.id))
                                    .map(row => tokenPos(row, sourceLanguage) -> tagAnswerless(row.id, now))
       targetWordActions        = targetMatches
                                    .filterNot(row => dupTargetIds.contains(row.id))
@@ -2139,11 +2143,11 @@ final case class WordServiceLive(
                                    val pos  = tokens.indexWhere(token => bareIn(sourceLanguage)(token) == bare)
                                    (if (pos < 0) tokens.size else pos) -> createAndTag(display, now)
                                  }
-      ordered                  = (exactActions ++ sourceWordActions ++ targetWordActions ++ unmatchedActions)
+      ordered                  = (verifiedActions ++ sourceWordActions ++ targetWordActions ++ unmatchedActions)
                                    .sortBy(_._1)
                                    .map(_._2)
       written                 <- ZIO.foreach(ordered)(identity)
-    } yield BulkImportResponse(written.flatten.toSet.size, exactBySource.size, unmatched.size)
+    } yield BulkImportResponse(written.flatten.toSet.size, verifiedBySource.size, unmatched.size)
   }
 
   /** Samples the pasted text and reports whether enough of it is in the tag's two languages. Tokenized the same way a
@@ -2309,11 +2313,14 @@ final case class WordServiceLive(
                                  else {
                                    // The reader asserted these pairs by putting both cells on one line, so each edge is
                                    // recorded even for a word the dictionary has never heard of. That is the whole
-                                   // difference from `bulkImport`, which can only mark a pair the dictionary knew.
+                                   // difference from `bulkImport`, which can only mark a pair the dictionary knew —
+                                   // and why the pair is `Paired`, not `Verified`: the file made this claim, nothing
+                                   // checked it.
                                    ZIO.foreachDiscard(sources)(src => {
-                                     ZIO.foreachDiscard(targets)(tgt =>
-                                       linkRows(src, tgt, now) *> repo.importPair(src.id, tagId, tgt.id, now).orDie
-                                     )
+                                     ZIO.foreachDiscard(targets)(tgt => {
+                                       linkRows(src, tgt, now) *>
+                                         repo.importPair(src.id, tagId, tgt.id, now, PairMatch.Paired).orDie
+                   })
                                    })
                                  }
           _                   <- writeComment(sources, sourceCell.comment)

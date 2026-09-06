@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
@@ -39,7 +39,7 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     sourceId: Long,
     targetId: Option[Long],
     imported: Boolean = false,
-    exact: Boolean = false,
+    matchKind: PairMatch = PairMatch.Manual,
     createdByMe: Boolean = false,
     inMyOtherTags: Boolean = false,
   ): TagEntry = {
@@ -47,7 +47,7 @@ object TagEditorPageSpec extends ZIOSpecDefault {
       source = Word(sourceId, WordLanguage.De, s"w$sourceId", PartOfSpeech.Noun, None),
       target = targetId.map(id => Word(id, WordLanguage.Hu, s"t$id", PartOfSpeech.Noun, None)),
       imported = imported,
-      exact = exact,
+      matchKind = matchKind,
       createdByMe = createdByMe,
       inMyOtherTags = inMyOtherTags,
       otherTranslations = Nil,
@@ -56,11 +56,12 @@ object TagEditorPageSpec extends ZIOSpecDefault {
 
   def spec = {
     suite("TagEditorPage")(
-      test("shows the three provenance filters plus the two new ones") {
+      test("shows the four provenance filters plus the two new ones") {
         val text = withPage(_.textContent)
         assertTrue(
-          text.contains(UiKeys.tagsEditorFilterExact),
-          text.contains(UiKeys.tagsEditorFilterNonExact),
+          text.contains(UiKeys.tagsEditorFilterVerified),
+          text.contains(UiKeys.tagsEditorFilterPaired),
+          text.contains(UiKeys.tagsEditorFilterOther),
           text.contains(UiKeys.tagsEditorFilterUnmatched),
           text.contains(UiKeys.tagsEditorFilterImportedByMe),
           text.contains(UiKeys.tagsEditorFilterUniqueToTag),
@@ -118,15 +119,33 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(TagEditorPage.rowVisible(row, Set.empty, importedByMe = false, uniqueToTag = false))
         },
         test("the buckets are OR'd; a row matches when its bucket is among the selected") {
-          val exactRow     = entry(1, Some(2), imported = true, exact = true)
+          val verifiedRow  = entry(1, Some(2), imported = true, matchKind = PairMatch.Verified)
           val unmatchedRow = entry(3, None, imported = true)
-          val selected     = Set(TagEditorPage.EntryFilter.Exact, TagEditorPage.EntryFilter.Unmatched)
+          val selected     = Set(TagEditorPage.EntryFilter.Verified, TagEditorPage.EntryFilter.Unmatched)
           assertTrue(
-            TagEditorPage.rowVisible(exactRow, selected, importedByMe = false, uniqueToTag = false),
+            TagEditorPage.rowVisible(verifiedRow, selected, importedByMe = false, uniqueToTag = false),
             TagEditorPage.rowVisible(unmatchedRow, selected, importedByMe = false, uniqueToTag = false),
             !TagEditorPage.rowVisible(
               entry(4, Some(5), imported = true),
               selected,
+              importedByMe = false,
+              uniqueToTag = false,
+            ),
+          )
+        },
+        test("a tabular import's pair is its own bucket, never the verified one") {
+          val pairedRow = entry(1, Some(2), imported = true, matchKind = PairMatch.Paired)
+          assertTrue(
+            TagEditorPage.stateOf(pairedRow).contains(TagEditorPage.EntryFilter.Paired),
+            !TagEditorPage.rowVisible(
+              pairedRow,
+              Set(TagEditorPage.EntryFilter.Verified),
+              importedByMe = false,
+              uniqueToTag = false,
+            ),
+            TagEditorPage.rowVisible(
+              pairedRow,
+              Set(TagEditorPage.EntryFilter.Paired),
               importedByMe = false,
               uniqueToTag = false,
             ),
@@ -143,7 +162,7 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             // still has to be in a selected bucket when one is active
             !TagEditorPage.rowVisible(
               mineImported,
-              Set(TagEditorPage.EntryFilter.Exact),
+              Set(TagEditorPage.EntryFilter.Verified),
               importedByMe = true,
               uniqueToTag = false,
             ),
