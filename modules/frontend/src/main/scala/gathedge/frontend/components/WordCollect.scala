@@ -165,12 +165,9 @@ object WordCollect {
 
 /** @param onError
   *   the page's own alert: a failed write's message, and `None` where a success clears it.
-  * @param onNotice
-  *   where "you now have a guest account" goes, once the detour has minted one.
   * @param onWarning
   *   where a soft-quota warning goes — a tag or pair write that still succeeded, but pushed the account's usage to or
-  *   past `AppConfig.quotas`' soft threshold. Separate from [[onNotice]] because the two read differently: a notice is
-  *   informational, a warning is worth the page's attention (`Alert.warning` rather than `Alert.info`).
+  *   past `AppConfig.quotas`' soft threshold. It is worth the page's attention, so it renders as `Alert.warning`.
   * @param onWritten
   *   what the page does when a tick or a chip lands: apply what changed to its local state.
   * @param collectLanguages
@@ -179,7 +176,6 @@ object WordCollect {
   */
 final class WordCollect(
   onError: Observer[Option[String]],
-  onNotice: Observer[String],
   onWarning: Observer[String],
   onWritten: Observer[WordCollect.Change],
   collectLanguages: Signal[(WordLanguage, WordLanguage)] = Val((WordLanguage.De, WordLanguage.Hu)),
@@ -305,8 +301,8 @@ final class WordCollect(
             // The list in hand was fetched for nobody (or for whoever was here before), so it says nothing about this
             // account's tags either — the write below fetches a fresh one rather than reading it.
             tagsLoadedVar.set(false)
-            // The banner appears from here on: the reader now has an account, and nothing else has told them so.
-            onNotice.onNext(I18n.t(UiKeys.guestBannerHint))
+            // Nothing is said here about the new account: `AppState.setUser` above makes the shell's guest banner
+            // appear, which carries the same warning on every page.
             tagsBus.emit(())
             write()
           case Left(err)       =>

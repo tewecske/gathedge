@@ -110,9 +110,6 @@ private class WordsPage(
   private val errorVar: Var[Option[String]] = Var(None)
   private val errorSignal                   = errorVar.signal
 
-  private val noticeVar: Var[Option[String]] = Var(None)
-  private val noticeSignal                   = noticeVar.signal
-
   private val warningVar: Var[Option[String]] = Var(None)
   private val warningSignal                   = warningVar.signal
 
@@ -125,7 +122,6 @@ private class WordsPage(
     */
   private val collect = new WordCollect(
     onError = errorVar.writer,
-    onNotice = noticeVar.writer.contramap[String](Some(_)),
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => wordsVar.update(_.map(applyChange(_, change)))),
     // The tag an auto-minted "saved" gets its language pair from is the direction the reader is browsing.
@@ -205,7 +201,6 @@ private class WordsPage(
     div(
       h1(cls  := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
       Alert.maybeError(errorSignal),
-      Alert.maybeInfo(noticeSignal),
       Alert.maybeWarning(warningSignal),
       renderDirection(),
       collect.renderBar(),

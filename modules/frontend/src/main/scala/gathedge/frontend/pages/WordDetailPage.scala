@@ -74,8 +74,6 @@ private class WordDetailPage(id: Long) {
 
   private val errorVar: Var[Option[String]] = Var(None)
 
-  private val noticeVar: Var[Option[String]] = Var(None)
-
   private val warningVar: Var[Option[String]] = Var(None)
 
   private val inFlightVar    = Var(false)
@@ -100,7 +98,6 @@ private class WordDetailPage(id: Long) {
     */
   private val collect = new WordCollect(
     onError = errorVar.writer,
-    onNotice = noticeVar.writer.contramap[String](Some(_)),
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => applyChange(change)),
     // No listing direction here; an auto-minted "saved" tag takes the words page's remembered pair.
@@ -154,7 +151,6 @@ private class WordDetailPage(id: Long) {
       cls := "max-w-2xl mx-auto",
       a(cls := "link link-hover text-sm", AppRouter.router.navigateTo(Page.Words()), I18n.t(UiKeys.wordDetailBack)),
       Alert.maybeError(errorVar.signal),
-      Alert.maybeInfo(noticeVar.signal),
       Alert.maybeWarning(warningVar.signal),
       child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.wordDetailNotFound)))),
       // Above the word for the reason it sits above the table on the listing: it says where a tick goes, and reading
