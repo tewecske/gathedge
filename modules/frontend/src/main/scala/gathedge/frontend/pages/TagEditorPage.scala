@@ -19,6 +19,7 @@ import gathedge.shared.dto.{
   TagPairInput,
   TagPairWord,
   TagResponse,
+  TagWordInput,
 }
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.parsing.{ColumnHeading, DelimitedText}
@@ -220,6 +221,34 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     )
   }
 
+  /** The answer from `addPair` and `attachWord` alike: append the new row and clear the add controls, or — since both
+    * writes are idempotent — flash the row already there when the write named one the list has.
+    */
+  private def onEntryAdded(result: Either[ApiError, gathedge.shared.dto.TagEntryResponse]): Unit = {
+    result match {
+      case Right(response) =>
+        val entry = response.entry
+        if (TagEditorPage.isDuplicate(entriesVar.now(), entry)) {
+          // Leave both inputs as they are — the reader edits one side rather than retyping the whole thing.
+          showToast(
+            I18n.t(
+              UiKeys.tagsDuplicatePair,
+              Word.display(entry.source),
+              entry.target.map(Word.display).getOrElse(""),
+            )
+          )
+          flashRow(TagEditorPage.rowKey(entry))
+        } else {
+          entriesVar.update(_ :+ entry)
+          warningVar.set(response.warning.map(I18n.resolve))
+          Var.set(addSourceVar -> None, addSourcePos -> None)
+          addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
+        }
+      case Left(err)       =>
+        errorVar.set(Some(err.message))
+    }
+  }
+
   private val reloadBus     = new EventBus[Unit]()
   private val entriesBus    = new EventBus[Unit]()
   private val deleteOpenVar = Var(false)
@@ -297,6 +326,8 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case None         => addSourcePicker.focus()
       }
     },
+    // Enter on the empty answer box, once a source is committed: add that word on its own, no answer.
+    onEmptyCommit = Observer[Unit](_ => addSourceVar.now().foreach(source => addWordBus.emit(source))),
     placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
     translateFrom = addSourceVar.signal.map(existingId),
   )
@@ -305,6 +336,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     addRowBus.emit(TagPairInput(source, target))
   }
   private val addRowBus                                                 = new EventBus[TagPairInput]()
+  private val addWordBus                                                = new EventBus[TagPairWord]()
 
   // -- Row editing -------------------------------------------------------------------------
 
@@ -676,32 +708,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case Right(_)  => AppRouter.router.pushState(Page.Tags)
         case Left(err) => Var.set(deleteOpenVar -> false, errorVar -> Some(err.message))
       },
-      addRowBus.events.flatMapSwitch(input => WordApiClient.addPair(tagId, input)) --> Observer[
-        Either[ApiError, gathedge.shared.dto.TagEntryResponse]
-      ] {
-        case Right(response) =>
-          val entry = response.entry
-          // `addPair` is idempotent, so an exact repeat comes back as a row already on the list. Refuse it the way the
-          // old create screen did: a toast, and a flash on the row that is already there.
-          if (TagEditorPage.isDuplicate(entriesVar.now(), entry)) {
-            // Leave both inputs as they are — the reader edits one side rather than retyping the whole pair.
-            showToast(
-              I18n.t(
-                UiKeys.tagsDuplicatePair,
-                Word.display(entry.source),
-                entry.target.map(Word.display).getOrElse(""),
-              )
-            )
-            flashRow(TagEditorPage.rowKey(entry))
-          } else {
-            entriesVar.update(_ :+ entry)
-            warningVar.set(response.warning.map(I18n.resolve))
-            Var.set(addSourceVar -> None, addSourcePos -> None)
-            addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
-          }
-        case Left(err)       =>
-          errorVar.set(Some(err.message))
-      },
+      // `addPair` is idempotent, so an exact repeat comes back as a row already on the list; `onEntryAdded` refuses it
+      // with a toast and a flash on the row that is already there.
+      addRowBus.events.flatMapSwitch(input => WordApiClient.addPair(tagId, input)) -->
+        Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]](onEntryAdded),
+      // Enter on the empty answer box: add the committed source word on its own, no answer marked.
+      addWordBus.events.flatMapSwitch(word => WordApiClient.attachWord(tagId, TagWordInput(word))) -->
+        Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]](onEntryAdded),
       replaceBus.events
         .sample(editingVar.signal, editSourceVar.signal, editTargetVar.signal)
         .collect { case (Some((oldSource, oldTarget)), Some(src), Some(tgt)) => (oldSource, oldTarget, src, tgt) }
@@ -1188,6 +1201,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         addSourcePicker.render(),
         addTargetPicker.render(),
       ),
+      p(cls  := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint)),
     )
   }
 

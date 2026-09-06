@@ -35,6 +35,8 @@ final class WordPicker(
   placeholderSignal: Signal[String],
   translateFrom: Signal[Option[Long]] = Val(None),
   onCommitWord: Observer[Option[Word]] = Observer.empty[Option[Word]],
+  // Enter pressed while the field is empty and offers nothing. The add row uses it to add the source word alone.
+  onEmptyCommit: Observer[Unit] = Observer.empty[Unit],
 ) {
 
   private val queryVar                         = Var("")
@@ -117,6 +119,7 @@ final class WordPicker(
     if (list.nonEmpty) commit(list(if (h >= 0 && h < list.size) h else 0))
     else if (bare(langMirror.now(), queryVar.now()).nonEmpty)
       commit(NewCompletion(bare(langMirror.now(), queryVar.now())))
+    else onEmptyCommit.onNext(())
   }
 
   private def handleKey(ev: dom.KeyboardEvent): Unit = {

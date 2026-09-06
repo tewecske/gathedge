@@ -623,6 +623,7 @@
   "ui.tags.saved": "A(z) {0} címke mentve.",
   "ui.tags.editor.defaultName": "Névtelen",
   "ui.tags.editor.addHeading": "Szópár hozzáadása",
+  "ui.tags.editor.addWordOnlyHint": "Ha önmagában szeretne szót hozzáadni, hagyja üresen a válaszmezőt, és nyomja meg az Entert.",
   "ui.tags.editor.empty": "Még nincs szó.",
   "ui.tags.editor.editRow": "Szerkesztés",
   "ui.tags.editor.saveRow": "Mentés",

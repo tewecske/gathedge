@@ -83,7 +83,11 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         // No backend answer, so `editableByMe` never becomes true and neither the add-row control nor the bulk panel
         // is rendered.
         val text = withPage(_.textContent)
-        assertTrue(!text.contains(UiKeys.tagsEditorBulkButton), !text.contains(UiKeys.tagsEditorAddHeading))
+        assertTrue(
+          !text.contains(UiKeys.tagsEditorBulkButton),
+          !text.contains(UiKeys.tagsEditorAddHeading),
+          !text.contains(UiKeys.tagsEditorAddWordOnlyHint),
+        )
       },
       suite("rowKey / isDuplicate")(
         test("a row is keyed by source AND target, so a word's translations are separate rows") {

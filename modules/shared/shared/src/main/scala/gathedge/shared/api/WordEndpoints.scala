@@ -32,6 +32,7 @@ import gathedge.shared.dto.{
   TabularImportResponse,
   TagPairInput,
   TagResponse,
+  TagWordInput,
   WordDetail,
   WordPage,
 }
@@ -379,6 +380,21 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
+  /** Adds one word to a tag on its own, no answer yet — the unified editor's "commit a source word, then press Enter on
+    * the empty answer box" action. `word` may be a brand-new word (`TagPairWord.New`), created on the fly, and must be
+    * in one of the tag's two languages (400 otherwise). Idempotent like [[tagWord]]: a word already in the tag comes
+    * back as the row already there. Writes only the membership — no `word_tag_pairs` row — so it is never quota-gated,
+    * which is why there is no 409. 404 is a tag that is not the caller's (or their group's), or a
+    * `TagPairWord.Existing` naming no word.
+    */
+  val attachWord = {
+    Endpoint(Method.POST / "api" / "tags" / tagId / "words")
+      .in[TagWordInput]
+      .withCodecError
+      .out[TagEntryResponse](Status.Created)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
   /** Replaces one editor row's pair in place — the row's inline edit. The body names the row (its old source word id,
     * and its old answer word id when it had one) and the pair it should become. The pair's `exact` flag is cleared: a
     * hand-edited pair is no longer an exact import match. Same 404/409 rules as [[addPair]].
@@ -555,6 +571,7 @@ object WordEndpoints {
       deselectPair,
       tagEntries,
       addPair,
+      attachWord,
       replacePair,
       deletePair,
       bulkDeletePairs,

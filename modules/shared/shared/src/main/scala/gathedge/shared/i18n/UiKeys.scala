@@ -937,6 +937,9 @@ object UiKeys {
   /** Heading above the add-a-row control. */
   val tagsEditorAddHeading: String = key("ui.tags.editor.addHeading")
 
+  /** Hint under the add-a-row control: leave the answer box empty and press Enter to add the word on its own. */
+  val tagsEditorAddWordOnlyHint: String = key("ui.tags.editor.addWordOnlyHint")
+
   /** Shown in place of the rows table while the tag holds none (matching the active filter, if any). */
   val tagsEditorEmpty: String = key("ui.tags.editor.empty")
 

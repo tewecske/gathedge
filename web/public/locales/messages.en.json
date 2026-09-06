@@ -623,6 +623,7 @@
   "ui.tags.saved": "Tag {0} saved.",
   "ui.tags.editor.defaultName": "Untitled",
   "ui.tags.editor.addHeading": "Add a word pair",
+  "ui.tags.editor.addWordOnlyHint": "To add a word on its own, leave the answer box empty and press Enter.",
   "ui.tags.editor.empty": "No words yet.",
   "ui.tags.editor.editRow": "Edit",
   "ui.tags.editor.saveRow": "Save",

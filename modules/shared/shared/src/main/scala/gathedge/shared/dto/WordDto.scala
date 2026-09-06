@@ -173,6 +173,13 @@ enum TagPairWord derives JsonCodec {
   */
 final case class TagPairInput(source: TagPairWord, target: TagPairWord) derives JsonCodec
 
+/** [[gathedge.shared.api.WordEndpoints.attachWord]]'s body: one word to put into a tag on its own, with no answer yet —
+  * the unified editor's "commit a source word, then press Enter on the empty answer box" action. `word` reuses
+  * [[TagPairWord]], so it may be an existing dictionary word or one to create. It must be in one of the tag's two
+  * languages.
+  */
+final case class TagWordInput(word: TagPairWord) derives JsonCodec
+
 /** [[gathedge.shared.api.WordEndpoints.createTagWithPairs]]'s body: a tag name and the whole ordered list of pairs the
   * reader built. Sent once, so the tag and every pair it carries are written as one unit of work rather than a create
   * followed by N pair writes that could leave a half-built tag if one failed.
