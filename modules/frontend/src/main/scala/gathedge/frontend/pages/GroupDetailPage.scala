@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GroupApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, InlineRename, ShareRow}
+import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, ShareRow}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{GroupRole, Tag}
@@ -315,6 +315,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
       a(
         cls    := "link",
         AppRouter.router.navigateTo(Page.TagDetail(tag.id)),
+        span(cls := "font-mono text-xs opacity-70 mr-2", Labels.tagCodes(tag.sourceLanguage, tag.targetLanguage)),
         s"${tag.name} (${tag.wordCount})",
       ),
       span(cls := "text-xs opacity-60", tag.ownerEmail.getOrElse(I18n.t(UiKeys.sharedProgressGuestBadge))),
@@ -352,7 +353,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
               span(cls := "label-text text-xs", I18n.t(UiKeys.groupDetailAttachLabel)),
               select(
                 cls    := "select select-sm",
-                eligible.map(tag => option(value := tag.id.toString, tag.name)),
+                eligible.map(tag => option(value := tag.id.toString, s"${Labels.tagCodes(tag)} ${tag.name}")),
                 onChange.mapToValue --> attachSelectionVar.writer.contramap[String](_.toLongOption),
               ),
             ),

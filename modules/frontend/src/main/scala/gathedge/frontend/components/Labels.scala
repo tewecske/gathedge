@@ -6,6 +6,7 @@ import gathedge.shared.domain.{
   GameMode,
   GrammarCategory,
   PartOfSpeech,
+  Tag,
   TranslationFilter,
   WordLanguage,
   WordPreference,
@@ -46,6 +47,34 @@ object Labels {
   def language(language: WordLanguage): String = {
     I18n.t(UiKeys.languagePrefix + WordLanguage.code(language))
   }
+
+  /** A fixed three-letter abbreviation for a study language. A `<select>`'s `option` holds only plain text — no badge,
+    * no colour — so this is the compact marker the language pickers and the tag lists show next to the name. It is a
+    * code, not a name: matched exhaustively like [[language]], and never translated, the same rule `WordLanguage.code`
+    * follows.
+    */
+  def langCode(language: WordLanguage): String = {
+    language match {
+      case WordLanguage.En =>
+        "ENG"
+      case WordLanguage.De =>
+        "GER"
+      case WordLanguage.Es =>
+        "SPA"
+      case WordLanguage.Hu =>
+        "HUN"
+    }
+  }
+
+  /** A tag's declared language pair as one code, e.g. `"GER–HUN"` — what every tag list and tag `<select>` shows so the
+    * reader can tell a tag's direction without opening it. Takes the two languages rather than a `Tag`, since
+    * `GroupTagSummary` carries the same pair without being one.
+    */
+  def tagCodes(source: WordLanguage, target: WordLanguage): String = {
+    s"${langCode(source)}–${langCode(target)}"
+  }
+
+  def tagCodes(tag: Tag): String = tagCodes(tag.sourceLanguage, tag.targetLanguage)
 
   def partOfSpeech(pos: PartOfSpeech): String = {
     pos match {
