@@ -19,6 +19,10 @@
 # PUBLIC_BASE_URL, DB_SCHEMA (= gathedge_wt<n>) and DB_URL (pinned to localhost)
 # overridden. `.env` is git-ignored and per-worktree.
 #
+# `npm install` then runs in the worktree (its root postinstall installs web/
+# too), so `npm run dev` works straight away. Skipped with a warning if npm is
+# not on the PATH.
+#
 # The Postgres schema is cloned with `pg_dump --schema=gathedge | rename | psql`.
 # psql/pg_dump on the PATH are used directly; otherwise the running `postgres`
 # compose service is used (`docker compose exec`). The rename is a word-boundary
@@ -48,7 +52,7 @@ warn()  { printf '  %swarn%s  %s\n' "$C_YELLOW" "$C_OFF" "$*" >&2; }
 die()   { printf '%serror%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # --- Postgres transport -------------------------------------------------------------
@@ -167,6 +171,14 @@ clone_schema() {  # $1 = target schema
   ok "schema $target cloned (structure + data)"
 }
 
+install_node_modules() {  # $1 = worktree dir
+  head1 "Node modules"
+  command -v npm >/dev/null 2>&1 || { warn "npm not on the PATH — skipping; run 'npm install' in the worktree yourself"; return; }
+  say "  npm install in $1  (root postinstall also does web/)"
+  ( cd "$1" && npm install --no-audit --no-fund >&2 )
+  ok "node_modules ready (root + web)"
+}
+
 # --- Entry point -----------------------------------------------------------------
 
 main() {
@@ -237,6 +249,8 @@ main() {
   ok "wrote $wt_dir/.env"
 
   clone_schema "$schema"
+
+  install_node_modules "$wt_dir"
 
   head1 "Ready"
   say "  worktree   $wt_dir"

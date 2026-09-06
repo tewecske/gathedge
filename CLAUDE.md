@@ -28,7 +28,7 @@ Vite serves the frontend at `:5173` and proxies `/api/*` to the backend at `:808
 scripts/new-worktree.sh <branch>    # -> ../wt-<n>-<branch>
 scripts/rm-worktree.sh <n>          # remove it + drop its schema
 ```
-`<n>` is the lowest free slot. It offsets the dev ports (`SERVER_PORT=8080+n*10`, `VITE_PORT=5173+n*10`, bumped past anything listening) and names a `gathedge_wt<n>` schema cloned from `gathedge` (data included) in the same Postgres. The new `.env` is git-ignored and per-worktree. Needs the `postgres` compose service up, or `psql`/`pg_dump` on the PATH.
+`<n>` is the lowest free slot. It offsets the dev ports (`SERVER_PORT=8080+n*10`, `VITE_PORT=5173+n*10`, bumped past anything listening) and names a `gathedge_wt<n>` schema cloned from `gathedge` (data included) in the same Postgres. The new `.env` is git-ignored and per-worktree. It then runs `npm install` in the worktree (root postinstall covers `web/`) so `npm run dev` works at once. Needs the `postgres` compose service up, or `psql`/`pg_dump` on the PATH.
 
 **Tests**
 ```
