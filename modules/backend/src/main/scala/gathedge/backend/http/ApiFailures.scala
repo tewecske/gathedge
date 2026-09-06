@@ -46,6 +46,16 @@ object ApiFailures {
     ApiFailure.Conflict(MessageRef(MessageKeys.emailAlreadyRegistered), "Email already registered")
   }
 
+  // Optimistic-lock loss: the row was changed by someone else between this request's read and its write. One message
+  // for tags, groups, memberships, games and the account profile alike — the caller's move is the same, reload and
+  // retry.
+  private val staleWrite: ApiFailure.Conflict = {
+    ApiFailure.Conflict(
+      MessageRef(MessageKeys.staleWrite),
+      "This changed while you were editing it. Reload and try again.",
+    )
+  }
+
   // One message for unknown, expired and already-redeemed alike, so a caller cannot tell them apart.
   private val verificationTokenInvalid: ApiFailure.BadRequest = {
     ApiFailure.BadRequest(
@@ -139,6 +149,8 @@ object ApiFailures {
         validationFailed(fieldErrors)
       case ProfileFailure.UsernameTaken                =>
         ApiFailure.Conflict(MessageRef(MessageKeys.usernameTaken), "That username is taken")
+      case ProfileFailure.StaleWrite                   =>
+        staleWrite
     }
   }
 
@@ -291,6 +303,8 @@ object ApiFailures {
           MessageRef(MessageKeys.wordTagLanguagesLocked),
           "The tag already has a pair, so its languages are fixed",
         )
+      case WordFailure.StaleWrite                   =>
+        staleWrite
     }
   }
 
@@ -370,7 +384,9 @@ object ApiFailures {
     }
   }
 
-  def gameRename(failure: GameFailure): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound = {
+  def gameRename(
+    failure: GameFailure
+  ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case GameFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
@@ -378,6 +394,8 @@ object ApiFailures {
         ApiFailure.Forbidden(MessageRef(MessageKeys.gameNotOwner), "You do not own this game")
       case GameFailure.NotFound                     =>
         ApiFailure.NotFound(MessageRef(MessageKeys.gameNotFound), "No such game")
+      case GameFailure.StaleWrite                   =>
+        staleWrite
       case _                                        =>
         // Unreachable through this mapping: rename never raises NoTagsSelected/TagNotEligible. Mapped anyway to
         // keep the match total.
@@ -567,18 +585,22 @@ object ApiFailures {
   /** `leave`: no membership to leave, or the caller is the group's only admin. */
   def groupLeave(failure: GroupFailure): ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
-      case GroupFailure.NotFound  =>
+      case GroupFailure.NotFound   =>
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
-      case GroupFailure.LastAdmin =>
+      case GroupFailure.LastAdmin  =>
         ApiFailure.Conflict(MessageRef(MessageKeys.groupLastAdmin), "A group must always have at least one admin")
-      case _                      =>
+      case GroupFailure.StaleWrite =>
+        staleWrite
+      case _                       =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
     }
   }
 
   /** `renameGroup`: admin-only, plus the same blank/over-length validation `groupCreate` runs on the name. */
-  def groupRename(failure: GroupFailure): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound = {
+  def groupRename(
+    failure: GroupFailure
+  ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case GroupFailure.ValidationError(fieldErrors) =>
         validationFailed(fieldErrors)
@@ -586,6 +608,8 @@ object ApiFailures {
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
       case GroupFailure.NotAdmin                     =>
         ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotAdmin), "You must be an admin of this group")
+      case GroupFailure.StaleWrite                   =>
+        staleWrite
       case _                                         =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
@@ -597,13 +621,15 @@ object ApiFailures {
     */
   def groupAdmin(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
-      case GroupFailure.NotFound  =>
+      case GroupFailure.NotFound   =>
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
-      case GroupFailure.NotAdmin  =>
+      case GroupFailure.NotAdmin   =>
         ApiFailure.Forbidden(MessageRef(MessageKeys.groupNotAdmin), "You must be an admin of this group")
-      case GroupFailure.LastAdmin =>
+      case GroupFailure.LastAdmin  =>
         ApiFailure.Conflict(MessageRef(MessageKeys.groupLastAdmin), "A group must always have at least one admin")
-      case _                      =>
+      case GroupFailure.StaleWrite =>
+        staleWrite
+      case _                       =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
     }
@@ -622,6 +648,8 @@ object ApiFailures {
         ApiFailure.Forbidden(MessageRef(MessageKeys.groupTagNotOwned), "You do not own this tag")
       case GroupFailure.TagAlreadyInGroup =>
         ApiFailure.Conflict(MessageRef(MessageKeys.groupTagAlreadyInGroup), "This tag already belongs to a group")
+      case GroupFailure.StaleWrite        =>
+        staleWrite
       case _                              =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.groupNotFound), "No such group")
@@ -631,7 +659,7 @@ object ApiFailures {
   /** `detachTag`: no such tag, the tag is not (currently) in this group, or the caller is neither the tag's owner nor
     * an admin of the group it belongs to.
     */
-  def groupDetachTag(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound = {
+  def groupDetachTag(failure: GroupFailure): ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case GroupFailure.TagNotFound   =>
         ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")
@@ -642,6 +670,8 @@ object ApiFailures {
           MessageRef(MessageKeys.groupNotAdmin),
           "You must own this tag or be an admin of this group",
         )
+      case GroupFailure.StaleWrite    =>
+        staleWrite
       case _                          =>
         // Unreachable through this mapping. Mapped anyway to keep the match total.
         ApiFailure.NotFound(MessageRef(MessageKeys.wordTagNotFound), "No such tag")

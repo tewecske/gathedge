@@ -26,6 +26,7 @@ final case class UserRow(
   isGuest: Boolean,
   username: Option[String] = None,
   displayName: Option[String] = None,
+  version: Long = 0L,
 )
 
 /** One external identity linked to a user. `provider` holds [[gathedge.backend.service.OAuthProvider]]'s wire name and
@@ -198,6 +199,7 @@ final case class TagRow(
   groupId: Option[Long] = None,
   sourceLanguage: String,
   targetLanguage: String,
+  version: Long = 0L,
 )
 
 /** A classroom-style group of accounts collaborating on shared tags. `inviteCode` is a bearer credential — like
@@ -210,10 +212,18 @@ final case class GroupRow(
   inviteCode: String,
   createdBy: Option[Long],
   createdAt: Long,
+  version: Long = 0L,
 )
 
 /** One account's standing (`role`: `"admin"` or `"member"`, see `GroupRole.code`) on one group's roster. */
-final case class GroupMemberRow(id: Long, groupId: Long, userId: Long, role: String, createdAt: Long)
+final case class GroupMemberRow(
+  id: Long,
+  groupId: Long,
+  userId: Long,
+  role: String,
+  createdAt: Long,
+  version: Long = 0L,
+)
 
 /** One word carrying one tag — and, since a tag belongs to exactly one account, the whole of what "this word is in my
   * vocabulary" means.
@@ -308,6 +318,7 @@ final case class GameRow(
   targetLanguage: String,
   createdAt: Long,
   updatedAt: Long,
+  version: Long = 0L,
 )
 
 /** One tag a game draws its words from. A game can span several tags, so this is a join table exactly like

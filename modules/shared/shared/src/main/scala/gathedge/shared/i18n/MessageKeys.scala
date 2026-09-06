@@ -208,6 +208,13 @@ object MessageKeys {
   val groupTagAlreadyInGroup: String = key("groups.tagAlreadyInGroup")
   val groupTagNotInGroup: String     = key("groups.tagNotInGroup")
 
+  // -- Optimistic locking --------------------------------------------------------------------------
+  // One key for every entity a person edits through a form -- tag, group, membership, game, profile.
+  // `ApiFailures` maps each service's own `StaleWrite` case to it; the caller's move is always the
+  // same, reload and retry.
+
+  val staleWrite: String = key("error.staleWrite")
+
   // -- Responses built outside the endpoint codecs ----------------------------------------------
   // RouteSupport's aspects and the OAuth routes assemble `dto.ErrorResponse` by hand, and
   // ApiEndpoint.withCodecError turns an undecodable body into `malformedRequest`.

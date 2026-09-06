@@ -103,6 +103,25 @@ object GroupServiceSpec extends ZIOSpecDefault {
           detail  <- GroupService.detail(created.id, other)
         } yield assertTrue(detail.viewerRole.contains(GroupRole.Member))
       },
+      test("a version-guarded group write refuses a stale version and advances the counter") {
+        for {
+          owner   <- userId("owner4b@example.com")
+          created <- GroupService.create("Group4b", owner)
+          v0      <- GroupRepository.findGroupById(created.id).map(_.get.version)
+          hit     <- GroupRepository.updateGroupName(created.id, "Renamed", "renamed", v0)
+          v1      <- GroupRepository.findGroupById(created.id).map(_.get.version)
+          stale   <- GroupRepository.updateGroupName(created.id, "Nope", "nope", v0)
+          name    <- GroupRepository.findGroupById(created.id).map(_.get.name)
+        } yield assertTrue(v0 == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "Renamed")
+      },
+      test("renameGroup passes the version it read, so a plain rename advances the counter") {
+        for {
+          owner   <- userId("owner4c@example.com")
+          created <- GroupService.create("Group4c", owner)
+          _       <- GroupService.renameGroup(created.id, "Group4c Renamed", owner)
+          bumped  <- GroupRepository.findGroupById(created.id).map(_.get.version)
+        } yield assertTrue(bumped == 1L)
+      },
       test("leaving as the sole admin is refused; a second admin makes it possible") {
         for {
           owner   <- userId("owner5@example.com")

@@ -315,9 +315,11 @@ object OpenApiSpec extends ZIOSpecDefault {
               // shares with the free-text import.
               ("POST", "/api/tags/{tagId}/tabular-import")                                ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
-              // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's.
+              // Follows createTag's own rules for the name; 404 is a tag that does not exist or is not the caller's;
+              // 409 is a stale write (someone else changed the tag between this caller's read and this write).
               ("PUT", "/api/tags/{tagId}")                                                -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
-              ("DELETE", "/api/tags/{tagId}")                                             -> Set(NoContent, BadRequest, Unauthorized, NotFound),
+              ("DELETE", "/api/tags/{tagId}")                                             ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               // Sets a tag's language pair while it has no practice pair: 400 for two equal languages, 404 for a tag
               // that is not the caller's, 409 once a pair has locked the languages.
               ("PUT", "/api/tags/{tagId}/languages")                                      ->
@@ -359,9 +361,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/games/{slug}/favorite")                                      -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("DELETE", "/api/games/{slug}/favorite")                                    -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // The only endpoint whose 403 is a business rule outside login/guest: `GameService.rename` raises
-              // `NotOwner` for anyone but the game's owner.
+              // `NotOwner` for anyone but the game's owner. 409 is a stale write — the game was renamed by someone
+              // else between this caller's read and this write.
               ("PATCH", "/api/games/{slug}")                                              ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               // startPlay's own failures are BadRequest (an out-of-range wordLimit, or a resolved direction with
               // nothing eligible right now) or NotFound (an unknown slug).
               ("POST", "/api/games/{slug}/plays")                                         ->
@@ -459,9 +462,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/groups")                                                      -> Set(Ok, Unauthorized),
               ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
-              // Admin-only, hence the 403; follows `create`'s own name validation, hence the 400.
+              // Admin-only, hence the 403; follows `create`'s own name validation, hence the 400; 409 is a stale
+              // write (the group changed between this caller's read and this write).
               ("PUT", "/api/groups/{groupId}")                                            ->
-                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound),
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               // 404 covers an unknown or rotated invite code alike, so the code space cannot be probed; 429 is the
               // caller's own groupJoin rate-limit budget.
               ("POST", "/api/groups/join")                                                -> Set(NoContent, BadRequest, Unauthorized, NotFound, TooManyRequests),
@@ -482,10 +486,11 @@ object OpenApiSpec extends ZIOSpecDefault {
               // already belonging to a group.
               ("PUT", "/api/groups/{groupId}/tags/{tagId}")                               ->
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
-              // Detaching: 403 covers being neither the tag's owner nor an admin of its group; no 409, unlike
-              // attaching — detaching a tag that isn't (currently) in this group answers 404, not a conflict.
+              // Detaching: 403 covers being neither the tag's owner nor an admin of its group; a tag that isn't
+              // (currently) in this group answers 404; 409 is a stale write (the tag changed between this caller's
+              // read and this write).
               ("DELETE", "/api/groups/{groupId}/tags/{tagId}")                            ->
-                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
             )
         )
       },
@@ -500,7 +505,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 311,
+          declared == 315,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

@@ -142,6 +142,20 @@ object GameRepositorySpec extends ZIOSpecDefault {
           none.isEmpty,
         )
       },
+      test("rename refuses a stale version and advances the counter") {
+        for {
+          owner <- newUser()
+          game  <- GameRepository.insertGame(
+                     GameRow(0L, owner, "lock-slug", "Lock Game", "de", "hu", 0L, 0L),
+                     Nil,
+                   )
+          hit   <- GameRepository.rename(game.id, "Renamed", 1L, game.version)
+          v1    <- GameRepository.findBySlug("lock-slug").map(_.get.version)
+          stale <- GameRepository.rename(game.id, "Nope", 2L, game.version)
+          name  <- GameRepository.findBySlug("lock-slug").map(_.get.name)
+          fresh <- GameRepository.rename(game.id, "Again", 3L, v1)
+        } yield assertTrue(game.version == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "Renamed", fresh == 1L)
+      },
     ).provide(layer)
   }
 }

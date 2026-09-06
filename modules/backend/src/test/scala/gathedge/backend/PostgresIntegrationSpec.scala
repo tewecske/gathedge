@@ -345,7 +345,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           tag   <- WordRepository.insertTag(owner.id, "pggrouptag", "pggrouptag", 0L, "de", "hu")
           group <- GroupRepository.insertGroup("PG Group", "pg group", "PGGR-OUP0-CODE-0001", owner.id, 0L)
           _     <- GroupRepository.insertMembership(group.id, owner.id, "admin", 0L)
-          _     <- WordRepository.setTagGroup(tag.id, Some(group.id))
+          _     <- WordRepository.setTagGroup(tag.id, Some(group.id), tag.version)
           _     <- GroupRepository.delete(group.id)
           after <- WordRepository.findTagById(tag.id)
         } yield assertTrue(after.isDefined, after.flatMap(_.groupId).isEmpty)
@@ -589,7 +589,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           saved     <- AuthService.updateProfile(owner.id, Some("PgReader"), Some("Pg Reader"))
           byName    <- AuthService.login("pgreader", "password123")
           taken     <- AuthService.updateProfile(rival.id, Some("pgreader"), None).either
-          collision <- UserRepository.updateUsernameAndName(rival.id, Some("pgreader"), None).either
+          rivalRow  <- UserRepository.findById(rival.id).map(_.get)
+          collision <- UserRepository
+                         .updateUsernameAndName(rival.id, Some("pgreader"), None, rivalRow.version)
+                         .either
           cleared   <- AuthService.updateProfile(owner.id, None, None)
           freed     <- AuthService.updateProfile(rival.id, Some("pgreader"), None)
         } yield assertTrue(
@@ -601,6 +604,26 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           collision.isLeft,
           cleared.username.isEmpty,
           freed.username.contains("pgreader"),
+        )
+      },
+      // Issue #42: `updateUsernameAndName`'s optimistic-lock guard — `WHERE ... AND version = ?` plus
+      // `SET ... version = version + 1` — reaches the real dialect here. The quoted lambda over `users` is `row`, so
+      // this is also where the Postgres reserved-word trap would show.
+      pgTest("a version-guarded users write refuses a stale version and advances the counter, on the real dialect") {
+        for {
+          owner <- AuthService.signup("pgversion@example.com", "password123").map(_._1)
+          row0  <- UserRepository.findById(owner.id).map(_.get)
+          hit   <- UserRepository.updateUsernameAndName(owner.id, Some("pgv"), None, row0.version)
+          row1  <- UserRepository.findById(owner.id).map(_.get)
+          stale <- UserRepository.updateUsernameAndName(owner.id, Some("pgv-again"), None, row0.version)
+          row2  <- UserRepository.findById(owner.id).map(_.get)
+        } yield assertTrue(
+          hit == 1L,
+          row1.version == row0.version + 1L,
+          row1.username.contains("pgv"),
+          stale == 0L,
+          row2.username.contains("pgv"),
+          row2.version == row1.version,
         )
       },
       // Three SQL shapes reach the real dialect here for the first time: `pairTranslation`'s four-statement transaction

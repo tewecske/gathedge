@@ -45,6 +45,7 @@
   "error.notAuthenticated": "Not authenticated",
   "error.notAdministrator": "You are signed in but do not have administrator rights",
   "error.invalidRedirect": "Invalid redirect target",
+  "error.staleWrite": "This changed while you were editing it. Reload and try again.",
   "error.requestFailed": "Could not reach the server. Check your connection and try again.",
   "email.verify.subject": "Confirm your email address",
   "email.verify.body": "Confirm your email address by following this link: {0}\n\nThe link stops working in {1} hours.",

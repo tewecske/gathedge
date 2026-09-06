@@ -152,18 +152,20 @@ trait WordRepository {
     pairs: List[(Long, Long)],
   ): Task[TagRow]
 
-  /** Renames `id`, scoped to `userId` the same way [[deleteTag]] is — a row count of `0` means either the tag does not
-    * exist or it is not the caller's, which `WordService.renameTag` cannot tell apart and does not need to.
+  /** Renames `id`, scoped to `userId` the same way [[deleteTag]] is, and only while its `version` still matches
+    * `expectedVersion` — a row count of `0` means the tag does not exist, is not the caller's, or was changed by
+    * someone else since it was read. Bumps `version`.
     */
-  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): Task[Long]
+  def updateTag(id: Long, userId: Long, name: String, nameNorm: String, expectedVersion: Long): Task[Long]
 
-  def deleteTag(id: Long, userId: Long): Task[Long]
+  /** Deletes `id`, scoped to `userId`, and only while its `version` still matches `expectedVersion`. */
+  def deleteTag(id: Long, userId: Long, expectedVersion: Long): Task[Long]
 
   /** Attaches or detaches a tag's group — the only write to `tags.group_id`, called by `GroupService.attachTag`/
     * `.detachTag`. Not scoped to a caller's `userId` here; that check belongs to the service, which already knows
-    * whether the caller may act on this particular tag and group.
+    * whether the caller may act on this particular tag and group. Guarded on `expectedVersion`; bumps `version`.
     */
-  def setTagGroup(tagId: Long, groupId: Option[Long]): Task[Long]
+  def setTagGroup(tagId: Long, groupId: Option[Long], expectedVersion: Long): Task[Long]
 
   /** How many words carry `tagId` — the count [[listTags]] computes for every tag at once, resolved here for the one
     * tag `WordService.renameTag` just wrote, so its answer carries the same number a fresh [[listTags]] would.
@@ -541,14 +543,20 @@ object WordRepository {
     )
   }
 
-  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): RIO[WordRepository, Long] =
-    ZIO.serviceWithZIO[WordRepository](_.updateTag(id, userId, name, nameNorm))
+  def updateTag(
+    id: Long,
+    userId: Long,
+    name: String,
+    nameNorm: String,
+    expectedVersion: Long,
+  ): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.updateTag(id, userId, name, nameNorm, expectedVersion))
 
-  def deleteTag(id: Long, userId: Long): RIO[WordRepository, Long] =
-    ZIO.serviceWithZIO[WordRepository](_.deleteTag(id, userId))
+  def deleteTag(id: Long, userId: Long, expectedVersion: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.deleteTag(id, userId, expectedVersion))
 
-  def setTagGroup(tagId: Long, groupId: Option[Long]): RIO[WordRepository, Long] =
-    ZIO.serviceWithZIO[WordRepository](_.setTagGroup(tagId, groupId))
+  def setTagGroup(tagId: Long, groupId: Option[Long], expectedVersion: Long): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setTagGroup(tagId, groupId, expectedVersion))
 
   def countWordsInTag(tagId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.countWordsInTag(tagId))
@@ -1110,22 +1118,30 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(inserted.map(id => row.copy(id = id)))(tag => s"tags.insert id=${tag.id} user=$userId")
   }
 
-  def updateTag(id: Long, userId: Long, name: String, nameNorm: String): Task[Long] = {
+  def updateTag(id: Long, userId: Long, name: String, nameNorm: String, expectedVersion: Long): Task[Long] = {
     val q = quote {
       tags
-        .filter(tag => tag.id == lift(id) && tag.userId == lift(userId))
-        .update(_.name -> lift(name), _.nameNorm -> lift(nameNorm))
+        .filter(tag => tag.id == lift(id) && tag.userId == lift(userId) && tag.version == lift(expectedVersion))
+        .update(_.name -> lift(name), _.nameNorm -> lift(nameNorm), tag => tag.version -> (tag.version + 1))
     }
     logged(run(ctx.run(q)))(rows => s"tags.update id=$id user=$userId rows=$rows")
   }
 
-  def deleteTag(id: Long, userId: Long): Task[Long] = {
-    val q = quote(tags.filter(tag => tag.id == lift(id) && tag.userId == lift(userId)).delete)
+  def deleteTag(id: Long, userId: Long, expectedVersion: Long): Task[Long] = {
+    val q = quote(
+      tags
+        .filter(tag => tag.id == lift(id) && tag.userId == lift(userId) && tag.version == lift(expectedVersion))
+        .delete
+    )
     logged(run(ctx.run(q)))(rows => s"tags.delete id=$id user=$userId rows=$rows")
   }
 
-  def setTagGroup(tagId: Long, groupId: Option[Long]): Task[Long] = {
-    val q = quote(tags.filter(_.id == lift(tagId)).update(_.groupId -> lift(groupId)))
+  def setTagGroup(tagId: Long, groupId: Option[Long], expectedVersion: Long): Task[Long] = {
+    val q = quote(
+      tags
+        .filter(tag => tag.id == lift(tagId) && tag.version == lift(expectedVersion))
+        .update(_.groupId -> lift(groupId), tag => tag.version -> (tag.version + 1))
+    )
     logged(run(ctx.run(q)))(rows => s"tags.setGroup id=$tagId group=$groupId rows=$rows")
   }
 
@@ -1275,7 +1291,11 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val q = quote {
       tags
         .filter(tag => tag.id == lift(tagId) && wordTagPairs.filter(_.tagId == lift(tagId)).isEmpty)
-        .update(_.sourceLanguage -> lift(sourceLanguage), _.targetLanguage -> lift(targetLanguage))
+        .update(
+          _.sourceLanguage   -> lift(sourceLanguage),
+          _.targetLanguage   -> lift(targetLanguage),
+          tag => tag.version -> (tag.version + 1),
+        )
     }
     logged(run(ctx.run(q)))(rows => s"tags.setLanguages id=$tagId rows=$rows")
   }
@@ -1284,7 +1304,11 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     val q = quote {
       tags
         .filter(_.id == lift(tagId))
-        .update(_.sourceLanguage -> lift(sourceLanguage), _.targetLanguage -> lift(targetLanguage))
+        .update(
+          _.sourceLanguage   -> lift(sourceLanguage),
+          _.targetLanguage   -> lift(targetLanguage),
+          tag => tag.version -> (tag.version + 1),
+        )
     }
     logged(run(ctx.run(q)))(rows => s"tags.swapLanguages id=$tagId rows=$rows")
   }

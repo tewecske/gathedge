@@ -31,13 +31,14 @@ trait GroupRepository {
 
   def findGroupByInviteCode(code: String): Task[Option[GroupRow]]
 
-  /** Rotates the group's invite code; the old one stops resolving the moment this returns. */
+  /** Rotates the group's invite code; the old one stops resolving the moment this returns. Bumps `version`. */
   def updateInviteCode(id: Long, code: String): Task[Unit]
 
-  /** Renames the group. `nameNorm` is [[gathedge.shared.domain.Group.normalize]]'d for sorted/case-insensitive listing,
-    * the same split `insertGroup` keeps between `name` and `nameNorm`.
+  /** Renames the group, only if its `version` still matches `expectedVersion`. `nameNorm` is
+    * [[gathedge.shared.domain.Group.normalize]]'d for sorted/case-insensitive listing, the same split `insertGroup`
+    * keeps between `name` and `nameNorm`. Returns rows affected, so a caller can tell a lost race from a success.
     */
-  def updateGroupName(id: Long, name: String, nameNorm: String): Task[Unit]
+  def updateGroupName(id: Long, name: String, nameNorm: String, expectedVersion: Long): Task[Long]
 
   /** Every group, with how many members and how many attached tags each has — what the browse page is built from. */
   def listGroups: Task[List[(GroupRow, Long, Long)]]
@@ -61,9 +62,11 @@ trait GroupRepository {
 
   def countAdmins(groupId: Long): Task[Long]
 
-  def updateMemberRole(groupId: Long, userId: Long, role: String): Task[Long]
+  /** Sets a member's role, only while their row's `version` still matches. Returns rows affected. Bumps `version`. */
+  def updateMemberRole(groupId: Long, userId: Long, role: String, expectedVersion: Long): Task[Long]
 
-  def deleteMembership(groupId: Long, userId: Long): Task[Long]
+  /** Removes a membership, only while its `version` still matches. Returns rows affected. */
+  def deleteMembership(groupId: Long, userId: Long, expectedVersion: Long): Task[Long]
 
   /** The group's attached tags, each with its word count and owner — what
     * [[gathedge.shared.dto.GroupDto.GroupTagSummary]] is built from.
@@ -99,8 +102,8 @@ object GroupRepository {
   def updateInviteCode(id: Long, code: String): RIO[GroupRepository, Unit] =
     ZIO.serviceWithZIO[GroupRepository](_.updateInviteCode(id, code))
 
-  def updateGroupName(id: Long, name: String, nameNorm: String): RIO[GroupRepository, Unit] =
-    ZIO.serviceWithZIO[GroupRepository](_.updateGroupName(id, name, nameNorm))
+  def updateGroupName(id: Long, name: String, nameNorm: String, expectedVersion: Long): RIO[GroupRepository, Long] =
+    ZIO.serviceWithZIO[GroupRepository](_.updateGroupName(id, name, nameNorm, expectedVersion))
 
   def listGroups: RIO[GroupRepository, List[(GroupRow, Long, Long)]] =
     ZIO.serviceWithZIO[GroupRepository](_.listGroups)
@@ -120,11 +123,16 @@ object GroupRepository {
   def countAdmins(groupId: Long): RIO[GroupRepository, Long] =
     ZIO.serviceWithZIO[GroupRepository](_.countAdmins(groupId))
 
-  def updateMemberRole(groupId: Long, userId: Long, role: String): RIO[GroupRepository, Long] =
-    ZIO.serviceWithZIO[GroupRepository](_.updateMemberRole(groupId, userId, role))
+  def updateMemberRole(
+    groupId: Long,
+    userId: Long,
+    role: String,
+    expectedVersion: Long,
+  ): RIO[GroupRepository, Long] =
+    ZIO.serviceWithZIO[GroupRepository](_.updateMemberRole(groupId, userId, role, expectedVersion))
 
-  def deleteMembership(groupId: Long, userId: Long): RIO[GroupRepository, Long] =
-    ZIO.serviceWithZIO[GroupRepository](_.deleteMembership(groupId, userId))
+  def deleteMembership(groupId: Long, userId: Long, expectedVersion: Long): RIO[GroupRepository, Long] =
+    ZIO.serviceWithZIO[GroupRepository](_.deleteMembership(groupId, userId, expectedVersion))
 
   def tagsOfGroup(groupId: Long): RIO[GroupRepository, List[(TagRow, Long, Option[UserRow])]] =
     ZIO.serviceWithZIO[GroupRepository](_.tagsOfGroup(groupId))
@@ -190,13 +198,19 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def updateInviteCode(id: Long, code: String): Task[Unit] = {
-    val q = quote(groups.filter(_.id == lift(id)).update(_.inviteCode -> lift(code)))
+    val q = quote(
+      groups.filter(_.id == lift(id)).update(_.inviteCode -> lift(code), row => row.version -> (row.version + 1))
+    )
     logged(run(ctx.run(q)).unit)(_ => s"groups.updateInviteCode id=$id")
   }
 
-  def updateGroupName(id: Long, name: String, nameNorm: String): Task[Unit] = {
-    val q = quote(groups.filter(_.id == lift(id)).update(_.name -> lift(name), _.nameNorm -> lift(nameNorm)))
-    logged(run(ctx.run(q)).unit)(_ => s"groups.updateName id=$id")
+  def updateGroupName(id: Long, name: String, nameNorm: String, expectedVersion: Long): Task[Long] = {
+    val q = quote(
+      groups
+        .filter(row => row.id == lift(id) && row.version == lift(expectedVersion))
+        .update(_.name -> lift(name), _.nameNorm -> lift(nameNorm), row => row.version -> (row.version + 1))
+    )
+    logged(run(ctx.run(q)))(rows => s"groups.updateName id=$id rows=$rows")
   }
 
   def listGroups: Task[List[(GroupRow, Long, Long)]] = {
@@ -258,15 +272,25 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(count => s"groupMembers.countAdmins group=$groupId count=$count")
   }
 
-  def updateMemberRole(groupId: Long, userId: Long, role: String): Task[Long] = {
+  def updateMemberRole(groupId: Long, userId: Long, role: String, expectedVersion: Long): Task[Long] = {
     val q = quote {
-      members.filter(row => row.groupId == lift(groupId) && row.userId == lift(userId)).update(_.role -> lift(role))
+      members
+        .filter(row =>
+          row.groupId == lift(groupId) && row.userId == lift(userId) && row.version == lift(expectedVersion)
+        )
+        .update(_.role -> lift(role), row => row.version -> (row.version + 1))
     }
     logged(run(ctx.run(q)))(rows => s"groupMembers.updateRole group=$groupId user=$userId rows=$rows")
   }
 
-  def deleteMembership(groupId: Long, userId: Long): Task[Long] = {
-    val q = quote(members.filter(row => row.groupId == lift(groupId) && row.userId == lift(userId)).delete)
+  def deleteMembership(groupId: Long, userId: Long, expectedVersion: Long): Task[Long] = {
+    val q = quote(
+      members
+        .filter(row =>
+          row.groupId == lift(groupId) && row.userId == lift(userId) && row.version == lift(expectedVersion)
+        )
+        .delete
+    )
     logged(run(ctx.run(q)))(rows => s"groupMembers.delete group=$groupId user=$userId rows=$rows")
   }
 
