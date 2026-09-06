@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.GroupRole
+import gathedge.shared.domain.{GroupRole, WordLanguage}
 import zio.json.*
 
 /** [[gathedge.shared.api.GroupEndpoints.create]]'s body: the group's name. The caller becomes its sole admin. */
@@ -18,8 +18,8 @@ final case class GroupMemberSummary(
 ) derives JsonCodec
 
 /** One row of [[GroupDetail.tags]] — a tag currently attached to the group, with enough of its owner's identity to show
-  * who contributed it. Visible to everyone, same as the group's name — a group's tag list is not part of its private
-  * roster.
+  * who contributed it, and its declared language pair so the list can mark each tag's direction. Visible to everyone,
+  * same as the group's name — a group's tag list is not part of its private roster.
   */
 final case class GroupTagSummary(
   id: Long,
@@ -27,6 +27,8 @@ final case class GroupTagSummary(
   wordCount: Long,
   ownerEmail: Option[String],
   ownerIsGuest: Boolean,
+  sourceLanguage: WordLanguage,
+  targetLanguage: WordLanguage,
 ) derives JsonCodec
 
 /** `GET /api/groups/{groupId}`'s answer.

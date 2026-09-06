@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.db.{GroupMemberRow, GroupRepository, GroupRow, UserRow, WordRepository}
 import gathedge.backend.security.Tokens
-import gathedge.shared.domain.{Group, GroupRole}
+import gathedge.shared.domain.{Group, GroupRole, WordLanguage}
 import gathedge.shared.dto.{GroupDetail, GroupMemberSummary, GroupTagSummary}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
@@ -194,7 +194,15 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       inviteCode = Option.when(isAdmin)(group.inviteCode),
       members = if (isMember) memberRows.map { case (member, user) => toMemberSummary(member, user) } else Nil,
       tags = tagRows.map { case (tag, wordCount, owner) =>
-        GroupTagSummary(tag.id, tag.name, wordCount, owner.flatMap(_.email), owner.exists(_.isGuest))
+        GroupTagSummary(
+          tag.id,
+          tag.name,
+          wordCount,
+          owner.flatMap(_.email),
+          owner.exists(_.isGuest),
+          WordLanguage.fromString(tag.sourceLanguage).getOrElse(WordLanguage.De),
+          WordLanguage.fromString(tag.targetLanguage).getOrElse(WordLanguage.Hu),
+        )
       },
     )
   }

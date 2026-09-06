@@ -207,6 +207,20 @@ object GroupServiceSpec extends ZIOSpecDefault {
           byAdmin.isRight,
         )
       },
+      test("a group's tag list carries each tag's declared language pair") {
+        for {
+          owner   <- userId("owner10@example.com")
+          created <- GroupService.create("Group10", owner)
+          tag     <- WordService
+                       .createTag("phrases", WordLanguage.En, WordLanguage.Es, owner)
+                       .orDieWith(failure => new RuntimeException(failure.toString))
+                       .map(_.tag.id)
+          _       <- GroupService.attachTag(created.id, tag, owner)
+          detail  <- GroupService.detail(created.id, owner)
+        } yield assertTrue(
+          detail.tags.map(t => (t.sourceLanguage, t.targetLanguage)) == List((WordLanguage.En, WordLanguage.Es))
+        )
+      },
     ).provide(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }
