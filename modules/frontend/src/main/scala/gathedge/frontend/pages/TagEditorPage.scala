@@ -99,25 +99,28 @@ object TagEditorPage {
   private[pages] def targetIsNew(entry: TagEntry): Boolean =
     entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
 
-  /** Whether the two languages on screen are the tag's own stored pair, flipped. This is the whole of the swap button's
-    * effect: it is a view choice, not a change to the tag, so nothing is saved. A dropdown relanguage persists and
-    * re-seeds the selects, which brings this back to `false` on its own.
-    */
-  private[pages] def isReversed(tag: Tag, source: WordLanguage, target: WordLanguage): Boolean =
-    source == tag.targetLanguage && target == tag.sourceLanguage && source != target
-
   /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
   private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
 
-  /** The words for a row's two columns. A local reversal (the swap button) trades them so they line up with the flipped
-    * headings; a lone source word, with no answer, never moves.
+  /** The two words of a row, placed in the columns the editor currently shows — `left` for language `left`, `right` for
+    * language `right`. The tag's stored order does not come into it: each word goes to the column that matches its own
+    * language, which is what lets the swap button reorder the view with no server call. A lone word (no answer) lands
+    * in its own language's column; the other cell stays empty.
     */
-  private[pages] def orient(entry: TagEntry, reversed: Boolean): (Side, Option[Side]) = {
+  private[pages] def orient(
+    entry: TagEntry,
+    left: WordLanguage,
+    right: WordLanguage,
+  ): (Option[Side], Option[Side]) = {
     val source = Side(entry.source, entry.comment, sourceIsNew(entry))
     val target = entry.target.map(word => Side(word, entry.targetComment, targetIsNew(entry)))
     target match {
-      case Some(answer) if reversed => (answer, Some(source))
-      case _                        => (source, target)
+      case Some(answer) =>
+        if (entry.source.language == right && answer.word.language == left) (Some(answer), Some(source))
+        else (Some(source), target)
+      case None         =>
+        if (entry.source.language == right && left != right) (None, Some(source))
+        else (Some(source), None)
     }
   }
 
@@ -263,7 +266,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         } else {
           entriesVar.update(_ :+ entry)
           warningVar.set(response.warning.map(I18n.resolve))
-          Var.set(addSourceVar -> None, addSourcePos -> None)
+          Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None)
           addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
         }
       case Left(err)       =>
@@ -286,29 +289,15 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val tagNameSignal: Signal[String] =
     tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))).distinct
 
-  // The tag's mandatory language pair. It is set at creation. The two selects relanguage it through
+  // The tag's mandatory language pair, set at creation. The two selects relanguage it through
   // `WordApiClient.setTagLanguages`, and stay editable only while the tag has no practice pair (`TagEntry.target`
-  // present on some row). The swap button only trades the two selects locally — a view choice, no request.
+  // present on some row). The swap button only trades the two selects locally — a view choice, no request: the
+  // headings, the rows (`TagEditorPage.orient`) and the add/edit boxes all follow these two, and the server accepts a
+  // pair whichever way round, so add and edit stay live in either orientation.
   private val sourceLangVar                = Var(WordLanguage.De)
   private val targetLangVar                = Var(WordLanguage.Hu)
   private val langsLocked: Signal[Boolean] = entriesVar.signal.map(_.exists(_.target.isDefined)).distinct
   private val langBus                      = new EventBus[(WordLanguage, WordLanguage)]()
-
-  // The on-screen direction is the tag's stored pair, flipped, with nothing saved. The rows re-orient to match and
-  // authoring is held until the reader swaps back, so a pair is never written the wrong way round.
-  private val reversed: Signal[Boolean] = {
-    Signal
-      .combine(tagVar.signal, sourceLangVar.signal, targetLangVar.signal)
-      .map {
-        case (Some(tag), source, target) => TagEditorPage.isReversed(tag, source, target)
-        case _                           => false
-      }
-      .distinct
-  }
-
-  // Content edits the reader may make right now: editable, and not looking at a reversed view.
-  private val canWriteSignal: Signal[Boolean] =
-    canEditSignal.combineWith(reversed).map { case (can, rev) => can && !rev }.distinct
 
   // -- Filters --------------------------------------------------------------------------------
 
@@ -333,11 +322,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   // -- Add-a-row control --------------------------------------------------------------------
 
+  // Either box may be filled first. When both hold a word the pair is submitted; Enter on an empty box, with the other
+  // one filled, adds that one word alone — on whichever side it was typed, so its language is the side's language.
   private val addSourceVar = Var(Option.empty[TagPairWord])
+  private val addTargetVar = Var(Option.empty[TagPairWord])
   private val addSourcePos = Var(Option.empty[PartOfSpeech])
 
-  /** The id of the committed source word, when it is a dictionary word — what the target picker offers translations of.
-    */
+  /** The id of a committed word, when it is a dictionary word — what the opposite picker offers translations of. */
   private def existingId(ref: Option[TagPairWord]): Option[Long] = ref match {
     case Some(TagPairWord.Existing(id)) => Some(id)
     case _                              => None
@@ -349,23 +340,30 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     onCommit = Observer[TagPairWord] { ref =>
       addSourceVar.set(Some(ref))
       addSourcePos.set(posOf(ref))
-      dom.window.setTimeout(() => addTargetPicker.focus(), 0)
+      addTargetVar.now() match {
+        case Some(target) => submitAdd(ref, target)
+        case None         => dom.window.setTimeout(() => addTargetPicker.focus(), 0)
+      }
     },
     // A dictionary pick settles the pair's part of speech; the target search is then held to it.
     onCommitWord = Observer[Option[Word]](_.foreach(w => addSourcePos.set(Some(w.partOfSpeech)))),
+    // Enter on the empty word box, with an answer already committed: add that answer on its own.
+    onEmptyCommit = Observer[Unit](_ => addTargetVar.now().foreach(target => addWordBus.emit(target))),
     placeholderSignal = sourceLangVar.signal.map(l => I18n.t(UiKeys.tagsSourcePlaceholder, Labels.language(l))),
+    translateFrom = addTargetVar.signal.map(existingId),
   )
 
   private lazy val addTargetPicker: WordPicker = new WordPicker(
     language = targetLangVar.signal,
     partOfSpeech = addSourcePos.signal,
     onCommit = Observer[TagPairWord] { ref =>
+      addTargetVar.set(Some(ref))
       addSourceVar.now() match {
         case Some(source) => submitAdd(source, ref)
         case None         => addSourcePicker.focus()
       }
     },
-    // Enter on the empty answer box, once a source is committed: add that word on its own, no answer.
+    // Enter on the empty answer box, with a word already committed: add that word on its own.
     onEmptyCommit = Observer[Unit](_ => addSourceVar.now().foreach(source => addWordBus.emit(source))),
     placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
     translateFrom = addSourceVar.signal.map(existingId),
@@ -460,11 +458,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   private def startEdit(entry: TagEntry): Unit = {
     editingVar.set(Some(TagEditorPage.rowKey(entry)))
-    editSourceVar.set(Some(TagPairWord.Existing(entry.source.id)))
-    editTargetVar.set(entry.target.map(w => TagPairWord.Existing(w.id)))
-    editSourcePos.set(Some(entry.source.partOfSpeech))
-    editSourcePicker.setText(Word.display(entry.source))
-    editTargetPicker.setText(entry.target.map(Word.display).getOrElse(""))
+    // Load the two boxes in the order the row is shown, so each word sits in a box searching its own language.
+    val (left, right) = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
+    editSourceVar.set(left.map(s => TagPairWord.Existing(s.word.id)))
+    editTargetVar.set(right.map(s => TagPairWord.Existing(s.word.id)))
+    editSourcePos.set(left.orElse(right).map(_.word.partOfSpeech))
+    editSourcePicker.setText(left.map(s => Word.display(s.word)).getOrElse(""))
+    editTargetPicker.setText(right.map(s => Word.display(s.word)).getOrElse(""))
   }
 
   private def cancelEdit(): Unit = {
@@ -700,14 +700,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
           renderLanguages(),
-          child.maybe <-- reversed.map(
-            Option.when(_)(p(cls := "text-sm opacity-70 mt-1", I18n.t(UiKeys.tagsEditorReversedHint)))
-          ),
           renderFilters(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderSelectionBar())),
           renderRows(),
-          child.maybe <-- canWriteSignal.map(Option.when(_)(renderAddRow())),
-          child.maybe <-- canWriteSignal.map(Option.when(_)(renderBulkPanel())),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderAddRow())),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkPanel())),
         ),
       ),
       child.maybe <-- toastVar.signal.map(
@@ -937,8 +934,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   }
 
   /** Trades the two language selects. This is a view choice, not a change to the tag: nothing is saved and no request
-    * is made. The rows re-orient to match ([[TagEditorPage.orient]]), and authoring is held until the reader swaps
-    * back. Live even once the pair is locked — a reversal never touches the stored pair.
+    * is made. The headings, the rows ([[TagEditorPage.orient]]) and the add/edit boxes all follow the two selects, and
+    * the server places a pair by language rather than by order, so add and edit keep working. Live even once the pair
+    * is locked — the swap never touches the stored pair.
     */
   private def renderLangSwap(): HtmlElement = {
     span(
@@ -1113,6 +1111,16 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private def newBadge(): HtmlElement =
     span(cls := "badge badge-accent badge-xs ml-1", I18n.t(UiKeys.tagsEditorNewBadge))
 
+  /** One word column of a row: the word with its note and badge, or the "no answer" placeholder when the row has
+    * nothing on this side.
+    */
+  private def renderWordCell(side: Option[TagEditorPage.Side]): HtmlElement = side match {
+    case Some(s) =>
+      span(Word.display(s.word), renderComment(s.comment), Option.when(s.isNew)(newBadge()))
+    case None    =>
+      span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
+  }
+
   private def renderRow(entry: TagEntry): HtmlElement = {
     val rowKey     = TagEditorPage.rowKey(entry)
     val isEditing  = editingVar.signal.map(_.contains(rowKey)).distinct
@@ -1136,30 +1144,15 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         ),
       ),
       td(
-        child <-- Signal.combine(isEditing, reversed).map {
-          case (true, _)    => editSourcePicker.render()
-          case (false, rev) =>
-            val left = TagEditorPage.orient(entry, rev)._1
-            span(
-              Word.display(left.word),
-              renderComment(left.comment),
-              Option.when(left.isNew)(newBadge()),
-            )
+        child <-- Signal.combine(isEditing, sourceLangVar.signal, targetLangVar.signal).map {
+          case (true, _, _)         => editSourcePicker.render()
+          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._1)
         }
       ),
       td(
-        child <-- Signal.combine(isEditing, reversed).map {
-          case (true, _)    => editTargetPicker.render()
-          case (false, rev) =>
-            TagEditorPage.orient(entry, rev)._2 match {
-              case Some(right) =>
-                span(
-                  Word.display(right.word),
-                  renderComment(right.comment),
-                  Option.when(right.isNew)(newBadge()),
-                )
-              case None        => span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
-            }
+        child <-- Signal.combine(isEditing, sourceLangVar.signal, targetLangVar.signal).map {
+          case (true, _, _)         => editTargetPicker.render()
+          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._2)
         }
       ),
       // One part of speech per row — a pair's two words share it. Hidden while the row is being edited, where the
@@ -1185,9 +1178,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         )
       ),
       td(
-        child <-- Signal.combine(isEditing, canEditSignal, isDeleting, reversed).map {
-          case (_, false, _, _)          => span()
-          case (false, true, true, _)    =>
+        child <-- Signal.combine(isEditing, canEditSignal, isDeleting).map {
+          case (_, false, _)        => span()
+          case (false, true, true)  =>
             // Button-shaped wrapper so the row keeps the exact height it has with the edit/delete buttons.
             div(
               cls := "flex gap-1",
@@ -1198,7 +1191,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                 span(cls := "loading loading-spinner loading-xs", role := "status"),
               ),
             )
-          case (true, true, _, _)        =>
+          case (true, true, _)      =>
             div(
               cls := "flex gap-1",
               button(
@@ -1217,16 +1210,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                 onClick.mapToUnit --> Observer[Unit](_ => cancelEdit()),
               ),
             )
-          case (false, true, false, rev) =>
-            // A reversed view holds back the edit icon — swap back to author — but a delete is direction-blind.
+          case (false, true, false) =>
             div(
               cls := "flex gap-1",
-              Option.when(!rev)(
-                InlineRename.iconButton(
-                  I18n.t(UiKeys.tagsEditorEditRow),
-                  pencilMark(),
-                  onClick.mapToUnit --> Observer[Unit](_ => startEdit(entry)),
-                )
+              InlineRename.iconButton(
+                I18n.t(UiKeys.tagsEditorEditRow),
+                pencilMark(),
+                onClick.mapToUnit --> Observer[Unit](_ => startEdit(entry)),
               ),
               InlineRename.iconButton(
                 I18n.t(UiKeys.tagsRemovePair),
