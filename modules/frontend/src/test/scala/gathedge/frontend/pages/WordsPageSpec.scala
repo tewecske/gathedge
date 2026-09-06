@@ -165,8 +165,8 @@ object WordsPageSpec extends ZIOSpecDefault {
           text.contains(UiKeys.wordsTitle),
           // Required by the licence the dictionary data is under, so it is not optional page furniture.
           text.contains(UiKeys.wordsAttribution),
-          // The collect bar's own hint is unconditional; its `<select>` stays absent regardless of session until a
-          // tag list arrives to populate it — under jsdom, a signed-out visitor never gets one.
+          // The collect bar's own hint is unconditional; its `<select>` needs a session — a signed-out visitor mints
+          // one on their first tick — so it is absent here.
           text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsCollectLabel),
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
@@ -174,13 +174,14 @@ object WordsPageSpec extends ZIOSpecDefault {
           !text.contains(UiKeys.wordsOnlyMine),
         )
       },
-      // Signed in, "only my words" is on offer; the collect select still waits on a tag list, which never arrives here.
-      test("a signed-in reader gets the only-mine toggle, and the collect select still waits on a tag list") {
+      // Signed in — a guest counts — the collect select is on offer even before the reader owns a tag: it still lets
+      // them pick "No tag", and a first tick mints "saved".
+      test("a signed-in reader gets the only-mine toggle and the collect select") {
         val text = signedIn(withPage(WordQuery())((container, _) => container.textContent))
         assertTrue(
           text.contains(UiKeys.wordsOnlyMine),
           text.contains(UiKeys.wordsCollectHint),
-          !text.contains(UiKeys.wordsCollectLabel),
+          text.contains(UiKeys.wordsCollectLabel),
         )
       },
       // Every request fails under jsdom, which is the same shape as a listing that matched nothing.

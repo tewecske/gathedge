@@ -75,28 +75,43 @@ object WordCollect {
     * any tag I have", which is the mistake that made a filtered listing look fully collected. `None` is only the moment
     * before the tag list arrives, or a reader with no tags at all, where the honest answer is whatever they have.
     *
+    * `explicitNone` is the reader picking "No tag" in the select on purpose — a different state from the `None` above.
+    * Nothing is marked then: the collect target is a "saved" tag that does not exist until the first click mints it, so
+    * a just-cleared select must stop showing the previous tag's chips.
+    *
     * Takes the marks rather than a row so both screens can ask it: the listing has a `WordSummary`, the word page a
     * `WordDetail`. Here rather than in either of them so it can be stated as a table in a test — neither page has a
     * seam for injecting rows, and this is the part of a chip that can be wrong.
     */
-  def selectedTranslationIds(pairs: List[TaggedPair], collect: Option[Long]): Set[Long] = {
-    collect match {
-      case Some(tagId) =>
-        pairs.filter(_.tagId == tagId).map(_.translationWordId).toSet
-      case None        =>
-        pairs.map(_.translationWordId).toSet
+  def selectedTranslationIds(
+    pairs: List[TaggedPair],
+    collect: Option[Long],
+    explicitNone: Boolean = false,
+  ): Set[Long] = {
+    if (explicitNone) Set.empty[Long]
+    else {
+      collect match {
+        case Some(tagId) =>
+          pairs.filter(_.tagId == tagId).map(_.translationWordId).toSet
+        case None        =>
+          pairs.map(_.translationWordId).toSet
+      }
     }
   }
 
   /** Whether the tick is showing, given the reader's tags on the word — the same question [[selectedTranslationIds]]
     * answers for a chip, and wrong in the same way if it is asked of the listing's filter instead of the collect tag.
+    * `explicitNone` behaves as it does there: the reader chose "No tag", so nothing is ticked.
     */
-  def isTagged(tagIds: List[Long], collect: Option[Long]): Boolean = {
-    collect match {
-      case Some(tagId) =>
-        tagIds.contains(tagId)
-      case None        =>
-        tagIds.nonEmpty
+  def isTagged(tagIds: List[Long], collect: Option[Long], explicitNone: Boolean = false): Boolean = {
+    if (explicitNone) false
+    else {
+      collect match {
+        case Some(tagId) =>
+          tagIds.contains(tagId)
+        case None        =>
+          tagIds.nonEmpty
+      }
     }
   }
 
@@ -191,6 +206,12 @@ final class WordCollect(
     */
   private val collectTagVar = Var(WordCollect.storedCollectTag)
 
+  /** Whether the reader has picked "No tag" on purpose, as opposed to the tag list not having arrived yet. Mirrors what
+    * [[WordCollect.storedCollectExplicitNone]] persists, so a tick and a chip can stop showing the previous tag's marks
+    * the moment the select is cleared — see [[WordCollect.isTagged]].
+    */
+  private val collectExplicitNoneVar = Var(WordCollect.storedCollectExplicitNone)
+
   /** Whether [[tagsVar]] holds a list fetched for whoever is signed in *now* — i.e. whether [[collectTagVar]] has been
     * through [[reconcileCollectTag]] against that list.
     *
@@ -256,6 +277,7 @@ final class WordCollect(
 
   private def setCollectTag(tagId: Option[Long]): Unit = {
     collectTagVar.set(tagId)
+    collectExplicitNoneVar.set(tagId.isEmpty)
     WordCollect.storeCollectTag(tagId)
   }
 
@@ -459,10 +481,10 @@ final class WordCollect(
         cls := "card-body py-3 gap-2",
         div(
           cls := "flex flex-wrap items-end gap-3",
-          // Absent until the reader has a tag to file under — their own, or one a group has opened to them — so with
-          // none of those it would otherwise render with nothing to choose between, even while the global list is
-          // non-empty.
-          child.maybe <-- tagsSignal.map(tags => Option.when(tags.exists(_.editableByMe))(renderCollectSelect())),
+          // Shown to anyone with a session, a guest included, even before they own a tag: it still offers "No tag", and
+          // a first tick mints "saved" through `collectTagOrDefault`. A signed-out visitor has no account to hang a tag
+          // on yet, so the select waits for their first tick to mint the guest.
+          child.maybe <-- signedInSignal.map(Option.when(_)(renderCollectSelect())),
         ),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsPairHint)),
@@ -492,12 +514,18 @@ final class WordCollect(
 
   /** Whether a word carrying these tags is in the vocabulary, as the tick asks it. */
   def taggedSignal(tagIds: Signal[List[Long]]): Signal[Boolean] = {
-    tagIds.combineWithFn(collectTagSignal)(WordCollect.isTagged).distinct
+    tagIds
+      .combineWith(collectTagSignal, collectExplicitNoneVar.signal)
+      .map { case (ids, collect, explicitNone) => WordCollect.isTagged(ids, collect, explicitNone) }
+      .distinct
   }
 
   /** Which of a word's translations are marked, as the chips ask it. */
   def selectedSignal(pairs: Signal[List[TaggedPair]]): Signal[Set[Long]] = {
-    pairs.combineWithFn(collectTagSignal)(WordCollect.selectedTranslationIds).distinct
+    pairs
+      .combineWith(collectTagSignal, collectExplicitNoneVar.signal)
+      .map { case (ps, collect, explicitNone) => WordCollect.selectedTranslationIds(ps, collect, explicitNone) }
+      .distinct
   }
 
   /** The word's own control: in or out of the vocabulary, in one click.
