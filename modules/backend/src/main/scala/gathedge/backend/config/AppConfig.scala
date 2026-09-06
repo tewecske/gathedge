@@ -44,6 +44,11 @@ final case class AppSection(
     * `loginAttemptRetentionDays` this is a table an unauthenticated caller can grow at will.
     */
   usageEventRetentionDays: Int,
+  /** How many unwritten `usage_events` rows the tracker holds in memory. The write is off the request path
+    * (`UsageTracker`); this bounds the backlog when the drain fiber falls behind. A full queue makes `record` wait for
+    * space rather than drop the event, so this trades a little request latency for not losing usage history.
+    */
+  usageEventQueueCapacity: Int,
   guestRetentionDays: Int,
   /** How long a "forgot password" link stays redeemable. Config rather than a literal — unlike
     * `AuthService.verificationValidity` — because a password reset link is a stronger credential than a verification
