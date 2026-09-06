@@ -673,7 +673,6 @@
   "ui.tags.editor.bulkTableResult": "Imported {0} rows: {1} pairs, {2} new words, {3} word forms.",
   "ui.tags.editor.bulkTableLangMismatch": "You chose {0} for this column, but the dictionary suggests {1}. Import anyway?",
   "ui.tags.editor.readOnly": "You can view this tag but not change it.",
-  "ui.tags.editor.reversedHint": "Showing the pair reversed. Swap back to change these words.",
   "ui.guest.bannerTitle": "You have data saved as a guest",
   "ui.guest.bannerHint": "Your data stays only while this browser keeps its cookies. Get a transfer code or create an account to use your data anywhere and keep it safe.",
   "ui.guest.getCode": "Get a transfer code",

@@ -1057,11 +1057,6 @@ object UiKeys {
   /** Shown instead of the editing controls when the reader may view the tag but not change it. */
   val tagsEditorReadOnly: String = key("ui.tags.editor.readOnly")
 
-  /** Shown under the language selects when the swap button has flipped the on-screen direction. The flip is local, so
-    * authoring waits until the reader swaps back.
-    */
-  val tagsEditorReversedHint: String = key("ui.tags.editor.reversedHint")
-
   // -- Guest accounts --------------------------------------------------------------------------
   // The banner a visitor who has tagged something sees, and the two ways out of it: a transfer code
   // for another machine, or a real account.

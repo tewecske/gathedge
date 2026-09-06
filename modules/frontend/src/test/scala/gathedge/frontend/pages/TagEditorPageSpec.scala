@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
@@ -46,10 +46,12 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     targetInMyOtherTags: Boolean = false,
     comment: Option[String] = None,
     targetComment: Option[String] = None,
+    sourceLang: WordLanguage = WordLanguage.De,
+    targetLang: WordLanguage = WordLanguage.Hu,
   ): TagEntry = {
     TagEntry(
-      source = Word(sourceId, WordLanguage.De, s"w$sourceId", PartOfSpeech.Noun, None),
-      target = targetId.map(id => Word(id, WordLanguage.Hu, s"t$id", PartOfSpeech.Noun, None)),
+      source = Word(sourceId, sourceLang, s"w$sourceId", PartOfSpeech.Noun, None),
+      target = targetId.map(id => Word(id, targetLang, s"t$id", PartOfSpeech.Noun, None)),
       imported = imported,
       matchKind = matchKind,
       createdByMe = createdByMe,
@@ -62,8 +64,8 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     )
   }
 
-  private def tag(source: WordLanguage, target: WordLanguage): Tag =
-    Tag(1L, "t", 0L, ownedByMe = true, sourceLanguage = source, targetLanguage = target)
+  private def sideOf(e: TagEntry): TagEditorPage.Side =
+    TagEditorPage.Side(e.source, e.comment, TagEditorPage.sourceIsNew(e))
 
   def spec = {
     suite("TagEditorPage")(
@@ -290,22 +292,13 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
-      suite("isReversed")(
-        test("true only when the selects are the tag's stored pair, the other way round") {
-          val t = tag(WordLanguage.De, WordLanguage.Hu)
-          assertTrue(
-            TagEditorPage.isReversed(t, WordLanguage.Hu, WordLanguage.De),
-            !TagEditorPage.isReversed(t, WordLanguage.De, WordLanguage.Hu),
-            !TagEditorPage.isReversed(t, WordLanguage.En, WordLanguage.De),
-          )
-        },
-        test("two equal languages are never a reversal") {
-          val t = tag(WordLanguage.De, WordLanguage.De)
-          assertTrue(!TagEditorPage.isReversed(t, WordLanguage.De, WordLanguage.De))
-        },
-      ),
       suite("orient")(
-        test("a pair trades columns when reversed; comment and new-word flag follow the word") {
+        test("a pair sits with each word under its own language's column") {
+          val row           = entry(1, Some(2))
+          val (left, right) = TagEditorPage.orient(row, WordLanguage.De, WordLanguage.Hu)
+          assertTrue(left.exists(_.word.id == 1L), right.exists(_.word.id == 2L))
+        },
+        test("with the columns swapped the pair trades sides; comment and new-word flag follow the word") {
           val row           = entry(
             1,
             Some(2),
@@ -315,25 +308,24 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             comment = Some("src note"),
             targetComment = Some("tgt note"),
           )
-          val (left, right) = TagEditorPage.orient(row, reversed = true)
+          val (left, right) = TagEditorPage.orient(row, WordLanguage.Hu, WordLanguage.De)
           assertTrue(
-            left.word.id == 2L,
-            left.comment.contains("tgt note"),
-            !left.isNew,
+            left.exists(_.word.id == 2L),
+            left.exists(_.comment.contains("tgt note")),
+            left.exists(!_.isNew),
             right.exists(_.word.id == 1L),
             right.exists(_.comment.contains("src note")),
             right.exists(_.isNew),
           )
         },
-        test("not reversed leaves the row as it stands") {
-          val row           = entry(1, Some(2))
-          val (left, right) = TagEditorPage.orient(row, reversed = false)
-          assertTrue(left.word.id == 1L, right.exists(_.word.id == 2L))
-        },
-        test("a lone source word keeps its column even when reversed") {
-          val row           = entry(7, None)
-          val (left, right) = TagEditorPage.orient(row, reversed = true)
-          assertTrue(left.word.id == 7L, right.isEmpty)
+        test("a lone word sits under its own language's column, left or right") {
+          val loneDe = entry(7, None, sourceLang = WordLanguage.De)
+          val loneHu = entry(9, None, sourceLang = WordLanguage.Hu)
+          assertTrue(
+            TagEditorPage.orient(loneDe, WordLanguage.De, WordLanguage.Hu) == ((Some(sideOf(loneDe)), None)),
+            TagEditorPage.orient(loneDe, WordLanguage.Hu, WordLanguage.De) == ((None, Some(sideOf(loneDe)))),
+            TagEditorPage.orient(loneHu, WordLanguage.De, WordLanguage.Hu) == ((None, Some(sideOf(loneHu)))),
+          )
         },
       ),
     )
