@@ -2227,6 +2227,40 @@ object WordServiceSpec extends ZIOSpecDefault {
           result <- WordService.deleteWords(tag.id, List(1L), 2L).either
         } yield assertTrue(result == Left(WordFailure.TagNotFound))
       },
+      test("removeEntries clears an imported tag's rows without leaving the memberships behind") {
+        for {
+          tag   <- createTag("import", 1L, WordLanguage.De, WordLanguage.Hu)
+          _     <- WordService.tabularImport(
+                     tag.id,
+                     List(row("Hund", "kutya"), row("Katze", "macska"), row("Haus", "ház")),
+                     WordLanguage.De,
+                     WordLanguage.Hu,
+                     1L,
+                   )
+          rows0 <- WordService.tagEntries(tag.id, 1L)
+          _     <- WordService.removeEntries(tag.id, rows0.map(r => PairRef(r.source.id, r.target.map(_.id))), 1L)
+          rows  <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows0.length == 3, rows0.forall(_.imported), rows.isEmpty)
+      },
+      test("deleteWords does not leave the answer word behind as a stray row") {
+        for {
+          haz       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          tag       <- createTag("t1", 1L)
+          _         <- WordService.addPair(
+                         tag.id,
+                         TagPairInput(
+                           TagPairWord.New(WordLanguage.De, "Kobold", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                           TagPairWord.Existing(haz.id),
+                         ),
+                         1L,
+                       )
+          rows0     <- WordService.tagEntries(tag.id, 1L)
+          koboldId   = rows0.find(_.source.text == "Kobold").map(_.source.id).get
+          _         <- WordService.deleteWords(tag.id, List(koboldId), 1L)
+          rows      <- WordService.tagEntries(tag.id, 1L)
+          stillWord <- WordRepository.findWordById(haz.id)
+        } yield assertTrue(rows.isEmpty, stillWord.isDefined)
+      },
     ).provide(layer)
   }
 

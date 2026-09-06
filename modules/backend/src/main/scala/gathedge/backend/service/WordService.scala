@@ -1908,8 +1908,10 @@ final case class WordServiceLive(
   ): IO[WordFailure, Unit] = {
     for {
       _ <- requireEditableTag(tagId, userId)
+      // `force = true`: the reader deleted this row by hand, so an imported membership it strands goes with it — the
+      // same rule `replacePair` follows for a side it discards.
       _ <- targetWordId match {
-             case Some(targetId) => repo.removePair(tagId, sourceWordId, targetId).orDie
+             case Some(targetId) => repo.removePair(tagId, sourceWordId, targetId, force = true).orDie
              case None           => repo.removeEntry(tagId, sourceWordId).orDie
            }
     } yield ()
@@ -1919,7 +1921,8 @@ final case class WordServiceLive(
     for {
       _ <- requireEditableTag(tagId, userId)
       _ <- ZIO.foreachDiscard(pairs) {
-             case PairRef(sourceWordId, Some(targetId)) => repo.removePair(tagId, sourceWordId, targetId).orDie
+             case PairRef(sourceWordId, Some(targetId)) =>
+               repo.removePair(tagId, sourceWordId, targetId, force = true).orDie
              case PairRef(sourceWordId, None)           => repo.removeEntry(tagId, sourceWordId).orDie
            }
     } yield ()
@@ -1931,9 +1934,15 @@ final case class WordServiceLive(
       rows      <- repo.findWordsByIds(wordIds.distinct).orDie
       mine       = rows.filter(w => w.source == WordService.userSource && w.createdBy.contains(userId)).map(_.id)
       elsewhere <- repo.wordsInOtherTags(tagId, mine).orDie
+      deletable  = mine.filterNot(elsewhere.contains)
+      // The answer half of each deleted row keeps its own `word_tags` row; read those partners before the words go.
+      partners  <- repo.pairPartnersInTag(tagId, deletable).orDie
       // A word another tag still holds is left alone. A word a game references makes the `words` delete fail on
       // Postgres (RESTRICT); `.either` per id skips it rather than failing the batch.
-      _         <- ZIO.foreachDiscard(mine.filterNot(elsewhere.contains))(id => repo.deleteOwnedWord(id, userId).either)
+      _         <- ZIO.foreachDiscard(deletable)(id => repo.deleteOwnedWord(id, userId).either)
+      // Drop a partner's membership once the tag no longer pairs it, so a deleted row does not linger as an
+      // answer-less entry. A partner still paired (its word was RESTRICT-skipped) keeps its row.
+      _         <- repo.dropStrandedMemberships(tagId, partners.toList).orDie
     } yield ()
   }
 

@@ -767,6 +767,62 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           after.isEmpty,
         )
       },
+      // `removeEntries`' forced prune and `deleteWords`' `pairPartnersInTag` / `dropStrandedMemberships` are new
+      // `word_tags` shapes: a bulk delete must clear an imported row and must not strand a deleted row's answer half.
+      pgTest("bulk delete leaves no imported membership and strands no answer word on the real dialect") {
+        for {
+          reader    <- AuthService.createGuest(Some("10.9.2.15")).map(_._1)
+          tag       <- WordService.createTag("pgbulkdel", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
+          haus      <- WordRepository.ensureWord(
+                         WordRow(0L, "de", "Pgbdhaus", "pgbdhaus", "noun", "neuter", 1, "user", None, 0L, "pgbdhaus")
+                       )
+          haz       <- WordRepository.ensureWord(
+                         WordRow(0L, "hu", "Pgbdhaz", "pgbdhaz", "noun", "", 1, "user", None, 0L, "pgbdhaz")
+                       )
+          _         <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
+          _         <- WordService.bulkImport(tag.id, "Pgbdhaus Pgbdhaz", WordLanguage.De, WordLanguage.Hu, reader.id)
+          imported  <- WordService.tagEntries(tag.id, reader.id)
+          _         <- WordService.removeEntries(
+                         tag.id,
+                         imported.map(r => PairRef(r.source.id, r.target.map(_.id))),
+                         reader.id,
+                       )
+          afterRm   <- WordService.tagEntries(tag.id, reader.id)
+          rmLinks   <- WordRepository.tagsFor(reader.id, List(haus.id, haz.id))
+          // `deleteWords`: a reader-minted source paired with a dictionary answer that only this tag holds.
+          kobold    <- WordRepository.ensureWord(
+                         WordRow(
+                           0L,
+                           "de",
+                           "Pgbdkobold",
+                           "pgbdkobold",
+                           "noun",
+                           "masculine",
+                           1,
+                           "user",
+                           Some(reader.id),
+                           0L,
+                           "pgbdkobold",
+                         )
+                       )
+          _         <- WordService.addPair(
+                         tag.id,
+                         TagPairInput(TagPairWord.Existing(kobold.id), TagPairWord.Existing(haz.id)),
+                         reader.id,
+                       )
+          _         <- WordService.deleteWords(tag.id, List(kobold.id), reader.id)
+          afterDel  <- WordService.tagEntries(tag.id, reader.id)
+          koboldRow <- WordRepository.findWordById(kobold.id)
+          hazRow    <- WordRepository.findWordById(haz.id)
+        } yield assertTrue(
+          imported.map(r => (r.source.text, r.imported)) == List(("Pgbdhaus", true)),
+          afterRm.isEmpty,
+          rmLinks.isEmpty,
+          afterDel.isEmpty,
+          koboldRow.isEmpty,
+          hazRow.isDefined,
+        )
+      },
       // The only UPDATE any `words` row takes, and the only one whose guard is a column the unique index also covers.
       // `UNIQUE (language, text_norm, part_of_speech, gender)` is what decides the conflict, and only Postgres runs the
       // dialect this ships on.

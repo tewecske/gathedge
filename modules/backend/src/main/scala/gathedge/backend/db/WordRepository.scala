@@ -276,10 +276,22 @@ trait WordRepository {
   def removeEntry(tagId: Long, sourceWordId: Long): Task[Unit]
 
   /** Deletes one `(source, target)` practice pair from a tag, both directions, then drops whichever side the tag no
-    * longer pairs and did not `import` — so a source word with other marked translations keeps its remaining rows. One
+    * longer pairs. A side that was `import`ed is kept when `force = false` (it stands as its own "unmatched" row) and
+    * dropped when `force = true` — what a delete the reader asked for by row wants, the same as [[replacePair]]. One
     * transaction. Idempotent.
     */
-  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): Task[Unit]
+  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long, force: Boolean = false): Task[Unit]
+
+  /** The words a tag pairs with any of `wordIds`, minus `wordIds` themselves — the answer half of each row a bulk word
+    * delete is about to strand, read before those words go. One query; an empty list skips it.
+    */
+  def pairPartnersInTag(tagId: Long, wordIds: List[Long]): Task[Set[Long]]
+
+  /** For each of `wordIds`, drops its membership in the tag when no `word_tag_pairs` row there still names it — the
+    * forced counterpart of [[removePair]]'s prune, for a bulk word delete that took the pairs but left the partner
+    * rows. One transaction; an empty list is a no-op.
+    */
+  def dropStrandedMemberships(tagId: Long, wordIds: List[Long]): Task[Unit]
 
   /** Rewrites a tag's language pair, but only while the tag has no `word_tag_pairs` row — the pair locks once a
     * practice pair exists. Rows affected: `1` on a tag still open to it, `0` on a locked or missing one.
@@ -615,8 +627,19 @@ object WordRepository {
   def removeEntry(tagId: Long, sourceWordId: Long): RIO[WordRepository, Unit] =
     ZIO.serviceWithZIO[WordRepository](_.removeEntry(tagId, sourceWordId))
 
-  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): RIO[WordRepository, Unit] =
-    ZIO.serviceWithZIO[WordRepository](_.removePair(tagId, sourceWordId, targetWordId))
+  def removePair(
+    tagId: Long,
+    sourceWordId: Long,
+    targetWordId: Long,
+    force: Boolean = false,
+  ): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.removePair(tagId, sourceWordId, targetWordId, force))
+
+  def pairPartnersInTag(tagId: Long, wordIds: List[Long]): RIO[WordRepository, Set[Long]] =
+    ZIO.serviceWithZIO[WordRepository](_.pairPartnersInTag(tagId, wordIds))
+
+  def dropStrandedMemberships(tagId: Long, wordIds: List[Long]): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.dropStrandedMemberships(tagId, wordIds))
 
   def setTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.setTagLanguages(tagId, sourceLanguage, targetLanguage))
@@ -1491,10 +1514,11 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   /** Deletes one `(source, target)` pair from a tag — both `word_tag_pairs` directions — then prunes whichever side the
-    * tag now pairs with nothing and did not `import`. A source word with other marked translations keeps those rows,
-    * and its membership, because a pair still names it. One transaction; idempotent.
+    * tag now pairs with nothing. A source word with other marked translations keeps those rows, and its membership,
+    * because a pair still names it. `force` decides whether an `import`ed orphan goes too (see the trait). One
+    * transaction; idempotent.
     */
-  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long): Task[Unit] = {
+  def removePair(tagId: Long, sourceWordId: Long, targetWordId: Long, force: Boolean = false): Task[Unit] = {
     val work = transaction(
       for {
         _ <- ctx.run(quote {
@@ -1506,11 +1530,37 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                  })
                  .delete
              })
-        _ <- pruneOrphanMembership(tagId, sourceWordId)
-        _ <- pruneOrphanMembership(tagId, targetWordId)
+        _ <- pruneOrphanMembership(tagId, sourceWordId, force)
+        _ <- pruneOrphanMembership(tagId, targetWordId, force)
       } yield ()
     )
     logged(work)(_ => s"wordTagPairs.removePair tag=$tagId source=$sourceWordId target=$targetWordId")
+  }
+
+  def pairPartnersInTag(tagId: Long, wordIds: List[Long]): Task[Set[Long]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      val asked = wordIds.toSet
+      val q     = quote {
+        wordTagPairs.filter(pair => {
+          pair.tagId == lift(tagId) &&
+          (liftQuery(wordIds).contains(pair.wordId) || liftQuery(wordIds).contains(pair.translationWordId))
+        })
+      }
+      val work  = run(ctx.run(q))
+        .map(rows => rows.flatMap(pair => List(pair.wordId, pair.translationWordId)).toSet.diff(asked))
+      logged(work)(partners => s"wordTagPairs.partnersInTag tag=$tagId asked=${wordIds.size} partners=${partners.size}")
+    }
+  }
+
+  def dropStrandedMemberships(tagId: Long, wordIds: List[Long]): Task[Unit] = {
+    if (wordIds.isEmpty)
+      ZIO.unit
+    else {
+      val work = transaction(ZIO.foreachDiscard(wordIds.distinct)(id => pruneOrphanMembership(tagId, id, force = true)))
+      logged(work)(_ => s"wordTags.dropStranded tag=$tagId n=${wordIds.size}")
+    }
   }
 
   /** Removes a `word_tags` row that no `word_tag_pairs` row in the tag still names. `force = false` keeps an `imported`
