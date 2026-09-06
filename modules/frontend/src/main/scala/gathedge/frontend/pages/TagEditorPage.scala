@@ -266,7 +266,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         } else {
           entriesVar.update(_ :+ entry)
           warningVar.set(response.warning.map(I18n.resolve))
-          Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None)
+          Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None, addTargetPos -> None)
           addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
         }
       case Left(err)       =>
@@ -324,9 +324,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   // Either box may be filled first. When both hold a word the pair is submitted; Enter on an empty box, with the other
   // one filled, adds that one word alone — on whichever side it was typed, so its language is the side's language.
+  // Each box's search is held to the *other* box's committed part of speech and offers that word's translations.
   private val addSourceVar = Var(Option.empty[TagPairWord])
   private val addTargetVar = Var(Option.empty[TagPairWord])
   private val addSourcePos = Var(Option.empty[PartOfSpeech])
+  private val addTargetPos = Var(Option.empty[PartOfSpeech])
 
   /** The id of a committed word, when it is a dictionary word — what the opposite picker offers translations of. */
   private def existingId(ref: Option[TagPairWord]): Option[Long] = ref match {
@@ -336,7 +338,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   private lazy val addSourcePicker: WordPicker = new WordPicker(
     language = sourceLangVar.signal,
-    partOfSpeech = Val(None),
+    partOfSpeech = addTargetPos.signal,
     onCommit = Observer[TagPairWord] { ref =>
       addSourceVar.set(Some(ref))
       addSourcePos.set(posOf(ref))
@@ -345,7 +347,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case None         => dom.window.setTimeout(() => addTargetPicker.focus(), 0)
       }
     },
-    // A dictionary pick settles the pair's part of speech; the target search is then held to it.
+    // A dictionary pick settles the pair's part of speech; the other box's search is then held to it.
     onCommitWord = Observer[Option[Word]](_.foreach(w => addSourcePos.set(Some(w.partOfSpeech)))),
     // Enter on the empty word box, with an answer already committed: add that answer on its own.
     onEmptyCommit = Observer[Unit](_ => addTargetVar.now().foreach(target => addWordBus.emit(target))),
@@ -358,11 +360,13 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     partOfSpeech = addSourcePos.signal,
     onCommit = Observer[TagPairWord] { ref =>
       addTargetVar.set(Some(ref))
+      addTargetPos.set(posOf(ref))
       addSourceVar.now() match {
         case Some(source) => submitAdd(source, ref)
         case None         => addSourcePicker.focus()
       }
     },
+    onCommitWord = Observer[Option[Word]](_.foreach(w => addTargetPos.set(Some(w.partOfSpeech)))),
     // Enter on the empty answer box, with a word already committed: add that word on its own.
     onEmptyCommit = Observer[Unit](_ => addSourceVar.now().foreach(source => addWordBus.emit(source))),
     placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
@@ -1232,13 +1236,14 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private def renderAddRow(): HtmlElement = {
     div(
       cls := "mt-6 flex flex-col gap-2",
-      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
+      h2(cls               := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
       div(
-        cls  := "grid grid-cols-2 gap-4 items-start",
+        cls                := "grid grid-cols-2 gap-4 items-start",
+        dataAttr("testid") := "tag-add-row",
         addSourcePicker.render(),
         addTargetPicker.render(),
       ),
-      p(cls  := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint)),
+      p(cls                := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint)),
     )
   }
 
