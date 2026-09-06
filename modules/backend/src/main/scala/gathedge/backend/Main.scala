@@ -76,8 +76,9 @@ object Main extends ZIOAppDefault {
     // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
     //
     // `serverSpan` is attached last, so it wraps the others: the HTTP server span is the parent, in the finished
-    // trace, of the log line, the usage row, the handler, and every SQL span the OpenTelemetry Java agent opens
-    // underneath. See `telemetry.Telemetry`.
+    // trace, of the log line, the handler, and every SQL span the OpenTelemetry Java agent opens underneath. The
+    // `usage_events` insert runs on `UsageTracker`'s drain fiber, off the request path, so it is not among them. See
+    // `telemetry.Telemetry`.
     RouteSupport.handleFailures(combined) @@
       RouteSupport.requestLogging @@ RouteSupport.usageTracking @@ RouteSupport.serverSpan
   }

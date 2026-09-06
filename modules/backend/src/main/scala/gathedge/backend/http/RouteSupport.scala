@@ -184,8 +184,8 @@ object RouteSupport {
   }
 
   /** Wraps every request in a `SpanKind.SERVER` span — the parent, in the finished trace, of the request log line, the
-    * usage row, the handler, and every SQL span the OpenTelemetry Java agent opens beneath it. `Main` attaches it
-    * outermost.
+    * handler, and every SQL span the OpenTelemetry Java agent opens beneath it. The `usage_events` insert is not among
+    * them: it runs on `UsageTracker`'s drain fiber, off the request path. `Main` attaches this aspect outermost.
     *
     * Built like [[requestLogging]], with `interceptHandlerStateful` carrying the open span from before the handler to
     * after it, because — as the note there says — the handler cannot be called directly across the `Scope` its response
@@ -262,9 +262,10 @@ object RouteSupport {
     * Built the same before/after shape as [[requestLogging]], because the status this records is the one the handler
     * actually answered with, and attached the same way: globally, once, in `Main`, needing no per-route wiring.
     *
-    * The caller and the client address are resolved inside [[UsageTracker.record]] rather than here, so this aspect
-    * needs nothing in its environment beyond the tracker itself — `AuthService` and `AppConfig` are the tracker's own
-    * dependencies, not this aspect's.
+    * [[UsageTracker.record]] only enqueues the event and returns — the session lookup and the insert happen on the
+    * tracker's own drain fiber — so this aspect adds no database work to the request and needs nothing in its
+    * environment beyond the tracker itself. `AuthService` and `AppConfig` are the tracker's own dependencies, not this
+    * aspect's.
     */
   val usageTracking: HandlerAspect[UsageTracker, Unit] = {
     HandlerAspect.interceptHandlerStateful(
