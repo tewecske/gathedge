@@ -439,6 +439,7 @@
   "ui.gameSetup.noMatchingTags": "No tags match your filter",
   "ui.gameSetup.play": "Play",
   "ui.gameSetup.created": "Quiz “{0}” is ready.",
+  "ui.gameSetup.languagesLockedHint": "Set by the selected tags. Clear every tag to change them, or swap to play the pair the other way.",
   "ui.gameInstance.notFound": "This quiz link is not valid.",
   "ui.gameInstance.start": "Start",
   "ui.gameInstance.direction.swap": "Swap languages",
