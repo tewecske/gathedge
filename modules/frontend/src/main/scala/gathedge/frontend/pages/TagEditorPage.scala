@@ -99,6 +99,28 @@ object TagEditorPage {
   private[pages] def targetIsNew(entry: TagEntry): Boolean =
     entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
 
+  /** Whether the two languages on screen are the tag's own stored pair, flipped. This is the whole of the swap button's
+    * effect: it is a view choice, not a change to the tag, so nothing is saved. A dropdown relanguage persists and
+    * re-seeds the selects, which brings this back to `false` on its own.
+    */
+  private[pages] def isReversed(tag: Tag, source: WordLanguage, target: WordLanguage): Boolean =
+    source == tag.targetLanguage && target == tag.sourceLanguage && source != target
+
+  /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
+  private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
+
+  /** The words for a row's two columns. A local reversal (the swap button) trades them so they line up with the flipped
+    * headings; a lone source word, with no answer, never moves.
+    */
+  private[pages] def orient(entry: TagEntry, reversed: Boolean): (Side, Option[Side]) = {
+    val source = Side(entry.source, entry.comment, sourceIsNew(entry))
+    val target = entry.target.map(word => Side(word, entry.targetComment, targetIsNew(entry)))
+    target match {
+      case Some(answer) if reversed => (answer, Some(source))
+      case _                        => (source, target)
+    }
+  }
+
   // -- Tabular import --------------------------------------------------------------------------
 
   /** What one column of a delimited paste is used for. The two "extra" roles carry the gender and grammar markers
@@ -264,12 +286,29 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val tagNameSignal: Signal[String] =
     tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))).distinct
 
-  // The tag's mandatory language pair. It is set at creation and stays editable here only while the tag has no practice
-  // pair (`TagEntry.target` present on some row); a change is saved through `WordApiClient.setTagLanguages`.
+  // The tag's mandatory language pair. It is set at creation. The two selects relanguage it through
+  // `WordApiClient.setTagLanguages`, and stay editable only while the tag has no practice pair (`TagEntry.target`
+  // present on some row). The swap button only trades the two selects locally — a view choice, no request.
   private val sourceLangVar                = Var(WordLanguage.De)
   private val targetLangVar                = Var(WordLanguage.Hu)
   private val langsLocked: Signal[Boolean] = entriesVar.signal.map(_.exists(_.target.isDefined)).distinct
   private val langBus                      = new EventBus[(WordLanguage, WordLanguage)]()
+
+  // The on-screen direction is the tag's stored pair, flipped, with nothing saved. The rows re-orient to match and
+  // authoring is held until the reader swaps back, so a pair is never written the wrong way round.
+  private val reversed: Signal[Boolean] = {
+    Signal
+      .combine(tagVar.signal, sourceLangVar.signal, targetLangVar.signal)
+      .map {
+        case (Some(tag), source, target) => TagEditorPage.isReversed(tag, source, target)
+        case _                           => false
+      }
+      .distinct
+  }
+
+  // Content edits the reader may make right now: editable, and not looking at a reversed view.
+  private val canWriteSignal: Signal[Boolean] =
+    canEditSignal.combineWith(reversed).map { case (can, rev) => can && !rev }.distinct
 
   // -- Filters --------------------------------------------------------------------------------
 
@@ -661,11 +700,14 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
           renderLanguages(),
+          child.maybe <-- reversed.map(
+            Option.when(_)(p(cls := "text-sm opacity-70 mt-1", I18n.t(UiKeys.tagsEditorReversedHint)))
+          ),
           renderFilters(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderSelectionBar())),
           renderRows(),
-          child.maybe <-- canEditSignal.map(Option.when(_)(renderAddRow())),
-          child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkPanel())),
+          child.maybe <-- canWriteSignal.map(Option.when(_)(renderAddRow())),
+          child.maybe <-- canWriteSignal.map(Option.when(_)(renderBulkPanel())),
         ),
       ),
       child.maybe <-- toastVar.signal.map(
@@ -689,8 +731,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case Right(rows) => entriesVar.set(rows)
         case Left(err)   => errorVar.set(Some(err.message))
       },
-      // Saving a language change: a new pair while the tag has none, or a reversal of the pair it already carries. A
-      // failure (someone raced a pair in) reverts the selects; success re-fetches the rows, which the reversal flips.
+      // Saving a relanguage: one of the two selects changed while the tag has no practice pair. A failure (someone
+      // raced a pair in) reverts the selects; success re-seeds them and re-fetches the rows. The swap button does
+      // not come through here — it only trades the selects locally.
       langBus.events.flatMapSwitch { case (source, target) =>
         WordApiClient.setTagLanguages(tagId, source, target)
       } --> Observer[Either[ApiError, TagResponse]] {
@@ -893,9 +936,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     )
   }
 
-  /** Reverses the tag's language pair. Live even once the pair is locked: a reversal is not a relanguaging, and
-    * [[WordApiClient.setTagLanguages]] lets the two sides trade places whatever the tag holds. The entry list is
-    * re-fetched on success, so every row shows its two words the new way round.
+  /** Trades the two language selects. This is a view choice, not a change to the tag: nothing is saved and no request
+    * is made. The rows re-orient to match ([[TagEditorPage.orient]]), and authoring is held until the reader swaps
+    * back. Live even once the pair is locked — a reversal never touches the stored pair.
     */
   private def renderLangSwap(): HtmlElement = {
     span(
@@ -911,7 +954,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           val target = sourceLangVar.now()
           sourceLangVar.set(source)
           targetLangVar.set(target)
-          langBus.emit((source, target))
+          errorVar.set(None)
         },
       ),
     )
@@ -1093,28 +1136,29 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         ),
       ),
       td(
-        child <-- isEditing.map {
-          case true  => editSourcePicker.render()
-          case false =>
+        child <-- Signal.combine(isEditing, reversed).map {
+          case (true, _)    => editSourcePicker.render()
+          case (false, rev) =>
+            val left = TagEditorPage.orient(entry, rev)._1
             span(
-              Word.display(entry.source),
-              renderComment(entry.comment),
-              Option.when(TagEditorPage.sourceIsNew(entry))(newBadge()),
+              Word.display(left.word),
+              renderComment(left.comment),
+              Option.when(left.isNew)(newBadge()),
             )
         }
       ),
       td(
-        child <-- isEditing.map {
-          case true  => editTargetPicker.render()
-          case false =>
-            entry.target match {
-              case Some(w) =>
+        child <-- Signal.combine(isEditing, reversed).map {
+          case (true, _)    => editTargetPicker.render()
+          case (false, rev) =>
+            TagEditorPage.orient(entry, rev)._2 match {
+              case Some(right) =>
                 span(
-                  Word.display(w),
-                  renderComment(entry.targetComment),
-                  Option.when(TagEditorPage.targetIsNew(entry))(newBadge()),
+                  Word.display(right.word),
+                  renderComment(right.comment),
+                  Option.when(right.isNew)(newBadge()),
                 )
-              case None    => span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
+              case None        => span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
             }
         }
       ),
@@ -1141,9 +1185,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         )
       ),
       td(
-        child <-- Signal.combine(isEditing, canEditSignal, isDeleting).map {
-          case (_, false, _)        => span()
-          case (false, true, true)  =>
+        child <-- Signal.combine(isEditing, canEditSignal, isDeleting, reversed).map {
+          case (_, false, _, _)          => span()
+          case (false, true, true, _)    =>
             // Button-shaped wrapper so the row keeps the exact height it has with the edit/delete buttons.
             div(
               cls := "flex gap-1",
@@ -1154,7 +1198,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                 span(cls := "loading loading-spinner loading-xs", role := "status"),
               ),
             )
-          case (true, true, _)      =>
+          case (true, true, _, _)        =>
             div(
               cls := "flex gap-1",
               button(
@@ -1173,13 +1217,16 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                 onClick.mapToUnit --> Observer[Unit](_ => cancelEdit()),
               ),
             )
-          case (false, true, false) =>
+          case (false, true, false, rev) =>
+            // A reversed view holds back the edit icon — swap back to author — but a delete is direction-blind.
             div(
               cls := "flex gap-1",
-              InlineRename.iconButton(
-                I18n.t(UiKeys.tagsEditorEditRow),
-                pencilMark(),
-                onClick.mapToUnit --> Observer[Unit](_ => startEdit(entry)),
+              Option.when(!rev)(
+                InlineRename.iconButton(
+                  I18n.t(UiKeys.tagsEditorEditRow),
+                  pencilMark(),
+                  onClick.mapToUnit --> Observer[Unit](_ => startEdit(entry)),
+                )
               ),
               InlineRename.iconButton(
                 I18n.t(UiKeys.tagsRemovePair),
