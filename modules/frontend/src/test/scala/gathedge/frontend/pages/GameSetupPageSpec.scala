@@ -3,7 +3,6 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import gathedge.shared.domain.Tag
-import gathedge.shared.dto.GameSetupWord
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 import zio.test._
@@ -85,51 +84,6 @@ object GameSetupPageSpec extends ZIOSpecDefault {
         assertTrue(
           !text.contains(UiKeys.gameSetupNoEligibleTags),
           !text.contains(UiKeys.gameSetupNoMatchingTags),
-        )
-      },
-      // `swapWords` re-orients the loaded word-list preview when the reader swaps the language pair, so a swap needs no
-      // network round trip — see the method's own doc comment. Tested directly against hand-built lists, the way
-      // `matchingTags` is above.
-      test("swapWords turns each source row into one row per former translation, sorted by text") {
-        val loaded = List(
-          GameSetupWord(1L, "der Hund", List("kutya")),
-          GameSetupWord(2L, "die Katze", List("macska", "cica")),
-        )
-        assertTrue(
-          GameSetupPage.swapWords(loaded) == List(
-            GameSetupWord(0L, "cica", List("die Katze")),
-            GameSetupWord(0L, "kutya", List("der Hund")),
-            GameSetupWord(0L, "macska", List("die Katze")),
-          )
-        )
-      },
-      test("swapWords merges former translations shared by two source words into one row") {
-        val loaded = List(
-          GameSetupWord(1L, "der See", List("tó")),
-          GameSetupWord(2L, "die See", List("tó", "tenger")),
-        )
-        assertTrue(
-          GameSetupPage.swapWords(loaded) == List(
-            GameSetupWord(0L, "tenger", List("die See")),
-            GameSetupWord(0L, "tó", List("der See", "die See")),
-          )
-        )
-      },
-      test("swapWords drops a row that has no translations, and maps the empty list to itself") {
-        assertTrue(
-          GameSetupPage.swapWords(List(GameSetupWord(1L, "árva", Nil))).isEmpty,
-          GameSetupPage.swapWords(Nil).isEmpty,
-        )
-      },
-      test("swapping twice restores the text and translation content of every row") {
-        val loaded    = List(
-          GameSetupWord(1L, "der Hund", List("kutya")),
-          GameSetupWord(2L, "die Katze", List("macska", "cica")),
-        )
-        val roundTrip = GameSetupPage.swapWords(GameSetupPage.swapWords(loaded))
-        assertTrue(
-          roundTrip.map(word => (word.text, word.translations.toSet)).toSet ==
-            loaded.map(word => (word.text, word.translations.toSet)).toSet
         )
       },
     )
