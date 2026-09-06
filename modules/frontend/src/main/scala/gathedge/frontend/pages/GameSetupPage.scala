@@ -30,6 +30,24 @@ object GameSetupPage {
     val needle = filter.trim.toLowerCase
     if (needle.isEmpty) tags else tags.filter(_.name.toLowerCase.contains(needle))
   }
+
+  /** The eligible-word preview flipped: every `text -> translations` row becomes the reverse edges, regrouped so each
+    * former translation is now a source row with its own accepted answers. A swap of the language pair is the same pair
+    * the other way round, so the preview is re-oriented in the browser rather than refetched.
+    *
+    * `wordId` is not carried back (a translation string has none) and `partOfSpeech` is dropped; the page renders the
+    * pristine fetched list again on an even number of swaps (`wordsInvertedVar`), so nothing is lost by swapping twice.
+    */
+  def swapWords(words: List[GameSetupWord]): List[GameSetupWord] = {
+    words
+      .flatMap(word => word.translations.map(translation => translation -> word.text))
+      .groupBy { case (translation, _) => translation }
+      .map { case (translation, pairs) =>
+        GameSetupWord(wordId = 0L, text = translation, translations = pairs.map(_._2).distinct.sorted)
+      }
+      .toList
+      .sortBy(_.text)
+  }
 }
 
 private class GameSetupPage {
@@ -41,6 +59,12 @@ private class GameSetupPage {
   private val targetVar = Var(defaultTarget)
 
   private val formSignal = sourceVar.signal.combineWith(targetVar.signal).distinct
+
+  /** The language pair with its order ignored. Swapping source and target is the same pair, so neither the tag list nor
+    * the word-list preview is refetched for it: the eligible set is identical either way (`word_tag_pairs` rows are
+    * stored in both directions), and a swap only re-orients what is already on screen.
+    */
+  private val languagePairSignal = formSignal.distinctBy { case (source, target) => Set(source, target) }
 
   private val tagsVar    = Var(List.empty[Tag])
   private val tagsSignal = tagsVar.signal
@@ -54,16 +78,38 @@ private class GameSetupPage {
 
   private val selectedTagIdsVar = Var(Set.empty[Long])
 
+  /** True while at least one tag is selected: the two language selects lock to the picked pair, the same guard
+    * `WordsPage.languagesLockedSignal` puts on the listing once a collect tag is chosen. The swap button stays live.
+    */
+  private val languagesLockedSignal: Signal[Boolean] = selectedTagIdsVar.signal.map(_.nonEmpty)
+
   private val formAndTagsSignal = formSignal.combineWith(selectedTagIdsVar.signal)
 
-  /** The setup screen's word-list preview, refetched whenever the language pair or the tag selection changes — see
-    * `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word list is
-    * trivially empty, the same shortcut the backend itself takes.
+  /** The setup screen's word-list preview, refetched whenever the language pair (order ignored) or the tag selection
+    * changes — see `GameApiClient.setupWords`. Empty tag ids never reach the network: an unselected setup form's word
+    * list is trivially empty, the same shortcut the backend itself takes. A pure swap does not refetch; `wordsView`
+    * re-orients the loaded rows through `GameSetupPage.swapWords` instead.
     */
-  private val wordsQuerySignal = formSignal.combineWith(selectedTagIdsVar.signal).distinct
+  private val wordsQuerySignal = {
+    formSignal.combineWith(selectedTagIdsVar.signal).distinctBy { case (source, target, tagIds) =>
+      (Set(source, target), tagIds)
+    }
+  }
 
   private val wordsVar        = Var(List.empty[GameSetupWord])
   private val wordsLoadingVar = Var(false)
+
+  /** `true` after an odd number of swaps since the last fetch: `wordsVar` holds the rows as fetched, and the preview
+    * shows them flipped. Reset on every real word-list fetch.
+    */
+  private val wordsInvertedVar = Var(false)
+
+  /** What the preview column renders: the fetched rows, or `swapWords` of them after a swap. */
+  private val wordsView: Signal[List[GameSetupWord]] = {
+    wordsVar.signal.combineWith(wordsInvertedVar.signal).map { case (words, inverted) =>
+      if (inverted) GameSetupPage.swapWords(words) else words
+    }
+  }
 
   private val loadingVar    = Var(false)
   private val loadingSignal = loadingVar.signal
@@ -86,7 +132,8 @@ private class GameSetupPage {
   private val reloadBus = new EventBus[Unit]()
   private val playBus   = new EventBus[Unit]()
 
-  private val formRequests = EventStream.merge(formSignal.updates, reloadBus.events.sample(formSignal))
+  private val formRequests =
+    EventStream.merge(languagePairSignal.updates, reloadBus.events.sample(formSignal))
 
   /** A per-account read or write, with the guest detour in front of it — copied in spirit from `WordCollect.asReader`.
     * With no session neither the tag fetch nor the create call can succeed, so a guest is minted first and the call is
@@ -121,9 +168,9 @@ private class GameSetupPage {
           h1(cls := "card-title text-2xl", I18n.t(UiKeys.gameSetupTitle)),
           div(
             cls  := "flex flex-wrap items-end gap-3 mb-4",
-            languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer),
+            languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer, languagesLockedSignal),
             renderSwap(),
-            languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer),
+            languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer, languagesLockedSignal),
           ),
           div(
             cls  := "flex flex-col md:flex-row gap-6",
@@ -134,8 +181,8 @@ private class GameSetupPage {
         ),
       ),
       AppState.currentUserSignal --> readerVar.writer,
-      // A language-pair change fetches a different tag list, so a filter typed against the old one is cleared with
-      // it — the same reasoning that already drops now-ineligible selections below.
+      // A real language-pair change (order ignored — a swap is not one) fetches a different tag list, so a filter typed
+      // against the old one is cleared with it — the same reasoning that already drops now-ineligible selections below.
       formRequests -->
         Observer[(WordLanguage, WordLanguage)](_ => Var.set(loadingVar -> true, errorVar -> None, tagFilterVar -> "")),
       formRequests.flatMapSwitch { case (source, target) => asReader(() => GameApiClient.setup(source, target)) } -->
@@ -152,7 +199,9 @@ private class GameSetupPage {
           case Left(err)   =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message), tagsVar -> Nil)
         },
-      wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ => wordsLoadingVar.set(true)),
+      wordsQuerySignal.updates --> Observer[(WordLanguage, WordLanguage, Set[Long])](_ =>
+        Var.set(wordsLoadingVar -> true, wordsInvertedVar -> false)
+      ),
       wordsQuerySignal.updates.flatMapSwitch { case (source, target, tagIds) =>
         if (tagIds.isEmpty)
           EventStream.fromValue(Right(Nil))
@@ -219,13 +268,14 @@ private class GameSetupPage {
   private def renderWordsColumn(): HtmlElement = {
     div(
       cls := "flex-1",
-      TagWordsList.render(wordsVar.signal, wordsLoadingVar.signal),
+      TagWordsList.render(wordsView, wordsLoadingVar.signal),
     )
   }
 
   /** Copied from `WordsPage.renderSwap`/`swapMark`: reuse the pattern, not the (page-private) function. Swaps both vars
-    * in one `Var.set` call so `formSignal` (which combines them) fires once, not twice — the language-pair change alone
-    * is what refetches the tag list and, through `wordsQuerySignal`, the word+translation study list below.
+    * in one `Var.set` call so `formSignal` fires once, not twice. A swap is the same pair the other way round, so it
+    * refetches nothing: it flips `wordsInvertedVar`, and `wordsView` re-orients the loaded preview rows. Stays enabled
+    * while the language selects are locked — the one language control a picked tag does not freeze.
     */
   private def renderSwap(): HtmlElement = {
     span(
@@ -237,7 +287,11 @@ private class GameSetupPage {
         aria.label := I18n.t(UiKeys.wordsSwapLanguages),
         swapMark(),
         onClick.mapToUnit --> Observer[Unit] { _ =>
-          Var.set(sourceVar -> targetVar.now(), targetVar -> sourceVar.now())
+          Var.set(
+            sourceVar        -> targetVar.now(),
+            targetVar        -> sourceVar.now(),
+            wordsInvertedVar -> !wordsInvertedVar.now(),
+          )
         },
       ),
     )
@@ -258,24 +312,39 @@ private class GameSetupPage {
     )
   }
 
-  /** Copied from `WordsPage.languageSelect`: reuse the pattern, not the (page-private) function. */
+  /** Copied from `WordsPage.languageSelect`: reuse the pattern, not the (page-private) function. `locked` disables the
+    * select while a tag is selected, so the pair cannot drift off the picked tags; the swap button is left live.
+    */
   private def languageSelect(
     labelKey: String,
     selected: Signal[WordLanguage],
     onPick: Observer[WordLanguage],
+    locked: Signal[Boolean],
   ): HtmlElement = {
     label(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
-      select(
-        cls    := "select select-sm w-28",
-        WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
-        controlled(
-          value <-- selected.map(WordLanguage.code),
-          onChange.mapToValue --> onPick.contramap[String](code =>
-            WordLanguage.fromString(code).getOrElse(defaultSource)
+      span(
+        // The tooltip has to be a wrapper — daisyUI's `.tooltip` is `display:inline-block` — and it carries a class
+        // only while locked, so nothing draws around a live select.
+        cls("tooltip") <-- locked,
+        dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.gameSetupLanguagesLockedHint) else ""),
+        select(
+          cls := "select select-sm w-28",
+          disabled <-- locked,
+          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+          controlled(
+            value <-- selected.map(WordLanguage.code),
+            onChange.mapToValue --> onPick.contramap[String](code =>
+              WordLanguage.fromString(code).getOrElse(defaultSource)
+            ),
           ),
         ),
+      ),
+      // The tooltip is CSS-drawn from a `data-` attribute, so it says nothing to a screen reader; this does.
+      span(
+        cls    := "sr-only",
+        child.text <-- locked.map(on => if (on) I18n.t(UiKeys.gameSetupLanguagesLockedHint) else ""),
       ),
     )
   }

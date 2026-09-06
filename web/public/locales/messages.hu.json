@@ -439,6 +439,7 @@
   "ui.gameSetup.noMatchingTags": "Egyetlen címke sem felel meg a szűrésnek",
   "ui.gameSetup.play": "Játék",
   "ui.gameSetup.created": "A(z) „{0}” kvíz elkészült.",
+  "ui.gameSetup.languagesLockedHint": "A kiválasztott címkék rögzítik. A módosításhoz töröld minden címke kijelölését, vagy cseréld fel a nyelvpárt a másik irányú játékhoz.",
   "ui.gameInstance.notFound": "Ez a kvízlink nem érvényes.",
   "ui.gameInstance.start": "Indítás",
   "ui.gameInstance.direction.swap": "Nyelvek felcserélése",
