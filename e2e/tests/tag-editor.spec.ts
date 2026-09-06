@@ -69,15 +69,17 @@ test('editing the target and pressing Enter saves it and leaves edit mode', asyn
 
   await rowFor(src).getByRole('button', { name: 'Edit' }).click();
 
-  // In edit mode the row shows a Save button and two pickers.
-  await expect(rowFor(src).getByRole('button', { name: 'Save' })).toBeVisible();
+  // In edit mode both cells are pickers, so the row's text no longer carries the words — address it by its Save
+  // button instead of `rowFor`.
+  const editingRow = page.locator('tbody tr').filter({ has: page.getByRole('button', { name: 'Save' }) });
+  await expect(editingRow).toBeVisible();
 
-  const editTarget = rowFor(src).locator('input[placeholder="Type a Hungarian word"]');
+  const editTarget = editingRow.locator('input[placeholder="Type a Hungarian word"]');
   await editTarget.fill(newTgt);
   await editTarget.press('Enter');
 
   // Left edit mode: Save gone, Edit back.
-  await expect(rowFor(src).getByRole('button', { name: 'Save' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0);
   await expect(rowFor(src).getByRole('button', { name: 'Edit' })).toBeVisible();
   // And it actually changed.
   await expect(rowFor(src)).toContainText(newTgt);
@@ -142,7 +144,7 @@ test('multiselect: Select all then Delete selected clears the visible rows in on
   await addPair(a, `${a}hu`);
   await addPair(b, `${b}hu`);
 
-  await page.getByRole('button', { name: 'Select all' }).click();
+  await page.getByRole('button', { name: 'Select all', exact: true }).click();
   await page.getByRole('button', { name: /^Delete selected rows|^Delete selected \(/ }).click();
   // The confirm dialog's own Delete-selected button.
   await page.locator('.modal-box').getByRole('button', { name: /^Delete selected/ }).click();
@@ -166,7 +168,7 @@ test('multiselect: Delete selected words hard-deletes my own words and its dialo
   await addTargetInput().press('Enter');
   await expect(rowFor(src)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Select all' }).click();
+  await page.getByRole('button', { name: 'Select all', exact: true }).click();
   await page.getByRole('button', { name: /^Delete selected words \(/ }).click();
 
   // The dialog carries a red warning line.
@@ -196,7 +198,7 @@ test('multiselect: Delete selected words hard-deletes my own words and its dialo
 //   - ordinary prose still takes the old free-text path, with no mapping step.
 test('a pasted TSV opens the column mapping step and imports one pair per row', async () => {
   const id = `Tab${unique}`;
-  await page.getByRole('button', { name: 'Bulk import' }).click();
+  await page.getByRole('button', { name: 'Bulk add' }).click();
 
   const paste = page.locator('textarea');
   await paste.fill(
@@ -235,8 +237,10 @@ test('a pasted TSV opens the column mapping step and imports one pair per row', 
 });
 
 test('ordinary prose still takes the free-text path, with no mapping step', async () => {
-  const id = `Prose${unique}`;
-  await page.getByRole('button', { name: 'Bulk import' }).click();
+  // Letters only: the free-text importer splits a token on any digit run, so a `Date.now()` suffix would be torn
+  // into "prose" + "eins" + real German number words.
+  const id = `Prose${String(unique).replace(/\d/g, (d) => 'abcdefghij'[Number(d)])}`;
+  await page.getByRole('button', { name: 'Bulk add' }).click();
 
   await page.locator('textarea').fill(`${id}eins ${id}zwei ${id}drei`);
   await page.getByRole('button', { name: 'Import', exact: true }).click();
