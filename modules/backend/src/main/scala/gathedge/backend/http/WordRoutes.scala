@@ -25,6 +25,7 @@ import gathedge.shared.dto.{
   TabularImportRequest,
   TagImportRequest,
   TagPairInput,
+  TagWordInput,
 }
 import zio.*
 import zio.http.*
@@ -272,6 +273,14 @@ object WordRoutes {
     )
   }
 
+  private val attachWordRoute = {
+    WordEndpoints.attachWord.implementHandler(
+      handler { (tagId: Long, body: TagWordInput) =>
+        userId.flatMap(id => WordService.attachWord(tagId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   private val replacePairRoute = {
     WordEndpoints.replacePair.implementHandler(
       handler { (tagId: Long, body: ReplacePairRequest) =>
@@ -405,6 +414,7 @@ object WordRoutes {
       deselectPairRoute,
       tagEntriesRoute,
       addPairRoute,
+      attachWordRoute,
       replacePairRoute,
       deletePairRoute,
       bulkDeletePairsRoute,

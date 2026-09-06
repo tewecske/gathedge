@@ -40,6 +40,7 @@ import gathedge.shared.dto.{
   TagImportResponse,
   TagPairInput,
   TagResponse,
+  TagWordInput,
   WordDetail,
   WordPage,
 }
@@ -206,6 +207,11 @@ object WordApiClient {
   /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */
   def addPair(tagId: Long, pair: TagPairInput): EventStream[Either[ApiError, TagEntryResponse]] = {
     run(executor(WordEndpoints.addPair(tagId, pair)))
+  }
+
+  /** Adds one word to a tag on its own, no answer yet. The word may be one to create (`TagPairWord.New`). */
+  def attachWord(tagId: Long, word: TagWordInput): EventStream[Either[ApiError, TagEntryResponse]] = {
+    run(executor(WordEndpoints.attachWord(tagId, word)))
   }
 
   /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */

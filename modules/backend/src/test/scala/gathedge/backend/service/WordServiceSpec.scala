@@ -22,6 +22,7 @@ import gathedge.shared.dto.{
   TabularRow,
   TagPairInput,
   TagPairWord,
+  TagWordInput,
   TaggedPair,
   WordSort,
 }
@@ -1878,6 +1879,50 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows.map(r => (r.source.text, r.target.map(_.text))) == List(("Haus", Some("ház"))),
           rows.forall(r => !r.imported && r.matchKind == PairMatch.Manual),
         )
+      },
+      test("attachWord adds a lone word as a loose row, with no answer and no practice pair") {
+        for {
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag  <- createTag("loose", 1L, WordLanguage.De, WordLanguage.Hu)
+          out  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(
+          out.warning.isEmpty,
+          rows.map(r => (r.source.text, r.target)) == List(("Haus", None)),
+          rows.forall(r => !r.imported && r.matchKind == PairMatch.Manual),
+        )
+      },
+      test("attachWord mints a word the dictionary does not have yet") {
+        for {
+          tag  <- createTag("mint", 1L, WordLanguage.De, WordLanguage.Hu)
+          _    <- WordService.attachWord(
+                    tag.id,
+                    TagWordInput(TagPairWord.New(WordLanguage.De, "Fenster", PartOfSpeech.Noun, Some(Gender.Neuter))),
+                    1L,
+                  )
+          rows <- WordService.tagEntries(tag.id, 1L)
+        } yield assertTrue(rows.map(r => (r.source.text, r.target)) == List(("Fenster", None)))
+      },
+      test("attachWord takes a word in either of the tag's languages and rejects a third") {
+        for {
+          haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
+          en   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "house"))
+          tag  <- createTag("langs", 1L, WordLanguage.De, WordLanguage.Hu)
+          src  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L).either
+          tgt  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haz.id)), 1L).either
+          out  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(en.id)), 1L).either
+        } yield assertTrue(src.isRight, tgt.isRight, out == Left(WordFailure.LanguageMismatch))
+      },
+      test("attachWord is idempotent, and somebody else's tag is TagNotFound") {
+        for {
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag   <- createTag("once", 1L, WordLanguage.De, WordLanguage.Hu)
+          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          rows  <- WordService.tagEntries(tag.id, 1L)
+          alien <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 2L).either
+        } yield assertTrue(rows.length == 1, alien == Left(WordFailure.TagNotFound))
       },
       // The pair is mandatory at creation, editable while the tag has no practice pair, and locked once it does.
       test("a tag's language pair is set at creation, editable until the first pair, then locked") {

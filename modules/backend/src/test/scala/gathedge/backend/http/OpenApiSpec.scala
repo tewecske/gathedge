@@ -103,6 +103,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/pairs",
               "/api/tags/{tagId}/pairs/{sourceWordId}",
               "/api/tags/{tagId}/pairs/bulk-delete",
+              "/api/tags/{tagId}/words",
               "/api/tags/{tagId}/words/bulk-delete",
               "/api/tags/{tagId}/bulk-import",
               "/api/tags/{tagId}/tabular-import",
@@ -296,6 +297,10 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/tags/{tagId}/pairs")                                         ->
                 Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
+              // Adding a lone word writes only a membership, never a `word_tag_pairs` row, so it has no quota to hit
+              // and no 409 — otherwise the same 400/404 shape as adding a pair.
+              ("POST", "/api/tags/{tagId}/words")                                         ->
+                Set(Created, BadRequest, Unauthorized, NotFound),
               ("PUT", "/api/tags/{tagId}/pairs")                                          ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}/pairs/{sourceWordId}")                        ->
@@ -495,7 +500,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 308,
+          declared == 311,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

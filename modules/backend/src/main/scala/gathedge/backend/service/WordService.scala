@@ -58,6 +58,7 @@ import gathedge.shared.dto.{
   TagImportResult,
   TagPairInput,
   TagPairWord,
+  TagWordInput,
   PairSelectionResponse,
   TagResponse,
   TaggedPair,
@@ -301,6 +302,13 @@ trait WordService {
     * already marked. On the first row it also fixes the tag's language pair, which locks from then on.
     */
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse]
+
+  /** Adds one word to a tag on its own, with no answer marked — the editor's "commit a source word, press Enter on the
+    * empty answer box". The word may be brand-new, created on the fly, and must be in one of the tag's two languages.
+    * Writes only the membership, so it is never quota-gated. Idempotent: a word already in the tag comes back as its
+    * existing row.
+    */
+  def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse]
 
   /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
     * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair is
@@ -583,6 +591,13 @@ object WordService {
 
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): ZIO[WordService, WordFailure, TagEntryResponse] =
     ZIO.serviceWithZIO[WordService](_.addPair(tagId, pair, userId))
+
+  def attachWord(
+    tagId: Long,
+    input: TagWordInput,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagEntryResponse] =
+    ZIO.serviceWithZIO[WordService](_.attachWord(tagId, input, userId))
 
   def replacePair(
     tagId: Long,
@@ -1879,6 +1894,21 @@ final case class WordServiceLive(
       _                   <- pairInTag(sourceId, tagId, targetId)
       entry               <- entryAfterWrite(tag, sourceId, Some(targetId), userId)
     } yield TagEntryResponse(entry, warning)
+  }
+
+  def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
+    for {
+      tag             <- requireEditableTag(tagId, userId)
+      (source, target) = tagLanguages(tag)
+      // `checkWord` proves the word (or its text) is real and is one of the tag's two languages — the same gate the
+      // pair path runs per side. No language-pair cross-check, since there is only one word.
+      checked         <- checkWord(input.word, Set(source, target))
+      wordId          <- createWord(checked._1, userId)
+      now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      // Membership only — no `word_tag_pairs` row, so no quota is charged. Idempotent, like `repo.tagWord` everywhere.
+      _               <- repo.tagWord(wordId, tagId, now).orDie
+      entry           <- entryAfterWrite(tag, wordId, None, userId)
+    } yield TagEntryResponse(entry, warning = None)
   }
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {
