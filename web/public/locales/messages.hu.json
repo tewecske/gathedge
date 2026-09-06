@@ -672,6 +672,7 @@
   "ui.tags.editor.bulkTableResult": "{0} sor importálva: {1} szópár, {2} új szó, {3} szóalak.",
   "ui.tags.editor.bulkTableLangMismatch": "Ehhez az oszlophoz {0} nyelvet választottál, de a szótár szerint inkább {1}. Mégis importálod?",
   "ui.tags.editor.readOnly": "Ezt a címkét megtekintheted, de nem módosíthatod.",
+  "ui.tags.editor.reversedHint": "A pár fordítva látszik. Ezek módosításához váltsd vissza.",
   "ui.guest.bannerTitle": "Vendégként mentett adataid vannak",
   "ui.guest.bannerHint": "Az adatok csak addig maradnak meg, amíg a böngésző sütijei megvannak. Kérj átviteli kódot, vagy hozz létre fiókot, hogy bárhonnan elérd és soha ne veszítsd el őket.",
   "ui.guest.getCode": "Átviteli kód kérése",
