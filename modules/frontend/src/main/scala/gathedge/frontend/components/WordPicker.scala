@@ -100,6 +100,9 @@ final class WordPicker(
     resultsVar.set(Nil)
     entry match {
       case DictionaryCompletion(word) =>
+        // Show the chosen word in the field — the controlled input only ever reflects `queryVar`, so without this a
+        // dropdown pick would leave the half-typed letters (or a blank, once a successful add clears them).
+        queryVar.set(Word.display(word))
         onCommit.onNext(TagPairWord.Existing(word.id))
         // The whole word, so the parent can read the part of speech a dictionary pick settles — the `ref` alone carries
         // only an id.
@@ -170,10 +173,12 @@ final class WordPicker(
       cls := "flex flex-col gap-1",
       language --> langMirror.writer,
       partOfSpeech --> posMirror.writer,
-      // The opposite word's known translations in this language, offered as the no-typing dropdown.
-      translateFrom.updates.flatMapSwitch {
-        case Some(id) => WordApiClient.get(id).map(_.toOption)
-        case None     => EventStream.fromValue(Option.empty[WordDetail])
+      // The opposite word's known translations in this language, offered as the no-typing dropdown. Driven off the
+      // signal itself, not its `.updates`, so a value already present when the field mounts (an edit, a re-render)
+      // still fetches rather than waiting for the next change.
+      translateFrom.flatMapSwitch {
+        case Some(id) => WordApiClient.get(id).map(_.toOption).startWith(None)
+        case None     => Val(Option.empty[WordDetail])
       } --> Observer[Option[WordDetail]] { detail =>
         val lang        = langMirror.now()
         val suggestions =
