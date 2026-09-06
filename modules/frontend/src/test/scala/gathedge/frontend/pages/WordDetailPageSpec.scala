@@ -40,8 +40,8 @@ object WordDetailPageSpec extends ZIOSpecDefault {
         val text = withPage(12L)(_.textContent)
         assertTrue(
           text.contains(UiKeys.wordDetailBack),
-          // The collect bar is shown to every visitor, exactly as on the listing; its `<select>` still stays absent
-          // until a tag list arrives.
+          // The collect bar is shown to every visitor, exactly as on the listing; its `<select>` needs a session, so
+          // for a signed-out visitor it stays absent.
           text.contains(UiKeys.wordsCollectHint),
           !text.contains(UiKeys.wordsCollectLabel),
           // Adding a translation belongs to an account.

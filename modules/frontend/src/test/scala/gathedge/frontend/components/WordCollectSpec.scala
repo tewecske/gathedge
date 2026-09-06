@@ -33,6 +33,9 @@ object WordCollectSpec extends ZIOSpecDefault {
           WordCollect.selectedTranslationIds(summary.pairs, Some(12L)) == Set.empty[Long],
           // Only before the tag list arrives, or for a reader with no tags at all.
           WordCollect.selectedTranslationIds(summary.pairs, None) == Set(2L, 3L),
+          // "No tag" chosen on purpose shows nothing marked — not "every tag you have", which left a just-cleared
+          // select still showing the previous tag's chips.
+          WordCollect.selectedTranslationIds(summary.pairs, None, explicitNone = true) == Set.empty[Long],
         )
       },
       test("a tick is set by the collect tag, not by any tag the reader has") {
@@ -44,6 +47,8 @@ object WordCollectSpec extends ZIOSpecDefault {
           // A word nobody has filed anywhere is untagged whichever way the question is asked.
           !WordCollect.isTagged(Nil, Some(10L)),
           !WordCollect.isTagged(Nil, None),
+          // "No tag" chosen on purpose: nothing is ticked, even for a word filed under other tags.
+          !WordCollect.isTagged(summary.tagIds, None, explicitNone = true),
         )
       },
       test("a remembered tag this account cannot write to is dropped, not written against") {
