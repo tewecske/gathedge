@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.config.{AppConfig, GoogleSection, MicrosoftSection}
+import gathedge.backend.config.{AppConfig, DiscordSection, GoogleSection, MicrosoftSection}
 import gathedge.shared.domain.OAuthProvider
 import zio.*
 import zio.http.{Body, Client, Form, FormField, QueryParams, Request, Response, Status, URL}
@@ -24,6 +24,11 @@ private final case class TokenResponse(id_token: String) derives JsonDecoder
 // Google's tokeninfo endpoint returns email_verified as the *string* "true"/"false".
 private final case class GoogleTokenInfo(aud: String, sub: String, email: String, email_verified: String)
     derives JsonDecoder
+
+// Discord's token endpoint answers with an OAuth2 access token and no id_token; the identity is read
+// from a separate `/users/@me` call made with that token.
+private final case class DiscordTokenResponse(access_token: String) derives JsonDecoder
+private final case class DiscordUser(id: String, email: Option[String], verified: Option[Boolean]) derives JsonDecoder
 
 trait OAuthClient {
   def provider: OAuthProvider
@@ -83,10 +88,11 @@ abstract class BackChannelOAuthClient(client: Client) extends OAuthClient {
       .mkString("&")
   }
 
-  /** Reads the `id_token` out of the token endpoint's response. Providers return more than this (access token, refresh
-    * token, expiry); none of it is needed once the identity is known, so none of it is decoded or stored.
+  /** Posts the one-time `code` to the token endpoint and returns the raw response body. Every provider sends the same
+    * five form fields; what it gets back (`id_token` for OIDC, a bare `access_token` for Discord) is the caller's to
+    * decode.
     */
-  protected def exchangeCode(code: String): Task[String] = {
+  protected def exchangeCodeForResponseBody(code: String): Task[String] = {
     val form = Form(
       FormField.simpleField("code", code),
       FormField.simpleField("client_id", clientId),
@@ -108,7 +114,16 @@ abstract class BackChannelOAuthClient(client: Client) extends OAuthClient {
           )
           .unit
       body     <- response.body.asString
-      idToken  <-
+    } yield body
+  }
+
+  /** Reads the `id_token` out of the token endpoint's response. Providers return more than this (access token, refresh
+    * token, expiry); none of it is needed once the identity is known, so none of it is decoded or stored.
+    */
+  protected def exchangeCode(code: String): Task[String] = {
+    for {
+      body    <- exchangeCodeForResponseBody(code)
+      idToken <-
         ZIO
           .fromEither(body.fromJson[TokenResponse])
           .mapBoth(err => new RuntimeException(s"Malformed ${provider.toString} token response: $err"), _.id_token)
@@ -287,6 +302,73 @@ object MicrosoftOAuthClient {
   }
 }
 
+/** Server-side OAuth2 authorization-code flow against Discord.
+  *
+  * Discord is plain OAuth2, not OIDC: the token endpoint returns an `access_token` and no `id_token`, so there is
+  * nothing to decode and no signature question to answer. The identity comes from a second back-channel call to
+  * `GET /users/@me` with the access token as a bearer credential — the address is display metadata only, the same as
+  * every other provider here, so no `email_verified` semantics ride on it.
+  */
+final class DiscordOAuthClient(config: DiscordSection, client: Client) extends BackChannelOAuthClient(client) {
+
+  val provider: OAuthProvider = OAuthProvider.Discord
+
+  protected val clientId: String      = config.clientId
+  protected val clientSecret: String  = config.clientSecret
+  protected val redirectUri: String   = config.redirectUri
+  protected val tokenEndpoint: String = "https://discord.com/api/oauth2/token"
+
+  def authorizationUrl(state: String): String = {
+    val params = Map(
+      "client_id"     -> config.clientId,
+      "redirect_uri"  -> config.redirectUri,
+      "response_type" -> "code",
+      "scope"         -> "identify email",
+      "state"         -> state,
+    )
+    s"https://discord.com/api/oauth2/authorize?${queryString(params)}"
+  }
+
+  def exchangeAndVerify(code: String): Task[OAuthIdentity] = {
+    for {
+      tokenBody   <- exchangeCodeForResponseBody(code)
+      accessToken <- ZIO
+                       .fromEither(tokenBody.fromJson[DiscordTokenResponse])
+                       .mapBoth(err => new RuntimeException(s"Malformed Discord token response: $err"), _.access_token)
+      url         <- urlOf("https://discord.com/api/users/@me")
+      response    <- send(Request.get(url).addHeader("Authorization", s"Bearer $accessToken"), "user fetch")
+      _           <-
+        ZIO
+          .unless(response.status == Status.Ok)(
+            ZIO.fail(new RuntimeException(s"Discord user fetch failed with status ${response.status.code}"))
+          )
+          .unit
+      body        <- response.body.asString
+      identity    <- ZIO.fromEither(DiscordOAuthClient.identityFrom(body))
+    } yield identity
+  }
+}
+
+object DiscordOAuthClient {
+
+  /** Projects a `/users/@me` response body onto [[OAuthIdentity]]. Passed the raw string rather than a parsed value so
+    * the failure cases are testable without an HTTP stub.
+    */
+  private[service] def identityFrom(userBody: String): Either[Throwable, OAuthIdentity] = {
+    val result = {
+      for {
+        user  <- userBody.fromJson[DiscordUser].left.map(err => s"user response: $err")
+        // The address is display metadata, but an account with none has nothing for the account menu to show,
+        // so treat that as a failure rather than inventing one — the same rule the Microsoft client applies.
+        email <- user.email.filter(_.nonEmpty).toRight("user response carries no email")
+      } yield {
+        OAuthIdentity(OAuthProvider.Discord, user.id, email, emailVerified = user.verified.getOrElse(false))
+      }
+    }
+    result.left.map(message => new RuntimeException(s"Discord $message"))
+  }
+}
+
 final case class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthClients {
 
   private val clients: Map[OAuthProvider, OAuthClient] = {
@@ -299,6 +381,8 @@ final case class OAuthClientsLive(config: AppConfig, client: Client) extends OAu
               new GoogleOAuthClient(config.oauth.google, client): OAuthClient
             case OAuthProvider.Microsoft =>
               new MicrosoftOAuthClient(config.oauth.microsoft, client): OAuthClient
+            case OAuthProvider.Discord   =>
+              new DiscordOAuthClient(config.oauth.discord, client): OAuthClient
           }
         }
         provider -> impl

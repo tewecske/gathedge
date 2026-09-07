@@ -74,7 +74,12 @@ final case class GoogleSection(clientId: String, clientSecret: String, redirectU
   */
 final case class MicrosoftSection(clientId: String, clientSecret: String, redirectUri: String, tenant: String)
 
-final case class OAuthSection(google: GoogleSection, microsoft: MicrosoftSection)
+/** Discord OAuth2 is not OIDC: the token response carries no `id_token`, so the identity comes from a second call to
+  * `GET /users/@me`. No tenant equivalent — every Discord account signs in through the same endpoints.
+  */
+final case class DiscordSection(clientId: String, clientSecret: String, redirectUri: String)
+
+final case class OAuthSection(google: GoogleSection, microsoft: MicrosoftSection, discord: DiscordSection)
 
 /** An empty `host` switches SMTP off the same way an empty client id switches a provider off: [[EmailSender.live]] then
   * falls back to the logging implementation, which is what makes the whole stack boot with no mail server at all.
@@ -163,6 +168,8 @@ final case class AppConfig(
         oauth.google.clientId.nonEmpty && oauth.google.clientSecret.nonEmpty
       case OAuthProvider.Microsoft =>
         oauth.microsoft.clientId.nonEmpty && oauth.microsoft.clientSecret.nonEmpty
+      case OAuthProvider.Discord   =>
+        oauth.discord.clientId.nonEmpty && oauth.discord.clientSecret.nonEmpty
     }
   }
 
