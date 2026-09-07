@@ -48,10 +48,10 @@ object Labels {
     I18n.t(UiKeys.languagePrefix + WordLanguage.code(language))
   }
 
-  /** A fixed three-letter abbreviation for a study language. A `<select>`'s `option` holds only plain text — no badge,
-    * no colour — so this is the compact marker the language pickers and the tag lists show next to the name. It is a
-    * code, not a name: matched exhaustively like [[language]], and never translated, the same rule `WordLanguage.code`
-    * follows.
+  /** A fixed three-letter abbreviation for a study language, the building block of [[tagCodes]]. A `<select>`'s
+    * `option` holds only plain text — no badge, no colour — so this is the compact marker the tag lists show next to a
+    * tag's name. It is a code, not a name: matched exhaustively like [[language]], and never translated, the same rule
+    * `WordLanguage.code` follows.
     */
   def langCode(language: WordLanguage): String = {
     language match {

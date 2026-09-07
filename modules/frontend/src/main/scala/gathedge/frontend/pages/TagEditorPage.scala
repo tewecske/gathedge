@@ -994,11 +994,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       dataAttr("tip") <-- langsLocked.map(locked => if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else ""),
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
-        cls    := "select select-sm w-40",
+        cls    := "select select-sm w-28",
         disabled <-- langsLocked,
-        WordLanguage.all.map(l =>
-          option(value := WordLanguage.code(l), s"${Labels.langCode(l)} — ${Labels.language(l)}")
-        ),
+        WordLanguage.all.map(l => option(value := WordLanguage.code(l), Labels.language(l))),
         controlled(
           value <-- langVar.signal.map(WordLanguage.code),
           onChange.mapToValue --> Observer[String] { code =>
@@ -1101,8 +1099,8 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                     )
                   ),
                 ),
-                th(child.text <-- sourceLangVar.signal.map(l => s"${Labels.langCode(l)} — ${Labels.language(l)}")),
-                th(child.text <-- targetLangVar.signal.map(l => s"${Labels.langCode(l)} — ${Labels.language(l)}")),
+                th(child.text <-- sourceLangVar.signal.map(Labels.language)),
+                th(child.text <-- targetLangVar.signal.map(Labels.language)),
                 th(I18n.t(UiKeys.wordsColPos)),
                 th(""),
                 th(""),

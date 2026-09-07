@@ -40,12 +40,11 @@ private class LanguagePicker {
     */
   private def renderTrigger(): HtmlElement = {
     button(
-      cls                := "btn btn-sm btn-ghost gap-1.5",
+      cls                := "btn btn-sm btn-ghost",
       typ                := "button",
       aria.label         := I18n.t(UiKeys.navLanguage),
       Popover.targetAttr := menuId,
       styleAttr          := s"anchor-name:$menuAnchor",
-      flagIcon(CurrentLocale.value),
       CurrentLocale.value.code.toUpperCase,
       chevronIcon(),
     )
@@ -98,8 +97,8 @@ private class LanguagePicker {
   }
 
   /** The interface language's own flag, drawn inline so no asset has to load. A rounded 3:2 rectangle, sized by CSS so
-    * it tracks the button text. `role="img"` plus a `<title>` give it an accessible name; the menu entry still spells
-    * the language out beside it, and the trigger keeps its two-letter code.
+    * it tracks the menu text. `role="img"` plus a `<title>` give it an accessible name; the menu entry still spells the
+    * language out beside it. Only the dropdown entries carry it — the trigger stays a plain two-letter code.
     *
     * A fifth interface language adds a case here, the same way [[Locale]] itself grows.
     */

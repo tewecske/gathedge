@@ -519,11 +519,9 @@ private class WordsPage(
         cls("tooltip") <-- locked,
         dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.wordsLanguagesCollectHint) else ""),
         select(
-          cls := "select select-sm w-40",
+          cls := "select select-sm w-28",
           disabled <-- locked,
-          WordLanguage.all.map(language =>
-            option(value := WordLanguage.code(language), s"${Labels.langCode(language)} — ${Labels.language(language)}")
-          ),
+          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
           controlled(
             value <-- selected.map(WordLanguage.code),
             onChange.mapToValue --> onPick.contramap[String](code =>
