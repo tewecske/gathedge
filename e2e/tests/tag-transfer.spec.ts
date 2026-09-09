@@ -66,10 +66,10 @@ test('an account builds a tag and exports it to a file', async ({ browser }) => 
   await wordRow(page, 'der Mann').getByRole('button', { name: /^ember / }).click();
   await expect(wordRow(page, 'der Mann').getByRole('button', { name: /^ember / })).toHaveAttribute('aria-pressed', 'true');
 
-  await page.goto('/en/tags');
-  // Export is "Export all tags" now, not a per-tag button — this fresh account owns only `xfer${unique}`.
+  // The per-tag "Export" button on the tag details page — "Export all tags" on `/en/tags` is the account-wide form.
+  await page.goto(`/en/tags/${tagId}`);
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export all tags' }).click();
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
   const download = await downloadPromise;
   exported = fs.readFileSync(await download.path(), 'utf8');
 

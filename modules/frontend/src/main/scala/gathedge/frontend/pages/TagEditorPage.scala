@@ -6,6 +6,7 @@ import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.ocr.ImageOcr
+import gathedge.frontend.util.Download
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkImportResponse,
@@ -16,6 +17,7 @@ import gathedge.shared.dto.{
   TabularImportResponse,
   TabularRow,
   TagEntry,
+  TagExportFile,
   TagPairInput,
   TagPairWord,
   TagResponse,
@@ -24,6 +26,7 @@ import gathedge.shared.dto.{
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.parsing.{ColumnHeading, DelimitedText}
 import org.scalajs.dom
+import zio.json._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
@@ -278,6 +281,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private val entriesBus    = new EventBus[Unit]()
   private val deleteOpenVar = Var(false)
   private val deleteBus     = new EventBus[Unit]()
+
+  /** "Export" — the whole tag as a portable JSON file the browser saves. Open to any reader, editor or not, the same as
+    * `WordApiClient.exportTag` and the import/export pair on `TagsPage`.
+    */
+  private val exportBus = new EventBus[Unit]()
 
   private val inlineRename = new InlineRename[TagResponse](name => WordApiClient.renameTag(tagId, name))
 
@@ -712,6 +720,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           child.maybe <-- canEditSignal.map(can =>
             Option.unless(can)(p(cls := "text-sm opacity-70 mt-2", I18n.t(UiKeys.tagsEditorReadOnly)))
           ),
+          child.maybe <-- tagVar.signal.map(_.map(_ => renderExportButton())),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
@@ -764,6 +773,14 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         case Right(_)  => AppRouter.router.pushState(Page.Tags)
         case Left(err) => Var.set(deleteOpenVar -> false, errorVar -> Some(err.message))
       },
+      exportBus.events.flatMapSwitch(_ => WordApiClient.exportTag(tagId)) -->
+        Observer[Either[ApiError, TagExportFile]] {
+          case Right(file) =>
+            val name = tagVar.now().map(_.name).getOrElse("tag")
+            Download.text(s"${Download.slug(name)}.tag.json", file.toJson)
+          case Left(err)   =>
+            errorVar.set(Some(err.message))
+        },
       // `addPair` is idempotent, so an exact repeat comes back as a row already on the list; `onEntryAdded` refuses it
       // with a toast and a flash on the row that is already there.
       addRowBus.events.flatMapSwitch(input => WordApiClient.addPair(tagId, input)) -->
@@ -937,6 +954,21 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(true)),
         )
       )
+    )
+  }
+
+  /** The "Export" button under the title — saves the whole tag as a JSON file through [[exportBus]]. Shown to every
+    * reader, since any tag is exportable whoever owns it.
+    */
+  private def renderExportButton(): HtmlElement = {
+    div(
+      cls := "mt-2",
+      button(
+        cls := "btn btn-sm",
+        typ := "button",
+        I18n.t(UiKeys.tagsExportButton),
+        onClick.mapToUnit --> exportBus.writer,
+      ),
     )
   }
 
