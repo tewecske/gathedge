@@ -7,7 +7,7 @@ import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{AnswerOutcome, GameMode, GameScoring, LanguageProfile}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, GameScoring, LanguageProfile, PartOfSpeech}
 import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -242,7 +242,7 @@ private class GamePlayPage(slug: String, playId: Long) {
   private def renderAnswerArea(prompt: GamePrompt, playState: PlayHandoff): HtmlElement = {
     playState.variant.mode match {
       case GameMode.Typing         =>
-        renderTypedAnswer(playState)
+        renderTypedAnswer(prompt, playState)
       case GameMode.MultipleChoice =>
         renderChoices(prompt)
     }
@@ -405,7 +405,7 @@ private class GamePlayPage(slug: String, playId: Long) {
     )
   }
 
-  private def renderTypedAnswer(playState: PlayHandoff): HtmlElement = {
+  private def renderTypedAnswer(prompt: GamePrompt, playState: PlayHandoff): HtmlElement = {
     val answerInput        = input(
       cls         := "input input-sm w-full",
       placeholder := I18n.t(UiKeys.gameInstanceAnswerPlaceholder),
@@ -421,7 +421,8 @@ private class GamePlayPage(slug: String, playId: Long) {
       label(
         cls := "form-control grow",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-        if (showGenderPicker(playState.variant)) renderGenderPicker(playState.variant, answerInput) else emptyNode,
+        if (showGenderPicker(playState.variant, prompt)) renderGenderPicker(playState.variant, answerInput)
+        else emptyNode,
         answerInput,
       ),
       button(
@@ -435,11 +436,15 @@ private class GamePlayPage(slug: String, playId: Long) {
 
   /** `variant.targetLanguage` is already the resolved (post-swap) answer language for this play, so no separate
     * direction lookup is needed here the way `GameInstancePage.startBus`'s handler needs one at `startPlay` time.
+    *
+    * The picker is per word, not per play: an article belongs to a noun, so a prompt that is a verb, an adjective or a
+    * phrase gets the plain input. `None` (a stored code this build no longer knows) is treated as "not a noun".
     */
-  private def showGenderPicker(variant: GameVariantDto): Boolean = {
-    variant.mode == GameMode.Typing && variant.includeDefiniteArticles && LanguageProfile
-      .of(variant.targetLanguage)
-      .hasGenders
+  private def showGenderPicker(variant: GameVariantDto, prompt: GamePrompt): Boolean = {
+    variant.mode == GameMode.Typing &&
+    variant.includeDefiniteArticles &&
+    prompt.partOfSpeech.contains(PartOfSpeech.Noun) &&
+    LanguageProfile.of(variant.targetLanguage).hasGenders
   }
 
   private def renderGenderPicker(
