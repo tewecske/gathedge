@@ -45,6 +45,29 @@ let page: Page;
 let gameUrl: string;
 let gameSlug: string;
 
+// Tag creation moved off the Words page collect bar to the Tags editor. Mint a tag there, name it, and hand
+// back its id so the caller can pick it in the "Collect into" select (the option value is the tag id).
+async function createTag(p: Page, name: string): Promise<string> {
+  await p.goto('/en/tags/new');
+  await expect(p).toHaveURL(/\/en\/tags\/\d+$/);
+  const id = p.url().match(/\/tags\/(\d+)/)![1];
+  // Let the editor finish mounting before touching the rename control — clicking it mid-mint drops the input.
+  await expect(p.getByRole('heading', { name: 'Add a word pair' })).toBeVisible();
+  await p.getByRole('button', { name: 'Rename tag' }).click();
+  const box = p.getByRole('textbox', { name: 'New name' });
+  await box.fill(name);
+  await expect(box).toHaveValue(name);
+  const renamed = p.waitForResponse(
+    (r) => r.request().method() === 'PUT' && new RegExp(`/api/tags/${id}(\\?|$)`).test(r.url()),
+  );
+  await box.press('Enter');
+  await renamed;
+  // Re-read from the server, not the still-open edit form whose input value trips a heading-name match.
+  await p.goto(`/en/tags/${id}`);
+  await expect(p.locator('h1')).toContainText(name);
+  return id;
+}
+
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
 });
@@ -62,13 +85,15 @@ test('an account signs up to build the quiz', async () => {
 });
 
 test('a tag collects four words, each with its Hungarian translation marked', async () => {
-  await page.goto('/en/words?lang=de&target=hu');
+  // Four words, each a full-page add with its own reload — comfortably past Playwright's 30s default.
+  test.setTimeout(60000);
 
-  // Creating a tag collects into it immediately (WordsPage/WordCollect's rule), so every word added below
-  // files under it with no further control to set.
-  await page.locator('input[placeholder="lesson1"]').fill(tagName);
-  await page.getByRole('button', { name: 'Add', exact: true }).click();
-  await expect(page.getByLabel('Collect into').locator('option:checked')).toHaveText(new RegExp(`^${tagName}`));
+  // Make the tag on the Tags editor, then pick it as the collect tag: every word added below files under it
+  // with no further control to set.
+  const tagId = await createTag(page, tagName);
+  await page.goto('/en/words?lang=de&target=hu');
+  await page.getByLabel('Collect into').selectOption(tagId);
+  await expect(page.getByLabel('Collect into').locator('option:checked')).toHaveText(new RegExp(tagName));
 
   for (const { term, hu } of words) {
     await page.goto('/en/words?lang=de&target=hu');
