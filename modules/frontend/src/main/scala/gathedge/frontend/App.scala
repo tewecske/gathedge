@@ -143,7 +143,7 @@ object App {
       // of it. `loaded` still matters, though — the page reads the user to decide whether to draw the tag controls,
       // and drawing them for an instant and then taking them away would be worse than a spinner.
       .collectSignalPF[WordQuery] { case (gate, page: Page.Words) if gate.loaded => page.query }(query =>
-        WordsPage.render(query, onWordQuery, ImageOcr.recognize)
+        WordsPage.render(query, onWordQuery)
       )
       // Both game pages mint a guest account on their first write (GameSetupPage.asReader/GameInstancePage.asReader) —
       // the same reasoning `WordsPage` above is pulled out for. `AppState.setUser` on that mint flips `Gate.signedIn`
@@ -451,7 +451,7 @@ object App {
         ForbiddenPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise.
       case Page.Words(query)                              =>
-        WordsPage.render(Val(query), onWordQuery, ImageOcr.recognize)
+        WordsPage.render(Val(query), onWordQuery)
       case Page.WordDetail(id)                            =>
         WordDetailPage.render(id)
       case Page.AdminUserDetail(id) if gate.isAdmin       =>
