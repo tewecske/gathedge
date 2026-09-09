@@ -4,19 +4,9 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
-import gathedge.frontend.components.{
-  Alert,
-  AppShell,
-  ArticleSelect,
-  BulkUploadDialog,
-  Labels,
-  Pagination,
-  SortHeader,
-  WordCollect,
-}
+import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, Pagination, SortHeader, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
-import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
@@ -56,23 +46,17 @@ object WordsPage {
   private val variantTypes: List[String] =
     List("plural", "past", "comparative", "superlative", "diminutive", "alternative")
 
-  /** `recognizeImage` is threaded through rather than called directly by [[BulkUploadDialog]] — see
-    * [[ImageOcr.Recognize]]'s own scaladoc for why: it keeps `tesseract.js`'s import out of this page's reachable graph
-    * under the test linker. `App` is the only caller that supplies the real one.
-    */
   def render(
     query: Signal[WordQuery],
     onQuery: Observer[WordQuery],
-    recognizeImage: ImageOcr.Recognize,
   ): HtmlElement = {
-    AppShell.render(Page.Words(), new WordsPage(query, onQuery, recognizeImage).render())
+    AppShell.render(Page.Words(), new WordsPage(query, onQuery).render())
   }
 }
 
 private class WordsPage(
   pageQuery: Signal[WordQuery],
   onQuery: Observer[WordQuery],
-  recognizeImage: ImageOcr.Recognize,
 ) {
 
   /** `.distinct` because every reader here treats an emission as "ask the server again". */
@@ -148,17 +132,6 @@ private class WordsPage(
     */
   private val restoreBus = new EventBus[Unit]()
 
-  /** Uploaded words land in the dictionary and the collect tag without changing what this listing is filtered to, so a
-    * re-fetch is the only way a newly tagged word already on screen shows its tick.
-    */
-  private val bulkUpload = new BulkUploadDialog(
-    collect,
-    querySignal.map(_.language).distinct,
-    targetSignal,
-    onUploaded = Observer[Unit](_ => reloadBus.emit(())),
-    recognizeImage = recognizeImage,
-  )
-
   /** The term a reader searched for and the dictionary does not have — the only case where adding a word is offered.
     * `None` while a request is in flight, so the form does not flash up between keystrokes.
     */
@@ -199,13 +172,11 @@ private class WordsPage(
 
   def render(): HtmlElement = {
     div(
-      h1(cls  := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
       Alert.maybeError(errorSignal),
       Alert.maybeWarning(warningSignal),
       renderDirection(),
       collect.renderBar(),
-      div(cls := "mb-4", bulkUpload.renderButton()),
-      bulkUpload.renderModal(),
       renderSearch(),
       // Offered only when the search found nothing: the dictionary is meant to already have the word, and a permanent
       // "add a word" form next to a hundred matches would invite duplicates of words that are already there.
@@ -220,7 +191,7 @@ private class WordsPage(
         summary = totalSignal.map(summaryOf).distinct,
         busy = loadingSignal,
       ),
-      p(cls   := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
+      p(cls  := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
       queryChanges --> onQuery,
       queryChanges --> Observer[WordQuery](WordQuery.storeFilter),
       querySignal.map(_.search).distinct --> searchInputVar.writer,
