@@ -32,10 +32,11 @@ import zio.http.*
 
 /** The vocabulary: the dictionary anybody may browse, and the tags and translations an account owns.
   *
-  * '''This is the only route file with a public half that still knows who the caller is.''' The two reads are wrapped
-  * in `optionalUser` rather than `authenticated`, so a visitor with no session gets the same words and no tags, while a
-  * reader who has one gets their own tags marked on the rows. Everything that writes is guarded normally — a visitor
-  * reaches those by minting a guest first (`POST /api/guest`), which is an ordinary session.
+  * '''This is the only route file with a public half that still knows who the caller is.''' The four reads — the two
+  * dictionary reads and the two wordlist reads (`listTags`, `tagEntries`) — are wrapped in `optionalUser` rather than
+  * `authenticated`, so a visitor with no session gets the same words and wordlists with none of the reader's marks,
+  * while a reader who has one gets their own tags marked on the rows. Everything that writes is guarded normally — a
+  * visitor reaches those by minting a guest first (`POST /api/guest`), which is an ordinary session.
   *
   * The aspects are on the `Routes` values, never on an individual `handler`: several handlers here take path
   * parameters, and attaching a context-providing aspect to one of those compiles and then throws `ClassCastException`
@@ -150,7 +151,7 @@ object WordRoutes {
   }
 
   private val listTagsRoute = {
-    WordEndpoints.listTags.implementHandler(handler((_: Unit) => userId.flatMap(WordService.listTags)))
+    WordEndpoints.listTags.implementHandler(handler((_: Unit) => reader.flatMap(WordService.listTags)))
   }
 
   private val createTagRoute = {
@@ -261,7 +262,7 @@ object WordRoutes {
 
   private val tagEntriesRoute = {
     WordEndpoints.tagEntries.implementHandler(
-      handler((tagId: Long) => userId.flatMap(id => WordService.tagEntries(tagId, id).mapError(ApiFailures.word)))
+      handler((tagId: Long) => reader.flatMap(who => WordService.tagEntries(tagId, who).mapError(ApiFailures.word)))
     )
   }
 
@@ -390,7 +391,7 @@ object WordRoutes {
   /** Two `Routes` values because they are guarded differently, `++`'d and then given the CSRF check together — the
     * arrangement `AuthRoutes` uses for the same reason.
     */
-  private val publicRoutes = Routes(listRoute, getRoute) @@ RouteSupport.optionalUser
+  private val publicRoutes = Routes(listRoute, getRoute, listTagsRoute, tagEntriesRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
     Routes(
@@ -398,7 +399,6 @@ object WordRoutes {
       addTranslationRoute,
       setGenderRoute,
       removeTranslationRoute,
-      listTagsRoute,
       createTagRoute,
       renameTagRoute,
       deleteTagRoute,
@@ -412,7 +412,6 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
-      tagEntriesRoute,
       addPairRoute,
       attachWordRoute,
       replacePairRoute,

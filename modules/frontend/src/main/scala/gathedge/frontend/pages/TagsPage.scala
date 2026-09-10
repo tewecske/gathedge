@@ -5,21 +5,36 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, Labels, TagImportDialog}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.state.AppState
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{GroupRef, Tag}
 import gathedge.shared.dto.TagExportFile
 import gathedge.shared.i18n.UiKeys
 import zio.json._
 
-/** Every tag the caller may edit — their own, plus any tag a group they belong to has opened to them — the same set
-  * `WordCollect.mineOptions` offers a tick or a chip, laid out here as a table instead of a dropdown. Reached from the
-  * navigation bar and from the collection bar's "All tags" button. The "New tag" button is here rather than on the bar:
-  * a tag is minted from the list of the tags there already, which is what shows the reader whether one fits.
+/** The whole wordlist catalog — every wordlist there is — laid out as a table instead of the dropdown `WordCollect`
+  * offers. Reached from the navigation bar and from the collection bar's "All tags" button.
+  *
+  * Everyone sees every wordlist. A signed-in reader's own wordlists come first, then any a group they belong to has
+  * opened to them, then everyone else's under "Other wordlists"; the last group is read-only, the same as what the
+  * editor shows a non-owner. A signed-out visitor sees one flat list, since none of it is theirs. The "New wordlist",
+  * "Export all" and "Import" controls are shown only when signed in ("New wordlist" always, since it mints a guest).
+  * "New wordlist" is here rather than on the bar: a wordlist is minted from the list of the ones there already, which
+  * is what shows the reader whether one fits.
   */
 object TagsPage {
 
   def render(): HtmlElement = {
     AppShell.render(Page.Tags, new TagsPage().render())
+  }
+
+  /** A table section's heading. `Yours` and `Others` are fixed labels; `Group` links to the study group that opened its
+    * wordlists to the reader.
+    */
+  private enum Heading {
+    case Yours
+    case Others
+    case Group(ref: GroupRef)
   }
 }
 
@@ -32,22 +47,40 @@ private class TagsPage {
   private val reloadBus    = new EventBus[Unit]()
   private val exportAllBus = new EventBus[Unit]()
 
+  private val signedInSignal = AppState.isSignedInSignal
+
   private val importDialog = new TagImportDialog(onImported = Observer[Unit](_ => reloadBus.emit(())))
 
-  /** One section of the table: a heading (`None` for the reader's own, un-grouped tags) and the tags under it, already
-    * sorted the way [[WordCollect.mineOptions]] sorts its `<optgroup>`s.
+  import TagsPage.Heading
+
+  /** The table's sections, always over the whole catalog. Signed out: one headingless section, sorted by name, since
+    * none of it is the reader's. Signed in: the reader's own wordlists under "Your wordlists", then one section per
+    * study group that shared its wordlists, then everyone else's under "Other wordlists" — each block sorted by name,
+    * the way [[WordCollect.mineOptions]] sorts its `<optgroup>`s.
     */
-  private def sections(tags: List[Tag]): List[(Option[GroupRef], List[Tag])] = {
-    val editable         = tags.filter(_.editableByMe)
-    val (mine, byOthers) = editable.partition(_.ownedByMe)
-    val mineSection      = Option.when(mine.nonEmpty)(None -> mine.sortBy(_.name.toLowerCase))
-    val groupSections    = byOthers
-      .groupBy(_.group)
-      .toList
-      .sortBy { case (group, _) => group.map(_.name.toLowerCase).getOrElse("") }
-      .map { case (group, groupTags) => group -> groupTags.sortBy(_.name.toLowerCase) }
-    mineSection.toList ++ groupSections
+  private def sections(tags: List[Tag], signedIn: Boolean): List[(Option[Heading], List[Tag])] = {
+    def byName(list: List[Tag]): List[Tag] = list.sortBy(_.name.toLowerCase)
+
+    if (!signedIn) {
+      List(None -> byName(tags))
+    } else {
+      val (editable, others) = tags.partition(_.editableByMe)
+      val (mine, byGroup)    = editable.partition(_.ownedByMe)
+      val mineSection        = Option.when(mine.nonEmpty)(Option(Heading.Yours) -> byName(mine))
+      val groupSections      = byGroup
+        .groupBy(_.group)
+        .toList
+        .sortBy { case (group, _) => group.map(_.name.toLowerCase).getOrElse("") }
+        .map { case (group, groupTags) =>
+          group.map(Heading.Group.apply) -> byName(groupTags)
+        }
+      val othersSection      = Option.when(others.nonEmpty)(Option(Heading.Others) -> byName(others))
+      mineSection.toList ++ groupSections ++ othersSection.toList
+    }
   }
+
+  private val sectionsSignal: Signal[List[(Option[Heading], List[Tag])]] =
+    Signal.combine(tagsVar.signal, signedInSignal).map { case (tags, signedIn) => sections(tags, signedIn) }
 
   def render(): HtmlElement = {
     div(
@@ -67,13 +100,18 @@ private class TagsPage {
                 AppRouter.router.navigateTo(Page.TagCreate),
                 I18n.t(UiKeys.tagsCreate),
               ),
-              button(
-                cls := "btn btn-sm",
-                typ := "button",
-                I18n.t(UiKeys.tagsExportAllButton),
-                onClick.mapToUnit --> exportAllBus.writer,
+              // Both act on the caller's own wordlists, so a signed-out visitor — who owns none — is not shown them.
+              child.maybe <-- signedInSignal.map(
+                Option.when(_)(
+                  button(
+                    cls := "btn btn-sm",
+                    typ := "button",
+                    I18n.t(UiKeys.tagsExportAllButton),
+                    onClick.mapToUnit --> exportAllBus.writer,
+                  )
+                )
               ),
-              importDialog.renderButton(),
+              child.maybe <-- signedInSignal.map(Option.when(_)(importDialog.renderButton())),
             ),
           ),
           renderList(),
@@ -101,9 +139,9 @@ private class TagsPage {
   private def renderList(): HtmlElement = {
     div(
       child.maybe <--
-        tagsVar.signal
-          .map(sections)
-          .map(list => Option.when(list.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsListEmpty)))),
+        sectionsSignal
+          .map(list => list.forall { case (_, tags) => tags.isEmpty })
+          .map(empty => Option.when(empty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsListEmpty)))),
       div(
         cls := "overflow-x-auto",
         table(
@@ -114,27 +152,32 @@ private class TagsPage {
               th(I18n.t(UiKeys.tagsListColWords)),
             )
           ),
-          tbody(children <-- tagsVar.signal.map(sections).map(_.flatMap(renderSection))),
+          tbody(children <-- sectionsSignal.map(_.flatMap(renderSection))),
         ),
       ),
     )
   }
 
-  private def renderSection(section: (Option[GroupRef], List[Tag])): List[HtmlElement] = {
-    val (group, tags) = section
-    renderSeparator(group) :: tags.map(renderRow)
+  /** The signed-out catalog is one headingless section, so its separator row is dropped; every signed-in section
+    * carries a heading ("Your wordlists", a group name, or "Other wordlists").
+    */
+  private def renderSection(section: (Option[Heading], List[Tag])): List[HtmlElement] = {
+    val (heading, tags) = section
+    heading.map(renderSeparator).toList ++ tags.map(renderRow)
   }
 
-  private def renderSeparator(group: Option[GroupRef]): HtmlElement = {
+  private def renderSeparator(heading: Heading): HtmlElement = {
     tr(
       cls := "bg-base-200",
       th(
         colSpan := 2,
-        group match {
-          case Some(g) =>
+        heading match {
+          case Heading.Group(g) =>
             a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GroupDetail(g.id)), g.name)
-          case None    =>
+          case Heading.Yours    =>
             span(I18n.t(UiKeys.tagsListYours))
+          case Heading.Others   =>
+            span(I18n.t(UiKeys.tagsListOthers))
         },
       ),
     )

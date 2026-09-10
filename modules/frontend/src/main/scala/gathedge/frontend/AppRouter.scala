@@ -18,7 +18,9 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
-  /** Builds a tag as an ordered list of bilingual pairs. Account-scoped, so it falls under the default `RequireAuth`.
+  /** Mints a fresh wordlist and hands off to [[TagDetail]]. Public like [[GameSetup]], and for the same reason: it
+    * mints a guest on arrival (through `TagCreatePage.asReader`) rather than bouncing a signed-out visitor to sign-in,
+    * so the catalog's "New wordlist" button works before signing up.
     */
   case object TagCreate extends Page
 
@@ -166,16 +168,18 @@ object Page {
     */
   final case class GroupJoin(code: String) extends Page
 
-  /** A standalone read-only view of one tag's words and marked translations — the "tag view" `TagWordsList` was built
-    * for game setup, reused here without the game-creation flow around it. Backed by the same session-only
-    * `GameEndpoints.setupWords` a game's own setup screen uses, so this is auth-only too, not public like
-    * [[WordDetail]].
+  /** The unified wordlist editor: one tag's rows, with add/edit/delete/import controls around them. Public like
+    * [[WordDetail]] — its two reads (`WordEndpoints.listTags`, `WordEndpoints.tagEntries`) answer without a session, so
+    * a signed-out visitor can open any wordlist and read it. The edit controls only appear for a wordlist the reader
+    * owns or their group owns (`Tag.editableByMe`), which is a signed-in state, so no guest is minted here — creating a
+    * wordlist to edit goes through [[TagCreate]] instead.
     */
   final case class TagDetail(id: Long) extends Page
 
-  /** Every tag the caller may see: their own, plus every tag opened by a group they belong to — the same set
-    * [[WordCollect]]'s collect select offers, shown as a table instead of a dropdown. Reached from the collection bar's
-    * "All tags" button. Auth-only, like [[TagDetail]]: there is no reader-agnostic version of "your tags".
+  /** The whole wordlist catalog, shown as a table instead of a dropdown. Reached from the collection bar's "All tags"
+    * button. Public like [[TagDetail]]: everyone sees every wordlist. A signed-in reader's own and group wordlists are
+    * grouped ahead of the rest and carry the create/export/import controls; a signed-out visitor sees one flat
+    * read-only list with just "New wordlist".
     */
   case object Tags extends Page
 
@@ -207,6 +211,11 @@ object Page {
       // sign-in. A shared link has to show the catalog, not sign-in. `AllGames` is the browsable catalog of every
       // account's games: a signed-out visitor reads it to find a game to play, the same reason `Games` is public.
       case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About =>
+        AuthGuard.Public
+      // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
+      // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
+      // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
+      case Tags | TagDetail(_) | TagCreate                                            =>
         AuthGuard.Public
       case _                                                                          =>
         AuthGuard.RequireAuth

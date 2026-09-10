@@ -213,7 +213,10 @@ trait WordService {
     */
   def setGender(wordId: Long, gender: Gender, userId: Long): IO[WordFailure, WordDetail]
 
-  def listTags(userId: Long): UIO[List[Tag]]
+  /** Every wordlist there is. `reader` is the caller when there is one — their rows come back with `ownedByMe`/
+    * `editableByMe` set — and `None` for a signed-out visitor, who gets the whole table with both marks false.
+    */
+  def listTags(reader: Option[Long]): UIO[List[Tag]]
 
   /** `TagQuotaExceeded` is the hard half of the tag quota; a write that only crosses the soft threshold succeeds with
     * [[gathedge.shared.dto.TagResponse.warning]] set instead. `LanguageMismatch` (raised as a 400) is `source` and
@@ -297,10 +300,11 @@ trait WordService {
   // -- The unified tag editor --------------------------------------------------------------------
 
   /** One tag's rows for the editor, in the order they were added (a bulk import keeps the pasted text's order). Any
-    * signed-in caller may read them — tag contents are world-visible — so `TagNotFound` is only an id that names
-    * nothing, not somebody else's tag.
+    * caller may read them — tag contents are world-visible — so `TagNotFound` is only an id that names nothing, not
+    * somebody else's tag. `reader` is `None` for a signed-out visitor, whose `createdByMe`/`inMyOtherTags` marks are
+    * all cleared.
     */
-  def tagEntries(tagId: Long, userId: Long): IO[WordFailure, List[TagEntry]]
+  def tagEntries(tagId: Long, reader: Option[Long]): IO[WordFailure, List[TagEntry]]
 
   /** Adds one bilingual pair to a tag, written straight away. Either side may be a brand-new word, created on the fly.
     * Charges the pair quota exactly as [[selectPair]] does — the tag owner's, not the caller's, and never for a pair
@@ -532,8 +536,8 @@ object WordService {
   def setGender(wordId: Long, gender: Gender, userId: Long): ZIO[WordService, WordFailure, WordDetail] =
     ZIO.serviceWithZIO[WordService](_.setGender(wordId, gender, userId))
 
-  def listTags(userId: Long): URIO[WordService, List[Tag]] =
-    ZIO.serviceWithZIO[WordService](_.listTags(userId))
+  def listTags(reader: Option[Long]): URIO[WordService, List[Tag]] =
+    ZIO.serviceWithZIO[WordService](_.listTags(reader))
 
   def createTag(
     name: String,
@@ -591,8 +595,8 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.deselectPair(wordId, tagId, translationWordId, userId))
 
-  def tagEntries(tagId: Long, userId: Long): ZIO[WordService, WordFailure, List[TagEntry]] =
-    ZIO.serviceWithZIO[WordService](_.tagEntries(tagId, userId))
+  def tagEntries(tagId: Long, reader: Option[Long]): ZIO[WordService, WordFailure, List[TagEntry]] =
+    ZIO.serviceWithZIO[WordService](_.tagEntries(tagId, reader))
 
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): ZIO[WordService, WordFailure, TagEntryResponse] =
     ZIO.serviceWithZIO[WordService](_.addPair(tagId, pair, userId))
@@ -1374,11 +1378,13 @@ final case class WordServiceLive(
     } yield ()
   }
 
-  def listTags(userId: Long): UIO[List[Tag]] = {
+  def listTags(reader: Option[Long]): UIO[List[Tag]] = {
     for {
-      rows          <- repo.listTags(userId).orDie
+      // `-1` never equals a `users.id` (they start at 1), so a signed-out visitor's rows all come back `ownedByMe`
+      // false — the same lenient no-match the reader threads through the dictionary reads.
+      rows          <- repo.listTags(reader.getOrElse(-1L)).orDie
       groupRefs     <- resolveGroupRefs(rows.map { case (row, _, _) => row })
-      memberships   <- groupRepo.listMembershipsFor(userId).orDie
+      memberships   <- ZIO.foreach(reader)(groupRepo.listMembershipsFor).map(_.getOrElse(Nil)).orDie
       // A tag not owned by the caller is still theirs to edit if it sits in a group they belong to — the same test
       // `WordService.requireEditableTag` makes a write against, restated here so the tag bar/collect picker can offer
       // it without the reader having to click first and find out.
@@ -1826,14 +1832,20 @@ final case class WordServiceLive(
     * the two per-reader flags `createdByMe` and `inMyOtherTags` the editor's "imported by me" / "only in this tag"
     * filters read. Two batch queries for the whole list.
     */
-  private def toTagEntries(tag: TagRow, rows: List[TagEntryRow], viewerId: Long): UIO[List[TagEntry]] = {
+  private def toTagEntries(tag: TagRow, rows: List[TagEntryRow], viewer: Option[Long]): UIO[List[TagEntry]] = {
     val targetLang = tagLanguages(tag)._2
     val sourceIds  = rows.map(_.source.id).distinct
     val targetIds  = rows.flatMap(_.target.map(_.id)).distinct
-    val mintedByMe = (word: WordRow) => word.source == WordService.userSource && word.createdBy.contains(viewerId)
+    // A signed-out visitor (`viewer` empty) minted no words and owns no other tags, so both provenance marks stay off.
+    val mintedByMe = (word: WordRow) =>
+      word.source == WordService.userSource && viewer.isDefined && word.createdBy == viewer
     for {
       known         <- translationsInto(sourceIds, targetLang)
-      otherTagWords <- repo.sourceWordsInMyOtherTags(viewerId, tag.id, (sourceIds ++ targetIds).distinct).orDie
+      otherTagWords <-
+        ZIO
+          .foreach(viewer)(v => repo.sourceWordsInMyOtherTags(v, tag.id, (sourceIds ++ targetIds).distinct))
+          .map(_.getOrElse(Set.empty[Long]))
+          .orDie
     } yield rows.map { row =>
       val others = known.getOrElse(row.source.id, Nil).filterNot(option => row.target.exists(_.id == option.wordId))
       TagEntry(
@@ -1853,7 +1865,7 @@ final case class WordServiceLive(
   }
 
   private def oneTagEntry(tag: TagRow, row: TagEntryRow, viewerId: Long): UIO[TagEntry] = {
-    toTagEntries(tag, List(row), viewerId).map(_.head)
+    toTagEntries(tag, List(row), Some(viewerId)).map(_.head)
   }
 
   /** The row `(sourceId, targetId)` as the editor will show it after a write — read back from
@@ -1888,11 +1900,11 @@ final case class WordServiceLive(
     } yield entry
   }
 
-  def tagEntries(tagId: Long, userId: Long): IO[WordFailure, List[TagEntry]] = {
+  def tagEntries(tagId: Long, reader: Option[Long]): IO[WordFailure, List[TagEntry]] = {
     for {
       tag  <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
       rows <- repo.tagEntries(tagId).orDie
-      out  <- toTagEntries(tag, rows, userId)
+      out  <- toTagEntries(tag, rows, reader)
     } yield out
   }
 
