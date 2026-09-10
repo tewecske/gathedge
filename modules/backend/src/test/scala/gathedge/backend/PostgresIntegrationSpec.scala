@@ -674,7 +674,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                       )
           _        <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
           _        <- WordService.bulkImport(tag.id, "Pghaus Pghaz brandneu", WordLanguage.De, WordLanguage.Hu, reader.id)
-          imported <- WordService.tagEntries(tag.id, reader.id)
+          imported <- WordService.tagEntries(tag.id, Some(reader.id))
           // Replace the verified row's answer with a fresh word.
           neu      <- WordRepository.ensureWord(
                         WordRow(0L, "hu", "Pgotthon", "pgotthon", "noun", "", 1, "user", None, 0L, "pgotthon")
@@ -688,9 +688,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                         ),
                         reader.id,
                       )
-          replaced <- WordService.tagEntries(tag.id, reader.id)
+          replaced <- WordService.tagEntries(tag.id, Some(reader.id))
           _        <- WordService.removeEntry(tag.id, haus.id, None, reader.id)
-          afterRm  <- WordService.tagEntries(tag.id, reader.id)
+          afterRm  <- WordService.tagEntries(tag.id, Some(reader.id))
           pairsRm  <- WordRepository.pairsInTag(tag.id)
         } yield assertTrue(
           // Text order kept; the dictionary-linked pair collapsed to one row, the unmatched token its own
@@ -734,7 +734,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                       reader.id,
                     )
           _      <- WordService.removeEntry(tag.id, dog.id, Some(hund.id), reader.id)
-          rows   <- WordService.tagEntries(tag.id, reader.id)
+          rows   <- WordService.tagEntries(tag.id, Some(reader.id))
           pairs  <- WordRepository.pairsInTag(tag.id)
           links  <- WordRepository.tagsFor(reader.id, List(dog.id, hund.id, koeter.id))
         } yield assertTrue(
@@ -777,13 +777,13 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                       TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)),
                       reader.id,
                     )
-          rows   <- WordService.tagEntries(t1.id, reader.id)
+          rows   <- WordService.tagEntries(t1.id, Some(reader.id))
           _      <- WordService.removeEntries(
                       t1.id,
                       rows.map(r => PairRef(r.source.id, r.target.map(_.id))),
                       reader.id,
                     )
-          after  <- WordService.tagEntries(t1.id, reader.id)
+          after  <- WordService.tagEntries(t1.id, Some(reader.id))
         } yield assertTrue(
           rows.find(_.source.text == "Pghaus").exists(_.inMyOtherTags),
           rows.find(_.source.text == "Pghund2").exists(!_.inMyOtherTags),
@@ -804,13 +804,13 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                        )
           _         <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
           _         <- WordService.bulkImport(tag.id, "Pgbdhaus Pgbdhaz", WordLanguage.De, WordLanguage.Hu, reader.id)
-          imported  <- WordService.tagEntries(tag.id, reader.id)
+          imported  <- WordService.tagEntries(tag.id, Some(reader.id))
           _         <- WordService.removeEntries(
                          tag.id,
                          imported.map(r => PairRef(r.source.id, r.target.map(_.id))),
                          reader.id,
                        )
-          afterRm   <- WordService.tagEntries(tag.id, reader.id)
+          afterRm   <- WordService.tagEntries(tag.id, Some(reader.id))
           rmLinks   <- WordRepository.tagsFor(reader.id, List(haus.id, haz.id))
           // `deleteWords`: a reader-minted source paired with a dictionary answer that only this tag holds.
           kobold    <- WordRepository.ensureWord(
@@ -834,7 +834,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                          reader.id,
                        )
           _         <- WordService.deleteWords(tag.id, List(kobold.id), reader.id)
-          afterDel  <- WordService.tagEntries(tag.id, reader.id)
+          afterDel  <- WordService.tagEntries(tag.id, Some(reader.id))
           koboldRow <- WordRepository.findWordById(kobold.id)
           hazRow    <- WordRepository.findWordById(haz.id)
         } yield assertTrue(
@@ -1081,14 +1081,14 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           reader    <- AuthService.createGuest(Some("10.9.3.1")).map(_._1)
           tag       <- WordService.createTag("pgtabular", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
           first     <- WordService.tabularImport(tag.id, rows, WordLanguage.De, WordLanguage.Hu, reader.id)
-          entries   <- WordService.tagEntries(tag.id, reader.id)
+          entries   <- WordService.tagEntries(tag.id, Some(reader.id))
           helfen    <- WordRepository.findWordsByKeys("de", List("pgtabhelfen")).map(_.headOption)
           forms     <- ZIO.foreach(helfen.map(_.id).toList)(id => WordRepository.formsOf(id)).map(_.flatten)
           formWord  <- ZIO.foreach(forms.map(_.formWordId))(WordRepository.findWordById).map(_.flatten)
           // The marker must never have reached `text_norm`: `pgtabhelfen +D` and `pgtabhelfen` are one row, not two.
           helfenAll <- WordRepository.findWordsByKeys("de", List("pgtabhelfen", "pgtabhelfen +d"))
           second    <- WordService.tabularImport(tag.id, rows, WordLanguage.De, WordLanguage.Hu, reader.id)
-          after     <- WordService.tagEntries(tag.id, reader.id)
+          after     <- WordService.tagEntries(tag.id, Some(reader.id))
           languages <- WordRepository.findTagById(tag.id)
           guesses   <- WordService.checkColumnLanguages(
                          List(

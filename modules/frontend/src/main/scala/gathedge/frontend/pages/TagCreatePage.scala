@@ -2,11 +2,12 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.frontend.api.{ApiError, WordApiClient}
+import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
-import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.frontend.state.AppState
+import gathedge.shared.domain.{Tag, User, WordLanguage}
 import gathedge.shared.dto.TagResponse
 import gathedge.shared.i18n.UiKeys
 
@@ -50,17 +51,40 @@ private final class TagCreatePage {
   private val errorVar = Var(Option.empty[String])
   private val startBus = new EventBus[Unit]()
 
+  /** Read synchronously by [[asReader]], the same trick as `WordCollect.readerVar`. */
+  private val readerVar = Var(Option.empty[User])
+
+  /** The create call, with the guest detour in front of it — copied in spirit from `WordCollect.asReader`. `listTags`
+    * above answers without a session, but `createTag` needs one, so a signed-out visitor is minted a guest first and
+    * the tag is created under it. Signed in, the mint is skipped.
+    */
+  private def asReader[A](write: () => EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
+    readerVar.now() match {
+      case Some(_) =>
+        write()
+      case None    =>
+        ApiClient.createGuest.flatMapSwitch {
+          case Right(response) =>
+            AppState.setUser(response.user)
+            write()
+          case Left(err)       =>
+            EventStream.fromValue(Left(err))
+        }
+    }
+  }
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-3xl mx-auto p-4",
       Alert.maybeError(errorVar.signal),
       p(cls := "opacity-60", I18n.t(UiKeys.commonCreate), "…"),
+      AppState.currentUserSignal --> readerVar.writer,
       startBus.events
         .flatMapSwitch(_ => WordApiClient.listTags)
         .flatMapSwitch {
           case Right(tags) =>
             val (source, target) = TagCreatePage.defaultLanguages(tags)
-            WordApiClient.createTag(TagCreatePage.freeName(tags), source, target)
+            asReader(() => WordApiClient.createTag(TagCreatePage.freeName(tags), source, target))
           case Left(err)   => EventStream.fromValue(Left(err))
         } --> Observer[Either[ApiError, TagResponse]] {
         case Right(response) =>

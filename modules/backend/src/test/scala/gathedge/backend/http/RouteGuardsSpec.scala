@@ -242,11 +242,25 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           junk      <- runRoutes(WordRoutes.routes, withSession(Request.get("/api/words"), "not-a-session"))
           real      <- runRoutes(WordRoutes.routes, withSession(Request.get("/api/words"), session))
           // The writes on the same `Routes` value are still guarded, which is what makes the split worth pinning.
-          write     <- runRoutes(WordRoutes.routes, withCsrf(Request.get("/api/tags")))
+          write     <- runRoutes(WordRoutes.routes, withCsrf(Request.post("/api/tags", Body.empty)))
         } yield assertTrue(
           anonymous.status == Status.Ok,
           junk.status == Status.Ok,
           real.status == Status.Ok,
+          write.status == Status.Unauthorized,
+        )
+      },
+      // The two wordlist reads sit on the same `optionalUser` split: the catalog and one wordlist's rows are
+      // world-visible, so a signed-out visitor can browse them; a wordlist write on the same `Routes` value stays
+      // guarded. `entries` on a missing id is a 404, not a 401 — the aspect let the request through.
+      test("the wordlist reads answer with no session; a wordlist write on the same routes does not") {
+        for {
+          catalog <- runRoutes(WordRoutes.routes, Request.get("/api/tags"))
+          entries <- runRoutes(WordRoutes.routes, Request.get("/api/tags/999999/entries"))
+          write   <- runRoutes(WordRoutes.routes, withCsrf(Request.post("/api/tags", Body.empty)))
+        } yield assertTrue(
+          catalog.status == Status.Ok,
+          entries.status == Status.NotFound,
           write.status == Status.Unauthorized,
         )
       },

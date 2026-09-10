@@ -1151,11 +1151,12 @@ object UiKeys {
   val tagDetailGroupLabel: String = key("ui.tagDetail.groupLabel")
 
   // -- Tags list ------------------------------------------------------------------------------------
-  // Every tag the reader may edit (`TagsPage`), reached from `WordCollect.renderBar`'s "All tags" button — the same
-  // set `WordCollect.mineOptions` offers, as a table instead of a dropdown.
+  // Every wordlist there is (`TagsPage`), reached from `WordCollect.renderBar`'s "All tags" button. Everyone sees the
+  // whole catalog; a signed-in reader's own and group wordlists are grouped ahead of the rest, which are read-only.
 
   val tagsListTitle: String    = key("ui.tagsList.title")
   val tagsListYours: String    = key("ui.tagsList.yours")
+  val tagsListOthers: String   = key("ui.tagsList.others")
   val tagsListColName: String  = key("ui.tagsList.colName")
   val tagsListColWords: String = key("ui.tagsList.colWords")
   val tagsListEmpty: String    = key("ui.tagsList.empty")

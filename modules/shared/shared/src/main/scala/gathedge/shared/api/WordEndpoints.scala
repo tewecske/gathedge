@@ -45,11 +45,12 @@ import ApiSchemas.given
 
 /** The vocabulary: browsing the dictionary, tagging words, and adding what it does not have.
   *
-  * Two of these are **public**, which no other resource in the application is: [[list]] and [[get]] answer without a
-  * session, because the whole design of the feature is that a visitor can search the dictionary before deciding whether
+  * Four of these are **public**, which no other resource in the application is: [[list]] and [[get]] read the
+  * dictionary, [[listTags]] and [[tagEntries]] read the wordlists. All four answer without a session, because the whole
+  * design of the feature is that a visitor can browse the dictionary and the shared wordlists before deciding whether
   * to keep anything. They consequently declare no 401 — there is no session for the `authenticated` aspect to reject —
-  * and are guarded by `RouteSupport.optionalUser` instead, which hands the handler an `Option[User]` and leaves
-  * `tagIds` empty when there is nobody to have tagged anything.
+  * and are guarded by `RouteSupport.optionalUser` instead, which hands the handler an `Option[User]` and leaves the
+  * reader's marks (`ownedByMe`, `editableByMe`, `createdByMe`) empty when there is nobody to have made any.
   *
   * Everything that writes is ordinary: guarded by `authenticated`, and so declaring 401. A visitor with no session
   * reaches them by minting a guest first ([[AuthEndpoints.createGuest]]), which is a session like any other.
@@ -184,9 +185,12 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
-  /** The reader's tags, with how many words each holds — what the tag bar is built from. */
+  /** Every wordlist there is, with how many words each holds — what the tag bar is built from, and a browsable catalog
+    * for a signed-out visitor. Public, like [[list]]: a caller with no session sees the whole table with `ownedByMe`
+    * and `editableByMe` false on every row. The listing takes no input, so it declares no failure at all.
+    */
   val listTags = {
-    Endpoint(Method.GET / "api" / "tags").out[List[Tag]].outFailure(failure.unauthorized)
+    Endpoint(Method.GET / "api" / "tags").out[List[Tag]]
   }
 
   /** 409 covers two things a caller cannot tell apart from the status alone — a name the account already has, compared
@@ -360,12 +364,13 @@ object WordEndpoints {
 
   /** The unified tag editor's rows, in the order they were added (a bulk import keeps the pasted text's order): each
     * source word, the answer translation marked for it in this tag if any, and the two import provenance flags. Any
-    * signed-in caller may read a tag's rows — tag contents are world-visible — so 404 is only an id that names nothing.
+    * caller may read a tag's rows — tag contents are world-visible, so this is public like [[list]], and a signed-out
+    * visitor sees every row with its `createdByMe`/`inMyOtherTags` marks cleared. 404 is only an id that names nothing.
     */
   val tagEntries = {
     Endpoint(Method.GET / "api" / "tags" / tagId / "entries").withCodecError
       .out[List[TagEntry]]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.notFound)
   }
 
   /** Adds one bilingual pair to a tag, saved immediately — the unified editor's add-row action. Either side may be a
@@ -586,8 +591,8 @@ object WordEndpoints {
     )
   }
 
-  /** The two that answer without a session. `DocsRoutes` marks every other operation as needing the session cookie, and
-    * `OpenApiSpec` pins both halves of that split.
+  /** The four that answer without a session — the two dictionary reads and the two wordlist reads. `DocsRoutes` marks
+    * every other operation as needing the session cookie, and `OpenApiSpec` pins both halves of that split.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get, listTags, tagEntries)
 }

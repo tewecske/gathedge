@@ -162,6 +162,10 @@ object App {
       .collectSignalPF[Unit] { case (gate, page: Page.GameInstance) if gate.loaded => latestGameSlug = page.slug }(_ =>
         GameInstancePage.render(latestGameSlug, generateQr)
       )
+      // `/tags/new` mints a guest on arrival (`TagCreatePage.asReader`), and `AppState.setUser` on that mint flips the
+      // `Gate` — exactly the `GameSetup` case above. Without a signal renderer the catch-all rebuilds the element on
+      // that change, tearing down the in-flight `createTag` so the page never lands on the new wordlist's editor.
+      .collectSignalPF[Unit] { case (gate, Page.TagCreate) if gate.loaded => () }(_ => TagCreatePage.render())
       // Owner-only, but the ownership check is server-side (a 403 the page itself shows, the same as
       // `GameInstancePage`'s rename control) — `Gate` has no notion of "owns this particular game", so this
       // renders for any signed-in reader once loaded, the same `gate.loaded` precondition `WordsPage` uses. Same
