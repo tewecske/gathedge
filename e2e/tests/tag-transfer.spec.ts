@@ -35,7 +35,7 @@ async function createTag(page: Page, name: string): Promise<string> {
   const id = page.url().match(/\/tags\/(\d+)/)![1];
   // Let the editor finish mounting before touching the rename control — clicking it mid-mint drops the input.
   await expect(page.getByRole('heading', { name: 'Add a word pair' })).toBeVisible();
-  await page.getByRole('button', { name: 'Rename tag' }).click();
+  await page.getByRole('button', { name: 'Rename wordlist' }).click();
   const box = page.getByRole('textbox', { name: 'New name' });
   await box.fill(name);
   await expect(box).toHaveValue(name);
@@ -92,7 +92,7 @@ test('another account imports that file and gets the tag, its word and its mark'
   // Scoped by the dialog's own heading: the shell also mounts a hidden guest "sign in" confirm
   // `.modal-box`, and its copy ("…leaves this device's words behind…") would otherwise collide
   // with a bare `/word/` match here.
-  const modal = page.locator('.modal-box').filter({ hasText: 'Import tags' });
+  const modal = page.locator('.modal-box').filter({ hasText: 'Import wordlists' });
   await modal.locator('input[type=file]').setInputFiles({
     name: 'tags.json',
     mimeType: 'application/json',

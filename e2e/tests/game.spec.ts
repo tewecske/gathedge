@@ -53,7 +53,7 @@ async function createTag(p: Page, name: string): Promise<string> {
   const id = p.url().match(/\/tags\/(\d+)/)![1];
   // Let the editor finish mounting before touching the rename control — clicking it mid-mint drops the input.
   await expect(p.getByRole('heading', { name: 'Add a word pair' })).toBeVisible();
-  await p.getByRole('button', { name: 'Rename tag' }).click();
+  await p.getByRole('button', { name: 'Rename wordlist' }).click();
   const box = p.getByRole('textbox', { name: 'New name' });
   await box.fill(name);
   await expect(box).toHaveValue(name);
