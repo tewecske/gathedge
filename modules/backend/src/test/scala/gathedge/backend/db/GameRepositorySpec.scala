@@ -156,6 +156,46 @@ object GameRepositorySpec extends ZIOSpecDefault {
           fresh <- GameRepository.rename(game.id, "Again", 3L, v1)
         } yield assertTrue(game.version == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "Renamed", fresh == 1L)
       },
+      test("deleteGame refuses a stale version, then removes the game and everything under it") {
+        for {
+          owner   <- newUser()
+          player  <- newUser()
+          tag     <- WordRepository.insertTag(owner, "repodel", "repodel", 0L, "de", "hu")
+          game    <- GameRepository.insertGame(
+                       GameRow(0L, owner, "del-slug", "Del Game", "de", "hu", 0L, 0L),
+                       List(tag.id),
+                     )
+          play    <- GameRepository.insertPlay(
+                       GamePlayRow(0L, game.id, player, 0, 2, 1, 0L, None, sourceLanguage = "de", targetLanguage = "hu"),
+                       List((1L, 2L)),
+                     )
+          _       <- GameRepository.recordAnswer(
+                       GamePlayAnswerRow(0L, play.id, 1L, 2L, 1, "x", "correct", 2, 0L),
+                       2,
+                       Some(0L),
+                     )
+          _       <- GameRepository.addFavorite(player, game.id, 0L)
+          stale   <- GameRepository.deleteGame(game.id, 99L)
+          leftTag <- GameRepository.tagsOf(game.id)
+          hit     <- GameRepository.deleteGame(game.id, game.version)
+          gone    <- GameRepository.findBySlug("del-slug")
+          tags    <- GameRepository.tagsOf(game.id)
+          words   <- GameRepository.wordPairsOf(play.id)
+          answers <- GameRepository.answersOf(play.id)
+          favs    <- GameRepository.favoriteCounts(List(game.id))
+          plays   <- GameRepository.playCounts(List(game.id))
+        } yield assertTrue(
+          stale == 0L,
+          leftTag.map(_.id) == List(tag.id),
+          hit == 1L,
+          gone.isEmpty,
+          tags.isEmpty,
+          words.isEmpty,
+          answers.isEmpty,
+          favs.isEmpty,
+          plays.isEmpty,
+        )
+      },
     ).provide(layer)
   }
 }

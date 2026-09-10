@@ -87,6 +87,11 @@ object GameApiClient {
     run(executor(GameEndpoints.rename(slug, RenameGameRequest(name))))
   }
 
+  /** Owner-only — removes the game and every play, answer and favorite scoped to it. Answers 204. */
+  def delete(slug: String): EventStream[Either[ApiError, Unit]] = {
+    run(executor(GameEndpoints.delete(slug)))
+  }
+
   /** Starts a fresh attempt at `slug` under the given variant — see [[StartPlayRequest]]. */
   def startPlay(
     slug: String,

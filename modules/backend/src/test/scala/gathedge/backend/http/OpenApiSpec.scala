@@ -366,6 +366,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // else between this caller's read and this write.
               ("PATCH", "/api/games/{slug}")                                              ->
                 Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // Delete shares rename's failure shape and its `ApiFailures.gameRename` mapping: owner-only (403), and a
+              // 409 for the same stale-write window. The 204 says it carried no body.
+              ("DELETE", "/api/games/{slug}")                                             ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               // startPlay's own failures are BadRequest (an out-of-range wordLimit, or a resolved direction with
               // nothing eligible right now) or NotFound (an unknown slug).
               ("POST", "/api/games/{slug}/plays")                                         ->
@@ -506,7 +510,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 312,
+          declared == 317,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -518,6 +522,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/guest/code"),
               ("POST", "/api/auth/upgrade"),
               ("PATCH", "/api/games/{slug}"),
+              ("DELETE", "/api/games/{slug}"),
               ("GET", "/api/games/plays/{playId}/prompt"),
               ("POST", "/api/games/plays/{playId}/answers"),
               ("GET", "/api/games/plays/{playId}/results"),
