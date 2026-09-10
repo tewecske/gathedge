@@ -36,7 +36,7 @@ async function createTag(p: Page, name: string): Promise<string> {
   const id = p.url().match(/\/tags\/(\d+)/)![1];
   // Let the editor finish mounting before touching the rename control — clicking it mid-mint drops the input.
   await expect(p.getByRole('heading', { name: 'Add a word pair' })).toBeVisible();
-  await p.getByRole('button', { name: 'Rename tag' }).click();
+  await p.getByRole('button', { name: 'Rename wordlist' }).click();
   const box = p.getByRole('textbox', { name: 'New name' });
   await box.fill(name);
   await expect(box).toHaveValue(name);
@@ -93,7 +93,7 @@ test('the collect bar is there for a visitor with no account yet, but the tag fi
   // The collect bar's hint is shown to everybody, so a first-time visitor sees where a tick files before their
   // first tick mints an account. The select itself waits for a session; the tag *filter*, the "only mine" filter
   // and the guest banner all still belong to an account.
-  await expect(page.getByText('Words you tick go into this tag.')).toBeVisible();
+  await expect(page.getByText('Words you tick go into this wordlist.')).toBeVisible();
   await expect(page.getByLabel('Collect into')).toHaveCount(0);
   await expect(page.getByText('Only my words')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toHaveCount(0);
