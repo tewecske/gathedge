@@ -18,12 +18,13 @@ import zio.http.*
 /** Creating, reading and renaming a vocabulary quiz (the setup/detail/rename endpoints), plus playing one
   * (startPlay/nextPrompt/submitAnswer/results).
   *
-  * `getRoute` and `playSetupRoute` are wrapped in `optionalUser` rather than `authenticated`, the same reasoning
-  * `WordRoutes` applies to the dictionary reads: a shared game link, and the play-variant picker's preview it leads to,
-  * must both be viewable before any guest is minted. `getRoute`'s handler does not consume `Option[User]` —
-  * `GameDetail` carries no owner-only data — but `playSetupRoute` does, the same as `WordRoutes.listRoute`/`.getRoute`:
-  * a signed-in caller's own play history still shapes the `LeastPlayed`/`MostMistakes` ordering, while an anonymous
-  * caller simply has none.
+  * `getRoute`, `playSetupRoute` and `allGamesRoute` are wrapped in `optionalUser` rather than `authenticated`, the same
+  * reasoning `WordRoutes` applies to the dictionary reads: a shared game link, the play-variant picker's preview it
+  * leads to, and the catalog of every account's games must all be viewable before any guest is minted. `getRoute`'s
+  * handler does not consume `Option[User]` — `GameDetail` carries no owner-only data — but `playSetupRoute` and
+  * `allGamesRoute` do, the same as `WordRoutes.listRoute`/`.getRoute`: a signed-in caller's own play history still
+  * shapes the `LeastPlayed`/`MostMistakes` ordering and their favorite marks, while an anonymous caller simply has
+  * none.
   *
   * The aspects are on the `Routes` values, never on an individual `handler`: `getRoute`/`renameRoute`/`playSetupRoute`
   * take a path parameter, and attaching a context-providing aspect to one of those compiles and then throws
@@ -93,9 +94,9 @@ object GameRoutes {
           q: Option[String],
           favorites: Option[Boolean],
         ) =>
-          userId.flatMap { id =>
+          reader.flatMap { viewerId =>
             GameService.allGames(
-              id,
+              viewerId,
               searchTerm(q),
               favorites.getOrElse(false),
               Paging.boundedPage(page),
@@ -271,13 +272,12 @@ object GameRoutes {
     )
   }
 
-  private val publicRoutes = Routes(getRoute, playSetupRoute) @@ RouteSupport.optionalUser
+  private val publicRoutes = Routes(getRoute, playSetupRoute, allGamesRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
     Routes(
       setupRoute,
       setupWordsRoute,
-      allGamesRoute,
       favoriteRoute,
       unfavoriteRoute,
       myPlaysRoute,

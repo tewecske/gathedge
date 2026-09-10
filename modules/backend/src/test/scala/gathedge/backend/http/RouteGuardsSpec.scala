@@ -250,6 +250,17 @@ object RouteGuardsSpec extends ZIOSpecDefault {
           write.status == Status.Unauthorized,
         )
       },
+      // `GET /api/games/all` sits on the same `optionalUser` split: the catalog of every account's games is public,
+      // so a signed-out visitor can browse for one to play; a write on the same `Routes` value stays guarded.
+      test("the games catalog answers with no session; a game write on the same routes does not") {
+        for {
+          catalog <- runRoutes(GameRoutes.routes, Request.get("/api/games/all"))
+          write   <- runRoutes(GameRoutes.routes, withCsrf(Request.post("/api/games/some-slug/favorite", Body.empty)))
+        } yield assertTrue(
+          catalog.status == Status.Ok,
+          write.status == Status.Unauthorized,
+        )
+      },
       // zio-http's own not-found response is `Response.error(NotFound, path)`: no JSON, and the requested path
       // echoed back into the body. Every other error this API can answer with is an `ErrorResponse` object.
       test("a path that matches no route is a JSON 404 that does not echo the path") {

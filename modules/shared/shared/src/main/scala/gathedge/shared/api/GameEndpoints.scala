@@ -84,6 +84,11 @@ object GameEndpoints {
     * `GameService.allGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
     * `dto.AllGameSort`, `q` is a case-insensitive substring of the game's name, and `favorites=true` keeps only games
     * the caller has favorited.
+    *
+    * Anonymous-capable, the same reasoning [[get]] applies: the catalog is a shared list of games anyone may play, so a
+    * signed-out visitor must be able to read it before any guest is minted. A caller with no session has no favorite
+    * marks, so `favoritedByMe` is always `false` and `favorites=true` narrows to nothing. The only declared failure is
+    * the 400 `withCodecError` answers for a query parameter that does not decode.
     */
   val allGames = {
     Endpoint(Method.GET / "api" / "games" / "all")
@@ -95,7 +100,7 @@ object GameEndpoints {
       .query(favoritesQuery)
       .withCodecError
       .out[AllGamePage]
-      .outErrors(failure.badRequest, failure.unauthorized)
+      .outFailure(failure.badRequest)
   }
 
   /** Marks `slug` as the caller's favorite — idempotent, so a repeated call is still a 204. `POST`/`DELETE` on the same
@@ -253,8 +258,9 @@ object GameEndpoints {
     playDetail,
   )
 
-  /** [[get]] and [[playSetup]] — a shared game link, and the play-variant picker's preview it leads to, must both be
-    * viewable before any guest is minted, the same reasoning [[WordEndpoints.public]] applies to the dictionary reads.
+  /** [[get]], [[playSetup]] and [[allGames]] — a shared game link, the play-variant picker's preview it leads to, and
+    * the catalog of every account's games — must all be viewable before any guest is minted, the same reasoning
+    * [[WordEndpoints.public]] applies to the dictionary reads.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get, playSetup)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get, playSetup, allGames)
 }

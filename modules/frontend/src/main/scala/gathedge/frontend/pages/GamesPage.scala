@@ -7,8 +7,11 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.i18n.UiKeys
 
-/** The catalog of game types (Vocabulary Quiz today), plus a link to the games listing when signed in. A local
-  * `gameCard` helper renders both, so adding the next game type is a call, not a reshape.
+/** The catalog of game types (Vocabulary Quiz today), plus a link to the browsable games listing. A local `gameCard`
+  * helper renders both, so adding the next game type is a call, not a reshape.
+  *
+  * The "All games" card shows whether or not anyone is signed in — the listing behind it is public. The "My plays" and
+  * "Shared progress" cards stay signed-in only: both are personal.
   */
 object GamesPage {
 
@@ -26,18 +29,13 @@ object GamesPage {
             playLabel = I18n.t(UiKeys.gamesVocabQuizPlay),
             target = Page.GameSetup,
           ),
-          // Only meaningful once there is something to see, so the card is left out entirely for a signed-out
-          // visitor rather than shown disabled.
-          child.maybe <-- AppState.isSignedInSignal.map(signedIn => {
-            Option.when(signedIn)(
-              gameCard(
-                title = I18n.t(UiKeys.gamesAllGamesTitle),
-                body = I18n.t(UiKeys.gamesAllGamesBody),
-                playLabel = I18n.t(UiKeys.gamesAllGamesOpen),
-                target = Page.AllGames(),
-              )
-            )
-          }),
+          // Public, like the vocabulary quiz above: the listing behind it renders for a signed-out visitor too.
+          gameCard(
+            title = I18n.t(UiKeys.gamesAllGamesTitle),
+            body = I18n.t(UiKeys.gamesAllGamesBody),
+            playLabel = I18n.t(UiKeys.gamesAllGamesOpen),
+            target = Page.AllGames(),
+          ),
           child.maybe <-- AppState.isSignedInSignal.map(signedIn => {
             Option.when(signedIn)(
               gameCard(
