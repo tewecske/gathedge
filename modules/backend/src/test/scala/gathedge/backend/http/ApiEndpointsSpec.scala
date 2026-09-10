@@ -788,6 +788,30 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             answeredRaw.fromJson[GameAnswerResult].map(_.expectedTexts) == Right(List("kutya")),
           )
         },
+        test("deleting a game is a bare 204 for its owner and a 403 for anyone else") {
+          for {
+            fixture        <- gameFixture("games-delete-wire@example.com")
+            (slug, session) = fixture
+            stranger       <- signUp("games-delete-stranger@example.com")
+            forbidden      <- runRoutes(
+                                GameRoutes.routes,
+                                withCsrf(withSession(Request.delete(s"/api/games/$slug"), stranger)),
+                              )
+            forbiddenRaw   <- body(forbidden)
+            deleted        <- runRoutes(
+                                GameRoutes.routes,
+                                withCsrf(withSession(Request.delete(s"/api/games/$slug"), session)),
+                              )
+            deletedRaw     <- body(deleted)
+            afterwards     <- runRoutes(GameRoutes.routes, Request.get(s"/api/games/$slug"))
+          } yield assertTrue(
+            forbidden.status == Status.Forbidden,
+            forbiddenRaw.fromJson[ErrorResponse].map(_.message) == Right("You do not own this game"),
+            deleted.status == Status.NoContent,
+            deletedRaw.isEmpty,
+            afterwards.status == Status.NotFound,
+          )
+        },
       ),
       suite("guest")(
         test("minting a guest answers 201, a session cookie, and a user with no address") {

@@ -442,3 +442,29 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
 
   await clickContext.close();
 });
+
+test('the owner deletes the game, warned that other people have played it', async () => {
+  await page.goto(gameUrl);
+
+  // The trash control sits beside the rename pencil, offered only to the browser that created the game
+  // (GameInstancePage.deleteIcon, gated on the same local ownership hint the "View results" link uses).
+  await page.getByRole('button', { name: 'Delete quiz' }).click();
+
+  const modal = page.locator('.modal-box', { hasText: 'Delete this quiz?' });
+  await expect(modal).toBeVisible();
+  // Strangers have played the shared link, so the confirm dialog warns about it — "warn if users played or
+  // liked it". The count line is pluralised (GameInstancePage.renderDeleteModal).
+  await expect(modal).toContainText('Other people have used this quiz:');
+  await expect(modal).toContainText(/plays? (is|are) recorded against it\./);
+
+  const deleted = page.waitForResponse(
+    (r) => r.request().method() === 'DELETE' && new RegExp(`/api/games/${gameSlug}(\\?|$)`).test(r.url()),
+  );
+  await modal.getByRole('button', { name: 'Delete quiz' }).click();
+  await deleted;
+
+  // Lands on the browsable catalog, and the shared link no longer resolves in the app.
+  await expect(page).toHaveURL(/\/en\/games\/all(\?|$)/);
+  await page.goto(gameUrl);
+  await expect(page.getByText('This quiz link is not valid.')).toBeVisible();
+});

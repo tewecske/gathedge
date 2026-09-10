@@ -1256,6 +1256,16 @@ object UiKeys {
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 
+  // Delete, offered next to rename and gated the same way. The warning line is built from two separately pluralised
+  // counts spliced in as `{0}`/`{1}`, the same shape `adminSystemPrune*` uses, so a translator never meets a bare
+  // "(s)" and Hungarian can phrase around its `a`/`az` article.
+  val gameInstanceDeleteButton: String  = key("ui.gameInstance.delete.button")
+  val gameInstanceDeleteTitle: String   = key("ui.gameInstance.delete.title")
+  val gameInstanceDeleteConfirm: String = key("ui.gameInstance.delete.confirm")
+  val gameInstanceDeleteWarning: String = key("ui.gameInstance.delete.warning")
+  val gameInstanceDeletePlays: String   = pluralKey("ui.gameInstance.delete.plays")
+  val gameInstanceDeleteLikes: String   = pluralKey("ui.gameInstance.delete.likes")
+
   // Owner-only — links to the results listing below.
   val gameInstanceViewResults: String = key("ui.gameInstance.viewResults")
 

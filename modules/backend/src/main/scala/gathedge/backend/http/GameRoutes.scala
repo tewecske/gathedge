@@ -178,6 +178,14 @@ object GameRoutes {
     )
   }
 
+  private val deleteRoute = {
+    GameEndpoints.delete.implementHandler(
+      handler { (slug: String) =>
+        userId.flatMap(id => GameService.deleteGame(slug, id).mapError(ApiFailures.gameRename))
+      }
+    )
+  }
+
   private val startPlayRoute = {
     GameEndpoints.startPlay.implementHandler(
       handler { (slug: String, body: StartPlayRequest) =>
@@ -283,6 +291,7 @@ object GameRoutes {
       myPlaysRoute,
       createRoute,
       renameRoute,
+      deleteRoute,
       startPlayRoute,
       nextPromptRoute,
       submitAnswerRoute,

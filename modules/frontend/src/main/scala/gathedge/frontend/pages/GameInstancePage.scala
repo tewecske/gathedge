@@ -187,6 +187,13 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val isOwnerVar = Var(GameOwnership.isOwned(slug))
 
+  /** The delete-confirm modal's open state, the in-flight flag while the call runs, and the click that fires it —
+    * modelled on `TagEditorPage`'s tag-delete modal.
+    */
+  private val deleteOpenVar = Var(false)
+  private val deletingVar   = Var(false)
+  private val deleteBus     = new EventBus[Unit]()
+
   private val inlineRename = new InlineRename[GameDetail](text => GameApiClient.rename(slug, text))
 
   /** Copy-link, Web Share and QR code — all three act on this page's own URL, which is the shared link itself. See
@@ -320,6 +327,23 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           }
         },
       ),
+      // The trash icon's confirm: flip the in-flight flag, then run the delete. Two subscriptions to one bus, the
+      // same shape `startBus` above uses.
+      deleteBus.events --> Observer[Unit](_ => Var.set(deletingVar -> true, errorVar -> None)),
+      deleteBus.events.flatMapSwitch(_ => GameApiClient.delete(slug)) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            // The game is gone; drop the local ownership hint and leave for the catalog.
+            GameOwnership.forget(slug)
+            AppRouter.router.pushState(Page.AllGames())
+          case Left(err) =>
+            if (err.status == 403) {
+              // A stale local owner hint — stop offering the control, the same move the rename path makes.
+              GameOwnership.forget(slug)
+              Var.set(isOwnerVar -> false, deleteOpenVar -> false, deletingVar -> false, errorVar -> Some(err.message))
+            } else
+              Var.set(deleteOpenVar -> false, deletingVar -> false, errorVar -> Some(err.message))
+        },
       // Last, like every other page's initial load — see `WordsPage`'s or `AdminSystemPage`'s own placement: the
       // stream this triggers (`loadBus`, above) has to already have a subscriber when this fires, or the mount's own
       // reload is emitted to nobody and silently lost, leaving the quiz stuck loading forever.
@@ -348,7 +372,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
           resultsLink(),
+          deleteIcon(),
         ),
+        renderDeleteModal(detail),
         p(
           cls   := "text-sm opacity-70",
           s"${Labels.language(detail.sourceLanguage)} → ${Labels.language(detail.targetLanguage)}",
@@ -392,6 +418,83 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       )
     }
   }
+
+  /** The trash icon beside the pencil, gated on the same local ownership hint — see `TagEditorPage.deleteIcon`, which
+    * this mirrors. Passed to `InlineRename.renderTitle` as `extra`, so it drops out in edit mode with the pencil.
+    */
+  private def deleteIcon(): Modifier[HtmlElement] = {
+    child.maybe <-- isOwnerVar.signal.map(
+      Option.when(_)(
+        InlineRename.iconButton(
+          I18n.t(UiKeys.gameInstanceDeleteButton),
+          trashMark(),
+          onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(true)),
+        )
+      )
+    )
+  }
+
+  /** The confirm dialog. `detail` is read once at build time (the card is built once, after the game loads); its
+    * `playCount`/`likeCount` drive the warning block, shown only when other people have already used the quiz.
+    */
+  private def renderDeleteModal(detail: GameDetail): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- deleteOpenVar.signal,
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.gameInstanceDeleteTitle)),
+        p(cls  := "py-2", child.text <-- nameVar.signal.map(name => I18n.t(UiKeys.gameInstanceDeleteConfirm, name))),
+        if (detail.playCount > 0 || detail.likeCount > 0) {
+          div(
+            cls := "alert alert-warning text-sm",
+            div(
+              p(I18n.t(UiKeys.gameInstanceDeleteWarning)),
+              ul(
+                cls := "list-disc list-inside",
+                if (detail.playCount > 0) li(I18n.plural(UiKeys.gameInstanceDeletePlays, detail.playCount))
+                else emptyNode,
+                if (detail.likeCount > 0) li(I18n.plural(UiKeys.gameInstanceDeleteLikes, detail.likeCount))
+                else emptyNode,
+              ),
+            ),
+          )
+        } else
+          emptyNode,
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            disabled <-- deletingVar.signal,
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false)),
+          ),
+          button(
+            cls := "btn btn-sm btn-error",
+            typ := "button",
+            disabled <-- deletingVar.signal,
+            I18n.t(UiKeys.gameInstanceDeleteButton),
+            onClick.mapToUnit --> deleteBus.writer,
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false))),
+    )
+  }
+
+  private def trashMark(): SvgElement = svg.svg(
+    svg.cls            := "h-4 w-4",
+    svg.viewBox        := "0 0 24 24",
+    svg.fill           := "none",
+    svg.stroke         := "currentColor",
+    svg.strokeWidth    := "2",
+    svg.strokeLineCap  := "round",
+    svg.strokeLineJoin := "round",
+    svg.path(svg.d := "M4 7h16"),
+    svg.path(svg.d := "M9 7V4h6v3"),
+    svg.path(svg.d := "M6 7l1 13h10l1-13"),
+  )
 
   private def renderStart(): HtmlElement = {
     div(

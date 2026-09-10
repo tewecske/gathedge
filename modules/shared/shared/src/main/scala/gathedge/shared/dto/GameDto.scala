@@ -41,13 +41,18 @@ final case class GameSetupWord(
   partOfSpeech: Option[PartOfSpeech] = None,
 ) derives JsonCodec
 
-/** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. */
+/** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. `playCount` and
+  * `likeCount` are the same public aggregates [[AllGameSummary]] carries — `0` for a game nobody has played or
+  * favorited yet, never absent — surfaced here so the game page can warn its owner before a delete removes them.
+  */
 final case class GameDetail(
   slug: String,
   name: String,
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   tags: List[GameTagRef],
+  playCount: Long = 0L,
+  likeCount: Long = 0L,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design

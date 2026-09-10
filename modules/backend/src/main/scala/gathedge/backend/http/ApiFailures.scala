@@ -350,10 +350,12 @@ object ApiFailures {
 
   // GameFailure gets six mappings rather than one: create only ever raises NoTagsSelected/TagNotEligible/
   // ValidationError (all BadRequest), get only ever raises NotFound, rename can raise NotFound/NotOwner/
-  // ValidationError, startPlay can raise NotFound/NoEligibleWords/ValidationError, and the play-id endpoints plus
-  // the owner-facing results listing/detail (nextPrompt/submitAnswer/getResults/listPlays/getPlayDetail) can raise
-  // NotFound/NotOwner. A single wide mapping would force every one of them to describe statuses they cannot
-  // produce — the same reason the guest mappings below are four functions instead of one.
+  // ValidationError/StaleWrite, startPlay can raise NotFound/NoEligibleWords/ValidationError, and the play-id
+  // endpoints plus the owner-facing results listing/detail (nextPrompt/submitAnswer/getResults/listPlays/
+  // getPlayDetail) can raise NotFound/NotOwner. A single wide mapping would force every one of them to describe
+  // statuses they cannot produce — the same reason the guest mappings below are four functions instead of one.
+  // `delete` raises NotFound/NotOwner/StaleWrite, a subset of `rename`'s, so it reuses `gameRename` rather than
+  // adding a seventh.
 
   def game(failure: GameFailure): ApiFailure.NotFound = {
     failure match {

@@ -394,6 +394,45 @@ object GameServiceSpec extends ZIOSpecDefault {
           result  <- GameService.rename(created.slug, "   ", owner).either
         } yield assertTrue(result.left.exists(_.isInstanceOf[GameFailure.ValidationError]))
       },
+      test("only the owner may delete a game, and a deleted game is gone") {
+        for {
+          owner      <- newUser()
+          other      <- newUser()
+          tagId      <- eligibleTag(owner, "lesson1", WordLanguage.De, WordLanguage.Hu)
+          created    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          blocked    <- GameService.deleteGame(created.slug, other).either
+          stillThere <- GameService.getBySlug(created.slug).either
+          _          <- GameService.deleteGame(created.slug, owner)
+          gone       <- GameService.getBySlug(created.slug).either
+        } yield assertTrue(
+          blocked == Left(GameFailure.NotOwner),
+          stillThere.isRight,
+          gone == Left(GameFailure.NotFound),
+        )
+      },
+      test("deleting a game clears its plays and favorites; getBySlug counts them until then") {
+        for {
+          owner   <- newUser()
+          other   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "deld", WordLanguage.De, WordLanguage.Hu, count = 2)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          _       <- GameService.rename(created.slug, "Deleteme Zeta", owner)
+          _       <- GameService.favoriteGame(created.slug, other)
+          play    <- GameService.startPlay(created.slug, owner)
+          _       <- playThrough(play.playId, "deld", owner)
+          before  <- GameService.getBySlug(created.slug)
+          _       <- GameService.deleteGame(created.slug, owner)
+          catalog <- GameService.allGames(Some(owner), Some("deleteme zeta"), false, 1, 20, None, false)
+          mine    <- GameService.myPlays(owner, None, Some("deleteme zeta"), 1, 20, None, false)
+        } yield assertTrue(
+          before.playCount == 1L,
+          before.likeCount == 1L,
+          catalog.items.isEmpty,
+          catalog.total == 0L,
+          mine.items.isEmpty,
+          mine.total == 0L,
+        )
+      },
       test("a full playthrough scores exact, typo and wrong answers, and results match what was submitted") {
         for {
           owner     <- newUser()

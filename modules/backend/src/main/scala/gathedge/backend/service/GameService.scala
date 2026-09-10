@@ -117,6 +117,12 @@ trait GameService {
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
 
+  /** Only the owner may delete; anyone else gets [[GameFailure.NotOwner]]. Removes the game and everything scoped to it
+    * — its tag links, every play and answer, and every favorite mark. [[GameFailure.StaleWrite]] if it was renamed or
+    * deleted by someone else since this request's read.
+    */
+  def deleteGame(slug: String, requesterUserId: Long): IO[GameFailure, Unit]
+
   /** Starts a fresh attempt at `slug` under the given variant. `swapDirection` plays the game's `targetLanguage` ->
     * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference`/`mode`
     * are this play's own settings, snapshotted onto its `game_plays` row — see the design doc. `mode` also decides the
@@ -274,6 +280,9 @@ object GameService {
 
   def rename(slug: String, newName: String, requesterUserId: Long): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.rename(slug, newName, requesterUserId))
+
+  def deleteGame(slug: String, requesterUserId: Long): ZIO[GameService, GameFailure, Unit] =
+    ZIO.serviceWithZIO[GameService](_.deleteGame(slug, requesterUserId))
 
   def startPlay(
     slug: String,
@@ -624,15 +633,19 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     rows.map(row => GameTagRef(row.id, row.name)).sortBy(_.name)
 
   private def detailOf(row: GameRow): UIO[GameDetail] = {
-    repo.tagsOf(row.id).orDie.map { tags =>
-      GameDetail(
-        row.slug,
-        row.name,
-        WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
-        WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
-        tagRefs(tags),
-      )
-    }
+    for {
+      tags  <- repo.tagsOf(row.id).orDie
+      plays <- repo.playCounts(List(row.id)).orDie
+      likes <- repo.favoriteCounts(List(row.id)).orDie
+    } yield GameDetail(
+      row.slug,
+      row.name,
+      WordLanguage.fromString(row.sourceLanguage).getOrElse(WordLanguage.En),
+      WordLanguage.fromString(row.targetLanguage).getOrElse(WordLanguage.En),
+      tagRefs(tags),
+      playCount = plays.getOrElse(row.id, 0L),
+      likeCount = likes.getOrElse(row.id, 0L),
+    )
   }
 
   def getBySlug(slug: String): IO[GameFailure, GameDetail] = {
@@ -670,6 +683,19 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                 )
       detail <- detailOf(row.copy(name = valid))
     } yield detail
+  }
+
+  def deleteGame(slug: String, requesterUserId: Long): IO[GameFailure, Unit] = {
+    for {
+      row  <- requireOwnGame(slug, requesterUserId)
+      rows <- repo.deleteGame(row.id, row.version).orDie
+      _    <- OptimisticLock.resolve(
+                rows,
+                repo.findBySlug(slug).orDie.map(_.isDefined),
+                GameFailure.StaleWrite,
+                GameFailure.NotFound,
+              )
+    } yield ()
   }
 
   /** Dedupes raw `(word_id, translation_word_id)` pairs to one row per source word — the lowest translation id on a tie

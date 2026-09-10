@@ -10,6 +10,7 @@ import gathedge.backend.db.{
   DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
+  GamePlayAnswerRow,
   GamePlayRow,
   GameRepository,
   GameRow,
@@ -405,6 +406,65 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         } yield assertTrue(
           before == List((source.id, dest.id)),
           after.isEmpty,
+        )
+      },
+      // `GameRepository.deleteGame` deletes the `games` row first (guarded by `version`); on Postgres its
+      // `ON DELETE CASCADE` clears `game_tags`, `game_favorites` and `game_plays` (and, through the play,
+      // `game_play_answers`/`game_play_words`). The explicit child deletes that follow are what make SQLite match —
+      // here they must run as harmless no-ops against the already-cascaded rows without raising a constraint
+      // violation. The tag itself is somebody's own row and must survive.
+      pgTest("deleting a game removes its tag links, plays, answers and favorite marks, but not the tag") {
+        for {
+          owner   <- AuthService.signup("pggamedel@example.com", "password123").map(_._1)
+          fan     <- AuthService.signup("pggamedelfan@example.com", "password123").map(_._1)
+          tag     <- WordRepository.insertTag(owner.id, "pggamedel", "pggamedel", 0L, "de", "hu")
+          source  <- WordRepository.ensureWord(
+                       WordRow(0L, "de", "Pgdelw", "pgdelw", "noun", "", 1, "user", Some(owner.id), 0L, "pgdelw")
+                     )
+          dest    <- WordRepository.ensureWord(
+                       WordRow(0L, "hu", "Pgdelszo", "pgdelszo", "noun", "", 1, "user", None, 0L, "pgdelszo")
+                     )
+          _       <- WordRepository.pairTranslation(source.id, tag.id, dest.id, 0L)
+          game    <- GameRepository.insertGame(
+                       GameRow(0L, owner.id, "pg-game-del", "PG Game Del", "de", "hu", 0L, 0L),
+                       List(tag.id),
+                     )
+          play    <- GameRepository.insertPlay(
+                       GamePlayRow(
+                         id = 0L,
+                         gameId = game.id,
+                         playerUserId = owner.id,
+                         score = 0,
+                         maxScore = 2,
+                         wordCount = 1,
+                         startedAt = 0L,
+                         finishedAt = None,
+                       ),
+                       List((source.id, dest.id)),
+                     )
+          _       <- GameRepository.recordAnswer(
+                       GamePlayAnswerRow(0L, play.id, source.id, dest.id, 1, "x", "correct", 2, 0L),
+                       2,
+                       Some(0L),
+                     )
+          _       <- GameRepository.addFavorite(fan.id, game.id, 0L)
+          rows    <- GameRepository.deleteGame(game.id, game.version)
+          gone    <- GameRepository.findBySlug("pg-game-del")
+          tags    <- GameRepository.tagsOf(game.id)
+          words   <- GameRepository.wordPairsOf(play.id)
+          answers <- GameRepository.answersOf(play.id)
+          favs    <- GameRepository.favoriteCounts(List(game.id))
+          plays   <- GameRepository.playCounts(List(game.id))
+          tagKept <- WordRepository.findTagById(tag.id)
+        } yield assertTrue(
+          rows == 1L,
+          gone.isEmpty,
+          tags.isEmpty,
+          words.isEmpty,
+          answers.isEmpty,
+          favs.isEmpty,
+          plays.isEmpty,
+          tagKept.isDefined,
         )
       },
       // `GameRepository.matchingPlays`'s player filter is a correlated subquery against `users` — the first query in

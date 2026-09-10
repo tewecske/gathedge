@@ -142,6 +142,16 @@ object GameEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
+  /** Owner-only, like [[rename]]: anyone else gets 403. Removes the game and everything scoped to it — its tag links,
+    * every play and answer, and every favorite mark. 409 is a stale write, the same window [[rename]] guards. Answers
+    * 204.
+    */
+  val delete = {
+    Endpoint(Method.DELETE / "api" / "games" / gameSlug).withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+  }
+
   /** Starts a fresh attempt at `slug` under the variant `body` describes — see [[StartPlayRequest]]. `badRequest`
     * covers both a body that fails validation (an out-of-range `wordLimit`, or one `>=` the resolved direction's
     * eligible pool) and `NoEligibleWords` (the resolved direction's pool is empty right now).
@@ -249,6 +259,7 @@ object GameEndpoints {
     create,
     get,
     rename,
+    delete,
     startPlay,
     playSetup,
     nextPrompt,
