@@ -72,9 +72,12 @@ trait GameService {
   /** One page of every account's games, most recently created first unless `sort` says otherwise, with their tag names,
     * how many times each was played, how many accounts favorited each, and whether `viewerId` did. `nameContains`
     * narrows to games whose name contains it; `favoritesOnly` keeps only games `viewerId` favorited.
+    *
+    * `viewerId` is optional: an anonymous caller reads the catalog too (see `GameEndpoints.allGames`). With no viewer
+    * there are no favorite marks, so every row's `favoritedByMe` is `false` and `favoritesOnly` narrows to nothing.
     */
   def allGames(
-    viewerId: Long,
+    viewerId: Option[Long],
     nameContains: Option[String],
     favoritesOnly: Boolean,
     page: Int,
@@ -231,7 +234,7 @@ object GameService {
     ZIO.serviceWithZIO[GameService](_.eligibleTags(sourceLanguage, targetLanguage, viewerId))
 
   def allGames(
-    viewerId: Long,
+    viewerId: Option[Long],
     nameContains: Option[String],
     favoritesOnly: Boolean,
     page: Int,
@@ -429,7 +432,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
   }
 
   def allGames(
-    viewerId: Long,
+    viewerId: Option[Long],
     nameContains: Option[String],
     favoritesOnly: Boolean,
     page: Int,
@@ -437,7 +440,25 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     sort: Option[String],
     descending: Boolean,
   ): UIO[AllGamePage] = {
-    val favoritesOf = Option.when(favoritesOnly)(viewerId)
+    // "Only my favorites" needs a viewer to resolve. An anonymous caller has no favorites, so the filter matches
+    // nothing rather than falling through to the whole catalog.
+    if (favoritesOnly && viewerId.isEmpty) {
+      ZIO.succeed(AllGamePage(Nil, 0L))
+    } else {
+      allGamesFor(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending)
+    }
+  }
+
+  private def allGamesFor(
+    viewerId: Option[Long],
+    nameContains: Option[String],
+    favoritesOnly: Boolean,
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[AllGamePage] = {
+    val favoritesOf = viewerId.filter(_ => favoritesOnly)
     for {
       rows          <- repo
                          .listAllGamesPage(nameContains, favoritesOf, Paging.offset(page, pageSize), pageSize, sort, descending)
@@ -449,7 +470,10 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                          .map(_.toMap)
       playCounts    <- repo.playCounts(gameIds).orDie
       likeCounts    <- repo.favoriteCounts(gameIds).orDie
-      favoritedMine <- repo.favoritedGameIds(viewerId, gameIds).orDie
+      favoritedMine <- viewerId match {
+                         case Some(id) => repo.favoritedGameIds(id, gameIds).orDie
+                         case None     => ZIO.succeed(Set.empty[Long])
+                       }
     } yield AllGamePage(
       rows.map { row =>
         AllGameSummary(

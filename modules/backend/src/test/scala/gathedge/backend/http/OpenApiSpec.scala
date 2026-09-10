@@ -236,9 +236,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // not a guest, which is an answer to a well-formed request rather than an aspect's rejection.
               ("POST", "/api/guest/code")                                                 -> Set(Ok, Unauthorized, Forbidden),
               ("POST", "/api/auth/upgrade")                                               -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict),
-              // The vocabulary's two reads are the only operations in the API guarded by `optionalUser`: they answer
-              // for a visitor with no session, so neither declares a 401. The 400 is a query parameter or a path
-              // segment that fails to decode.
+              // The vocabulary's two reads are guarded by `optionalUser` (as are three game reads —
+              // `GET /api/games/{slug}`, its `/plays/setup`, and `/api/games/all`): they answer for a visitor with no
+              // session, so none declares a 401. The 400 is a query parameter or a path segment that fails to decode.
               ("GET", "/api/words")                                                       -> Set(Ok, BadRequest),
               ("GET", "/api/words/{id}")                                                  -> Set(Ok, BadRequest, NotFound),
               // 404 covers a `mainWordId` naming no word and a `tagIds` entry naming a tag that is not the caller's
@@ -344,9 +344,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The setup screen's word-list preview. A missing/empty tagIds simply answers an empty list, not a
               // 400, so its only failure is the aspect's 401, the same shape as setup.
               ("GET", "/api/games/setup/words")                                           -> Set(Ok, Unauthorized),
-              // Every account's games, paged/sorted/filtered like the play history — so its only failures are the
-              // query codec's 400 and the aspect's 401.
-              ("GET", "/api/games/all")                                                   -> Set(Ok, BadRequest, Unauthorized),
+              // Every account's games, paged/sorted/filtered like the play history — guarded by `optionalUser` like
+              // `GET /api/games/{slug}`, so its only failure is the query codec's 400.
+              ("GET", "/api/games/all")                                                   -> Set(Ok, BadRequest),
               // The caller's own play history: always the caller's own data, so its only failures are the query
               // codec's 400 and the aspect's 401.
               ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),
@@ -505,7 +505,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 315,
+          declared == 314,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -607,6 +607,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/{slug}"),
               // The play-variant picker's preview that link leads to — same reasoning.
               ("GET", "/api/games/{slug}/plays/setup"),
+              // The browsable catalog of every account's games — a signed-out visitor reads it to find one to play.
+              ("GET", "/api/games/all"),
             )
         )
       },
@@ -615,7 +617,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 15,
+          guarded.size == operations.size - 16,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

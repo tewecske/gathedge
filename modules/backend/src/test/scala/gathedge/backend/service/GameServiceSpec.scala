@@ -275,12 +275,12 @@ object GameServiceSpec extends ZIOSpecDefault {
           otherGame  <- GameService.createGame(other, WordLanguage.De, WordLanguage.Hu, List(otherTagId))
           _          <- GameService.rename(ownGame.slug, "Zzyzx Own", owner)
           _          <- GameService.rename(otherGame.slug, "Zzyzx Other", other)
-          unplayed   <- GameService.allGames(owner, Some("zzyzx"), false, 1, 20, None, false)
+          unplayed   <- GameService.allGames(Some(owner), Some("zzyzx"), false, 1, 20, None, false)
           firstPlay  <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(firstPlay.playId, "mine", owner)
           secondPlay <- GameService.startPlay(ownGame.slug, owner)
           _          <- playThrough(secondPlay.playId, "mine", owner)
-          played     <- GameService.allGames(owner, Some("zzyzx"), false, 1, 20, None, false)
+          played     <- GameService.allGames(Some(owner), Some("zzyzx"), false, 1, 20, None, false)
         } yield {
           val ownRow    = unplayed.items.find(_.slug == ownGame.slug).get
           val playedOwn = played.items.find(_.slug == ownGame.slug).get
@@ -297,6 +297,27 @@ object GameServiceSpec extends ZIOSpecDefault {
           )
         }
       },
+      test("allGames serves an anonymous caller: games, no favorite marks, and no favorites filter") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "mine", WordLanguage.De, WordLanguage.Hu, count = 1)
+          game    <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          _       <- GameService.rename(game.slug, "Xylophone Anon", owner)
+          _       <- GameService.favoriteGame(game.slug, owner)
+          anon    <- GameService.allGames(None, Some("xylophone"), false, 1, 20, None, false)
+          anonFav <- GameService.allGames(None, Some("xylophone"), true, 1, 20, None, false)
+        } yield {
+          val row = anon.items.find(_.slug == game.slug).get
+          assertTrue(
+            anon.total == 1L,
+            row.likeCount == 1L,
+            !row.favoritedByMe,
+            // "Only my favorites" needs an account, so it matches nothing rather than the whole catalog.
+            anonFav.total == 0L,
+            anonFav.items.isEmpty,
+          )
+        }
+      },
       test("allGames narrows to games whose name contains the filter, case-insensitively") {
         for {
           owner <- newUser()
@@ -306,8 +327,8 @@ object GameServiceSpec extends ZIOSpecDefault {
           // A unique token: the listing is not owner-scoped, so another test's "Alpha Quiz" must not collide.
           _     <- GameService.rename(gameA.slug, "Qwerty Alpha", owner)
           _     <- GameService.rename(gameB.slug, "Qwerty Beta", owner)
-          hit   <- GameService.allGames(owner, Some("QWERTY ALPHA"), false, 1, 20, None, false)
-          miss  <- GameService.allGames(owner, Some("qwerty gamma"), false, 1, 20, None, false)
+          hit   <- GameService.allGames(Some(owner), Some("QWERTY ALPHA"), false, 1, 20, None, false)
+          miss  <- GameService.allGames(Some(owner), Some("qwerty gamma"), false, 1, 20, None, false)
         } yield assertTrue(
           hit.total == 1L,
           hit.items.map(_.name) == List("Qwerty Alpha"),
@@ -327,12 +348,13 @@ object GameServiceSpec extends ZIOSpecDefault {
           _          <- GameService.favoriteGame(liked.slug, owner)
           _          <- GameService.favoriteGame(liked.slug, other)
           _          <- GameService.favoriteGame(liked.slug, owner) // idempotent — still one row for owner
-          listed     <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, None, false)
-          byLikes    <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, Some(AllGameSort.likeCount), true)
-          ownerMine  <- GameService.allGames(owner, Some("frobnitz"), true, 1, 20, None, false)
-          otherMine  <- GameService.allGames(other, Some("frobnitz"), true, 1, 20, None, false)
+          listed     <- GameService.allGames(Some(owner), Some("frobnitz"), false, 1, 20, None, false)
+          byLikes    <-
+            GameService.allGames(Some(owner), Some("frobnitz"), false, 1, 20, Some(AllGameSort.likeCount), true)
+          ownerMine  <- GameService.allGames(Some(owner), Some("frobnitz"), true, 1, 20, None, false)
+          otherMine  <- GameService.allGames(Some(other), Some("frobnitz"), true, 1, 20, None, false)
           _          <- GameService.unfavoriteGame(liked.slug, other)
-          afterUnfav <- GameService.allGames(owner, Some("frobnitz"), false, 1, 20, None, false)
+          afterUnfav <- GameService.allGames(Some(owner), Some("frobnitz"), false, 1, 20, None, false)
           missing    <- GameService.favoriteGame("no-such-game", owner).either
         } yield {
           val likedRow = listed.items.find(_.slug == liked.slug).get

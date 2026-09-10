@@ -33,10 +33,12 @@ object Page {
     */
   case object GameSetup extends Page
 
-  /** Every account's games: name, tags, language pair, and how many times each was played. Unlike
-    * [[Games]]/[[GameSetup]]/[[GameInstance]], there is no shared link to keep public, so it requires auth like the
-    * rest of the account-scoped pages. It carries its whole listing state, the same reason
-    * [[MyPlays]]/[[GameResults]]/[[Admin]] do — see [[gathedge.frontend.listing.AllGameQuery]] and the routes below.
+  /** Every account's games: name, tags, language pair, and how many times each was played. Public, like [[Games]]: the
+    * catalog is how a signed-out visitor finds a game to play, so it must render without bouncing to sign-in. A caller
+    * with no session sees the games and none of the favorite marks — the heart and the "my favorites" filter are drawn
+    * only when signed in, the same way [[Words]] hides its tag controls. It carries its whole listing state, the same
+    * reason [[MyPlays]]/[[GameResults]]/[[Admin]] do — see [[gathedge.frontend.listing.AllGameQuery]] and the routes
+    * below.
     */
   final case class AllGames(query: AllGameQuery = AllGameQuery.default) extends Page
 
@@ -65,9 +67,10 @@ object Page {
   final case class GameResults(slug: String, query: GamePlayQuery = GamePlayQuery.default) extends Page
 
   /** The signed-in caller's own play history across every game — the foundation [[SharedPlayerHistory]] and the admin
-    * games tab both reuse, addressed by a different account id and a different authorization check. Auth-only like
-    * [[AllGames]], for the same reason: personal, no shared link. It carries its whole listing state, the same reason
-    * [[GameResults]]/[[Admin]]/[[Words]] do — see [[gathedge.frontend.listing.MyPlayQuery]] and the routes below.
+    * games tab both reuse, addressed by a different account id and a different authorization check. Auth-only, unlike
+    * the public [[AllGames]] catalog: this is personal, with no shared link. It carries its whole listing state, the
+    * same reason [[GameResults]]/[[Admin]]/[[Words]] do — see [[gathedge.frontend.listing.MyPlayQuery]] and the routes
+    * below.
     */
   final case class MyPlays(query: MyPlayQuery = MyPlayQuery.default) extends Page
 
@@ -193,18 +196,19 @@ object Page {
 
   def guardFor(page: Page): AuthGuard = {
     page match {
-      case SignIn | SignUp | ForgotPassword                                      =>
+      case SignIn | SignUp | ForgotPassword                                           =>
         AuthGuard.RequireAnon
-      case VerifyEmail(_) | CheckInbox | ResetPassword(_) | Forbidden | NotFound =>
+      case VerifyEmail(_) | CheckInbox | ResetPassword(_) | Forbidden | NotFound      =>
         AuthGuard.Public
       // The whole point of the vocabulary is that it is usable before signing up for anything.
-      case Words(_) | WordDetail(_)                                              =>
+      case Words(_) | WordDetail(_)                                                   =>
         AuthGuard.Public
       // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
-      // sign-in. A shared link has to show the catalog, not sign-in.
-      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | About          =>
+      // sign-in. A shared link has to show the catalog, not sign-in. `AllGames` is the browsable catalog of every
+      // account's games: a signed-out visitor reads it to find a game to play, the same reason `Games` is public.
+      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About =>
         AuthGuard.Public
-      case _                                                                     =>
+      case _                                                                          =>
         AuthGuard.RequireAuth
     }
   }

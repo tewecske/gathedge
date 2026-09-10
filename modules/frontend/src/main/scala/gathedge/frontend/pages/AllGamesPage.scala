@@ -6,6 +6,7 @@ import gathedge.frontend.api.{ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AllGameQuery
+import gathedge.frontend.state.AppState
 import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary, GameTagRef}
 import gathedge.shared.i18n.UiKeys
 
@@ -17,6 +18,10 @@ import gathedge.shared.i18n.UiKeys
   * state in the URL, so it takes a `Signal[AllGameQuery]` and an `Observer[AllGameQuery]` the same way those pages do;
   * `App` supplies both. Each row's heart button toggles the caller's favorite mark — patched optimistically, reverted
   * if the call fails. There is no per-row detail modal — a game's own page is one click away on its name.
+  *
+  * Public: a signed-out visitor reads the catalog to find a game to play. Favoriting needs an account, so the heart
+  * button and the "my favorites" toggle are drawn only when signed in — the same way `WordsPage` hides its tag
+  * controls.
   */
 object AllGamesPage {
 
@@ -28,6 +33,8 @@ object AllGamesPage {
 private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[AllGameQuery]) {
 
   private val querySignal = pageQuery.distinct
+
+  private val signedInSignal = AppState.isSignedInSignal
 
   private val gamesVar    = Var(List.empty[AllGameSummary])
   private val gamesSignal = gamesVar.signal
@@ -166,16 +173,21 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           onInput.mapToValue --> searchTypedBus.writer,
         ),
       ),
-      label(
-        cls := "label cursor-pointer gap-2",
-        input(
-          typ    := "checkbox",
-          cls    := "toggle toggle-sm",
-          checked <-- querySignal.map(_.favoritesOnly),
-          onClick.mapToChecked --> Observer[Boolean](on => change(_.reset(_.copy(favoritesOnly = on)))),
-        ),
-        span(cls := "label-text text-xs", I18n.t(UiKeys.allGamesFavoritesFilter)),
+      // Favoriting needs an account, so the filter is offered only to a signed-in visitor.
+      child.maybe <-- signedInSignal.map(Option.when(_)(renderFavoritesToggle())),
+    )
+  }
+
+  private def renderFavoritesToggle(): HtmlElement = {
+    label(
+      cls := "label cursor-pointer gap-2",
+      input(
+        typ    := "checkbox",
+        cls    := "toggle toggle-sm",
+        checked <-- querySignal.map(_.favoritesOnly),
+        onClick.mapToChecked --> Observer[Boolean](on => change(_.reset(_.copy(favoritesOnly = on)))),
       ),
+      span(cls := "label-text text-xs", I18n.t(UiKeys.allGamesFavoritesFilter)),
     )
   }
 
@@ -213,7 +225,8 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       td(
         div(
           cls := "flex items-center gap-1",
-          renderFavorite(game),
+          // The heart toggles the caller's own mark, so it needs an account; the like count stays for everyone.
+          child.maybe <-- signedInSignal.map(Option.when(_)(renderFavorite(game))),
           span(cls := "tabular-nums", game.likeCount.toString),
         )
       ),
