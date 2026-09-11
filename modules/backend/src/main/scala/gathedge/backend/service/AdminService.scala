@@ -315,6 +315,8 @@ final case class AdminServiceLive(
       row.createdAt.toString,
       row.emailVerifiedAt.isDefined,
       row.isGuest,
+      row.username,
+      row.displayName,
     )
   }
 

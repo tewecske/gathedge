@@ -320,6 +320,11 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
         thead(
           tr(
             SortHeader.render(I18n.t(MessageKeys.fieldEmail), UserSort.email, sortSignal, onSort),
+            // Neither column has an `ORDER BY` behind it, the same reason the sign-in column below is unsortable: a
+            // guest's username is randomly minted and a display name is free text, so no order an administrator would
+            // ask for is worth building.
+            th(I18n.t(MessageKeys.fieldUsername)),
+            th(I18n.t(MessageKeys.fieldName)),
             SortHeader.render(I18n.t(UiKeys.adminUsersColAdmin), UserSort.admin, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.adminUsersColConfirmed), UserSort.confirmed, sortSignal, onSort),
             // The one column with nothing behind it to order by; see `lockedVar`.
@@ -350,6 +355,8 @@ private class AdminUsersPage(pageQuery: Signal[UserQuery], onQuery: Observer[Use
           text <-- userSignal.map(user => user.email.getOrElse(s"#${user.id}")).distinct,
         )
       ),
+      td(text <-- userSignal.map(_.username.getOrElse("—")).distinct),
+      td(text <-- userSignal.map(_.name.getOrElse("—")).distinct),
       td(
         child <--
           userSignal
