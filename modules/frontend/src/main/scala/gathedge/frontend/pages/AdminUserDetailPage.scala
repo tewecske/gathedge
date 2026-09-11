@@ -177,6 +177,15 @@ private class AdminUserDetailPage(userId: Long) {
       onSubmit.preventDefault.mapToUnit --> saveBus.writer,
       div(
         cls := "card-body",
+        // Read-only: the username and display name are self-service, set through the account's own profile form
+        // rather than by an administrator, so this screen shows them without offering to change them.
+        dl(
+          cls := "grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm mb-4",
+          dt(cls := "opacity-60", I18n.t(MessageKeys.fieldUsername)),
+          dd(text <-- userSignal.map(_.flatMap(_.username).getOrElse("—"))),
+          dt(cls := "opacity-60", I18n.t(MessageKeys.fieldName)),
+          dd(text <-- userSignal.map(_.flatMap(_.name).getOrElse("—"))),
+        ),
         fieldSet(
           cls := "fieldset",
           legend(cls := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
