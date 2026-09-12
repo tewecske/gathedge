@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, WordPicker}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.util.Download
@@ -1294,11 +1294,15 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
   private def renderBulkPanel(): HtmlElement = {
     div(
       cls := "mt-6",
-      button(
-        typ := "button",
-        cls := "btn btn-sm",
-        I18n.t(UiKeys.tagsEditorBulkButton),
-        onClick.mapToUnit --> Observer[Unit](_ => bulkOpenVar.update(!_)),
+      div(
+        cls := "flex items-center gap-1",
+        button(
+          typ := "button",
+          cls := "btn btn-sm",
+          I18n.t(UiKeys.tagsEditorBulkButton),
+          onClick.mapToUnit --> Observer[Unit](_ => bulkOpenVar.update(!_)),
+        ),
+        HelpIcon.render(I18n.t(UiKeys.helpBulkImport)),
       ),
       child.maybe <-- bulkOpenVar.signal.map(
         Option.when(_)(

@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GroupApiClient}
-import gathedge.frontend.components.{Alert, AppShell}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{Group, GroupRole}
 import gathedge.shared.dto.GroupDetail
@@ -47,7 +47,11 @@ private class GroupsPage {
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          h1(cls  := "card-title text-2xl", I18n.t(UiKeys.groupsTitle)),
+          h1(
+            cls   := "card-title text-2xl flex items-center gap-1",
+            span(I18n.t(UiKeys.groupsTitle)),
+            HelpIcon.render(I18n.t(UiKeys.helpGroups)),
+          ),
           renderForms(),
           div(cls := "divider"),
           renderList(),

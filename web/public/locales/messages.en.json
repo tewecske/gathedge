@@ -943,5 +943,14 @@
   "ui.groups.memberCount.one": "{0} member",
   "ui.groups.memberCount.other": "{0} members",
   "ui.groups.tagCount.one": "{0} wordlist",
-  "ui.groups.tagCount.other": "{0} wordlists"
+  "ui.groups.tagCount.other": "{0} wordlists",
+  "ui.help.tags": "A wordlist groups words for one language pair. Add words to it from the Words page, then use it to start a game or track them together. Anyone can see a wordlist; only its owner can edit it.",
+  "ui.help.bulkImport": "Add many words at once. Paste plain text, a comma- or tab-separated list, or upload a text file or a photo of a word list. Each line is matched to a word and its translation.",
+  "ui.help.gameShare": "This link is your game. Share it with anyone — they can play with no account of their own. Rename it or delete it from here.",
+  "ui.help.gameMode": "Typing asks for the answer in a text box. Multiple choice offers four options to pick from.",
+  "ui.help.shareHistory": "Get a code and give it to someone. They enter it on their own Shared progress page to see which games you've played and how you scored. Revoke it any time to stop sharing.",
+  "ui.help.groups": "A study group shares wordlists among its members. Create one below, or enter the invite code someone gave you to join theirs.",
+  "ui.help.words": "Search the shared dictionary. Tick a word to collect it into a wordlist, and mark one of its translations as the answer you want to practice.",
+  "ui.help.wordsCollect": "Choose a wordlist here, then tick any word below to add it. Click one of its translations to mark that as the answer.",
+  "ui.help.wordsAddMissing": "Not in the dictionary yet? Add it here with its translation. It goes straight into the shared dictionary for everyone."
 }

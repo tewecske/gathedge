@@ -943,5 +943,14 @@
   "ui.groups.memberCount.one": "{0} tag",
   "ui.groups.memberCount.other": "{0} tag",
   "ui.groups.tagCount.one": "{0} szógyűjtemény",
-  "ui.groups.tagCount.other": "{0} szógyűjtemény"
+  "ui.groups.tagCount.other": "{0} szógyűjtemény",
+  "ui.help.tags": "A szógyűjtemény szavakat csoportosít egy nyelvpárhoz. Adj hozzá szavakat a Szavak oldalról, majd használd játék indítására vagy közös nyomon követésre. A szógyűjteményt mindenki látja, de csak a tulajdonosa szerkesztheti.",
+  "ui.help.bulkImport": "Adj hozzá sok szót egyszerre. Illessz be szöveget, vesszővel vagy tabulátorral elválasztott listát, vagy tölts fel szövegfájlt vagy egy szólista fényképét. Minden sorhoz megkeresi a szót és a fordítását.",
+  "ui.help.gameShare": "Ez a link a játékod. Oszd meg bárkivel — saját fiók nélkül is játszhat vele. Innen nevezheted át vagy törölheted.",
+  "ui.help.gameMode": "A Beírás módban szövegmezőbe kell írni a választ. A Feleletválasztós módban négy lehetőség közül kell választani.",
+  "ui.help.shareHistory": "Kérj egy kódot, és add oda valakinek. A saját Megosztott haladás oldalán beírva látja, milyen játékokat játszottál és hogyan teljesítettél. Bármikor visszavonhatod, hogy leállítsd a megosztást.",
+  "ui.help.groups": "A tanulócsoport szógyűjteményeket oszt meg a tagjai között. Hozz létre egyet lent, vagy add meg a meghívókódot, amit valakitől kaptál, hogy csatlakozz az övékéhez.",
+  "ui.help.words": "Keress a közös szótárban. Jelöld be a szót, hogy egy szógyűjteménybe kerüljön, és jelöld meg az egyik fordítását válaszként, amit gyakorolni szeretnél.",
+  "ui.help.wordsCollect": "Válassz itt egy szógyűjteményt, majd jelöld be lent bármelyik szót, hogy hozzáadd. Kattints az egyik fordítására, hogy azt jelöld meg válaszként.",
+  "ui.help.wordsAddMissing": "Még nincs a szótárban? Add hozzá itt a fordításával együtt. Rögtön bekerül a közös szótárba mindenki számára."
 }
