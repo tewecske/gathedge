@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError, ProgressShareApiClient}
 import gathedge.frontend.Page
-import gathedge.frontend.components.{AppShell, CaptchaField, OAuthButtons, OAuthMessages}
+import gathedge.frontend.components.{AppShell, CaptchaField, HelpIcon, OAuthButtons, OAuthMessages}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.OAuthProvider
 import gathedge.shared.dto.{
@@ -329,10 +329,14 @@ private class SettingsPage {
       cls := "card bg-base-100 shadow",
       div(
         cls := "card-body gap-3",
-        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsShareTitle)),
-        p(cls  := "text-sm opacity-70", I18n.t(UiKeys.settingsShareHint)),
+        h2(
+          cls := "card-title text-lg flex items-center gap-1",
+          span(I18n.t(UiKeys.settingsShareTitle)),
+          HelpIcon.render(I18n.t(UiKeys.helpShareHistory)),
+        ),
+        p(cls := "text-sm opacity-70", I18n.t(UiKeys.settingsShareHint)),
         div(
-          cls  := "card-actions",
+          cls := "card-actions",
           button(
             cls := "btn btn-sm",
             typ := "button",

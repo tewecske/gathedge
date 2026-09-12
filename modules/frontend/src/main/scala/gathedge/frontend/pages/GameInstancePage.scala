@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, ShareRow, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
@@ -371,6 +371,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           I18n.t(UiKeys.gameInstanceRenameEdit),
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
+          HelpIcon.render(I18n.t(UiKeys.helpGameShare)),
           resultsLink(),
           deleteIcon(),
         ),
@@ -652,9 +653,13 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   private def renderModeControl(): HtmlElement = {
     div(
       cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceModeLabel)),
+      div(
+        cls := "flex items-center gap-1",
+        span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceModeLabel)),
+        HelpIcon.render(I18n.t(UiKeys.helpGameMode)),
+      ),
       select(
-        cls    := "select select-sm w-full max-w-xs",
+        cls := "select select-sm w-full max-w-xs",
         option(value := "typing", I18n.t(UiKeys.gameInstanceModeTyping)),
         option(value := "multipleChoice", I18n.t(UiKeys.gameInstanceModeMultipleChoice)),
         controlled(

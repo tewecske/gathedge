@@ -4,7 +4,16 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, Pagination, SortHeader, WordCollect}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  ArticleSelect,
+  HelpIcon,
+  Labels,
+  Pagination,
+  SortHeader,
+  WordCollect,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
@@ -172,7 +181,11 @@ private class WordsPage(
 
   def render(): HtmlElement = {
     div(
-      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.wordsTitle)),
+      h1(
+        cls := "text-2xl font-bold mb-4 flex items-center gap-1",
+        span(I18n.t(UiKeys.wordsTitle)),
+        HelpIcon.render(I18n.t(UiKeys.helpWords)),
+      ),
       Alert.maybeError(errorSignal),
       Alert.maybeWarning(warningSignal),
       renderDirection(),
@@ -191,7 +204,7 @@ private class WordsPage(
         summary = totalSignal.map(summaryOf).distinct,
         busy = loadingSignal,
       ),
-      p(cls  := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
+      p(cls := "text-xs opacity-60 mt-6", I18n.t(UiKeys.wordsAttribution)),
       queryChanges --> onQuery,
       queryChanges --> Observer[WordQuery](WordQuery.storeFilter),
       querySignal.map(_.search).distinct --> searchInputVar.writer,
@@ -569,7 +582,11 @@ private class WordsPage(
       cls := "card bg-base-100 shadow mb-4",
       div(
         cls := "card-body py-3",
-        h2(cls       := "card-title text-base", I18n.t(UiKeys.wordsAddMissing, term)),
+        h2(
+          cls        := "card-title text-base flex items-center gap-1",
+          span(I18n.t(UiKeys.wordsAddMissing, term)),
+          HelpIcon.render(I18n.t(UiKeys.helpWordsAddMissing)),
+        ),
         form(
           cls        := "flex flex-wrap items-end gap-2",
           noValidate := true,

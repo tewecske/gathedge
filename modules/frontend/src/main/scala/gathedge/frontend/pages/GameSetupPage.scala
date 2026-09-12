@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
@@ -150,15 +150,19 @@ private class GameSetupPage {
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          h1(cls := "card-title text-2xl", I18n.t(UiKeys.gameSetupTitle)),
+          h1(
+            cls := "card-title text-2xl flex items-center gap-1",
+            span(I18n.t(UiKeys.gameSetupTitle)),
+            HelpIcon.render(I18n.t(UiKeys.helpGameSetup)),
+          ),
           div(
-            cls  := "flex flex-wrap items-end gap-3 mb-4",
+            cls := "flex flex-wrap items-end gap-3 mb-4",
             languageSelect(UiKeys.gameSetupSourceLabel, sourceVar.signal, sourceVar.writer, languagesLockedSignal),
             renderSwap(),
             languageSelect(UiKeys.gameSetupTargetLabel, targetVar.signal, targetVar.writer, languagesLockedSignal),
           ),
           div(
-            cls  := "flex flex-col md:flex-row gap-6",
+            cls := "flex flex-col md:flex-row gap-6",
             renderTagsColumn(),
             renderWordsColumn(),
           ),

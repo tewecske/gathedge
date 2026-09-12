@@ -1406,4 +1406,21 @@ object UiKeys {
 
   /** Rounded up; what "unblocks itself in …" is rendered with. */
   val formatMinutes: String = pluralKey("ui.format.minutes")
+
+  // -- Help icons --------------------------------------------------------------------------------
+  // One key per [[components.HelpIcon]] placed on a non-admin page — see that component's doc comment for the pattern
+  // (a "?" mark, daisyUI's hover dropdown, real text rather than a `data-tip`). Named after the page and the control
+  // each sits beside, not after a shared topic, since two help texts that happen to cover similar ground are still
+  // free to be worded differently once a translator gets to them.
+
+  val helpTags: String            = key("ui.help.tags")
+  val helpBulkImport: String      = key("ui.help.bulkImport")
+  val helpGameSetup: String       = key("ui.help.gameSetup")
+  val helpGameShare: String       = key("ui.help.gameShare")
+  val helpGameMode: String        = key("ui.help.gameMode")
+  val helpShareHistory: String    = key("ui.help.shareHistory")
+  val helpGroups: String          = key("ui.help.groups")
+  val helpWords: String           = key("ui.help.words")
+  val helpWordsCollect: String    = key("ui.help.wordsCollect")
+  val helpWordsAddMissing: String = key("ui.help.wordsAddMissing")
 }

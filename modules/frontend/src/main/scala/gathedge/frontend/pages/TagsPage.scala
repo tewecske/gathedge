@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Labels, TagImportDialog}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, TagImportDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.frontend.util.Download
@@ -92,9 +92,13 @@ private class TagsPage {
           cls := "card-body",
           div(
             cls := "flex flex-wrap items-center justify-between gap-2",
-            h1(cls := "card-title text-2xl", I18n.t(UiKeys.tagsListTitle)),
+            h1(
+              cls := "card-title text-2xl flex items-center gap-1",
+              span(I18n.t(UiKeys.tagsListTitle)),
+              HelpIcon.render(I18n.t(UiKeys.helpTags)),
+            ),
             div(
-              cls  := "flex gap-2",
+              cls := "flex gap-2",
               a(
                 cls := "btn btn-sm btn-primary",
                 AppRouter.router.navigateTo(Page.TagCreate),
