@@ -946,6 +946,7 @@
   "ui.groups.tagCount.other": "{0} wordlists",
   "ui.help.tags": "A wordlist groups words for one language pair. Add words to it from the Words page, then use it to start a game or track them together. Anyone can see a wordlist; only its owner can edit it.",
   "ui.help.bulkImport": "Add many words at once. Paste plain text, a comma- or tab-separated list, or upload a text file or a photo of a word list. Each line is matched to a word and its translation.",
+  "ui.help.gameSetup": "Pick a language pair, then choose one or more wordlists (or single words) to quiz on. Play creates the quiz and takes you to its page, where you can share the link or start playing.",
   "ui.help.gameShare": "This link is your game. Share it with anyone — they can play with no account of their own. Rename it or delete it from here.",
   "ui.help.gameMode": "Typing asks for the answer in a text box. Multiple choice offers four options to pick from.",
   "ui.help.shareHistory": "Get a code and give it to someone. They enter it on their own Shared progress page to see which games you've played and how you scored. Revoke it any time to stop sharing.",

@@ -1415,6 +1415,7 @@ object UiKeys {
 
   val helpTags: String            = key("ui.help.tags")
   val helpBulkImport: String      = key("ui.help.bulkImport")
+  val helpGameSetup: String       = key("ui.help.gameSetup")
   val helpGameShare: String       = key("ui.help.gameShare")
   val helpGameMode: String        = key("ui.help.gameMode")
   val helpShareHistory: String    = key("ui.help.shareHistory")
