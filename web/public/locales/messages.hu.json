@@ -946,6 +946,7 @@
   "ui.groups.tagCount.other": "{0} szógyűjtemény",
   "ui.help.tags": "A szógyűjtemény szavakat csoportosít egy nyelvpárhoz. Adj hozzá szavakat a Szavak oldalról, majd használd játék indítására vagy közös nyomon követésre. A szógyűjteményt mindenki látja, de csak a tulajdonosa szerkesztheti.",
   "ui.help.bulkImport": "Adj hozzá sok szót egyszerre. Illessz be szöveget, vesszővel vagy tabulátorral elválasztott listát, vagy tölts fel szövegfájlt vagy egy szólista fényképét. Minden sorhoz megkeresi a szót és a fordítását.",
+  "ui.help.gameSetup": "Válassz nyelvpárt, majd válassz ki egy vagy több szógyűjteményt (vagy egyes szavakat), amikből kvíz legyen. A Játék gombra kattintva elkészül a kvíz, és a kvíz oldalára kerülsz, ahol megoszthatod a linket, vagy elkezdheted a játékot.",
   "ui.help.gameShare": "Ez a link a játékod. Oszd meg bárkivel — saját fiók nélkül is játszhat vele. Innen nevezheted át vagy törölheted.",
   "ui.help.gameMode": "A Beírás módban szövegmezőbe kell írni a választ. A Feleletválasztós módban négy lehetőség közül kell választani.",
   "ui.help.shareHistory": "Kérj egy kódot, és add oda valakinek. A saját Megosztott haladás oldalán beírva látja, milyen játékokat játszottál és hogyan teljesítettél. Bármikor visszavonhatod, hogy leállítsd a megosztást.",
