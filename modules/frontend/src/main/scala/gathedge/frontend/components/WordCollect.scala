@@ -486,6 +486,7 @@ final class WordCollect(
           // a first tick mints "saved" through `collectTagOrDefault`. A signed-out visitor has no account to hang a tag
           // on yet, so the select waits for their first tick to mint the guest.
           child.maybe <-- signedInSignal.map(Option.when(_)(renderCollectSelect())),
+          HelpIcon.render(I18n.t(UiKeys.helpWordsCollect)),
         ),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
         p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsPairHint)),
