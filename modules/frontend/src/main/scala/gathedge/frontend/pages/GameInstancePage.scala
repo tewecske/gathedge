@@ -371,9 +371,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           I18n.t(UiKeys.gameInstanceRenameEdit),
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
+          deleteIcon(),
           HelpIcon.render(I18n.t(UiKeys.helpGameShare)),
           resultsLink(),
-          deleteIcon(),
         ),
         renderDeleteModal(detail),
         p(
