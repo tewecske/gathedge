@@ -30,6 +30,7 @@ import gathedge.shared.dto.{
   TagImportResponse,
   TabularImportRequest,
   TabularImportResponse,
+  TagPage,
   TagPairInput,
   TagResponse,
   TagWordInput,
@@ -82,6 +83,7 @@ object WordEndpoints {
   private val posQuery      = HttpCodec.query[String]("pos").optional
   private val tagQuery      = HttpCodec.query[Long]("tag").optional
   private val mineQuery     = HttpCodec.query[Boolean]("mine").optional
+  private val scopeQuery    = HttpCodec.query[String]("scope").optional
   private val trQuery       = HttpCodec.query[String]("tr").optional
   private val mainQuery     = HttpCodec.query[Boolean]("main").optional
 
@@ -191,6 +193,25 @@ object WordEndpoints {
     */
   val listTags = {
     Endpoint(Method.GET / "api" / "tags").out[List[Tag]]
+  }
+
+  /** The catalog's own listing, paged/sorted/filtered by the database like [[list]] — [[listTags]] above stays as it is
+    * for every dropdown and collect bar, which still want the whole unpaged table. `scope` narrows to `TagScope.code`
+    * (`mine`/`group`/`other`), `q` is a substring match on the name; either or both may narrow `sort`'s own order away.
+    * The only declared failure is `withCodecError`'s 400 for a query parameter that does not decode — a filter that
+    * matches nothing is an empty page, not an error, the same rule [[list]] follows.
+    */
+  val listTagsPage = {
+    Endpoint(Method.GET / "api" / "tags" / "page")
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .query(searchQuery)
+      .query(scopeQuery)
+      .withCodecError
+      .out[TagPage]
+      .outFailure(failure.badRequest)
   }
 
   /** 409 covers two things a caller cannot tell apart from the status alone — a name the account already has, compared
@@ -562,6 +583,7 @@ object WordEndpoints {
       setGender,
       removeTranslation,
       listTags,
+      listTagsPage,
       createTag,
       createTagWithPairs,
       renameTag,
@@ -594,5 +616,5 @@ object WordEndpoints {
   /** The four that answer without a session — the two dictionary reads and the two wordlist reads. `DocsRoutes` marks
     * every other operation as needing the session cookie, and `OpenApiSpec` pins both halves of that split.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get, listTags, tagEntries)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get, listTags, listTagsPage, tagEntries)
 }

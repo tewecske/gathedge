@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, TagScope, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   TagExportEntry,
@@ -22,6 +22,7 @@ import gathedge.shared.dto.{
   TabularRow,
   TagPairInput,
   TagPairWord,
+  TagSort,
   TagWordInput,
   TaggedPair,
   WordSort,
@@ -404,6 +405,73 @@ object WordServiceSpec extends ZIOSpecDefault {
           // editable, same as they see anyone else's ordinary tag.
           byOther.find(_.id == tag.id).exists(t => !t.ownedByMe && !t.editableByMe),
         )
+      },
+      test("listTagsPaged orders own tags first, then a group's, then everyone else's, when unsorted") {
+        for {
+          _        <- seed
+          own      <- createTag("bbb", 1L)
+          groupTag <- createTag("aaa", 3L)
+          _        <- putInGroupWith(groupTag.id, ownerId = 3L, memberId = 1L)
+          other    <- createTag("ccc", 4L)
+          page     <-
+            WordService.listTagsPaged(
+              Some(1L),
+              page = 1,
+              pageSize = 10,
+              sort = None,
+              descending = false,
+              search = None,
+              scope = TagScope.All,
+            )
+        } yield assertTrue(page.items.map(_.id) == List(own.id, groupTag.id, other.id))
+      },
+      test("listTagsPaged sorts by name across every category once a column is asked for") {
+        for {
+          _        <- seed
+          own      <- createTag("bbb", 1L)
+          groupTag <- createTag("aaa", 3L)
+          _        <- putInGroupWith(groupTag.id, ownerId = 3L, memberId = 1L)
+          other    <- createTag("ccc", 4L)
+          page     <- WordService.listTagsPaged(
+                        Some(1L),
+                        page = 1,
+                        pageSize = 10,
+                        sort = Some(TagSort.name),
+                        descending = false,
+                        search = None,
+                        scope = TagScope.All,
+                      )
+        } yield assertTrue(page.items.map(_.id) == List(groupTag.id, own.id, other.id))
+      },
+      test("listTagsPaged narrows by scope and by a case-insensitive name search") {
+        for {
+          _         <- seed
+          own       <- createTag("haustag", 1L)
+          groupTag  <- createTag("gruppe", 3L)
+          _         <- putInGroupWith(groupTag.id, ownerId = 3L, memberId = 1L)
+          other     <- createTag("fremd", 4L)
+          mineOnly  <-
+            WordService.listTagsPaged(Some(1L), 1, 10, None, false, None, TagScope.Mine)
+          groupOnly <-
+            WordService.listTagsPaged(Some(1L), 1, 10, None, false, None, TagScope.Group)
+          otherOnly <-
+            WordService.listTagsPaged(Some(1L), 1, 10, None, false, None, TagScope.Other)
+          searched  <-
+            WordService.listTagsPaged(Some(1L), 1, 10, None, false, Some("HAUS"), TagScope.All)
+        } yield assertTrue(
+          mineOnly.items.map(_.id) == List(own.id),
+          groupOnly.items.map(_.id) == List(groupTag.id),
+          otherOnly.items.map(_.id) == List(other.id),
+          searched.items.map(_.id) == List(own.id),
+        )
+      },
+      test("listTagsPaged counts every matching tag in `total` while slicing to one page") {
+        for {
+          _      <- seed
+          _      <- ZIO.foreach(1 to 3)(n => createTag(s"page$n", 1L))
+          first  <- WordService.listTagsPaged(Some(1L), 1, 2, Some(TagSort.name), false, None, TagScope.Mine)
+          second <- WordService.listTagsPaged(Some(1L), 2, 2, Some(TagSort.name), false, None, TagScope.Mine)
+        } yield assertTrue(first.items.size == 2, first.total == 3L, second.items.size == 1, second.total == 3L)
       },
       test("renaming or deleting a group's tag stays refused for a non-owner member — only content editing widened") {
         for {

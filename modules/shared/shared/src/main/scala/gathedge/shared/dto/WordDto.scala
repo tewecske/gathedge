@@ -103,6 +103,11 @@ final case class WordDetail(
   */
 final case class WordPage(items: List[WordSummary], total: Long) derives JsonCodec
 
+/** One page of the wordlist catalog, counted the same way [[WordPage]] is — what `GET /api/tags/page` answers, unlike
+  * the unpaged [[gathedge.shared.api.WordEndpoints.listTags]] every tag dropdown still calls.
+  */
+final case class TagPage(items: List[Tag], total: Long) derives JsonCodec
+
 /** Adds a word somebody typed, along with whatever translations and tags they gave it.
   *
   * The endpoint behind it is "ensure and attach" rather than "create or conflict": a word that already exists is
@@ -510,4 +515,16 @@ object WordSort {
   val added: String = "added"
 
   val all: List[String] = List(text, pos, rank, added)
+}
+
+/** The columns `GET /api/tags/page` will order by. Asked for without either (the common case), the listing keeps its
+  * own order instead: the caller's own wordlists, then a study group's, then everyone else's, alphabetically within
+  * each — the same precedence [[Tag.sorted]] gives the dropdowns, refined into three groups now that a flat paged table
+  * has no section heading left to carry the distinction.
+  */
+object TagSort {
+  val name: String  = "name"
+  val words: String = "words"
+
+  val all: List[String] = List(name, words)
 }

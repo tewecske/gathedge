@@ -2,7 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TagScope, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkImportRequest,
@@ -38,6 +38,7 @@ import gathedge.shared.dto.{
   TagImportChoice,
   TagImportRequest,
   TagImportResponse,
+  TagPage,
   TagPairInput,
   TagResponse,
   TagWordInput,
@@ -115,6 +116,20 @@ object WordApiClient {
 
   def listTags: EventStream[Either[ApiError, List[Tag]]] = {
     run(executor(WordEndpoints.listTags(())))
+  }
+
+  /** The catalog's own paged/sorted/filtered listing — `GET /api/tags/page`, [[TagsPage]]'s own call. [[listTags]]
+    * above stays as it is for every dropdown and collect bar, which still want the whole unpaged table.
+    */
+  def listTagsPage(
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+    search: Option[String] = None,
+    scope: Option[TagScope] = None,
+  ): EventStream[Either[ApiError, TagPage]] = {
+    run(executor(WordEndpoints.listTagsPage(page, pageSize, sort, dir, search, scope.map(TagScope.code))))
   }
 
   def createTag(

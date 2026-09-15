@@ -2,7 +2,7 @@ package gathedge.frontend
 
 import com.raquo.waypoint._
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, TagQuery, UserQuery, WordQuery}
 import gathedge.shared.Branding
 
 sealed trait Page
@@ -176,12 +176,13 @@ object Page {
     */
   final case class TagDetail(id: Long) extends Page
 
-  /** The whole wordlist catalog, shown as a table instead of a dropdown. Reached from the collection bar's "All tags"
-    * button. Public like [[TagDetail]]: everyone sees every wordlist. A signed-in reader's own and group wordlists are
-    * grouped ahead of the rest and carry the create/export/import controls; a signed-out visitor sees one flat
-    * read-only list with just "New wordlist".
+  /** The whole wordlist catalog, paged/sorted/filtered like [[Words]]. Reached from the collection bar's "All tags"
+    * button. Public like [[TagDetail]]: everyone sees every wordlist. A signed-in reader's own and group wordlists sort
+    * ahead of the rest by default and carry the create/export/import controls; a signed-out visitor sees the same flat
+    * list, read-only, with just "New wordlist". It carries its whole listing state for the same reason [[Words]] does —
+    * see [[gathedge.frontend.listing.TagQuery]] and the two routes below.
     */
-  case object Tags extends Page
+  final case class Tags(query: TagQuery = TagQuery.default) extends Page
 
   case object Forbidden extends Page
   case object NotFound  extends Page
@@ -215,7 +216,7 @@ object Page {
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
-      case Tags | TagDetail(_) | TagCreate                                            =>
+      case Tags(_) | TagDetail(_) | TagCreate                                         =>
         AuthGuard.Public
       case _                                                                          =>
         AuthGuard.RequireAuth
@@ -338,7 +339,14 @@ object AppRouter {
     pattern = root / "tags" / segment[Long],
     basePath = basePath,
   )
-  private val tagsRoute        = Route.static(Tags, root / "tags", basePath)
+  private val tagsQueryRoute   = Route.onlyQueryPF[Tags, TagQuery](
+    matchEncode = { case page: Tags if page.query != TagQuery.default => page.query },
+    decode = { case query if query != TagQuery.default => Tags(query) },
+    pattern = (root / "tags") ? TagQuery.params,
+    basePath = basePath,
+  )
+
+  private val tagsRoute = Route.staticPartial(Tags(), root / "tags", basePath)
 
   /** The two listings get **two routes each**: one that carries a query string and one that is the bare path.
     *
@@ -481,8 +489,8 @@ object AppRouter {
         s"GroupJoin:$code"
       case TagDetail(id)                  =>
         s"TagDetail:$id"
-      case Tags                           =>
-        "Tags"
+      case Tags(query)                    =>
+        "Tags:" + TagQuery.params.createParamsString(query)
       case Forbidden                      =>
         "Forbidden"
       case NotFound                       =>
@@ -598,6 +606,9 @@ object AppRouter {
         .getOrElse(AdminAudit())
     } else if (tag.startsWith("Admin:")) {
       UserQuery.params.matchQueryString(tag.stripPrefix("Admin:")).map(query => Admin(query)).getOrElse(Admin())
+    } else if (tag.startsWith("Tags:")) {
+      // A tag from an older build falls back to the default view, the same reasoning `AdminAudit`'s fallback uses.
+      TagQuery.params.matchQueryString(tag.stripPrefix("Tags:")).map(query => Tags(query)).getOrElse(Tags())
     } else {
       tag match {
         case "SignIn"          =>
@@ -641,8 +652,9 @@ object AppRouter {
           AdminRateLimits
         case "Groups"          =>
           Groups
+        // The colon-less form is what a history entry written by an older build holds.
         case "Tags"            =>
-          Tags
+          Tags()
         case "Forbidden"       =>
           Forbidden
         case _                 =>
@@ -691,6 +703,7 @@ object AppRouter {
         groupsRoute,
         groupJoinRoute,
         groupDetailRoute,
+        tagsQueryRoute,
         tagsRoute,
         tagDetailRoute,
         forbiddenRoute,

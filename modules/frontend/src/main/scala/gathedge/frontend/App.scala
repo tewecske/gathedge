@@ -42,7 +42,7 @@ import gathedge.frontend.pages.{
 }
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, TagQuery, UserQuery, WordQuery}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
@@ -201,6 +201,12 @@ object App {
       .collectSignalPF[AllGameQuery] { case (gate, page: Page.AllGames) if gate.loaded => page.query }(query =>
         AllGamesPage.render(query, onAllGamesQuery)
       )
+      // The wordlist catalog has no gate at all, the same reasoning `WordsPage` above is pulled out for: it renders
+      // for a visitor with no session, which is the whole point of it. `loaded` still matters — the page reads the
+      // user to decide whether to draw the create/export/import controls.
+      .collectSignalPF[TagQuery] { case (gate, page: Page.Tags) if gate.loaded => page.query }(query =>
+        TagsPage.render(query, onTagsQuery)
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -297,6 +303,21 @@ object App {
         }
       }
       navigate(Page.AllGames(query), replace = refinesSearch)
+    }
+  }
+
+  /** Same rule as the user list: a search being typed out further replaces, everything else pushes. */
+  private val onTagsQuery: Observer[TagQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.Tags(previous) =>
+            query.refines(previous)
+          case _                   =>
+            false
+        }
+      }
+      navigate(Page.Tags(query), replace = refinesSearch)
     }
   }
 
@@ -491,8 +512,10 @@ object App {
         GroupJoinPage.render(code)
       case Page.TagDetail(id)                             =>
         TagEditorPage.render(id, ImageOcr.recognize)
-      case Page.Tags                                      =>
-        TagsPage.render()
+      // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
+      // `Page.Words` above.
+      case Page.Tags(query)                               =>
+        TagsPage.render(Val(query), onTagsQuery)
       case Page.Forbidden                                 =>
         ForbiddenPage.render()
       case Page.NotFound                                  =>

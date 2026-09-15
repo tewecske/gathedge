@@ -127,3 +127,35 @@ object PairMatch {
     def wireCode: String = code(kind)
   }
 }
+
+/** Which wordlists `GET /api/tags/page` narrows to — the flat listing's own reading of [[Tag.ownedByMe]]/
+  * [[Tag.editableByMe]], the three groups `TagsPage`'s sections used to be. [[Mine]] is `ownedByMe`; [[Group]] is
+  * `editableByMe` without `ownedByMe` — a study group's tag, not the caller's own; [[Other]] is everything not
+  * `editableByMe`. A signed-out reader has neither, so [[Mine]]/[[Group]] simply answer empty.
+  */
+enum TagScope derives JsonCodec, CanEqual {
+  case All, Mine, Group, Other
+}
+
+object TagScope {
+
+  val all: List[TagScope] = List(All, Mine, Group, Other)
+
+  def code(scope: TagScope): String = {
+    scope match {
+      case All   =>
+        "all"
+      case Mine  =>
+        "mine"
+      case Group =>
+        "group"
+      case Other =>
+        "other"
+    }
+  }
+
+  /** Anything unrecognised falls back to [[All]] — the same lenient rule every other listing filter in a query string
+    * follows, so a stale link narrows to nothing rather than failing.
+    */
+  def fromString(value: String): TagScope = all.find(scope => code(scope) == value.toLowerCase).getOrElse(All)
+}

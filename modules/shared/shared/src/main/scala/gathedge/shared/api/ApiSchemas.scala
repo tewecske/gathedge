@@ -132,6 +132,7 @@ import gathedge.shared.dto.{
   SubmitAnswerRequest,
   SuspiciousUser,
   SystemOverview,
+  TagPage,
   TagResponse,
   TaggedPair,
   TranslationEntry,
@@ -275,11 +276,12 @@ object ApiSchemas {
   given Schema[RouteUsage]                 = DeriveSchema.gen[RouteUsage]
   given Schema[SuspiciousUser]             = DeriveSchema.gen[SuspiciousUser]
 
-  // The two paged listings. Concrete rather than one generic `Page[A]`, which would need a `given [A: Schema]` and buys
-  // a shared field name in exchange for a derivation that only ever has two instantiations.
+  // The paged listings. Concrete rather than one generic `Page[A]`, which would need a `given [A: Schema]` and buys a
+  // shared field name in exchange for a derivation that only ever has a handful of instantiations.
   given Schema[UserPage]  = DeriveSchema.gen[UserPage]
   given Schema[AuditPage] = DeriveSchema.gen[AuditPage]
   given Schema[WordPage]  = DeriveSchema.gen[WordPage]
+  given Schema[TagPage]   = DeriveSchema.gen[TagPage]
 
   given Schema[ClearRateLimitRequest] = DeriveSchema.gen[ClearRateLimitRequest]
 

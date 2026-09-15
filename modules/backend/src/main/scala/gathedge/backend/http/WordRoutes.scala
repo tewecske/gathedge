@@ -2,7 +2,7 @@ package gathedge.backend.http
 
 import gathedge.backend.service.{AuthService, WordService}
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{PartOfSpeech, TranslationFilter, User, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, TagScope, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkDeletePairsRequest,
@@ -152,6 +152,27 @@ object WordRoutes {
 
   private val listTagsRoute = {
     WordEndpoints.listTags.implementHandler(handler((_: Unit) => reader.flatMap(WordService.listTags)))
+  }
+
+  private type TagListQuery = (Option[Int], Option[Int], Option[String], Option[String], Option[String], Option[String])
+
+  private val listTagsPageRoute = {
+    WordEndpoints.listTagsPage.implementHandler(
+      handler { (input: TagListQuery) =>
+        val (page, pageSize, sort, dir, q, scope) = input
+        reader.flatMap { who =>
+          WordService.listTagsPaged(
+            reader = who,
+            page = Paging.boundedPage(page),
+            pageSize = Paging.boundedPageSize(pageSize),
+            sort = sort,
+            descending = SortDirection.isDescending(dir),
+            search = searchTerm(q),
+            scope = scope.map(TagScope.fromString).getOrElse(TagScope.All),
+          )
+        }
+      }
+    )
   }
 
   private val createTagRoute = {
@@ -391,7 +412,8 @@ object WordRoutes {
   /** Two `Routes` values because they are guarded differently, `++`'d and then given the CSRF check together — the
     * arrangement `AuthRoutes` uses for the same reason.
     */
-  private val publicRoutes = Routes(listRoute, getRoute, listTagsRoute, tagEntriesRoute) @@ RouteSupport.optionalUser
+  private val publicRoutes =
+    Routes(listRoute, getRoute, listTagsRoute, listTagsPageRoute, tagEntriesRoute) @@ RouteSupport.optionalUser
 
   private val sessionRoutes = {
     Routes(

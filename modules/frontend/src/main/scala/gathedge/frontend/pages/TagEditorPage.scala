@@ -770,7 +770,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
       },
       inlineRename.bindings(onSaved = Observer[TagResponse](response => tagVar.set(Some(response.tag)))),
       deleteBus.events.flatMapSwitch(_ => WordApiClient.deleteTag(tagId)) --> Observer[Either[ApiError, Unit]] {
-        case Right(_)  => AppRouter.router.pushState(Page.Tags)
+        case Right(_)  => AppRouter.router.pushState(Page.Tags())
         case Left(err) => Var.set(deleteOpenVar -> false, errorVar -> Some(err.message))
       },
       exportBus.events.flatMapSwitch(_ => WordApiClient.exportTag(tagId)) -->

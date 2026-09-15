@@ -1161,6 +1161,17 @@ object UiKeys {
   val tagsListColWords: String = key("ui.tagsList.colWords")
   val tagsListEmpty: String    = key("ui.tagsList.empty")
 
+  // The flat, paged listing (`TagsPage`, since it carried a URL query and a `Pagination` control): `scope` is what the
+  // three headings above used to be, now a filter instead — see `TagQuery`'s doc comment.
+  val tagsListColOwner: String          = key("ui.tagsList.colOwner")
+  val tagsListOwnerYou: String          = key("ui.tagsList.ownerYou")
+  val tagsListSearchLabel: String       = key("ui.tagsList.searchLabel")
+  val tagsListSearchPlaceholder: String = key("ui.tagsList.searchPlaceholder")
+  val tagsListScopeLabel: String        = key("ui.tagsList.scopeLabel")
+  val tagsListScopeGroup: String        = key("ui.tagsList.scopeGroup")
+  val tagsListResetFilters: String      = key("ui.tagsList.resetFilters")
+  val tagsListCount: String             = pluralKey("ui.tagsList.count")
+
   // -- Tag export / import -----------------------------------------------------------------------
   // Export writes a tag (or every owned tag) to a JSON file; import rebuilds it here. `TagImportDialog`, plus a button
   // on `TagEditorPage` and two on `TagsPage`.

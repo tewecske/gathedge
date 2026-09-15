@@ -22,6 +22,7 @@ import gathedge.shared.domain.{
   PairMatch,
   PartOfSpeech,
   Tag,
+  TagScope,
   TranslationFilter,
   Word,
   WordLanguage,
@@ -56,9 +57,11 @@ import gathedge.shared.dto.{
   TagImportRequest,
   TagImportResponse,
   TagImportResult,
+  TagPage,
   TagPairInput,
   TagPairWord,
   TagWordInput,
+  TagSort,
   PairSelectionResponse,
   TagResponse,
   TaggedPair,
@@ -217,6 +220,22 @@ trait WordService {
     * `editableByMe` set — and `None` for a signed-out visitor, who gets the whole table with both marks false.
     */
   def listTags(reader: Option[Long]): UIO[List[Tag]]
+
+  /** The catalog's own paged/sorted/filtered listing — `GET /api/tags/page`, the sibling of [[list]] for the
+    * dictionary. `sort`/`descending` are [[gathedge.shared.dto.TagSort]]'s two columns; asked for neither, the answer
+    * keeps the listing's own order (own tags, then a study group's, then everyone else's, alphabetically within each)
+    * rather than a database column. `search` narrows by a case-insensitive substring of the name, `scope` by
+    * [[TagScope]] — both apply before paging, so `total` counts what they leave.
+    */
+  def listTagsPaged(
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): UIO[TagPage]
 
   /** `TagQuotaExceeded` is the hard half of the tag quota; a write that only crosses the soft threshold succeeds with
     * [[gathedge.shared.dto.TagResponse.warning]] set instead. `LanguageMismatch` (raised as a 400) is `source` and
@@ -538,6 +557,17 @@ object WordService {
 
   def listTags(reader: Option[Long]): URIO[WordService, List[Tag]] =
     ZIO.serviceWithZIO[WordService](_.listTags(reader))
+
+  def listTagsPaged(
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): URIO[WordService, TagPage] =
+    ZIO.serviceWithZIO[WordService](_.listTagsPaged(reader, page, pageSize, sort, descending, search, scope))
 
   def createTag(
     name: String,
@@ -1378,7 +1408,30 @@ final case class WordServiceLive(
     } yield ()
   }
 
-  def listTags(reader: Option[Long]): UIO[List[Tag]] = {
+  def listTags(reader: Option[Long]): UIO[List[Tag]] = classifiedTags(reader).map(Tag.sorted)
+
+  def listTagsPaged(
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): UIO[TagPage] = {
+    classifiedTags(reader).map { tags =>
+      val narrowed = tags.filter(matchesScope(_, scope)).filter(matchesSearch(_, search))
+      val ordered  = orderForListing(narrowed, sort, descending)
+      val offset   = gathedge.shared.dto.Paging.offset(page, pageSize)
+      TagPage(ordered.slice(offset, offset + pageSize), ordered.size.toLong)
+    }
+  }
+
+  /** Every wordlist there is, each with the caller's own two marks on it — the shared body [[listTags]] sorts one way
+    * (its own two-group order, for the dropdowns) and [[listTagsPaged]] another (filtered, paged, and a third group
+    * split out — see [[orderForListing]]).
+    */
+  private def classifiedTags(reader: Option[Long]): UIO[List[Tag]] = {
     for {
       // `-1` never equals a `users.id` (they start at 1), so a signed-out visitor's rows all come back `ownedByMe`
       // false — the same lenient no-match the reader threads through the dictionary reads.
@@ -1389,10 +1442,50 @@ final case class WordServiceLive(
       // `WordService.requireEditableTag` makes a write against, restated here so the tag bar/collect picker can offer
       // it without the reader having to click first and find out.
       memberGroupIds = memberships.map(_.groupId).toSet
-    } yield Tag.sorted(rows.map { case (row, count, ownedByMe) =>
+    } yield rows.map { case (row, count, ownedByMe) =>
       val editableByMe = ownedByMe || row.groupId.exists(memberGroupIds.contains)
       toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
-    })
+    }
+  }
+
+  private def matchesScope(tag: Tag, scope: TagScope): Boolean = {
+    scope match {
+      case TagScope.All   =>
+        true
+      case TagScope.Mine  =>
+        tag.ownedByMe
+      case TagScope.Group =>
+        tag.editableByMe && !tag.ownedByMe
+      case TagScope.Other =>
+        !tag.editableByMe
+    }
+  }
+
+  private def matchesSearch(tag: Tag, search: Option[String]): Boolean = {
+    search.forall(term => tag.name.toLowerCase.contains(term.toLowerCase))
+  }
+
+  /** [[TagSort.name]]/[[TagSort.words]] replace the listing's own order outright; asked for neither (the common case),
+    * own tags come first, then a study group's, then everyone else's, alphabetically within each — [[Tag.sorted]]'s
+    * two-way split refined into three, since a flat paged table has no section heading left to carry the distinction.
+    */
+  private def orderForListing(tags: List[Tag], sort: Option[String], descending: Boolean): List[Tag] = {
+    sort match {
+      case Some(TagSort.name)  =>
+        sortByDirection(tags, descending)(_.name.toLowerCase)
+      case Some(TagSort.words) =>
+        sortByDirection(tags, descending)(_.wordCount)
+      case _                   =>
+        tags.sortBy(tag => (categoryRank(tag), tag.name.toLowerCase))
+    }
+  }
+
+  private def sortByDirection[A: Ordering](tags: List[Tag], descending: Boolean)(key: Tag => A): List[Tag] = {
+    if (descending) tags.sortBy(key)(using summon[Ordering[A]].reverse) else tags.sortBy(key)
+  }
+
+  private def categoryRank(tag: Tag): Int = {
+    if (tag.ownedByMe) 0 else if (tag.editableByMe) 1 else 2
   }
 
   /** The name-half of creating a tag, shared by [[createTag]], [[copyTag]] and [[renameTag]]: valid, and not already

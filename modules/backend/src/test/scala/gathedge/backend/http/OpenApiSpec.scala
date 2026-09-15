@@ -92,6 +92,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/tags/{tagId}/bulk-upload/preview",
               "/api/words/tags/{tagId}/bulk-upload/confirm",
               "/api/tags",
+              "/api/tags/page",
               "/api/tags/{tagId}",
               "/api/tags/{tagId}/languages",
               "/api/tags/{tagId}/copy",
@@ -282,6 +283,9 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, TooManyRequests),
               // Listing wordlists is public (`optionalUser`) and takes no input, so it declares no status but 200.
               ("GET", "/api/tags")                                                        -> Set(Ok),
+              // The catalog's paged/sorted/filtered listing, guarded by `optionalUser` like `GET /api/words` above and
+              // for the same reason — its only failure is a query parameter that fails to decode.
+              ("GET", "/api/tags/page")                                                   -> Set(Ok, BadRequest),
               // 409 covers a name the account already has *and* already owning as many tags as the quota's hard
               // threshold allows — `error.key` tells the two apart. The body may carry a warning instead when the
               // write only crossed the *soft* threshold.
@@ -510,7 +514,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 317,
+          declared == 318,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -618,6 +622,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The wordlist catalog and one wordlist's rows — tag contents are world-visible, so a signed-out visitor
               // browses them the same way it browses the dictionary.
               ("GET", "/api/tags"),
+              ("GET", "/api/tags/page"),
               ("GET", "/api/tags/{tagId}/entries"),
             )
         )
@@ -627,7 +632,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 18,
+          guarded.size == operations.size - 19,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),
