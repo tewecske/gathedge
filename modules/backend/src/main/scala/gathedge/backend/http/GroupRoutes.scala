@@ -7,8 +7,10 @@ import gathedge.shared.dto.{
   CreateGroupRequest,
   InviteCodeResponse,
   JoinGroupRequest,
+  Paging,
   RenameGroupRequest,
   SetMemberRoleRequest,
+  SortDirection,
 }
 import zio.*
 import zio.http.*
@@ -21,8 +23,37 @@ object GroupRoutes {
 
   private def userId: URIO[User, Long] = ZIO.service[User].map(_.id)
 
+  /** An empty `q=`/`tag=` is the search box after it has been cleared, which is not a filter — the same rule
+    * `AdminRoutes.searchTerm` follows.
+    */
+  private def searchTerm(requested: Option[String]): Option[String] = {
+    requested.map(_.trim).filter(_.nonEmpty)
+  }
+
   private val listRoute = {
-    GroupEndpoints.list.implementHandler(handler((_: Unit) => userId.flatMap(GroupService.list)))
+    GroupEndpoints.list.implementHandler(
+      handler {
+        (
+          page: Option[Int],
+          pageSize: Option[Int],
+          sort: Option[String],
+          dir: Option[String],
+          q: Option[String],
+          tag: Option[String],
+        ) =>
+          userId.flatMap { id =>
+            GroupService.listPage(
+              id,
+              Paging.boundedPage(page),
+              Paging.boundedPageSize(pageSize),
+              searchTerm(q),
+              searchTerm(tag),
+              sort,
+              SortDirection.isDescending(dir),
+            )
+          }
+      }
+    )
   }
 
   private val getRoute = {

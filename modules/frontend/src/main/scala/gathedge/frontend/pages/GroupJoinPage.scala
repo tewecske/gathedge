@@ -54,7 +54,7 @@ private class GroupJoinPage(code: String) {
       Alert.success(I18n.t(UiKeys.groupJoinSuccess)),
       a(
         cls := "btn btn-primary",
-        AppRouter.router.navigateTo(Page.Groups),
+        AppRouter.router.navigateTo(Page.Groups()),
         I18n.t(UiKeys.groupJoinViewGroups),
       ),
     )
@@ -65,7 +65,7 @@ private class GroupJoinPage(code: String) {
       Alert.error(message),
       a(
         cls := "btn",
-        AppRouter.router.navigateTo(Page.Groups),
+        AppRouter.router.navigateTo(Page.Groups()),
         I18n.t(UiKeys.groupJoinViewGroups),
       ),
     )

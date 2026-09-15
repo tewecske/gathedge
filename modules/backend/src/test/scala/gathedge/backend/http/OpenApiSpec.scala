@@ -467,8 +467,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // failure is the aspect's 401.
               ("DELETE", "/api/progress-shares/viewers/{viewerUserId}")                   -> Set(NoContent, Unauthorized),
               // Groups: authenticated like `GET /api/tags/export`, not public — a group is visible to every account, not
-              // the open internet. `list` takes no input, so its only failure is the aspect's 401.
-              ("GET", "/api/groups")                                                      -> Set(Ok, Unauthorized),
+              // the open internet. `list` is paged/sorted/filtered like `GET /api/admin/users`, hence the 400 for an
+              // unparseable query parameter.
+              ("GET", "/api/groups")                                                      -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
               // Admin-only, hence the 403; follows `create`'s own name validation, hence the 400; 409 is a stale
@@ -514,7 +515,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 318,
+          declared == 319,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

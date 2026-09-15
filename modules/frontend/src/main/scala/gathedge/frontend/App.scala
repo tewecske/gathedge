@@ -42,7 +42,16 @@ import gathedge.frontend.pages.{
 }
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.LocaleSync
-import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, TagQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{
+  AllGameQuery,
+  AuditQuery,
+  GamePlayQuery,
+  GroupQuery,
+  MyPlayQuery,
+  TagQuery,
+  UserQuery,
+  WordQuery,
+}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
@@ -207,6 +216,12 @@ object App {
       .collectSignalPF[TagQuery] { case (gate, page: Page.Tags) if gate.loaded => page.query }(query =>
         TagsPage.render(query, onTagsQuery)
       )
+      // The groups listing carries its state in the URL the same way — a signal renderer for the same reason. Auth is
+      // enforced by the redirect observer, not here, the same as `MyPlays`/`AllGames` above: `gate.loaded` is the only
+      // precondition.
+      .collectSignalPF[GroupQuery] { case (gate, page: Page.Groups) if gate.loaded => page.query }(query =>
+        GroupsPage.render(query, onGroupsQuery)
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
@@ -274,6 +289,21 @@ object App {
   /** No refinement case: the audit trail's two filters are applied on a button, so every change here is deliberate. */
   private val onAdminAuditQuery: Observer[AuditQuery] = {
     Observer(query => navigate(Page.AdminAudit(query), replace = false))
+  }
+
+  /** Same rule as the user list: either filter box being typed out further replaces, everything else pushes. */
+  private val onGroupsQuery: Observer[GroupQuery] = {
+    Observer { query =>
+      val refinesSearch = {
+        AppRouter.router.currentPageSignal.now() match {
+          case Page.Groups(previous) =>
+            query.refines(previous)
+          case _                     =>
+            false
+        }
+      }
+      navigate(Page.Groups(query), replace = refinesSearch)
+    }
   }
 
   /** Same rule as the user list: a game-name filter being typed out further replaces, everything else pushes. */
@@ -504,8 +534,9 @@ object App {
         AdminRateLimitsPage.render()
       case Page.AdminRateLimits                           =>
         ForbiddenPage.render()
-      case Page.Groups                                    =>
-        GroupsPage.render()
+      // Reached only before the session has loaded; the signal renderer above answers otherwise.
+      case Page.Groups(query)                             =>
+        GroupsPage.render(Val(query), onGroupsQuery)
       case Page.GroupDetail(id)                           =>
         GroupDetailPage.render(id, generateQr)
       case Page.GroupJoin(code)                           =>

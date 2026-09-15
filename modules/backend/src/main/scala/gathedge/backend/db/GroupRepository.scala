@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
-import gathedge.shared.domain.GroupRole
+import gathedge.shared.domain.{Group, GroupRole}
+import gathedge.shared.dto.GroupSort
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
@@ -25,7 +26,7 @@ trait GroupRepository {
   def findGroupById(id: Long): Task[Option[GroupRow]]
 
   /** Batched form of [[findGroupById]], for resolving several tags' `Tag.group` refs in one query rather than one per
-    * tag — the same reason [[GroupRepository]]'s own [[listGroups]] batches its counts.
+    * tag — the same reason [[GroupRepository]]'s own [[listPage]] batches its counts.
     */
   def findGroupsByIds(ids: List[Long]): Task[List[GroupRow]]
 
@@ -40,8 +41,21 @@ trait GroupRepository {
     */
   def updateGroupName(id: Long, name: String, nameNorm: String, expectedVersion: Long): Task[Long]
 
-  /** Every group, with how many members and how many attached tags each has — what the browse page is built from. */
-  def listGroups: Task[List[(GroupRow, Long, Long)]]
+  /** One page of groups, with how many members and how many attached tags each has — what the browse page is built
+    * from. `nameContains` narrows by name, `tagContains` to groups holding an attached tag whose name contains it, both
+    * case-insensitive substrings.
+    */
+  def listPage(
+    offset: Int,
+    limit: Int,
+    nameContains: Option[String],
+    tagContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[(GroupRow, Long, Long)]]
+
+  /** How many groups match the same narrowing [[listPage]] applies, across every page. */
+  def countMatching(nameContains: Option[String], tagContains: Option[String]): Task[Long]
 
   /** Every group `userId` belongs to, with their role in each — how the listing resolves `Group.viewerRole` without one
     * query per row.
@@ -105,8 +119,18 @@ object GroupRepository {
   def updateGroupName(id: Long, name: String, nameNorm: String, expectedVersion: Long): RIO[GroupRepository, Long] =
     ZIO.serviceWithZIO[GroupRepository](_.updateGroupName(id, name, nameNorm, expectedVersion))
 
-  def listGroups: RIO[GroupRepository, List[(GroupRow, Long, Long)]] =
-    ZIO.serviceWithZIO[GroupRepository](_.listGroups)
+  def listPage(
+    offset: Int,
+    limit: Int,
+    nameContains: Option[String],
+    tagContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): RIO[GroupRepository, List[(GroupRow, Long, Long)]] =
+    ZIO.serviceWithZIO[GroupRepository](_.listPage(offset, limit, nameContains, tagContains, sort, descending))
+
+  def countMatching(nameContains: Option[String], tagContains: Option[String]): RIO[GroupRepository, Long] =
+    ZIO.serviceWithZIO[GroupRepository](_.countMatching(nameContains, tagContains))
 
   def listMembershipsFor(userId: Long): RIO[GroupRepository, List[GroupMemberRow]] =
     ZIO.serviceWithZIO[GroupRepository](_.listMembershipsFor(userId))
@@ -213,22 +237,86 @@ final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"groups.updateName id=$id rows=$rows")
   }
 
-  def listGroups: Task[List[(GroupRow, Long, Long)]] = {
-    val allGroups    = quote(groups.sortBy(_.nameNorm)(using Ord.asc))
-    val memberCounts = quote(members.groupBy(_.groupId).map { case (groupId, rows) => (groupId, rows.size) })
-    // Only tags actually attached to a group are counted, so the `WHERE group_id IS NOT NULL` happens before the
-    // group-by rather than after — an ungrouped tag has no row here at all.
-    val tagCounts    = quote {
-      tags.filter(_.groupId.isDefined).groupBy(_.groupId).map { case (groupId, rows) => (groupId, rows.size) }
+  /** The `LIKE` pattern behind the name filter, or `None` when it is empty — the same shape
+    * `UserRepository.emailPattern` follows, normalised through [[Group.normalize]] since that is what `nameNorm`
+    * already stores.
+    */
+  private def namePattern(nameContains: Option[String]): Option[String] = {
+    nameContains.map(Group.normalize).filter(_.nonEmpty).map(needle => s"%$needle%")
+  }
+
+  private def tagPattern(tagContains: Option[String]): Option[String] = {
+    tagContains.map(_.trim.toLowerCase).filter(_.nonEmpty).map(needle => s"%$needle%")
+  }
+
+  /** The rows a page is cut from, before ordering: the narrowing [[listPage]] and [[countMatching]] have to share, or
+    * the total would count a different set than the page shows.
+    *
+    * The tag filter is a correlated subquery rather than a join, the same reason `WordRepository.matching`'s own
+    * `tagId` filter is: Quill's Dynamic Query cannot synthesize a `.join` inside a `filterOpt` closure.
+    */
+  private def matching(nameContains: Option[String], tagContains: Option[String]): DynamicQuery[GroupRow] = {
+    dynamicQuerySchema[GroupRow]("groups")
+      .filterOpt(namePattern(nameContains))((row, pattern) => quote(row.nameNorm.like(unquote(pattern))))
+      .filterOpt(tagPattern(tagContains))((row, pattern) =>
+        quote(tags.filter(tag => tag.groupId.contains(row.id) && tag.nameNorm.like(unquote(pattern))).nonEmpty)
+      )
+  }
+
+  /** The `dto.GroupSort` vocabulary translated to an `ORDER BY`, defaulting to name — the listing's own order, and the
+    * one every group has something to show for.
+    */
+  private def ordered(
+    query: DynamicQuery[GroupRow],
+    sort: Option[String],
+    descending: Boolean,
+  ): DynamicQuery[GroupRow] = {
+    sort match {
+      case Some(GroupSort.name) =>
+        query.sortBy(_.nameNorm)(using ordering(descending))
+      case _                    =>
+        query.sortBy(_.nameNorm)(using Ord.asc)
     }
-    val listed       = for {
-      rows          <- run(ctx.run(allGroups))
-      memberCounted <- run(ctx.run(memberCounts))
-      tagCounted    <- run(ctx.run(tagCounts))
+  }
+
+  def listPage(
+    offset: Int,
+    limit: Int,
+    nameContains: Option[String],
+    tagContains: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): Task[List[(GroupRow, Long, Long)]] = {
+    val page    = ordered(matching(nameContains, tagContains), sort, descending).drop(offset).take(limit)
+    val counted = for {
+      rows          <- run(ctx.run(page))
+      ids            = rows.map(_.id)
+      memberCounted <-
+        run(ctx.run(quote {
+          members.filter(row => liftQuery(ids).contains(row.groupId)).groupBy(_.groupId).map {
+            case (groupId, grouped) =>
+              (groupId, grouped.size)
+          }
+        }))
+      // Only tags actually attached to one of these groups are counted, so the filter happens before the group-by
+      // rather than after — an ungrouped tag, or one attached elsewhere, has no row here at all.
+      tagCounted    <-
+        run(ctx.run(quote {
+          tags
+            .filter(row => row.groupId.exists(groupId => liftQuery(ids).contains(groupId)))
+            .groupBy(_.groupId)
+            .map { case (groupId, grouped) => (groupId, grouped.size) }
+        }))
       byMember       = memberCounted.toMap
       byTag          = tagCounted.flatMap { case (groupId, count) => groupId.map(_ -> count) }.toMap
     } yield rows.map(group => (group, byMember.getOrElse(group.id, 0L), byTag.getOrElse(group.id, 0L)))
-    logged(listed)(rows => s"groups.list rows=${rows.size}")
+    logged(counted) { rows =>
+      s"groups.listPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} desc=$descending rows=${rows.size}"
+    }
+  }
+
+  def countMatching(nameContains: Option[String], tagContains: Option[String]): Task[Long] = {
+    logged(run(ctx.run(matching(nameContains, tagContains).size)))(count => s"groups.countMatching count=$count")
   }
 
   def listMembershipsFor(userId: Long): Task[List[GroupMemberRow]] = {

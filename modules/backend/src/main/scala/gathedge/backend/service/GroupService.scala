@@ -3,7 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.db.{GroupMemberRow, GroupRepository, GroupRow, UserRow, WordRepository}
 import gathedge.backend.security.Tokens
 import gathedge.shared.domain.{Group, GroupRole, WordLanguage}
-import gathedge.shared.dto.{GroupDetail, GroupMemberSummary, GroupTagSummary}
+import gathedge.shared.dto.{GroupDetail, GroupMemberSummary, GroupPage, GroupTagSummary, Paging}
 import gathedge.shared.i18n.MessageRef
 import gathedge.shared.validation.Validation
 import zio.*
@@ -39,8 +39,16 @@ enum GroupFailure {
   */
 trait GroupService {
 
-  /** Every group, with the caller's own role in each — `None` for one they haven't joined. */
-  def list(viewerId: Long): UIO[List[Group]]
+  /** One page of groups, with the caller's own role in each — `None` for one they haven't joined. */
+  def listPage(
+    viewerId: Long,
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    tag: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[GroupPage]
 
   def detail(groupId: Long, viewerId: Long): IO[GroupFailure, GroupDetail]
 
@@ -84,8 +92,16 @@ trait GroupService {
 
 object GroupService {
 
-  def list(viewerId: Long): URIO[GroupService, List[Group]] =
-    ZIO.serviceWithZIO[GroupService](_.list(viewerId))
+  def listPage(
+    viewerId: Long,
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    tag: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): URIO[GroupService, GroupPage] =
+    ZIO.serviceWithZIO[GroupService](_.listPage(viewerId, page, pageSize, search, tag, sort, descending))
 
   def detail(groupId: Long, viewerId: Long): ZIO[GroupService, GroupFailure, GroupDetail] =
     ZIO.serviceWithZIO[GroupService](_.detail(groupId, viewerId))
@@ -168,14 +184,26 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
     } yield group
   }
 
-  def list(viewerId: Long): UIO[List[Group]] = {
+  def listPage(
+    viewerId: Long,
+    page: Int,
+    pageSize: Int,
+    search: Option[String],
+    tag: Option[String],
+    sort: Option[String],
+    descending: Boolean,
+  ): UIO[GroupPage] = {
     for {
-      rows        <- repo.listGroups.orDie
+      rows        <- repo.listPage(Paging.offset(page, pageSize), pageSize, search, tag, sort, descending).orDie
+      total       <- repo.countMatching(search, tag).orDie
       memberships <- repo.listMembershipsFor(viewerId).orDie
       roleByGroup  = memberships.flatMap(m => GroupRole.fromString(m.role).map(m.groupId -> _)).toMap
-    } yield rows.map { case (row, memberCount, tagCount) =>
-      Group(row.id, row.name, memberCount, tagCount, roleByGroup.get(row.id))
-    }
+    } yield GroupPage(
+      rows.map { case (row, memberCount, tagCount) =>
+        Group(row.id, row.name, memberCount, tagCount, roleByGroup.get(row.id))
+      },
+      total,
+    )
   }
 
   def detail(groupId: Long, viewerId: Long): IO[GroupFailure, GroupDetail] = {

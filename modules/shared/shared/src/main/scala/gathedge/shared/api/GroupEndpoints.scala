@@ -1,10 +1,10 @@
 package gathedge.shared.api
 
-import gathedge.shared.domain.Group
 import gathedge.shared.dto.{
   CreateGroupRequest,
   GroupDetail,
   GroupMemberSummary,
+  GroupPage,
   InviteCodeResponse,
   JoinGroupRequest,
   RenameGroupRequest,
@@ -35,11 +35,31 @@ object GroupEndpoints {
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
-  /** Every group that exists, with the caller's own role in each (`None` for one they haven't joined) — what the
-    * browse/join page is built from.
+  /** Paged/sorted/filtered the same way `AdminEndpoints.listUsers` is — see its own doc comment for why every one of
+    * these is optional rather than defaulted. `q` narrows by name, a case-insensitive substring; `tag` narrows to
+    * groups holding an attached tag whose name contains it, also case-insensitive.
+    */
+  private val pageQuery     = HttpCodec.query[Int]("page").optional
+  private val pageSizeQuery = HttpCodec.query[Int]("pageSize").optional
+  private val sortQuery     = HttpCodec.query[String]("sort").optional
+  private val dirQuery      = HttpCodec.query[String]("dir").optional
+  private val searchQuery   = HttpCodec.query[String]("q").optional
+  private val tagQuery      = HttpCodec.query[String]("tag").optional
+
+  /** One page of groups, with the caller's own role in each (`None` for one they haven't joined) — what the browse/join
+    * page is built from.
     */
   val list = {
-    Endpoint(Method.GET / "api" / "groups").out[List[Group]].outFailure(failure.unauthorized)
+    Endpoint(Method.GET / "api" / "groups")
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(sortQuery)
+      .query(dirQuery)
+      .query(searchQuery)
+      .query(tagQuery)
+      .withCodecError
+      .out[GroupPage]
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   /** One group's detail. `members` is empty and `inviteCode` is `None` unless the caller is themself a member (for the

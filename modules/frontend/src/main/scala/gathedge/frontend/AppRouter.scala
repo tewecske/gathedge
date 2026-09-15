@@ -2,7 +2,16 @@ package gathedge.frontend
 
 import com.raquo.waypoint._
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, TagQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{
+  AllGameQuery,
+  AuditQuery,
+  GamePlayQuery,
+  GroupQuery,
+  MyPlayQuery,
+  TagQuery,
+  UserQuery,
+  WordQuery,
+}
 import gathedge.shared.Branding
 
 sealed trait Page
@@ -153,9 +162,10 @@ object Page {
 
   /** Browsing/creating/joining classroom-style tag groups. Auth-only, like [[SharedProgress]]: collaborating on a group
     * is between signed-in accounts, and `GroupEndpoints.list`/`.get` themselves need a session, unlike
-    * [[Words]]/[[WordDetail]]'s public pair.
+    * [[Words]]/[[WordDetail]]'s public pair. It carries its whole listing state, the same reason [[Admin]]/[[Words]] do
+    * — see [[gathedge.frontend.listing.GroupQuery]] and the two routes below.
     */
-  case object Groups extends Page
+  final case class Groups(query: GroupQuery = GroupQuery.default) extends Page
 
   /** One group's roster (visible only to its own members), invite code (admins only), and attached tags. */
   final case class GroupDetail(id: Long) extends Page
@@ -320,7 +330,17 @@ object AppRouter {
   private val adminRateLimitsRoute = Route.static(AdminRateLimits, root / "admin" / "rate-limits", basePath)
   private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
 
-  private val groupsRoute      = Route.static(Groups, root / "groups", basePath)
+  /** The groups listing's "two routes, query first" pair — a fully static path, so the same trick the admin listings
+    * use (see [[adminQueryRoute]]).
+    */
+  private val groupsQueryRoute = Route.onlyQueryPF[Groups, GroupQuery](
+    matchEncode = { case page: Groups if page.query != GroupQuery.default => page.query },
+    decode = { case query if query != GroupQuery.default => Groups(query) },
+    pattern = (root / "groups") ? GroupQuery.params,
+    basePath = basePath,
+  )
+
+  private val groupsRoute      = Route.staticPartial(Groups(), root / "groups", basePath)
   private val groupDetailRoute = Route(
     encode = (p: GroupDetail) => p.id,
     decode = (id: Long) => GroupDetail(id),
@@ -481,8 +501,8 @@ object AppRouter {
         "AdminWordForms"
       case AdminRateLimits                =>
         "AdminRateLimits"
-      case Groups                         =>
-        "Groups"
+      case Groups(query)                  =>
+        "Groups:" + GroupQuery.params.createParamsString(query)
       case GroupDetail(id)                =>
         s"GroupDetail:$id"
       case GroupJoin(code)                =>
@@ -597,6 +617,10 @@ object AppRouter {
       GroupJoin(tag.stripPrefix("GroupJoin:"))
     } else if (tag.startsWith("TagDetail:")) {
       withId(tag, "TagDetail:")(TagDetail.apply)
+    } else if (tag.startsWith("Groups:")) {
+      // A tag we cannot read is a history entry from an older build; the listing itself is still the right screen, so
+      // fall back to its default view rather than to Not Found — the same reasoning `AdminAudit`'s fallback uses.
+      GroupQuery.params.matchQueryString(tag.stripPrefix("Groups:")).map(query => Groups(query)).getOrElse(Groups())
     } else if (tag.startsWith("AdminAudit:")) {
       // A tag we cannot read is a history entry from an older build; the listing itself is still the right screen, so
       // fall back to its default view rather than to Not Found.
@@ -651,8 +675,7 @@ object AppRouter {
         case "AdminRateLimits" =>
           AdminRateLimits
         case "Groups"          =>
-          Groups
-        // The colon-less form is what a history entry written by an older build holds.
+          Groups()
         case "Tags"            =>
           Tags()
         case "Forbidden"       =>
@@ -700,6 +723,7 @@ object AppRouter {
         adminUsageRoute,
         adminWordFormsRoute,
         adminRateLimitsRoute,
+        groupsQueryRoute,
         groupsRoute,
         groupJoinRoute,
         groupDetailRoute,

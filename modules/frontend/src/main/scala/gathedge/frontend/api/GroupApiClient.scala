@@ -2,11 +2,12 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.GroupEndpoints
-import gathedge.shared.domain.{Group, GroupRole}
+import gathedge.shared.domain.GroupRole
 import gathedge.shared.dto.{
   CreateGroupRequest,
   GroupDetail,
   GroupMemberSummary,
+  GroupPage,
   InviteCodeResponse,
   JoinGroupRequest,
   RenameGroupRequest,
@@ -20,9 +21,18 @@ import EndpointClient.{executor, run}
   */
 object GroupApiClient {
 
-  /** Every group, with the caller's own role in each. */
-  def list(): EventStream[Either[ApiError, List[Group]]] = {
-    run(executor(GroupEndpoints.list(())))
+  /** One page of groups, with the caller's own role in each. Every parameter is optional, the same as
+    * `AdminApiClient.listUsers` — omitting all of them is the first page of everything, in the listing's own order.
+    */
+  def listPage(
+    page: Option[Int] = None,
+    pageSize: Option[Int] = None,
+    sort: Option[String] = None,
+    dir: Option[String] = None,
+    search: Option[String] = None,
+    tag: Option[String] = None,
+  ): EventStream[Either[ApiError, GroupPage]] = {
+    run(executor(GroupEndpoints.list(page, pageSize, sort, dir, search, tag)))
   }
 
   def get(groupId: Long): EventStream[Either[ApiError, GroupDetail]] = {

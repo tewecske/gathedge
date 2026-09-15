@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.User
+import gathedge.shared.domain.{Group, User}
 import zio.json.*
 
 /** One page of a listing, the vocabulary for asking for it, and the arithmetic both ends do on the answer.
@@ -22,6 +22,11 @@ final case class UserPage(items: List[User], total: Long) derives JsonCodec
 
 /** One page of the audit trail, counted the same way. */
 final case class AuditPage(items: List[AuditEntry], total: Long) derives JsonCodec
+
+/** One page of groups, counted the same way — what narrows `total` is the name/tag filter, not membership: the browse
+  * listing shows every group that matches, joined or not.
+  */
+final case class GroupPage(items: List[Group], total: Long) derives JsonCodec
 
 /** How big a page is, and what a caller may ask for.
   *
@@ -114,4 +119,14 @@ object AuditSort {
   val ip: String         = "ip"
 
   val all: List[String] = List(occurredAt, actor, action, ip)
+}
+
+/** The columns `GET /api/groups` will order by. Member and tag counts are absent: both are aggregates joined in after
+  * the page is cut, not columns on `groups` itself, so there is no `ORDER BY` for them without a join this listing does
+  * not otherwise need.
+  */
+object GroupSort {
+  val name: String = "name"
+
+  val all: List[String] = List(name)
 }

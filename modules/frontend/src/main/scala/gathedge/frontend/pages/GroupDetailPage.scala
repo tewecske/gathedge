@@ -95,7 +95,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
               I18n.t(UiKeys.groupDetailRenameLabel),
               "input input-sm",
             ),
-            a(cls := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups), "←"),
+            a(cls := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups()), "←"),
           ),
           child.maybe <-- detailVar.signal.map(_.map(renderBody)),
         ),
@@ -128,7 +128,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
       leaveBus.events.flatMapSwitch(_ => GroupApiClient.leave(groupId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            AppRouter.router.pushState(Page.Groups)
+            AppRouter.router.pushState(Page.Groups())
           case Left(err) =>
             Var.set(busyVar -> false, errorVar -> Some(err.message))
         },

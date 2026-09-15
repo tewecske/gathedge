@@ -79,6 +79,7 @@ import gathedge.shared.dto.{
   GameVariantDto,
   GroupDetail,
   GroupMemberSummary,
+  GroupPage,
   GroupTagSummary,
   IdentitiesResponse,
   InviteCodeResponse,
@@ -280,6 +281,7 @@ object ApiSchemas {
   // shared field name in exchange for a derivation that only ever has a handful of instantiations.
   given Schema[UserPage]  = DeriveSchema.gen[UserPage]
   given Schema[AuditPage] = DeriveSchema.gen[AuditPage]
+  given Schema[GroupPage] = DeriveSchema.gen[GroupPage]
   given Schema[WordPage]  = DeriveSchema.gen[WordPage]
   given Schema[TagPage]   = DeriveSchema.gen[TagPage]
 

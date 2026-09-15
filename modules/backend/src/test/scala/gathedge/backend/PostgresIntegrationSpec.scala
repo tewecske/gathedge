@@ -351,6 +351,30 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           after <- WordRepository.findTagById(tag.id)
         } yield assertTrue(after.isDefined, after.flatMap(_.groupId).isEmpty)
       },
+      // The groups listing's name and tag filters are each a Quill Dynamic Query, so nothing about the SQL they render
+      // is checked at compile time — this is the one place either actually runs against the real dialect. The tag
+      // filter in particular is a correlated subquery over `tags` scoped by `groups.id` (see
+      // `GroupRepositoryLive.matching`), the same shape `WordRepository.matching`'s own `tagId` filter takes.
+      pgTest("the groups listing's name and tag filters each narrow to the right group") {
+        for {
+          owner       <- AuthService.signup("pggroupfilter@example.com", "password123").map(_._1)
+          alpha       <- GroupRepository.insertGroup("PG Alpha Group", "pg alpha group", "PGGR-OUP0-CODE-0003", owner.id, 0L)
+          beta        <- GroupRepository.insertGroup("PG Beta Group", "pg beta group", "PGGR-OUP0-CODE-0004", owner.id, 0L)
+          tag         <- WordRepository.insertTag(owner.id, "pgfrenchlist", "pgfrenchlist", 0L, "de", "hu")
+          _           <- WordRepository.setTagGroup(tag.id, Some(beta.id), tag.version)
+          byName      <- GroupRepository.listPage(0, 10, Some("alpha"), None, None, descending = false)
+          byTag       <- GroupRepository.listPage(0, 10, None, Some("frenchlist"), None, descending = false)
+          none        <- GroupRepository.listPage(0, 10, None, Some("no-such-tag"), None, descending = false)
+          countByName <- GroupRepository.countMatching(Some("alpha"), None)
+          countByTag  <- GroupRepository.countMatching(None, Some("frenchlist"))
+        } yield assertTrue(
+          byName.map(_._1.id) == List(alpha.id),
+          byTag.map(_._1.id) == List(beta.id),
+          none.isEmpty,
+          countByName == 1L,
+          countByTag == 1L,
+        )
+      },
       // `group_members.user_id` cascades, unlike `tags.group_id` above: a deleted account cannot remain on a roster.
       // This is the accepted gap the migration's own comment documents — deleting a group's *last* admin this way
       // leaves the group with none, since `AdminService.deleteUser` has no notion of `GroupService`'s own last-admin
