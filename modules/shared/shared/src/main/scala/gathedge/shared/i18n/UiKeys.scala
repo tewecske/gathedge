@@ -1137,6 +1137,16 @@ object UiKeys {
   val allGamesFavoriteRemove: String    = key("ui.allGames.favoriteRemove")
   val allGamesCount: String             = pluralKey("ui.allGames.count")
 
+  /** The wordlist and language filters — `TagPicker`'s first user, and a second pair of `<select>`s like
+    * `WordsPage.languageSelect`'s own, but each optional ("Any") rather than a mandatory direction. Choosing a wordlist
+    * locks both to its own pair, the same way choosing a collect wordlist locks `WordsPage`'s.
+    */
+  val allGamesTagFilterLabel: String       = key("ui.allGames.tagFilterLabel")
+  val allGamesTagFilterPlaceholder: String = key("ui.allGames.tagFilterPlaceholder")
+  val allGamesTagFilterClear: String       = key("ui.allGames.tagFilterClear")
+  val allGamesLanguageAny: String          = key("ui.allGames.languageAny")
+  val allGamesLanguageLockedHint: String   = key("ui.allGames.languageLockedHint")
+
   // -- Tag words list ---------------------------------------------------------------------------
 
   /** The source-word/translation preview shared by `components.TagWordsList` — used both when creating a quiz

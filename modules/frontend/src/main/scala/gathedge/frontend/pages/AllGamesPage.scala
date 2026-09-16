@@ -2,11 +2,12 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.frontend.api.{ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader}
+import gathedge.frontend.api.{ApiError, GameApiClient, WordApiClient}
+import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader, TagPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AllGameQuery
 import gathedge.frontend.state.AppState
+import gathedge.shared.domain.{Tag, WordLanguage}
 import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary, GameTagRef}
 import gathedge.shared.i18n.UiKeys
 
@@ -22,6 +23,11 @@ import gathedge.shared.i18n.UiKeys
   * Public: a signed-out visitor reads the catalog to find a game to play. Favoriting needs an account, so the heart
   * button and the "my favorites" toggle are drawn only when signed in — the same way `WordsPage` hides its tag
   * controls.
+  *
+  * The wordlist filter (`TagPicker`) and the two language filters work the same way `WordsPage`'s direction and collect
+  * wordlist do: choosing a wordlist sets both language selects to its own pair and locks them there, since a game's
+  * language pair is exactly its wordlist's. Unlike `WordsPage`, both are ordinary listing filters here rather than a
+  * mandatory browsing direction, so each may be cleared back to "Any".
   */
 object AllGamesPage {
 
@@ -55,6 +61,49 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private val searchInputVar   = Var("")
   private val searchTypedBus   = new EventBus[String]()
   private val searchDebounceMs = 300
+
+  /** Every wordlist there is — the same unpaged, public `GET /api/tags` every tag `<select>` on the site reads —
+    * fetched once on mount for [[tagPicker]] to search client-side.
+    */
+  private val tagsVar    = Var(List.empty[Tag])
+  private val tagsSignal = tagsVar.signal
+  private val tagsBus    = new EventBus[Unit]()
+
+  /** The languages currently chosen, in the order they were chosen — [[TagPicker]]'s own `languages` narrows and ranks
+    * by this, and the two language `<select>`s below read their values back out of it.
+    */
+  private val selectedLanguagesSignal: Signal[List[WordLanguage]] =
+    querySignal.map(query => List(query.language1, query.language2).flatten).distinct
+
+  private val selectedTagSignal: Signal[Option[Tag]] =
+    querySignal.map(_.tagId).combineWithFn(tagsSignal)((id, tags) => id.flatMap(tid => tags.find(_.id == tid)))
+
+  /** True while a wordlist is chosen: the two language selects are disabled, since a game's language pair is exactly
+    * its wordlist's — the same lock `WordsPage.languagesLockedSignal` puts on its own pair for a collect wordlist.
+    */
+  private val languagesLockedSignal: Signal[Boolean] = selectedTagSignal.map(_.isDefined)
+
+  private val tagPicker = new TagPicker(
+    tags = tagsSignal,
+    languages = selectedLanguagesSignal,
+    selected = querySignal.map(_.tagId).distinct,
+    onSelect = Observer[Option[Long]] {
+      case Some(id) =>
+        val pair = tagsVar.now().find(_.id == id).map(tag => (tag.sourceLanguage, tag.targetLanguage))
+        change(
+          _.reset(query => {
+            query.copy(
+              tagId = Some(id),
+              language1 = pair.map(_._1).orElse(query.language1),
+              language2 = pair.map(_._2).orElse(query.language2),
+            )
+          })
+        )
+      case None     =>
+        change(_.reset(_.copy(tagId = None)))
+    },
+    placeholderText = I18n.t(UiKeys.allGamesTagFilterPlaceholder),
+  )
 
   private val errorVar: Var[Option[String]] = Var(None)
 
@@ -137,7 +186,11 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           case (_, _, Right(_))          =>
             ()
         },
-      onMountCallback(_ => reloadBus.emit(())),
+      tagsBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
+        case Right(tags) => tagsVar.set(Tag.sorted(tags))
+        case Left(_)     => ()
+      },
+      onMountCallback(_ => { reloadBus.emit(()); tagsBus.emit(()) }),
     )
   }
 
@@ -149,6 +202,9 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       dir = query.sort.wire,
       search = Option(query.search).filter(_.nonEmpty),
       favoritesOnly = Option.when(query.favoritesOnly)(true),
+      tagId = query.tagId,
+      language1 = query.language1,
+      language2 = query.language2,
     )
   }
 
@@ -173,6 +229,19 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           onInput.mapToValue --> searchTypedBus.writer,
         ),
       ),
+      renderTagFilter(),
+      languageSelect(
+        UiKeys.allGamesSourceCol,
+        querySignal.map(_.language1).distinct,
+        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
+        languagesLockedSignal,
+      ),
+      languageSelect(
+        UiKeys.allGamesTargetCol,
+        querySignal.map(_.language2).distinct,
+        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language2 = language)))),
+        languagesLockedSignal,
+      ),
       // Favoriting needs an account, so the filter is offered only to a signed-in visitor.
       child.maybe <-- signedInSignal.map(Option.when(_)(renderFavoritesToggle())),
     )
@@ -188,6 +257,69 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         onClick.mapToChecked --> Observer[Boolean](on => change(_.reset(_.copy(favoritesOnly = on)))),
       ),
       span(cls := "label-text text-xs", I18n.t(UiKeys.allGamesFavoritesFilter)),
+    )
+  }
+
+  /** The wordlist filter: [[tagPicker]], with a clear button beside it once a wordlist is chosen — typing over it is
+    * not enough on its own, since a search box for one is the same widget as a search box for none. See [[TagPicker]]'s
+    * doc comment for why clearing is this page's job rather than the widget's own.
+    */
+  private def renderTagFilter(): HtmlElement = {
+    label(
+      cls := "form-control",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.allGamesTagFilterLabel)),
+      div(
+        cls    := "flex items-center gap-1",
+        div(cls := "w-48", tagPicker.render()),
+        child.maybe <-- querySignal.map(_.tagId.isDefined).distinct.map(Option.when(_)(renderClearTag())),
+      ),
+    )
+  }
+
+  private def renderClearTag(): HtmlElement = {
+    button(
+      typ        := "button",
+      cls        := "btn btn-ghost btn-sm btn-square",
+      aria.label := I18n.t(UiKeys.allGamesTagFilterClear),
+      "×",
+      onClick.mapToUnit --> Observer[Unit] { _ =>
+        tagPicker.clear()
+        change(_.reset(_.copy(tagId = None)))
+      },
+    )
+  }
+
+  /** Every `<select>` here carries a literal width, the same reason `WordsPage.languageSelect` gives for its own.
+    * Unlike that one, `None` is a real option ("Any"), since this is an ordinary listing filter rather than a mandatory
+    * browsing direction.
+    */
+  private def languageSelect(
+    labelKey: String,
+    selected: Signal[Option[WordLanguage]],
+    onPick: Observer[Option[WordLanguage]],
+    locked: Signal[Boolean],
+  ): HtmlElement = {
+    label(
+      cls := "flex flex-col gap-1",
+      span(cls := "label-text text-xs", I18n.t(labelKey)),
+      span(
+        cls("tooltip") <-- locked,
+        dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
+        select(
+          cls := "select select-sm w-28",
+          disabled <-- locked,
+          option(value := "", I18n.t(UiKeys.allGamesLanguageAny)),
+          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+          controlled(
+            value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),
+            onChange.mapToValue --> onPick.contramap[String](code => WordLanguage.fromString(code)),
+          ),
+        ),
+      ),
+      span(
+        cls    := "sr-only",
+        child.text <-- locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
+      ),
     )
   }
 

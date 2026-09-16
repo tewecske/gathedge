@@ -47,7 +47,9 @@ object GameApiClient {
     run(executor(GameEndpoints.setupWords(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)), joined)))
   }
 
-  /** Every account's games, one page at a time, for the games table. */
+  /** Every account's games, one page at a time, for the games table. `tagId` narrows to one wordlist; `language1`/
+    * `language2` narrow to games whose language pair contains whichever of the two are given.
+    */
   def allGames(
     page: Option[Int] = None,
     pageSize: Option[Int] = None,
@@ -55,8 +57,25 @@ object GameApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
     favoritesOnly: Option[Boolean] = None,
+    tagId: Option[Long] = None,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): EventStream[Either[ApiError, AllGamePage]] = {
-    run(executor(GameEndpoints.allGames(page, pageSize, sort, dir, search, favoritesOnly)))
+    run(
+      executor(
+        GameEndpoints.allGames(
+          page,
+          pageSize,
+          sort,
+          dir,
+          search,
+          favoritesOnly,
+          tagId,
+          language1.map(WordLanguage.code),
+          language2.map(WordLanguage.code),
+        )
+      )
+    )
   }
 
   /** Marks `slug` as the caller's favorite — idempotent, answers 204. */
