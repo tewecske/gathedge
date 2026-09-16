@@ -1,5 +1,5 @@
 import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
-import org.scalajs.linker.interface.ModuleKind
+import org.scalajs.linker.interface.{ESVersion, ModuleKind}
 
 val scala3Version = "3.8.4"
 val zioVersion = "2.1.26"
@@ -96,6 +96,11 @@ lazy val shared = crossProject(JSPlatform, JVMPlatform)
   .crossType(CrossType.Full)
   .in(file("modules/shared"))
   .settings(commonSettings)
+  .jsSettings(
+    // `WordCell`'s `\p{L}` patterns need ES2018 regex (Unicode property escapes); the linker
+    // default is older and fails these at runtime, not at compile time.
+    scalaJSLinkerConfig ~= (_.withESFeatures(_.withESVersion(ESVersion.ES2018))),
+  )
   .settings(
     name := "shared",
     libraryDependencies ++=
