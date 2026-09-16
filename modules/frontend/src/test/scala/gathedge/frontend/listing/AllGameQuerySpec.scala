@@ -1,6 +1,7 @@
 package gathedge.frontend.listing
 
 import gathedge.frontend.components.SortHeader
+import gathedge.shared.domain.WordLanguage
 import gathedge.shared.dto.{AllGameSort, Paging}
 import zio.test._
 
@@ -44,6 +45,20 @@ object AllGameQuerySpec extends ZIOSpecDefault {
           AllGameQuery(page = 4).reset(_.copy(search = "quiz")) == AllGameQuery(search = "quiz"),
           AllGameQuery(page = 4).reset(_.copy(search = "quiz")).page == Paging.firstPage,
           AllGameQuery.default.page == Paging.firstPage,
+        )
+      },
+      test("the default query carries no wordlist or language filter") {
+        assertTrue(
+          AllGameQuery.default.tagId.isEmpty,
+          AllGameQuery.default.language1.isEmpty,
+          AllGameQuery.default.language2.isEmpty,
+        )
+      },
+      test("choosing a wordlist or a language filter also returns to the first page") {
+        assertTrue(
+          AllGameQuery(page = 4).reset(_.copy(tagId = Some(7L))) == AllGameQuery(tagId = Some(7L)),
+          AllGameQuery(page = 4).reset(_.copy(language1 = Some(WordLanguage.De))) ==
+            AllGameQuery(language1 = Some(WordLanguage.De)),
         )
       },
     )
