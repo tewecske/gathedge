@@ -2,7 +2,15 @@ package gathedge.frontend
 
 import gathedge.frontend.components.SortHeader
 import gathedge.frontend.i18n.CurrentLocale
-import gathedge.frontend.listing.{AllGameQuery, AuditQuery, GamePlayQuery, MyPlayQuery, UserQuery, WordQuery}
+import gathedge.frontend.listing.{
+  AllGameQuery,
+  AuditQuery,
+  GamePlayQuery,
+  MyPlayQuery,
+  TagEntryQuery,
+  UserQuery,
+  WordQuery,
+}
 import gathedge.shared.domain.Locale.urlPrefix
 import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
 import gathedge.shared.dto.{AllGameSort, GamePlaySort, Paging, UserSort, WordSort}
@@ -278,6 +286,38 @@ object AppRouterSpec extends ZIOSpecDefault {
             .pageForRelativeUrl(AppRouter.router.relativeUrlForPage(Page.AdminUserPlays(3)))
             .contains(Page.AdminUserPlays(3)),
           AppRouter.deserialize(AppRouter.serialize(Page.AdminUserPlays(3))) == Page.AdminUserPlays(3),
+        )
+      },
+      // The wordlist editor is a path segment plus a query like the three listings above, but split into two routes so
+      // the first page keeps the address the catalog links to — see `AppRouter.tagDetailQueryRoute`. That bare address
+      // is what `e2e/tests/tag-editor.spec.ts` asserts after `/tags/new`, and what every shared link is.
+      test("the wordlist editor is the bare path on its first page and carries the page number after that") {
+        val second = Page.TagDetail(5, TagEntryQuery(page = 2))
+        val url    = AppRouter.router.relativeUrlForPage(second)
+
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.TagDetail(5)) == s"$prefix/tags/5",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/tags/5").contains(Page.TagDetail(5)),
+          url == s"$prefix/tags/5?page=2",
+          AppRouter.router.pageForRelativeUrl(url).contains(second),
+          // The editor's own default page size writes no parameter; another one does.
+          AppRouter.router
+            .relativeUrlForPage(Page.TagDetail(5, TagEntryQuery(pageSize = Paging.tagEntryPageSize))) ==
+            s"$prefix/tags/5",
+          AppRouter.router
+            .pageForRelativeUrl(s"$prefix/tags/5?size=10")
+            .contains(
+              Page.TagDetail(5, TagEntryQuery(pageSize = 10))
+            ),
+          // A hand-edited URL is bounded rather than refused, the same as every other listing.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/tags/5?page=0").contains(Page.TagDetail(5)),
+          AppRouter.router
+            .pageForRelativeUrl(s"$prefix/tags/5?size=100000")
+            .contains(Page.TagDetail(5, TagEntryQuery(pageSize = Paging.maxPageSize))),
+          // The history tag carries the page too, and the one-part tag an older build wrote still opens the editor.
+          AppRouter.deserialize(AppRouter.serialize(second)) == second,
+          AppRouter.deserialize(AppRouter.serialize(Page.TagDetail(5))) == Page.TagDetail(5),
+          AppRouter.deserialize("TagDetail:5") == Page.TagDetail(5),
         )
       },
       // Same shape again, for the viewer's copy of that listing — one sharer's play history.

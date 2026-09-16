@@ -949,6 +949,11 @@ object UiKeys {
   /** Shown in place of the rows table while the tag holds none (matching the active filter, if any). */
   val tagsEditorEmpty: String = key("ui.tags.editor.empty")
 
+  /** How many rows the filters show, beside the page buttons — the editor's own count, since a wordlist row is a word
+    * and `ui.tagsList.count` counts wordlists.
+    */
+  val tagsEditorCount: String = pluralKey("ui.tags.editor.count")
+
   /** Accessible label for a row's edit button, and the button that commits an in-progress row edit. */
   val tagsEditorEditRow: String = key("ui.tags.editor.editRow")
   val tagsEditorSaveRow: String = key("ui.tags.editor.saveRow")

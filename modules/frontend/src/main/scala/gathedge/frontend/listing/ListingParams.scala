@@ -23,6 +23,22 @@ object ListingParams {
 
   type Common = (Option[Int], Option[Int], Option[String], Option[String])
 
+  /** `page` and `size` alone — what a listing with no sortable column puts in its URL.
+    *
+    * The wordlist editor is the one such listing: its rows are in the order they were added (a bulk import keeps the
+    * pasted order), so there is no column heading to order by and no `sort`/`dir` to carry. See [[TagEntryQuery]].
+    */
+  val paging = param[Int]("page").? & param[Int]("size").?
+
+  type Paged = (Option[Int], Option[Int])
+
+  /** The [[paging]] half of [[encodeCommon]], for a listing whose default page size is not [[Paging.defaultPageSize]]:
+    * `default` is the size that writes no parameter at all, so the address stays clean on the page a reader lands on.
+    */
+  def encodePaging(page: Int, pageSize: Int, default: Int): Paged = {
+    (Option.when(page != Paging.firstPage)(page), Option.when(pageSize != default)(pageSize))
+  }
+
   def encodeCommon(page: Int, pageSize: Int, sort: SortHeader.Sort): Common = {
     (
       // One-based, like the API and like the buttons: the second page is `page=2`, and the first writes no parameter
@@ -44,7 +60,11 @@ object ListingParams {
   /** `?page=0`, or anything below the first page, reads as the first page rather than as an error. */
   def decodePage(page: Option[Int]): Int = Paging.boundedPage(page)
 
-  def decodePageSize(size: Option[Int]): Int = Paging.boundedPageSize(size)
+  /** `default` is what an absent `size` reads as — see [[Paging.boundedPageSize]]; the bound above it is the same for
+    * every listing.
+    */
+  def decodePageSize(size: Option[Int], default: Int = Paging.defaultPageSize): Int =
+    Paging.boundedPageSize(size, default)
 
   /** An unknown column is dropped rather than refused.
     *

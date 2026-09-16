@@ -44,6 +44,14 @@ object Paging {
 
   val maxPageSize: Int = pageSizes.max
 
+  /** What the wordlist editor's rows start at, rather than [[defaultPageSize]].
+    *
+    * A row there is one line of a wordlist somebody is reading down, not a record they are looking one of up, so a
+    * short page turns reading into paging. It is one of [[pageSizes]] like every other page size, so the dropdown can
+    * offer it and the reader can leave it.
+    */
+  val tagEntryPageSize: Int = 50
+
   /** The index of the first page — **one**, in the URL, in the API and in the browser alike.
     *
     * It is a named constant rather than a literal because it is the one number every layer has to agree on: the address
@@ -52,8 +60,11 @@ object Paging {
     */
   val firstPage: Int = 1
 
-  def boundedPageSize(requested: Option[Int]): Int = {
-    requested.getOrElse(defaultPageSize).max(1).min(maxPageSize)
+  /** `default` is what an absent `pageSize` means, which is [[defaultPageSize]] for every listing the database pages
+    * and [[tagEntryPageSize]] for the wordlist editor. The cap above it is the same either way.
+    */
+  def boundedPageSize(requested: Option[Int], default: Int = defaultPageSize): Int = {
+    requested.getOrElse(default).max(1).min(maxPageSize)
   }
 
   /** One-based, and never below the first page. Past the end is *not* clamped here — the server does not know the total
