@@ -354,10 +354,10 @@ private class GamePlayPage(slug: String, playId: Long) {
       svg.viewBox        := "0 0 24 24",
       svg.fill           := "none",
       svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2.5",
+      svg.strokeWidth    := "2",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.path(svg.d := (if (correct) "M5 13l4 4 10-10" else "M6 6l12 12M6 18L18 6")),
+      svg.path(svg.d := (if (correct) "m4.5 12.75 6 6 9-13.5" else "M6 18 18 6M6 6l12 12")),
     )
   }
 

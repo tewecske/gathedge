@@ -158,10 +158,10 @@ object InlineRename {
       svg.viewBox        := "0 0 24 24",
       svg.fill           := "none",
       svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2",
+      svg.strokeWidth    := "1.5",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"),
+      svg.path(svg.d := "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"),
     )
   }
 

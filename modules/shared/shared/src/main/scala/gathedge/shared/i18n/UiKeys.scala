@@ -226,6 +226,12 @@ object UiKeys {
   val aboutAuthorTitle: String           = key("ui.about.authorTitle")
   val aboutAuthorBody: String            = key("ui.about.authorBody")
   val aboutContactLabel: String          = key("ui.about.contactLabel")
+  val aboutIconsTitle: String            = key("ui.about.iconsTitle")
+  val aboutIconsBody: String             = key("ui.about.iconsBody")
+  val aboutIconsLicenseLabel: String     = key("ui.about.iconsLicenseLabel")
+  val aboutUiTitle: String               = key("ui.about.uiTitle")
+  val aboutUiBody: String                = key("ui.about.uiBody")
+  val aboutUiLicenseLabel: String        = key("ui.about.uiLicenseLabel")
 
   // -- Account settings ------------------------------------------------------------------------
 

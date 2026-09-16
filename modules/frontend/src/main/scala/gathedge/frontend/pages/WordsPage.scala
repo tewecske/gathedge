@@ -909,8 +909,7 @@ private class WordsPage(
       svg.strokeWidth    := "2",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M4 9h15m0 0l-4-4m4 4l-4 4"),
-      svg.path(svg.d := "M20 15H5m0 0l4-4m-4 4l4 4"),
+      svg.path(svg.d := "M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"),
     )
   }
 }

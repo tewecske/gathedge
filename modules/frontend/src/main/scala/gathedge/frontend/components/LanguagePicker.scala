@@ -138,7 +138,9 @@ private class LanguagePicker {
       svg.fill        := "none",
       svg.stroke      := "currentColor",
       svg.strokeWidth := "3",
-      svg.path(svg.d := "M6 9l6 6 6-6"),
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "m19.5 8.25-7.5 7.5-7.5-7.5"),
     )
   }
 }

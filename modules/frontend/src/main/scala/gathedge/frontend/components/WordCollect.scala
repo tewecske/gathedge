@@ -553,13 +553,39 @@ final class WordCollect(
         }
         I18n.t(key, word)
       },
-      child.text <-- tagged.map(isTagged => {
+      child <-- tagged.map(isTagged => {
         if (isTagged)
-          "✓"
+          tickMark()
         else
-          "+"
+          plusMark()
       }),
       onClick.compose(_.sample(tagged)) --> Observer[Boolean](isTagged => toggleBus.emit((wordId, isTagged))),
+    )
+  }
+
+  private def tickMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "1.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "m4.5 12.75 6 6 9-13.5"),
+    )
+  }
+
+  private def plusMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "1.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(svg.d := "M12 4.5v15m7.5-7.5h-15"),
     )
   }
 
@@ -634,9 +660,7 @@ final class WordCollect(
       svg.strokeWidth    := "2",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.circle(svg.cx := "12", svg.cy := "12", svg.r := "9"),
-      svg.path(svg.d    := "M12 7.5v5"),
-      svg.path(svg.d    := "M12 16.25h.01"),
+      svg.path(svg.d := "M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"),
     )
   }
 
@@ -649,14 +673,14 @@ final class WordCollect(
     */
   private def chipMark(): SvgElement = {
     svg.svg(
-      svg.cls            := "h-[0.4rem] w-[0.47rem] shrink-0",
-      svg.viewBox        := "0 0 14 12",
+      svg.cls            := "h-[0.47rem] w-[0.47rem] shrink-0",
+      svg.viewBox        := "0 0 24 24",
       svg.fill           := "none",
       svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2.5",
+      svg.strokeWidth    := "3",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M1 6.5L5 10.5L13 1.5"),
+      svg.path(svg.d := "m4.5 12.75 6 6 9-13.5"),
     )
   }
 }

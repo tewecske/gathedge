@@ -41,6 +41,18 @@ object Branding {
   /** The kaikki.org dictionary derived from Wiktionary. Reached from the About page. */
   val sourceKaikkiUrl: String = "https://kaikki.org/dictionary/"
 
+  /** The Heroicons icon set the whole UI draws its icons from. Reached from the About page. */
+  val iconsUrl: String = "https://github.com/tailwindlabs/heroicons"
+
+  /** The licence Heroicons is released under. Reached from the About page. */
+  val iconsLicenseUrl: String = "https://github.com/tailwindlabs/heroicons/blob/master/LICENSE"
+
+  /** The daisyUI component library the whole UI is styled with. Reached from the About page. */
+  val daisyUiUrl: String = "https://github.com/saadeghi/daisyui"
+
+  /** The licence daisyUI is released under. Reached from the About page. */
+  val daisyUiLicenseUrl: String = "https://github.com/saadeghi/daisyui/blob/master/LICENSE"
+
   /** The person who created and maintains this deployment. Shown on the About page. */
   val authorName: String = "Levente Hortobágyi"
 

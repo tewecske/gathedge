@@ -37,11 +37,13 @@ object AboutPage {
       svg.viewBox        := "0 0 24 24",
       svg.fill           := "none",
       svg.stroke         := "currentColor",
-      svg.strokeWidth    := "2",
+      svg.strokeWidth    := "1.5",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"),
-      svg.path(svg.d := "M22 6l-10 7L2 6"),
+      svg.path(
+        svg.d :=
+          "M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"
+      ),
     )
   }
 
@@ -117,6 +119,44 @@ object AboutPage {
               target := "_blank",
               rel    := "noopener noreferrer",
               I18n.t(UiKeys.aboutCodeLicenseLabel),
+            ),
+            h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutIconsTitle)),
+            p(I18n.t(UiKeys.aboutIconsBody)),
+            div(
+              cls := "flex flex-col gap-1",
+              a(
+                cls    := "link link-primary",
+                href   := Branding.iconsUrl,
+                target := "_blank",
+                rel    := "noopener noreferrer",
+                "Heroicons",
+              ),
+              a(
+                cls    := "link link-primary",
+                href   := Branding.iconsLicenseUrl,
+                target := "_blank",
+                rel    := "noopener noreferrer",
+                I18n.t(UiKeys.aboutIconsLicenseLabel),
+              ),
+            ),
+            h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutUiTitle)),
+            p(I18n.t(UiKeys.aboutUiBody)),
+            div(
+              cls := "flex flex-col gap-1",
+              a(
+                cls    := "link link-primary",
+                href   := Branding.daisyUiUrl,
+                target := "_blank",
+                rel    := "noopener noreferrer",
+                "daisyUI",
+              ),
+              a(
+                cls    := "link link-primary",
+                href   := Branding.daisyUiLicenseUrl,
+                target := "_blank",
+                rel    := "noopener noreferrer",
+                I18n.t(UiKeys.aboutUiLicenseLabel),
+              ),
             ),
             h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutLinksTitle)),
             a(

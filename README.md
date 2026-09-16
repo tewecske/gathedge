@@ -159,3 +159,17 @@ nix/                a NixOS module and package definitions, as an alternative to
 descriptions constrain the routes and the client, what the aspects do, and the rules that are easy
 to get wrong. Read it before changing anything structural. `summary.md` is the product-level
 description of what the skeleton's screens do.
+
+## Third-party assets
+
+Every UI icon is a [Heroicons](https://github.com/tailwindlabs/heroicons) SVG, inlined into the
+Laminar source that draws it. Heroicons is MIT-licensed:
+
+> MIT License. Copyright (c) 2020 Refactoring UI Inc.
+
+Country flags, brand marks (Google, Microsoft, Discord, GitHub) and the language picker's flag
+icons are hand-drawn or vendor-supplied instead — Heroicons has no equivalents for those.
+
+The UI is styled with [daisyUI](https://github.com/saadeghi/daisyui), also MIT-licensed:
+
+> MIT License. Copyright (c) 2020 Pouya Saadeghi
