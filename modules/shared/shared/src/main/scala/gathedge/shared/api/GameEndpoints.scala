@@ -45,6 +45,17 @@ object GameEndpoints {
   /** The games listing's "only my favorites" toggle — absent or `false` is the whole listing. */
   private val favoritesQuery = HttpCodec.query[Boolean]("favorites").optional
 
+  /** The games listing's wordlist filter — a `tags.id`. Absent is the whole catalog. */
+  private val allGamesTagQuery = HttpCodec.query[Long]("tag").optional
+
+  /** The games listing's language filter, up to two of them (`WordLanguage.code`) — a game matches when its own
+    * `sourceLanguage`/`targetLanguage` pair contains whichever of these are given, in either order — see
+    * `GameService.allGames`'s doc comment. Two params rather than one comma-joined string, unlike [[tagIdsQuery]]:
+    * there are never more than two, so the parsing [[tagIdsQuery]] needs would only be overhead here.
+    */
+  private val allGamesLang1Query = HttpCodec.query[String]("lang1").optional
+  private val allGamesLang2Query = HttpCodec.query[String]("lang2").optional
+
   /** The owner-facing plays listing's paging/sort/filter params — same shape as `AdminEndpoints`'s own, not shared
     * across files since neither hoists them today. `sort` names a column out of `dto.GamePlaySort`; `q` is a
     * case-insensitive substring of the player's address.
@@ -82,8 +93,9 @@ object GameEndpoints {
 
   /** Every account's games, one page at a time, most recently created first unless `sort` says otherwise — see
     * `GameService.allGames`. Paged/sorted/filtered the same way [[listPlays]] is; `sort` names a column out of
-    * `dto.AllGameSort`, `q` is a case-insensitive substring of the game's name, and `favorites=true` keeps only games
-    * the caller has favorited.
+    * `dto.AllGameSort`, `q` is a case-insensitive substring of the game's name, `favorites=true` keeps only games the
+    * caller has favorited, `tag` narrows to one wordlist, and `lang1`/`lang2` narrow to games whose language pair
+    * contains whichever of the two are given.
     *
     * Anonymous-capable, the same reasoning [[get]] applies: the catalog is a shared list of games anyone may play, so a
     * signed-out visitor must be able to read it before any guest is minted. A caller with no session has no favorite
@@ -98,6 +110,9 @@ object GameEndpoints {
       .query(dirQuery)
       .query(searchQuery)
       .query(favoritesQuery)
+      .query(allGamesTagQuery)
+      .query(allGamesLang1Query)
+      .query(allGamesLang2Query)
       .withCodecError
       .out[AllGamePage]
       .outFailure(failure.badRequest)

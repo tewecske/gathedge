@@ -46,6 +46,14 @@ object GameRoutes {
     requested.flatMap(WordLanguage.fromString).getOrElse(WordLanguage.En)
   }
 
+  /** A games-listing language filter slot, read leniently like [[languageOf]] — an unrecognised code is dropped rather
+    * than failing the request — but, unlike [[languageOf]], staying absent rather than falling back: missing means "no
+    * filter on this slot", not "English".
+    */
+  private def optionalLanguageOf(requested: Option[String]): Option[WordLanguage] = {
+    requested.flatMap(WordLanguage.fromString)
+  }
+
   /** A `wordPreference` query/body value, read leniently like [[languageOf]]: an unrecognised or missing one falls back
     * to [[WordPreference.All]] rather than failing the request.
     */
@@ -83,28 +91,39 @@ object GameRoutes {
     )
   }
 
+  /** [[GameEndpoints.allGames]]'s nine query params, past the arity zio-http's `handler` smart constructor infers
+    * without help — the same reason `WordRoutes.ListQuery` names its own, and named the same way.
+    */
+  private type AllGamesQuery = (
+    Option[Int],
+    Option[Int],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[Boolean],
+    Option[Long],
+    Option[String],
+    Option[String],
+  )
+
   private val allGamesRoute = {
     GameEndpoints.allGames.implementHandler(
-      handler {
-        (
-          page: Option[Int],
-          pageSize: Option[Int],
-          sort: Option[String],
-          dir: Option[String],
-          q: Option[String],
-          favorites: Option[Boolean],
-        ) =>
-          reader.flatMap { viewerId =>
-            GameService.allGames(
-              viewerId,
-              searchTerm(q),
-              favorites.getOrElse(false),
-              Paging.boundedPage(page),
-              Paging.boundedPageSize(pageSize),
-              sort,
-              SortDirection.isDescending(dir),
-            )
-          }
+      handler { (input: AllGamesQuery) =>
+        val (page, pageSize, sort, dir, q, favorites, tag, lang1, lang2) = input
+        reader.flatMap { viewerId =>
+          GameService.allGames(
+            viewerId,
+            searchTerm(q),
+            favorites.getOrElse(false),
+            Paging.boundedPage(page),
+            Paging.boundedPageSize(pageSize),
+            sort,
+            SortDirection.isDescending(dir),
+            tag,
+            optionalLanguageOf(lang1),
+            optionalLanguageOf(lang2),
+          )
+        }
       }
     )
   }

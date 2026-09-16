@@ -71,7 +71,14 @@ trait GameService {
 
   /** One page of every account's games, most recently created first unless `sort` says otherwise, with their tag names,
     * how many times each was played, how many accounts favorited each, and whether `viewerId` did. `nameContains`
-    * narrows to games whose name contains it; `favoritesOnly` keeps only games `viewerId` favorited.
+    * narrows to games whose name contains it; `favoritesOnly` keeps only games `viewerId` favorited; `tagId` narrows to
+    * one wordlist.
+    *
+    * `language1`/`language2` narrow to games whose `sourceLanguage`/`targetLanguage` pair contains whichever of the two
+    * are given — order does not matter: picking German and Hungarian matches a `de -> hu` game and an `hu -> de` game
+    * alike, the same way either slot alone matches a game with that language on either side. Given both, a game must
+    * carry both to match, which — since a game has only two language slots — is the same as requiring its pair to equal
+    * the given one, in either order.
     *
     * `viewerId` is optional: an anonymous caller reads the catalog too (see `GameEndpoints.allGames`). With no viewer
     * there are no favorite marks, so every row's `favoritedByMe` is `false` and `favoritesOnly` narrows to nothing.
@@ -84,6 +91,9 @@ trait GameService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long] = None,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): UIO[AllGamePage]
 
   /** Marks `slug` as `userId`'s favorite — idempotent. [[GameFailure.NotFound]] if there is no such game. */
@@ -247,9 +257,12 @@ object GameService {
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long] = None,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): URIO[GameService, AllGamePage] = {
     ZIO.serviceWithZIO[GameService](
-      _.allGames(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending)
+      _.allGames(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending, tagId, language1, language2)
     )
   }
 
@@ -448,13 +461,16 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long] = None,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): UIO[AllGamePage] = {
     // "Only my favorites" needs a viewer to resolve. An anonymous caller has no favorites, so the filter matches
     // nothing rather than falling through to the whole catalog.
     if (favoritesOnly && viewerId.isEmpty) {
       ZIO.succeed(AllGamePage(Nil, 0L))
     } else {
-      allGamesFor(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending)
+      allGamesFor(viewerId, nameContains, favoritesOnly, page, pageSize, sort, descending, tagId, language1, language2)
     }
   }
 
@@ -466,13 +482,28 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     pageSize: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long],
+    language1: Option[WordLanguage],
+    language2: Option[WordLanguage],
   ): UIO[AllGamePage] = {
     val favoritesOf = viewerId.filter(_ => favoritesOnly)
+    val lang1Code   = language1.map(WordLanguage.code)
+    val lang2Code   = language2.map(WordLanguage.code)
     for {
       rows          <- repo
-                         .listAllGamesPage(nameContains, favoritesOf, Paging.offset(page, pageSize), pageSize, sort, descending)
+                         .listAllGamesPage(
+                           nameContains,
+                           favoritesOf,
+                           Paging.offset(page, pageSize),
+                           pageSize,
+                           sort,
+                           descending,
+                           tagId,
+                           lang1Code,
+                           lang2Code,
+                         )
                          .orDie
-      total         <- repo.countAllGamesMatching(nameContains, favoritesOf).orDie
+      total         <- repo.countAllGamesMatching(nameContains, favoritesOf, tagId, lang1Code, lang2Code).orDie
       gameIds        = rows.map(_.id)
       tagsByGame    <- repo.tagsOfGames(gameIds).orDie.map(_.view.mapValues(tagRefs).toMap)
       playCounts    <- repo.playCounts(gameIds).orDie
