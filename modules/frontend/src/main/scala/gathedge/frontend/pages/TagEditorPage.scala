@@ -3,8 +3,9 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, WordPicker}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination, WordPicker}
 import gathedge.frontend.i18n.I18n
+import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
@@ -14,6 +15,7 @@ import gathedge.shared.dto.{
   ColumnLanguageGuess,
   ColumnSample,
   LanguageCheckResponse,
+  Paging,
   TabularImportResponse,
   TabularRow,
   TagEntry,
@@ -42,8 +44,39 @@ import scala.util.{Failure, Success}
   * the pasted order, and the reader sorts them out here.
   */
 object TagEditorPage {
-  def render(tagId: Long, recognize: ImageOcr.Recognize): HtmlElement = {
-    AppShell.render(Page.TagDetail(tagId), new TagEditorPage(tagId, recognize).render())
+
+  /** @param query
+    *   which page of the rows to draw, from the URL — see [[gathedge.frontend.listing.TagEntryQuery]].
+    * @param onQuery
+    *   where a page turn goes: the address bar, not a local `Var`.
+    */
+  def render(
+    tagId: Long,
+    recognize: ImageOcr.Recognize,
+    query: Signal[TagEntryQuery],
+    onQuery: Observer[TagEntryQuery],
+  ): HtmlElement = {
+    AppShell.render(Page.TagDetail(tagId), new TagEditorPage(tagId, recognize, query, onQuery).render())
+  }
+
+  /** The rows one page holds, cut from the rows the filters show.
+    *
+    * `page` is clamped rather than trusted: a hand-edited URL, a narrowing filter or a deleted row all leave a number
+    * pointing past the end, and the last page is a better answer than an empty table. The arithmetic is `Pagination`'s
+    * and `Paging`'s, so the slice and the buttons above it cannot disagree about which page is which.
+    */
+  private[pages] def pageSlice(rows: List[TagEntry], page: Int, pageSize: Int): List[TagEntry] = {
+    val current = Pagination.clampPage(page, Paging.pageCount(rows.size.toLong, pageSize))
+    val from    = Paging.offset(current, pageSize)
+    rows.slice(from, from + pageSize)
+  }
+
+  /** Which page holds one row, or `None` when the filters hide it — what the editor jumps to when a write names a row
+    * the reader cannot currently see: the duplicate it flashes, or the row an add appended past the end of the page.
+    */
+  private[pages] def pageOfRow(rows: List[TagEntry], key: (Long, Option[Long]), pageSize: Int): Option[Int] = {
+    val index = rows.indexWhere(row => rowKey(row) == key)
+    Option.when(index >= 0 && pageSize > 0)(index / pageSize + Paging.firstPage)
   }
 
   /** A row's identity in the editor. One source word can carry more than one translation row, so the target id is part
@@ -214,10 +247,37 @@ object TagEditorPage {
   }
 }
 
-private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
+private final class TagEditorPage(
+  tagId: Long,
+  recognize: ImageOcr.Recognize,
+  pageQuery: Signal[TagEntryQuery],
+  onQuery: Observer[TagEntryQuery],
+) {
 
   /** Ceiling on a bulk-import file, matching `BulkUploadDialog.maxBytes`. */
   private val maxBulkBytes = 2 * 1024 * 1024
+
+  // -- Paging --------------------------------------------------------------------------------
+  // The page of rows to draw, from the URL. Unlike every other listing here, turning the page asks the server for
+  // nothing: `WordApiClient.tagEntries` answers with the whole wordlist, and the editor needs it whole — see
+  // `TagEntryQuery`'s doc comment. So `page` cuts `visibleEntries` and nothing else reloads.
+
+  /** `.distinct` because every reader of this treats an emission as "redraw the rows". */
+  private val querySignal = pageQuery.distinct
+
+  private val pageSignal     = querySignal.map(_.page).distinct
+  private val pageSizeSignal = querySignal.map(_.pageSize).distinct
+
+  /** Every way this page asks for a different page, as edits applied to whatever the address bar says — the arrangement
+    * `TagsPage`/`WordsPage` use, and for the same reason: the state is in the URL, not in a local `Var`.
+    */
+  private val changeBus = new EventBus[TagEntryQuery => TagEntryQuery]()
+
+  private def change(edit: TagEntryQuery => TagEntryQuery): Unit = changeBus.emit(edit)
+
+  /** Those edits resolved against the query in the address bar — what [[render]] hands back to the router. */
+  private val queryChanges: EventStream[TagEntryQuery] =
+    changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) }
 
   private val tagVar: Var[Option[Tag]]        = Var(None)
   private val entriesVar: Var[List[TagEntry]] = Var(List.empty[TagEntry])
@@ -251,6 +311,11 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   /** The answer from `addPair` and `attachWord` alike: append the new row and clear the add controls, or — since both
     * writes are idempotent — flash the row already there when the write named one the list has.
+    *
+    * Either way the rows move under a paged list, so both branches take the reader to the page the row is on. A new row
+    * is appended, so it is on the last page; the duplicate may be anywhere, and a flash on a page nobody is looking at
+    * is no answer at all. When the row is already on screen the page does not change, and
+    * [[gathedge.frontend.App.onTagDetailQuery]] writes no history entry for it.
     */
   private def onEntryAdded(result: Either[ApiError, gathedge.shared.dto.TagEntryResponse]): Unit = {
     result match {
@@ -265,9 +330,17 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
               entry.target.map(Word.display).getOrElse(""),
             )
           )
-          flashRow(TagEditorPage.rowKey(entry))
+          val key = TagEditorPage.rowKey(entry)
+          flashRow(key)
+          change(query => {
+            TagEditorPage
+              .pageOfRow(filteredNow(entriesVar.now()), key, query.pageSize)
+              .fold(query)(page => query.copy(page = page))
+          })
         } else {
-          entriesVar.update(_ :+ entry)
+          val rows = entriesVar.now() :+ entry
+          entriesVar.set(rows)
+          change(query => query.copy(page = Pagination.lastPage(filteredNow(rows).size.toLong, query.pageSize)))
           warningVar.set(response.warning.map(I18n.resolve))
           Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None, addTargetPos -> None)
           addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
@@ -326,6 +399,32 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
         if (buckets.isEmpty && !importedByMe && !uniqueToTag) entries
         else entries.filter(entry => TagEditorPage.rowVisible(entry, buckets, importedByMe, uniqueToTag))
       }
+  }
+
+  /** The filtered rows the current page holds — what the table draws. Everything else about the editor still reads
+    * [[visibleEntries]] or `entriesVar`: the selection is scoped to what the filters show rather than to one page, and
+    * the whole list is what the duplicate check and the language lock are asked about.
+    */
+  private val pagedEntries: Signal[List[TagEntry]] = {
+    Signal
+      .combine(visibleEntries, pageSignal, pageSizeSignal)
+      .map { case (rows, page, size) => TagEditorPage.pageSlice(rows, page, size) }
+  }
+
+  /** How many rows the filters show, for the page control's own count and buttons. */
+  private val totalSignal: Signal[Long] = visibleEntries.map(_.size.toLong).distinct
+
+  /** The rows as the filters show them *now*, read synchronously — what [[onEntryAdded]] needs to work out which page a
+    * just-written row landed on. It restates [[visibleEntries]] rather than sampling it because a `Signal` has no
+    * public `now`, and because a write made inside an observer propagates in the *next* transaction: the signal is
+    * still holding the old list at the moment this is asked.
+    */
+  private def filteredNow(rows: List[TagEntry]): List[TagEntry] = {
+    val buckets      = filtersVar.now()
+    val importedByMe = importedByMeVar.now()
+    val uniqueToTag  = uniqueToTagVar.now()
+    if (buckets.isEmpty && !importedByMe && !uniqueToTag) rows
+    else rows.filter(entry => TagEditorPage.rowVisible(entry, buckets, importedByMe, uniqueToTag))
   }
 
   // -- Add-a-row control --------------------------------------------------------------------
@@ -455,6 +554,10 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
 
   /** The keys of the rows the filters currently show — kept in step with [[visibleEntries]] so "Select all" can read
     * them synchronously (a `Signal` has no public `now`).
+    *
+    * Every row the filters show, not only the page on screen: "Select all" and the bulk deletes behind it are about the
+    * wordlist the reader has narrowed to, which paging only draws a slice of. The table heading's own tick box is the
+    * per-page one — see [[renderRows]].
     */
   private val visibleKeysVar = Var(List.empty[(Long, Option[Long])])
 
@@ -728,6 +831,7 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           renderFilters(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderSelectionBar())),
           renderRows(),
+          renderPagination(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderAddRow())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkPanel())),
         ),
@@ -740,6 +844,16 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
           )
         })
       ),
+      // -- paging --
+      queryChanges --> onQuery,
+      // A filter change starts again at the first page: page 4 of the wider list says nothing about the narrowed one,
+      // the rule `TagEntryQuery.reset` carries for every other listing. Only when there is a page to leave — the
+      // filter chips must not write a history entry each on the first page.
+      Signal
+        .combine(filtersVar.signal, importedByMeVar.signal, uniqueToTagVar.signal)
+        .updates
+        .sample(querySignal)
+        .filter(_.page != Paging.firstPage) --> Observer[TagEntryQuery](_ => change(_.reset(identity))),
       // -- data --
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
         case Right(tags) =>
@@ -1104,13 +1218,43 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     )
   }
 
+  /** The page control under the rows, hidden while the wordlist shows none — the table already says so in words, and a
+    * row of buttons over an empty table offers nothing to press. Built once and kept, rather than rebuilt with every
+    * row change: the boolean it follows is `.distinct`.
+    *
+    * No `busy` flag: paging here draws what the browser already holds, so there is no request for the buttons to wait
+    * on.
+    */
+  private def renderPagination(): HtmlElement = {
+    div(
+      child.maybe <-- totalSignal
+        .map(_ > 0L)
+        .distinct
+        .map(
+          Option.when(_)(
+            Pagination.render(
+              page = pageSignal,
+              total = totalSignal,
+              pageSize = pageSizeSignal,
+              onPage = Observer[Int](page => change(_.copy(page = page))),
+              onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
+              summary = totalSignal.map(total => I18n.plural(UiKeys.tagsEditorCount, total)).distinct,
+            )
+          )
+        )
+    )
+  }
+
   private def renderRows(): HtmlElement = {
     div(
       cls := "mt-4",
-      child <-- visibleEntries.map { rows =>
+      child <-- pagedEntries.map { rows =>
         if (rows.isEmpty) p(cls := "opacity-60 text-sm", I18n.t(UiKeys.tagsEditorEmpty))
         else {
-          val visibleKeys = rows.map(TagEditorPage.rowKey).toSet
+          // This page's rows, which is what the heading's tick box acts on — the selection bar's "Select all" is the
+          // wider one, over every row the filters show. A reader ticking the heading means "these", and the rows they
+          // can see are the ones they are answering about.
+          val pageKeys = rows.map(TagEditorPage.rowKey).toSet
           table(
             cls := "table table-sm",
             thead(
@@ -1122,9 +1266,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
                       input(
                         typ := "checkbox",
                         cls := "checkbox checkbox-xs",
-                        checked <-- selectedVar.signal.map(s => visibleKeys.nonEmpty && visibleKeys.subsetOf(s)),
+                        checked <-- selectedVar.signal.map(s => pageKeys.nonEmpty && pageKeys.subsetOf(s)),
                         onInput.mapToChecked --> Observer[Boolean](on =>
-                          selectedVar.update(s => if (on) s ++ visibleKeys else s -- visibleKeys)
+                          selectedVar.update(s => if (on) s ++ pageKeys else s -- pageKeys)
                         ),
                       )
                     )
@@ -1637,7 +1781,9 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     svg.strokeWidth    := "1.5",
     svg.strokeLineCap  := "round",
     svg.strokeLineJoin := "round",
-    svg.path(svg.d := "m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"),
+    svg.path(
+      svg.d := "m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+    ),
   )
 
   private def pencilMark(): SvgElement = svg.svg(
@@ -1648,6 +1794,8 @@ private final class TagEditorPage(tagId: Long, recognize: ImageOcr.Recognize) {
     svg.strokeWidth    := "1.5",
     svg.strokeLineCap  := "round",
     svg.strokeLineJoin := "round",
-    svg.path(svg.d := "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"),
+    svg.path(
+      svg.d := "m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125"
+    ),
   )
 }

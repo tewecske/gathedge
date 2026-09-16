@@ -646,6 +646,8 @@
   "ui.tags.editor.addHeading": "Szópár hozzáadása",
   "ui.tags.editor.addWordOnlyHint": "Ha önmagában szeretne szót hozzáadni, hagyja üresen a válaszmezőt, és nyomja meg az Entert.",
   "ui.tags.editor.empty": "Még nincs szó.",
+  "ui.tags.editor.count.one": "{0} szó",
+  "ui.tags.editor.count.other": "{0} szó",
   "ui.tags.editor.editRow": "Szerkesztés",
   "ui.tags.editor.saveRow": "Mentés",
   "ui.tags.editor.noAnswer": "—",

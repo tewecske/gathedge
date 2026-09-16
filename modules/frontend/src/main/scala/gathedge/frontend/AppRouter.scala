@@ -8,6 +8,7 @@ import gathedge.frontend.listing.{
   GamePlayQuery,
   GroupQuery,
   MyPlayQuery,
+  TagEntryQuery,
   TagQuery,
   UserQuery,
   WordQuery,
@@ -161,8 +162,8 @@ object Page {
   case object AdminRateLimits extends Page
 
   /** Browsing/creating/joining classroom-style tag groups. Public like [[Tags]]: `GroupEndpoints.list`/`.get` answer
-    * without a session, so a signed-out visitor browses the catalog and opens any group's detail read-only; creating
-    * or joining one is still a signed-in action. It carries its whole listing state, the same reason [[Admin]]/[[Words]]
+    * without a session, so a signed-out visitor browses the catalog and opens any group's detail read-only; creating or
+    * joining one is still a signed-in action. It carries its whole listing state, the same reason [[Admin]]/[[Words]]
     * do — see [[gathedge.frontend.listing.GroupQuery]] and the two routes below.
     */
   final case class Groups(query: GroupQuery = GroupQuery.default) extends Page
@@ -185,8 +186,11 @@ object Page {
     * a signed-out visitor can open any wordlist and read it. The edit controls only appear for a wordlist the reader
     * owns or their group owns (`Tag.editableByMe`), which is a signed-in state, so no guest is minted here — creating a
     * wordlist to edit goes through [[TagCreate]] instead.
+    *
+    * It carries which page of its rows is on screen, for the same reason [[Tags]] carries its whole listing state — see
+    * [[gathedge.frontend.listing.TagEntryQuery]] and the two routes below.
     */
-  final case class TagDetail(id: Long) extends Page
+  final case class TagDetail(id: Long, query: TagEntryQuery = TagEntryQuery.default) extends Page
 
   /** The whole wordlist catalog, paged/sorted/filtered like [[Words]]. Reached from the collection bar's "All tags"
     * button. Public like [[TagDetail]]: everyone sees every wordlist. A signed-in reader's own and group wordlists sort
@@ -228,7 +232,7 @@ object Page {
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
-      case Tags(_) | TagDetail(_) | TagCreate                                         =>
+      case Tags(_) | TagDetail(_, _) | TagCreate                                      =>
         AuthGuard.Public
       // The group catalog and a group's own detail read without a session, the same reasoning as the wordlist catalog:
       // a visitor browses every group and opens one before deciding to sign in and join. `GroupJoin` stays auth-only
@@ -360,13 +364,29 @@ object AppRouter {
     pattern = root / "groups" / "join" / segment[String],
     basePath = basePath,
   )
-  private val tagDetailRoute   = Route(
-    encode = (p: TagDetail) => p.id,
-    decode = (id: Long) => TagDetail(id),
+
+  /** The wordlist editor, which carries the page of rows it is showing — a path segment *and* a query, like
+    * [[gameResultsRoute]], but split into two routes the way the static listings are (see [[adminQueryRoute]]).
+    *
+    * `Route.withQuery` alone would do, at the cost of a trailing `?` on the bare editor URL. That is a wart
+    * `gameResultsRoute` accepts and this page cannot: `/tags/{id}` is where the catalog, a group's page and every
+    * shared link land, so it is an address readers see and send on. `withQueryPF` plus a bare-path `applyPF` keeps the
+    * first page spelled `/tags/5`, and the parameter appears only once the reader turns to page two.
+    */
+  private val tagDetailQueryRoute = Route.withQueryPF[TagDetail, Long, TagEntryQuery](
+    matchEncode = { case page: TagDetail if page.query != TagEntryQuery.default => PatternArgs(page.id, page.query) },
+    decode = { case args if args.params != TagEntryQuery.default => TagDetail(args.path, args.params) },
+    pattern = (root / "tags" / segment[Long]) ? TagEntryQuery.params,
+    basePath = basePath,
+  )
+
+  private val tagDetailRoute = Route.applyPF[TagDetail, Long](
+    matchEncode = { case page: TagDetail if page.query == TagEntryQuery.default => page.id },
+    decode = { case id: Long => TagDetail(id) },
     pattern = root / "tags" / segment[Long],
     basePath = basePath,
   )
-  private val tagsQueryRoute   = Route.onlyQueryPF[Tags, TagQuery](
+  private val tagsQueryRoute = Route.onlyQueryPF[Tags, TagQuery](
     matchEncode = { case page: Tags if page.query != TagQuery.default => page.query },
     decode = { case query if query != TagQuery.default => Tags(query) },
     pattern = (root / "tags") ? TagQuery.params,
@@ -514,8 +534,8 @@ object AppRouter {
         s"GroupDetail:$id"
       case GroupJoin(code)                =>
         s"GroupJoin:$code"
-      case TagDetail(id)                  =>
-        s"TagDetail:$id"
+      case TagDetail(id, query)           =>
+        s"TagDetail:$id:" + TagEntryQuery.params.createParamsString(query)
       case Tags(query)                    =>
         "Tags:" + TagQuery.params.createParamsString(query)
       case Forbidden                      =>
@@ -623,7 +643,24 @@ object AppRouter {
     } else if (tag.startsWith("GroupJoin:")) {
       GroupJoin(tag.stripPrefix("GroupJoin:"))
     } else if (tag.startsWith("TagDetail:")) {
-      withId(tag, "TagDetail:")(TagDetail.apply)
+      // Same shape as the `AdminUserPlays:` branch, including the one-part tag an older build wrote: a corrupt id is
+      // `NotFound`, an unreadable query falls back to that wordlist's first page.
+      val rest = tag.stripPrefix("TagDetail:")
+      val sep  = rest.indexOf(':')
+      if (sep < 0) {
+        rest.toLongOption.map(id => TagDetail(id)).getOrElse(NotFound)
+      } else {
+        rest
+          .substring(0, sep)
+          .toLongOption
+          .map { id =>
+            TagEntryQuery.params
+              .matchQueryString(rest.substring(sep + 1))
+              .map(query => TagDetail(id, query))
+              .getOrElse(TagDetail(id))
+          }
+          .getOrElse(NotFound)
+      }
     } else if (tag.startsWith("Groups:")) {
       // A tag we cannot read is a history entry from an older build; the listing itself is still the right screen, so
       // fall back to its default view rather than to Not Found — the same reasoning `AdminAudit`'s fallback uses.
@@ -736,6 +773,7 @@ object AppRouter {
         groupDetailRoute,
         tagsQueryRoute,
         tagsRoute,
+        tagDetailQueryRoute,
         tagDetailRoute,
         forbiddenRoute,
       ),

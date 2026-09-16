@@ -646,6 +646,8 @@
   "ui.tags.editor.addHeading": "Add a word pair",
   "ui.tags.editor.addWordOnlyHint": "To add a word on its own, leave the answer box empty and press Enter.",
   "ui.tags.editor.empty": "No words yet.",
+  "ui.tags.editor.count.one": "{0} word",
+  "ui.tags.editor.count.other": "{0} words",
   "ui.tags.editor.editRow": "Edit",
   "ui.tags.editor.saveRow": "Save",
   "ui.tags.editor.noAnswer": "—",

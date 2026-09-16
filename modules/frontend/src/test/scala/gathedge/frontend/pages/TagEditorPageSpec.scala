@@ -3,9 +3,10 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, Paging, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -27,7 +28,8 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     val container                 = dom.document.createElement("div")
     dom.document.body.appendChild(container)
     val noOcr: ImageOcr.Recognize = (_, _, _, _) => Future.successful("")
-    val rootNode                  = L.render(container, new TagEditorPage(1L, noOcr).render())
+    val rootNode                  =
+      L.render(container, new TagEditorPage(1L, noOcr, Val(TagEntryQuery.default), Observer.empty).render())
     try use(container)
     finally {
       rootNode.unmount()
@@ -84,6 +86,12 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         val text = withPage(_.textContent)
         assertTrue(text.contains(UiKeys.tagsEditorEmpty))
       },
+      // The rows arrive in one answer and the browser cuts them, so an empty list means no page control at all — a row
+      // of buttons over the "no words yet" notice offers nothing to press.
+      test("the page control stays away while the wordlist shows no rows") {
+        val text = withPage(_.textContent)
+        assertTrue(!text.contains(UiKeys.commonRowsPerPage))
+      },
       test("renders the source and target language selects") {
         val selects = withPage(_.querySelectorAll("select.select-sm").toList)
         assertTrue(selects.size >= 2)
@@ -127,6 +135,39 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(
             TagEditorPage.isDuplicate(existing, entry(7, None)),
             !TagEditorPage.isDuplicate(existing, entry(7, Some(10))),
+          )
+        },
+      ),
+      // What paging comes to on this page: the filtered rows, cut. The editor still holds every row — the duplicate
+      // check, the language lock and the row deletes all read the whole list — so the cut is the only thing the page
+      // number changes.
+      suite("pageSlice / pageOfRow")(
+        test("a page holds its own rows, in order") {
+          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
+          assertTrue(
+            TagEditorPage.pageSlice(rows, Paging.firstPage, 3).map(_.source.id) == List(1L, 2L, 3L),
+            TagEditorPage.pageSlice(rows, 2, 3).map(_.source.id) == List(4L, 5L, 6L),
+            // The last page is the short one.
+            TagEditorPage.pageSlice(rows, 3, 3).map(_.source.id) == List(7L),
+          )
+        },
+        test("a page past the end reads as the last page, not as an empty table") {
+          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
+          assertTrue(
+            TagEditorPage.pageSlice(rows, 99, 3).map(_.source.id) == List(7L),
+            // Below the first page is the first page, the same rule `Paging.boundedPage` follows.
+            TagEditorPage.pageSlice(rows, 0, 3).map(_.source.id) == List(1L, 2L, 3L),
+            TagEditorPage.pageSlice(Nil, 4, 3) == Nil,
+          )
+        },
+        test("a row's page is where a write takes the reader") {
+          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
+          assertTrue(
+            TagEditorPage.pageOfRow(rows, (1L, None), 3).contains(Paging.firstPage),
+            TagEditorPage.pageOfRow(rows, (4L, None), 3).contains(2),
+            TagEditorPage.pageOfRow(rows, (7L, None), 3).contains(3),
+            // A row the filters hide has no page to go to.
+            TagEditorPage.pageOfRow(rows, (99L, None), 3).isEmpty,
           )
         },
       ),

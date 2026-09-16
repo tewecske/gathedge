@@ -48,6 +48,7 @@ import gathedge.frontend.listing.{
   GamePlayQuery,
   GroupQuery,
   MyPlayQuery,
+  TagEntryQuery,
   TagQuery,
   UserQuery,
   WordQuery,
@@ -83,6 +84,9 @@ object App {
 
   /** Same hand-off trick as [[latestGameSlug]], for the `SharedPlayerHistory` signal renderer below. */
   private var latestSharedPlayerHistoryId: Long = 0L
+
+  /** Same hand-off trick as [[latestGameSlug]], for the `TagDetail` signal renderer below. */
+  private var latestTagDetailId: Long = 0L
 
   /** The *only* user-derived facts that change which page element is built. Deliberately not the whole `User`: a theme
     * toggle (or any other profile write) must not tear down and rebuild the mounted page, discarding its `Var`s,
@@ -216,6 +220,18 @@ object App {
       .collectSignalPF[TagQuery] { case (gate, page: Page.Tags) if gate.loaded => page.query }(query =>
         TagsPage.render(query, onTagsQuery)
       )
+      // The wordlist editor turns the page of its own rows, so every page turn is a new `Page` — a signal renderer for
+      // the same reason the listings above need one, and a stronger one: the editor holds a screen's worth of state
+      // the catch-all would discard on a page turn (the filters, the ticked rows, a half-filled add row, an open
+      // bulk-import panel). Public like the catalog, and the id is stashed as a side effect the way `GameInstance`'s
+      // slug is — with the same consequence: arriving here with a *different* id (only reachable by hand-editing the
+      // URL; nothing links one editor straight to another) would keep showing the first wordlist, which a plain
+      // reload fixes.
+      .collectSignalPF[TagEntryQuery] {
+        case (gate, page: Page.TagDetail) if gate.loaded =>
+          latestTagDetailId = page.id
+          page.query
+      }(query => TagEditorPage.render(latestTagDetailId, ImageOcr.recognize, query, onTagDetailQuery))
       // The groups listing has no gate at all, the same reasoning `WordsPage`/`TagsPage` above are pulled out for: it
       // renders for a visitor with no session, since `GroupEndpoints.list` answers without one. `loaded` still
       // matters — the page reads the user to decide whether to draw the create/join controls.
@@ -367,6 +383,13 @@ object App {
       }
       navigate(Page.GameResults(latestGameResultsSlug, query), replace = refinesSearch)
     }
+  }
+
+  /** The editor's own page turns. There is no search box to type out further, so this always pushes: every change is a
+    * page or a page size, which is exactly what the back button should walk through.
+    */
+  private val onTagDetailQuery: Observer[TagEntryQuery] = {
+    Observer(query => navigate(Page.TagDetail(latestTagDetailId, query), replace = false))
   }
 
   /** Same rule as [[onGameResultsQuery]], keyed to [[latestAdminUserPlaysId]] as well as the query: a query change for
@@ -541,8 +564,9 @@ object App {
         GroupDetailPage.render(id, generateQr)
       case Page.GroupJoin(code)                           =>
         GroupJoinPage.render(code)
-      case Page.TagDetail(id)                             =>
-        TagEditorPage.render(id, ImageOcr.recognize)
+      // Reached only before the session has loaded; the signal renderer above answers otherwise.
+      case Page.TagDetail(id, query)                      =>
+        TagEditorPage.render(id, ImageOcr.recognize, Val(query), onTagDetailQuery)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words` above.
       case Page.Tags(query)                               =>

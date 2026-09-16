@@ -30,6 +30,11 @@ object PagingSpec extends ZIOSpecDefault {
           Paging.boundedPageSize(Some(-5)) == 1,
           Paging.maxPageSize == Paging.pageSizes.max,
           Paging.pageSizes.contains(Paging.defaultPageSize),
+          // The wordlist editor reads its rows a page at a time and starts at its own size; the dropdown has to be
+          // able to offer it, and an absent `pageSize` has to mean it.
+          Paging.pageSizes.contains(Paging.tagEntryPageSize),
+          Paging.boundedPageSize(None, Paging.tagEntryPageSize) == Paging.tagEntryPageSize,
+          Paging.boundedPageSize(Some(100000), Paging.tagEntryPageSize) == Paging.maxPageSize,
         )
       },
       // Deliberately *not* clamped at the top: the server has not counted anything yet when it reads this, and an
