@@ -73,7 +73,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
           // Redeeming a second time for a group already joined must not fail — that is the whole of what
           // "idempotent" means here; there is nothing further to assert once this line does not raise.
           _       <- GroupService.join(code, other)
-          detail  <- GroupService.detail(created.id, other)
+          detail  <- GroupService.detail(created.id, Some(other))
         } yield assertTrue(
           detail.viewerRole.contains(GroupRole.Member),
           detail.memberCount == 2L,
@@ -100,7 +100,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
           created <- GroupService.create("Group4", owner)
           fresh   <- GroupService.regenerateInviteCode(created.id, owner)
           _       <- GroupService.join(fresh, other)
-          detail  <- GroupService.detail(created.id, other)
+          detail  <- GroupService.detail(created.id, Some(other))
         } yield assertTrue(detail.viewerRole.contains(GroupRole.Member))
       },
       test("a version-guarded group write refuses a stale version and advances the counter") {
@@ -131,7 +131,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
           blocked <- GroupService.leave(created.id, owner).either
           _       <- GroupService.setMemberRole(created.id, owner, other, GroupRole.Admin)
           allowed <- GroupService.leave(created.id, owner).either
-          detail  <- GroupService.detail(created.id, other)
+          detail  <- GroupService.detail(created.id, Some(other))
         } yield assertTrue(
           blocked == Left(GroupFailure.LastAdmin),
           allowed.isRight,
@@ -216,7 +216,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
                        .orDieWith(failure => new RuntimeException(failure.toString))
                        .map(_.tag.id)
           _       <- GroupService.attachTag(created.id, tag, owner)
-          detail  <- GroupService.detail(created.id, owner)
+          detail  <- GroupService.detail(created.id, Some(owner))
         } yield assertTrue(
           detail.tags.map(t => (t.sourceLanguage, t.targetLanguage)) == List((WordLanguage.En, WordLanguage.Es))
         )

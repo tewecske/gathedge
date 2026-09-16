@@ -216,9 +216,9 @@ object App {
       .collectSignalPF[TagQuery] { case (gate, page: Page.Tags) if gate.loaded => page.query }(query =>
         TagsPage.render(query, onTagsQuery)
       )
-      // The groups listing carries its state in the URL the same way — a signal renderer for the same reason. Auth is
-      // enforced by the redirect observer, not here, the same as `MyPlays`/`AllGames` above: `gate.loaded` is the only
-      // precondition.
+      // The groups listing has no gate at all, the same reasoning `WordsPage`/`TagsPage` above are pulled out for: it
+      // renders for a visitor with no session, since `GroupEndpoints.list` answers without one. `loaded` still
+      // matters — the page reads the user to decide whether to draw the create/join controls.
       .collectSignalPF[GroupQuery] { case (gate, page: Page.Groups) if gate.loaded => page.query }(query =>
         GroupsPage.render(query, onGroupsQuery)
       )

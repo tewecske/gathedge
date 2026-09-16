@@ -15,13 +15,16 @@ import gathedge.shared.dto.{
 import zio.*
 import zio.http.*
 
-/** Shareable tag groups. Every operation sits behind `authenticated` — a group is visible to every *account*, not to
-  * the open internet, the same as `WordRoutes.listTags` — so there is no public/session split the way `WordRoutes`
-  * itself has. See `shared.api.GroupEndpoints`.
+/** Shareable tag groups. `list`/`get` sit behind `optionalUser`, the same as `WordRoutes.list`/`.get` — a visitor with
+  * no session sees the same groups and detail with no roster/invite-code/role, the way `GroupDetail` already narrows
+  * those for a signed-in non-member. Everything else still sits behind `authenticated`. See `shared.api.GroupEndpoints`.
   */
 object GroupRoutes {
 
   private def userId: URIO[User, Long] = ZIO.service[User].map(_.id)
+
+  /** The viewer, when there is one. Supplied by `optionalUser`. */
+  private def viewerId: URIO[Option[User], Option[Long]] = ZIO.service[Option[User]].map(_.map(_.id))
 
   /** An empty `q=`/`tag=` is the search box after it has been cleared, which is not a filter — the same rule
     * `AdminRoutes.searchTerm` follows.
@@ -41,7 +44,7 @@ object GroupRoutes {
           q: Option[String],
           tag: Option[String],
         ) =>
-          userId.flatMap { id =>
+          viewerId.flatMap { id =>
             GroupService.listPage(
               id,
               Paging.boundedPage(page),
@@ -59,7 +62,7 @@ object GroupRoutes {
   private val getRoute = {
     GroupEndpoints.get.implementHandler(
       handler((groupId: Long) =>
-        userId.flatMap(viewer => GroupService.detail(groupId, viewer).mapError(ApiFailures.group))
+        viewerId.flatMap(viewer => GroupService.detail(groupId, viewer).mapError(ApiFailures.group))
       )
     )
   }
@@ -140,10 +143,12 @@ object GroupRoutes {
     )
   }
 
-  val routes: Routes[AuthService & GroupService, Response] = {
+  private val publicRoutes = {
+    Routes(listRoute, getRoute) @@ RouteSupport.optionalUser
+  }
+
+  private val sessionRoutes = {
     Routes(
-      listRoute,
-      getRoute,
       createRoute,
       joinRoute,
       leaveRoute,
@@ -155,4 +160,6 @@ object GroupRoutes {
       detachTagRoute,
     ) @@ RouteSupport.authenticated @@ RouteSupport.csrf
   }
+
+  val routes: Routes[AuthService & GroupService, Response] = publicRoutes ++ sessionRoutes
 }

@@ -22,10 +22,10 @@ import ApiSchemas.given
   * marked translations) to every member, while renaming/deleting it stays the tag owner's alone — see
   * `WordService.requireEditableTag`.
   *
-  * Every endpoint here sits behind `authenticated`, the same as [[WordEndpoints.listTags]]: a group is visible to every
-  * *account*, not to the open internet — there is no visitor-facing browse the way [[WordEndpoints.list]] is.
-  * [[list]]/[[get]] answer the same result to every account regardless of membership, only [[GroupDetail.members]] and
-  * `.inviteCode` narrow by the caller's own standing in that particular group.
+  * [[list]]/[[get]] sit behind `optionalUser`, the same as [[WordEndpoints.list]]/[[WordEndpoints.get]] — a visitor
+  * with no session browses and views groups too. Everything else sits behind `authenticated`. [[list]]/[[get]] answer
+  * the same result to every viewer regardless of membership, only [[GroupDetail.members]] and `.inviteCode` narrow by
+  * the caller's own standing in that particular group.
   */
 object GroupEndpoints {
 
@@ -59,16 +59,17 @@ object GroupEndpoints {
       .query(tagQuery)
       .withCodecError
       .out[GroupPage]
-      .outErrors(failure.badRequest, failure.unauthorized)
+      .outFailure(failure.badRequest)
   }
 
   /** One group's detail. `members` is empty and `inviteCode` is `None` unless the caller is themself a member (for the
-    * roster) or an admin (for the code) of this particular group — see [[GroupDetail]].
+    * roster) or an admin (for the code) of this particular group — see [[GroupDetail]]. Callable with no session at
+    * all, the same as [[WordEndpoints.get]] — a visitor gets the same detail with no roster/invite-code/role.
     */
   val get = {
     Endpoint(Method.GET / "api" / "groups" / groupId).withCodecError
       .out[GroupDetail]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.notFound)
   }
 
   /** Creates a group; the caller becomes its sole admin. 400 covers a blank name or one over `Group.maxNameLength`. */
@@ -155,6 +156,9 @@ object GroupEndpoints {
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
+
+  /** [[list]]/[[get]] sit behind `optionalUser`, not `authenticated` — for `DocsRoutes.publicEndpoints`. */
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get)
 
   /** For `DocsRoutes`, which needs every description as one heterogeneous collection. */
   val all: List[Endpoint[?, ?, ?, ?, ?]] = {

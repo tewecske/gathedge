@@ -160,21 +160,23 @@ object Page {
     */
   case object AdminRateLimits extends Page
 
-  /** Browsing/creating/joining classroom-style tag groups. Auth-only, like [[SharedProgress]]: collaborating on a group
-    * is between signed-in accounts, and `GroupEndpoints.list`/`.get` themselves need a session, unlike
-    * [[Words]]/[[WordDetail]]'s public pair. It carries its whole listing state, the same reason [[Admin]]/[[Words]] do
-    * — see [[gathedge.frontend.listing.GroupQuery]] and the two routes below.
+  /** Browsing/creating/joining classroom-style tag groups. Public like [[Tags]]: `GroupEndpoints.list`/`.get` answer
+    * without a session, so a signed-out visitor browses the catalog and opens any group's detail read-only; creating
+    * or joining one is still a signed-in action. It carries its whole listing state, the same reason [[Admin]]/[[Words]]
+    * do — see [[gathedge.frontend.listing.GroupQuery]] and the two routes below.
     */
   final case class Groups(query: GroupQuery = GroupQuery.default) extends Page
 
-  /** One group's roster (visible only to its own members), invite code (admins only), and attached tags. */
+  /** One group's detail: roster and invite code only for its own members/admins, attached tags for everyone — see
+    * `GroupEndpoints.get`. Public read, like [[Groups]]; the membership/admin actions on the page still need a session.
+    */
   final case class GroupDetail(id: Long) extends Page
 
   /** Where a group's invite link lands — `/groups/join/{code}`, the URL [[GroupDetailPage]]'s share row builds and
-    * encodes as a QR code, the same shape `GameInstance`'s shared link is. Unlike that one, this page is not itself
-    * public: every `GroupEndpoints` call needs a session (see `GroupEndpoints`'s doc comment), so a signed-out visitor
-    * following the link bounces to sign-in first, same as every other `Groups` screen — there is no guest detour to
-    * copy from `GameInstancePage`, since a group has no meaning for an account with no identity of its own.
+    * encodes as a QR code, the same shape `GameInstance`'s shared link is. Unlike [[Groups]]/[[GroupDetail]], this page
+    * is not itself public: redeeming a code (`GroupEndpoints.join`) needs a session, so a signed-out visitor following
+    * the link bounces to sign-in first — there is no guest detour to copy from `GameInstancePage`, since a group has no
+    * meaning for an account with no identity of its own.
     */
   final case class GroupJoin(code: String) extends Page
 
@@ -227,6 +229,11 @@ object Page {
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
       case Tags(_) | TagDetail(_) | TagCreate                                         =>
+        AuthGuard.Public
+      // The group catalog and a group's own detail read without a session, the same reasoning as the wordlist catalog:
+      // a visitor browses every group and opens one before deciding to sign in and join. `GroupJoin` stays auth-only
+      // (see its own doc comment) since redeeming a code needs a session.
+      case Groups(_) | GroupDetail(_)                                                 =>
         AuthGuard.Public
       case _                                                                          =>
         AuthGuard.RequireAuth

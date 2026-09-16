@@ -466,11 +466,11 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Idempotent: revoking a viewer with no share answers the same 204 as one that had one, so its only
               // failure is the aspect's 401.
               ("DELETE", "/api/progress-shares/viewers/{viewerUserId}")                   -> Set(NoContent, Unauthorized),
-              // Groups: authenticated like `GET /api/tags/export`, not public — a group is visible to every account, not
-              // the open internet. `list` is paged/sorted/filtered like `GET /api/admin/users`, hence the 400 for an
-              // unparseable query parameter.
-              ("GET", "/api/groups")                                                      -> Set(Ok, BadRequest, Unauthorized),
-              ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound),
+              // Groups: `list`/`get` are guarded by `optionalUser`, like `GET /api/tags`/`.../entries` above — a
+              // visitor with no session browses and opens a group too, so neither declares a 401. `list` is
+              // paged/sorted/filtered like `GET /api/admin/users`, hence the 400 for an unparseable query parameter.
+              ("GET", "/api/groups")                                                      -> Set(Ok, BadRequest),
+              ("GET", "/api/groups/{groupId}")                                            -> Set(Ok, BadRequest, NotFound),
               ("POST", "/api/groups")                                                     -> Set(Created, BadRequest, Unauthorized),
               // Admin-only, hence the 403; follows `create`'s own name validation, hence the 400; 409 is a stale
               // write (the group changed between this caller's read and this write).
@@ -515,7 +515,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 319,
+          declared == 317,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -625,6 +625,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/tags"),
               ("GET", "/api/tags/page"),
               ("GET", "/api/tags/{tagId}/entries"),
+              // The group catalog and one group's detail — a signed-out visitor browses and opens any group read-only,
+              // the same reasoning as the wordlist catalog.
+              ("GET", "/api/groups"),
+              ("GET", "/api/groups/{groupId}"),
             )
         )
       },
@@ -633,7 +637,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 19,
+          guarded.size == operations.size - 21,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

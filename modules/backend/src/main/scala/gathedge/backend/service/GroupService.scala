@@ -39,9 +39,11 @@ enum GroupFailure {
   */
 trait GroupService {
 
-  /** One page of groups, with the caller's own role in each — `None` for one they haven't joined. */
+  /** One page of groups, with the caller's own role in each — `None` for one they haven't joined, or for a visitor
+    * with no session at all.
+    */
   def listPage(
-    viewerId: Long,
+    viewerId: Option[Long],
     page: Int,
     pageSize: Int,
     search: Option[String],
@@ -50,7 +52,10 @@ trait GroupService {
     descending: Boolean,
   ): UIO[GroupPage]
 
-  def detail(groupId: Long, viewerId: Long): IO[GroupFailure, GroupDetail]
+  /** `viewerId` is `None` for a visitor with no session — `GroupDetail.members`/`.inviteCode` come back empty/`None`,
+    * same as for a signed-in non-member.
+    */
+  def detail(groupId: Long, viewerId: Option[Long]): IO[GroupFailure, GroupDetail]
 
   /** Creates a group; the caller becomes its sole admin. */
   def create(name: String, userId: Long): IO[GroupFailure, GroupDetail]
@@ -93,7 +98,7 @@ trait GroupService {
 object GroupService {
 
   def listPage(
-    viewerId: Long,
+    viewerId: Option[Long],
     page: Int,
     pageSize: Int,
     search: Option[String],
@@ -103,7 +108,7 @@ object GroupService {
   ): URIO[GroupService, GroupPage] =
     ZIO.serviceWithZIO[GroupService](_.listPage(viewerId, page, pageSize, search, tag, sort, descending))
 
-  def detail(groupId: Long, viewerId: Long): ZIO[GroupService, GroupFailure, GroupDetail] =
+  def detail(groupId: Long, viewerId: Option[Long]): ZIO[GroupService, GroupFailure, GroupDetail] =
     ZIO.serviceWithZIO[GroupService](_.detail(groupId, viewerId))
 
   def create(name: String, userId: Long): ZIO[GroupService, GroupFailure, GroupDetail] =
@@ -185,7 +190,7 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
   }
 
   def listPage(
-    viewerId: Long,
+    viewerId: Option[Long],
     page: Int,
     pageSize: Int,
     search: Option[String],
@@ -196,7 +201,7 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
     for {
       rows        <- repo.listPage(Paging.offset(page, pageSize), pageSize, search, tag, sort, descending).orDie
       total       <- repo.countMatching(search, tag).orDie
-      memberships <- repo.listMembershipsFor(viewerId).orDie
+      memberships <- viewerId.fold(ZIO.succeed(List.empty[GroupMemberRow]))(repo.listMembershipsFor(_).orDie)
       roleByGroup  = memberships.flatMap(m => GroupRole.fromString(m.role).map(m.groupId -> _)).toMap
     } yield GroupPage(
       rows.map { case (row, memberCount, tagCount) =>
@@ -206,10 +211,10 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
     )
   }
 
-  def detail(groupId: Long, viewerId: Long): IO[GroupFailure, GroupDetail] = {
+  def detail(groupId: Long, viewerId: Option[Long]): IO[GroupFailure, GroupDetail] = {
     for {
       group      <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
-      membership <- repo.findMembership(groupId, viewerId).orDie
+      membership <- viewerId.fold(ZIO.succeed(Option.empty[GroupMemberRow]))(repo.findMembership(groupId, _).orDie)
       memberRows <- repo.membersWithUsers(groupId).orDie
       tagRows    <- repo.tagsOfGroup(groupId).orDie
       isMember    = membership.isDefined
@@ -245,7 +250,7 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
       group  <- repo.insertGroup(valid, normal, code, userId, now).orDie
       _      <- repo.insertMembership(group.id, userId, adminCode, now).orDie
-      result <- detail(group.id, userId)
+      result <- detail(group.id, Some(userId))
     } yield result
   }
 
@@ -291,7 +296,7 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
                   GroupFailure.StaleWrite,
                   GroupFailure.NotFound,
                 )
-      result <- detail(groupId, userId)
+      result <- detail(groupId, Some(userId))
     } yield result
   }
 

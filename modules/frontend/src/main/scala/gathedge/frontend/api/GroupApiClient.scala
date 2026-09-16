@@ -17,7 +17,7 @@ import gathedge.shared.dto.{
 import EndpointClient.{executor, run}
 
 /** Shareable tag groups' calls, generated from `GroupEndpoints` the same way [[WordApiClient]] is from `WordEndpoints`.
-  * Every call needs a session — there is no public half, unlike the vocabulary listing.
+  * [[listPage]]/[[get]] answer without a session, the same as `WordApiClient.list`/`.get`; everything else needs one.
   */
 object GroupApiClient {
 

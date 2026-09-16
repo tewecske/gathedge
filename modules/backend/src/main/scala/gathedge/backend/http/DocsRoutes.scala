@@ -61,7 +61,9 @@ object DocsRoutes {
       // words and no tags, which is what lets the feature be used before signing up for anything.
       WordEndpoints.public ++
       // A shared game link, the same reasoning as WordEndpoints.public: viewable before any guest is minted.
-      GameEndpoints.public
+      GameEndpoints.public ++
+      // The group list/detail reads, the same reasoning as WordEndpoints.public: viewable before any guest is minted.
+      GroupEndpoints.public
   }
 
   private val sessionSchemeName = "sessionCookie"
