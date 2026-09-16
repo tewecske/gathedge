@@ -17,6 +17,12 @@ import javax.sql.DataSource
 trait UsageEventRepository {
   def insert(row: UsageEventRow): Task[UsageEventRow]
 
+  /** A whole drained batch as one JDBC batch rather than one round trip per row — what `UsageTracker`'s drain fiber
+    * writes with, so a burst of requests costs one statement instead of one each. Rows inserted; an empty list is a
+    * no-op. No generated id comes back, the same reason `WordRepository.insertWords` names its columns one by one.
+    */
+  def insertAll(rows: List[UsageEventRow]): Task[Long]
+
   /** How many requests each (method, route) pair received since `since` — a GET and a DELETE on the same path are
     * different features. Most-used first is the caller's job; this answers every pair that had at least one.
     */
@@ -39,6 +45,9 @@ trait UsageEventRepository {
 object UsageEventRepository {
   def insert(row: UsageEventRow): RIO[UsageEventRepository, UsageEventRow] =
     ZIO.serviceWithZIO[UsageEventRepository](_.insert(row))
+
+  def insertAll(rows: List[UsageEventRow]): RIO[UsageEventRepository, Long] =
+    ZIO.serviceWithZIO[UsageEventRepository](_.insertAll(rows))
 
   def countsByRoute(since: Long): RIO[UsageEventRepository, List[(String, String, Long)]] =
     ZIO.serviceWithZIO[UsageEventRepository](_.countsByRoute(since))
@@ -81,6 +90,26 @@ final class UsageEventRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrate
     val inserted = run(ctx.run(quote(events.insertValue(lift(row)).returningGenerated(_.id))))
     logged(inserted.map(id => row.copy(id = id))) { event =>
       s"usageEvents.insert id=${event.id} route=${row.route}"
+    }
+  }
+
+  def insertAll(rows: List[UsageEventRow]): Task[Long] = {
+    if (rows.isEmpty)
+      ZIO.succeed(0L)
+    else {
+      val q = quote {
+        liftQuery(rows).foreach(row => {
+          events.insert(
+            _.createdAt -> row.createdAt,
+            _.method    -> row.method,
+            _.route     -> row.route,
+            _.status    -> row.status,
+            _.userId    -> row.userId,
+            _.ip        -> row.ip,
+          )
+        })
+      }
+      logged(run(ctx.run(q)).map(_.sum))(inserted => s"usageEvents.insertBatch rows=${rows.size} inserted=$inserted")
     }
   }
 

@@ -234,12 +234,18 @@ trait AuthService {
 
   /** None both when there's no session and when it's expired/revoked. */
   def currentUser(sessionId: String): UIO[Option[User]]
-  def updateTheme(userId: Long, theme: Theme): Task[User]
+
+  /** Takes the caller's own `User` rather than an id, and answers it with the new theme on it: the `authenticated`
+    * aspect resolved that row one statement ago, so reading it back would be asking the database a question the caller
+    * is already holding the answer to.
+    */
+  def updateTheme(user: User, theme: Theme): Task[User]
 
   /** Records the language the account chose. Which language a *page* renders in is decided by its URL prefix, not by
-    * this — see `V8__user_locale.sql` for what the stored value is actually for.
+    * this — see `V8__user_locale.sql` for what the stored value is actually for. Takes and answers the caller's own
+    * `User`, for the reason [[updateTheme]] does.
     */
-  def updateLocale(userId: Long, locale: Locale): Task[User]
+  def updateLocale(user: User, locale: Locale): Task[User]
 
   /** Replaces the account's username and display name, both wholesale: `None` clears the column rather than leaving it
     * alone, which is what lets the settings form empty a field by sending an empty box.
@@ -362,11 +368,11 @@ object AuthService {
   def currentUser(sessionId: String): URIO[AuthService, Option[User]] =
     ZIO.serviceWithZIO[AuthService](_.currentUser(sessionId))
 
-  def updateTheme(userId: Long, theme: Theme): RIO[AuthService, User] =
-    ZIO.serviceWithZIO[AuthService](_.updateTheme(userId, theme))
+  def updateTheme(user: User, theme: Theme): RIO[AuthService, User] =
+    ZIO.serviceWithZIO[AuthService](_.updateTheme(user, theme))
 
-  def updateLocale(userId: Long, locale: Locale): RIO[AuthService, User] =
-    ZIO.serviceWithZIO[AuthService](_.updateLocale(userId, locale))
+  def updateLocale(user: User, locale: Locale): RIO[AuthService, User] =
+    ZIO.serviceWithZIO[AuthService](_.updateLocale(user, locale))
 
   def updateProfile(
     userId: Long,
@@ -1103,18 +1109,12 @@ final case class AuthServiceLive(
     ).orDie
   }
 
-  def updateTheme(userId: Long, theme: Theme): Task[User] = {
-    for {
-      _   <- userRepo.updateTheme(userId, theme.toString.toLowerCase)
-      row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
-    } yield toDomain(row)
+  def updateTheme(user: User, theme: Theme): Task[User] = {
+    userRepo.updateTheme(user.id, theme.toString.toLowerCase).as(user.copy(theme = theme))
   }
 
-  def updateLocale(userId: Long, locale: Locale): Task[User] = {
-    for {
-      _   <- userRepo.updateLocale(userId, locale.code)
-      row <- userRepo.findById(userId).someOrFail(new RuntimeException(s"user $userId not found"))
-    } yield toDomain(row)
+  def updateLocale(user: User, locale: Locale): Task[User] = {
+    userRepo.updateLocale(user.id, locale.code).as(user.copy(locale = locale))
   }
 
   /** Validates both halves, refuses a username another account holds, and writes them together.

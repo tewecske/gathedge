@@ -14,10 +14,11 @@ import java.util.concurrent.TimeUnit
 /** Where every request lands a `usage_events` row, from `RouteSupport.usageTracking`.
   *
   * The write is '''off the request path'''. `record` resolves the cheap, pure parts of the row (method, route, status,
-  * client address, session id, timestamp) and hands them to a bounded queue; a single background fiber drains the
-  * queue, does the one database-backed step — the session-cookie lookup — and the insert. The request returns as soon
-  * as the event is enqueued. A full queue makes `record` wait for space rather than dropping the event, so a database
-  * that cannot keep up slows callers a little instead of losing usage history.
+  * client address, session id, timestamp) and hands them to a bounded queue; a single background fiber drains the queue
+  * '''a batch at a time''', does the one database-backed step — the session-cookie lookup, once per distinct cookie in
+  * the batch — and one batched insert. The request returns as soon as the event is enqueued. A full queue makes
+  * `record` wait for space rather than dropping the event, so a database that cannot keep up slows callers a little
+  * instead of losing usage history.
   *
   * The session-cookie lookup on the drain fiber is the one place a caller is resolved a second time:
   * `authenticated`/`optionalUser` already do it for the handler, but the tracking aspect runs outside any one route
@@ -99,38 +100,60 @@ final case class UsageTrackerLive(
     } yield ()
   }
 
-  /** Takes one pending event at a time, resolves the account behind the session cookie, and writes the row. A failed
-    * step is logged and swallowed — the same rule `AuditTrail.record`'s DB half follows — so the fiber survives a
-    * database blip and keeps draining.
+  /** Takes everything the queue is holding, resolves the accounts behind the session cookies, and writes the rows. A
+    * failed step is logged and swallowed — the same rule `AuditTrail.record`'s DB half follows — so the fiber survives
+    * a database blip and keeps draining, and a row the database refuses loses only itself.
     *
-    * The session lookup and insert run inside a `SpanKind.CONSUMER` span, linked to the request's server span
-    * (`pending.traceLink`). The span is this trace's root — the write outlives the request, so a link, not a parent
-    * edge — and the Java agent's SQL span nests under it. No agent: the span call is a no-op.
+    * '''One batch, not one row.''' `take` blocks until there is something to do, then `takeUpTo` sweeps up whatever
+    * else arrived while the last batch was being written, and the lot goes in as one JDBC batch. The session lookups
+    * are deduplicated across the batch too: a burst from one reader carries one cookie, so it costs one lookup however
+    * many requests it was. Under load this collapses two statements per request towards two per batch; on an idle
+    * server a batch is one event and nothing changes.
+    *
+    * The lookups and insert run inside a `SpanKind.CONSUMER` span, linked to the request spans the batch came from
+    * (`traceLink`). The span is its trace's root — the write outlives the request, so a link, not a parent edge — and
+    * the Java agent's SQL span nests under it. No agent: the span call is a no-op.
     */
   private[service] val drainLoop: UIO[Nothing] = {
-    val one = {
-      queue.take.flatMap { pending =>
-        tracing.span("usage_events insert", SpanKind.CONSUMER, links = pending.traceLink.toSeq) {
-          for {
-            userId <- pending.sessionId match {
-                        case None      => ZIO.succeed(None)
-                        case Some(sid) => authService.currentUser(sid).map(_.map(_.id))
-                      }
-            _      <- repo.insert(
-                        UsageEventRow(
-                          id = 0L,
-                          createdAt = pending.at,
-                          method = pending.method,
-                          route = pending.route,
-                          status = pending.status,
-                          userId = userId,
-                          ip = pending.ip,
-                        )
-                      )
-          } yield ()
-        }
-      }
+    val batch = {
+      for {
+        first <- queue.take
+        rest  <- queue.takeUpTo(config.app.usageEventQueueCapacity)
+        events = first :: rest.toList
+        _     <- tracing.span("usage_events insert", SpanKind.CONSUMER, links = events.flatMap(_.traceLink)) {
+                   for {
+                     // One lookup per distinct cookie, not per event: the map is what every row in the batch reads.
+                     userIds <- ZIO
+                                  .foreach(events.flatMap(_.sessionId).distinct) { sid =>
+                                    authService.currentUser(sid).map(user => sid -> user.map(_.id))
+                                  }
+                                  .map(_.toMap)
+                     rows     = events.map { pending =>
+                                  UsageEventRow(
+                                    id = 0L,
+                                    createdAt = pending.at,
+                                    method = pending.method,
+                                    route = pending.route,
+                                    status = pending.status,
+                                    userId = pending.sessionId.flatMap(userIds.getOrElse(_, None)),
+                                    ip = pending.ip,
+                                  )
+                                }
+                     _       <- repo.insertAll(rows).catchAllCause { cause =>
+                                  // A batch fails as a unit, so one unwritable row would take the rest of the batch's
+                                  // history with it. The retry costs a statement per row, but only on the rare batch
+                                  // that failed, and keeps the rule that a bad row loses itself and nothing else.
+                                  ZIO.logWarningCause("Usage-event batch failed; retrying row by row", cause) *>
+                                    ZIO.foreachDiscard(rows) { row =>
+                                      repo.insert(row).catchAllCause { rowCause =>
+                                        ZIO.logWarningCause("Could not record usage event", rowCause)
+                                      }
+                                    }
+                                }
+                   } yield ()
+                 }
+      } yield ()
     }
-    one.catchAllCause(cause => ZIO.logWarningCause("Could not record usage event", cause)).forever
+    batch.catchAllCause(cause => ZIO.logWarningCause("Could not record usage events", cause)).forever
   }
 }

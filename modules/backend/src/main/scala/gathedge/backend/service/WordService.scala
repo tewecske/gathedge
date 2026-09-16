@@ -1419,17 +1419,41 @@ final case class WordServiceLive(
     search: Option[String],
     scope: TagScope,
   ): UIO[TagPage] = {
-    classifiedTags(reader).map { tags =>
-      val narrowed = tags.filter(matchesScope(_, scope)).filter(matchesSearch(_, search))
-      val ordered  = orderForListing(narrowed, sort, descending)
-      val offset   = gathedge.shared.dto.Paging.offset(page, pageSize)
-      TagPage(ordered.slice(offset, offset + pageSize), ordered.size.toLong)
+    for {
+      // The viewer's study groups decide `scope` and the default order, so they are resolved first and handed to the
+      // query rather than classified per row afterwards — which is what lets the database do the narrowing.
+      memberships   <- ZIO.foreach(reader)(groupRepo.listMembershipsFor).map(_.getOrElse(Nil)).orDie
+      memberGroupIds = memberships.map(_.groupId).distinct
+      paged         <- repo
+                         .listTagsPage(
+                           // `-1` never equals a `users.id` (they start at 1), so a signed-out visitor owns nothing —
+                           // the same lenient no-match `classifiedTags` threads through.
+                           reader.getOrElse(-1L),
+                           memberGroupIds,
+                           gathedge.shared.dto.Paging.offset(page, pageSize),
+                           pageSize,
+                           sort,
+                           descending,
+                           search,
+                           scope,
+                         )
+                         .orDie
+      (rows, total)  = paged
+      groupRefs     <- resolveGroupRefs(rows.map { case (row, _, _) => row })
+      memberGroups   = memberGroupIds.toSet
+    } yield {
+      val items = rows.map { case (row, count, ownedByMe) =>
+        val editableByMe = ownedByMe || row.groupId.exists(memberGroups.contains)
+        toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
+      }
+      TagPage(items, total)
     }
   }
 
-  /** Every wordlist there is, each with the caller's own two marks on it — the shared body [[listTags]] sorts one way
-    * (its own two-group order, for the dropdowns) and [[listTagsPaged]] another (filtered, paged, and a third group
-    * split out — see [[orderForListing]]).
+  /** Every wordlist there is, each with the caller's own two marks on it, in the dropdowns' own two-group order — what
+    * [[listTags]] answers. [[listTagsPaged]] asks the same question of the database instead
+    * ([[gathedge.backend.db.WordRepository.listTagsPage]]), since a page of a catalog has no business reading the whole
+    * table to throw most of it away.
     */
   private def classifiedTags(reader: Option[Long]): UIO[List[Tag]] = {
     for {
@@ -1446,46 +1470,6 @@ final case class WordServiceLive(
       val editableByMe = ownedByMe || row.groupId.exists(memberGroupIds.contains)
       toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
     }
-  }
-
-  private def matchesScope(tag: Tag, scope: TagScope): Boolean = {
-    scope match {
-      case TagScope.All   =>
-        true
-      case TagScope.Mine  =>
-        tag.ownedByMe
-      case TagScope.Group =>
-        tag.editableByMe && !tag.ownedByMe
-      case TagScope.Other =>
-        !tag.editableByMe
-    }
-  }
-
-  private def matchesSearch(tag: Tag, search: Option[String]): Boolean = {
-    search.forall(term => tag.name.toLowerCase.contains(term.toLowerCase))
-  }
-
-  /** [[TagSort.name]]/[[TagSort.words]] replace the listing's own order outright; asked for neither (the common case),
-    * own tags come first, then a study group's, then everyone else's, alphabetically within each — [[Tag.sorted]]'s
-    * two-way split refined into three, since a flat paged table has no section heading left to carry the distinction.
-    */
-  private def orderForListing(tags: List[Tag], sort: Option[String], descending: Boolean): List[Tag] = {
-    sort match {
-      case Some(TagSort.name)  =>
-        sortByDirection(tags, descending)(_.name.toLowerCase)
-      case Some(TagSort.words) =>
-        sortByDirection(tags, descending)(_.wordCount)
-      case _                   =>
-        tags.sortBy(tag => (categoryRank(tag), tag.name.toLowerCase))
-    }
-  }
-
-  private def sortByDirection[A: Ordering](tags: List[Tag], descending: Boolean)(key: Tag => A): List[Tag] = {
-    if (descending) tags.sortBy(key)(using summon[Ordering[A]].reverse) else tags.sortBy(key)
-  }
-
-  private def categoryRank(tag: Tag): Int = {
-    if (tag.ownedByMe) 0 else if (tag.editableByMe) 1 else 2
   }
 
   /** The name-half of creating a tag, shared by [[createTag]], [[copyTag]] and [[renameTag]]: valid, and not already
@@ -1962,41 +1946,37 @@ final case class WordServiceLive(
   }
 
   /** The row `(sourceId, targetId)` as the editor will show it after a write — read back from
-    * [[gathedge.backend.db.WordRepository.tagEntries]] so `imported`/`matchKind` are whatever the write left them, with
-    * a plain fallback for the rare stale-read case.
+    * [[gathedge.backend.db.WordRepository.tagEntry]] so `imported`/`matchKind` are whatever the write left them, with a
+    * placeholder for the rare stale-read case.
+    *
+    * Keyed on the row, not on the tag: this runs on every `addPair`, `attachWord` and `replacePair`, so reading the
+    * whole tag back to find one row would make each single-row edit cost the size of the wordlist.
     */
   private def entryAfterWrite(tag: TagRow, sourceId: Long, targetId: Option[Long], viewerId: Long): UIO[TagEntry] = {
     for {
-      rows   <- repo.tagEntries(tag.id).orDie
-      source <- repo.findWordById(sourceId).orDie
-      target <- targetId match {
-                  case Some(id) => repo.findWordById(id).orDie
-                  case None     => ZIO.succeed(None)
-                }
-      found   = rows.find(row => row.source.id == sourceId && row.target.map(_.id) == targetId)
-      row     = found.orElse(source.map(s => TagEntryRow(s, target, imported = false, PairMatch.Manual)))
-      entry  <- row match {
-                  case Some(r) => oneTagEntry(tag, r, viewerId)
-                  case None    =>
-                    ZIO.succeed(
-                      TagEntry(
-                        Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None),
-                        None,
-                        imported = false,
-                        PairMatch.Manual,
-                        createdByMe = false,
-                        inMyOtherTags = false,
-                        otherTranslations = Nil,
-                      )
-                    )
-                }
+      row   <- repo.tagEntry(tag.id, sourceId, targetId).orDie
+      entry <- row match {
+                 case Some(r) => oneTagEntry(tag, r, viewerId)
+                 case None    =>
+                   ZIO.succeed(
+                     TagEntry(
+                       Word(sourceId, WordLanguage.En, "", PartOfSpeech.Other, None),
+                       None,
+                       imported = false,
+                       PairMatch.Manual,
+                       createdByMe = false,
+                       inMyOtherTags = false,
+                       otherTranslations = Nil,
+                     )
+                   )
+               }
     } yield entry
   }
 
   def tagEntries(tagId: Long, reader: Option[Long]): IO[WordFailure, List[TagEntry]] = {
     for {
       tag  <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
-      rows <- repo.tagEntries(tagId).orDie
+      rows <- repo.tagEntries(tagId, tag.sourceLanguage).orDie
       out  <- toTagEntries(tag, rows, reader)
     } yield out
   }
@@ -2538,37 +2518,48 @@ final case class WordServiceLive(
   def checkColumnLanguages(columns: List[ColumnSample]): UIO[ColumnLanguageCheckResponse] = {
     // Every study language, not just a tag's two: the mapping step's job is to say what a column *is*, including one
     // the reader has not assigned yet.
-    ZIO
-      .foreach(columns)(column => {
-        val values = column.values.map(_.trim).filter(_.nonEmpty).distinct
-        if (values.isEmpty)
-          ZIO.succeed(ColumnLanguageGuess(column.index, sampled = 0, hits = Nil, best = None))
-        else {
-          for {
-            shuffled <- Random.shuffle(values)
-            sample    = shuffled.take(languageCheck.sampleSize)
-            hits     <- ZIO.foreach(WordLanguage.all)(language => {
-                          // Parsed the same way the import will parse it, so a marker or an article never counts as
-                          // part of the word being looked up.
-                          val markers = MarkerVocabulary.forPair(language, language)
-                          val keys    = sample.map(value => WordCell.parseWord(value, language, markers).text.toLowerCase)
-                          repo
-                            .findWordsByKeys(WordLanguage.code(language), keys)
-                            .orDie
-                            .map(found => {
-                              val norms = found.map(_.textNorm).toSet
-                              LanguageHit(language, keys.count(norms.contains))
-                            })
-                        })
-          } yield ColumnLanguageGuess(
-            index = column.index,
-            sampled = sample.size,
-            hits = hits,
-            best = hits.filter(_.matched > 0).maxByOption(_.matched).map(_.language),
-          )
+    for {
+      samples <- ZIO.foreach(columns)(column => {
+                   val values = column.values.map(_.trim).filter(_.nonEmpty).distinct
+                   if (values.isEmpty)
+                     ZIO.succeed(column.index -> List.empty[String])
+                   else
+                     Random.shuffle(values).map(shuffled => column.index -> shuffled.take(languageCheck.sampleSize))
+                 })
+      // Parsed the same way the import will parse it, so a marker or an article never counts as part of the word being
+      // looked up. Every column is parsed against every language before anything is read.
+      keyed    = samples.map { case (index, sample) =>
+                   val perLanguage = WordLanguage.all.map(language => {
+                     val markers = MarkerVocabulary.forPair(language, language)
+                     language -> sample.map(value => WordCell.parseWord(value, language, markers).text.toLowerCase)
+                   })
+                   (index, sample.size, perLanguage)
+                 }
+      // One statement for every column against every language, rather than one per pair: the rows come back carrying
+      // their own `language`, which is the whole of what a per-language count needs.
+      found   <- repo
+                   .findWordsAcrossLanguages(
+                     WordLanguage.all.map(WordLanguage.code),
+                     keyed.flatMap { case (_, _, perLanguage) => perLanguage.flatMap(_._2) }.distinct,
+                   )
+                   .orDie
+      known    = found.map(row => (row.language, row.textNorm)).toSet
+    } yield ColumnLanguageCheckResponse(keyed.map { case (index, sampled, perLanguage) =>
+      if (sampled == 0)
+        ColumnLanguageGuess(index, sampled = 0, hits = Nil, best = None)
+      else {
+        val hits = perLanguage.map { case (language, keys) =>
+          val code = WordLanguage.code(language)
+          LanguageHit(language, keys.count(key => known.contains((code, key))))
         }
-      })
-      .map(ColumnLanguageCheckResponse.apply)
+        ColumnLanguageGuess(
+          index = index,
+          sampled = sampled,
+          hits = hits,
+          best = hits.filter(_.matched > 0).maxByOption(_.matched).map(_.language),
+        )
+      }
+    })
   }
 
   /** The tokens already in the dictionary for `language`, and whatever is left. Looks each token up by its bare word

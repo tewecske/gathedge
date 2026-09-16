@@ -474,9 +474,7 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
                          .orDie
       total         <- repo.countAllGamesMatching(nameContains, favoritesOf).orDie
       gameIds        = rows.map(_.id)
-      tagsByGame    <- ZIO
-                         .foreach(rows)(row => repo.tagsOf(row.id).orDie.map(tags => row.id -> tagRefs(tags)))
-                         .map(_.toMap)
+      tagsByGame    <- repo.tagsOfGames(gameIds).orDie.map(_.view.mapValues(tagRefs).toMap)
       playCounts    <- repo.playCounts(gameIds).orDie
       likeCounts    <- repo.favoriteCounts(gameIds).orDie
       favoritedMine <- viewerId match {
@@ -1076,9 +1074,9 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     */
   private def candidateTranslationIds(play: GamePlayRow, wordId: Long, fallback: Long): UIO[List[Long]] = {
     repo
-      .eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage)
+      .eligibleTranslationsOf(play.gameId, play.sourceLanguage, play.targetLanguage, List(wordId))
       .orDie
-      .map(pairs => (fallback :: pairs.collect { case (w, t) if w == wordId => t }).distinct)
+      .map(pairs => (fallback :: pairs.map(_._2)).distinct)
   }
 
   def submitAnswer(
@@ -1138,7 +1136,16 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     answers: List[GamePlayAnswerRow],
   ): UIO[List[GameAnswerResult]] = {
     for {
-      pairs        <- repo.eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage).orDie
+      // Narrowed to the words actually answered: the whole pool would be the same join over every tag in the game,
+      // and every row outside this list would be grouped away unread.
+      pairs        <- repo
+                        .eligibleTranslationsOf(
+                          play.gameId,
+                          play.sourceLanguage,
+                          play.targetLanguage,
+                          answers.map(_.wordId).distinct,
+                        )
+                        .orDie
       targetsByWord = pairs.groupBy(_._1).view.mapValues(_.map(_._2)).toMap
       expectedIds   = answers.map { a =>
                         a.id -> (a.translationWordId :: targetsByWord.getOrElse(a.wordId, Nil)).distinct

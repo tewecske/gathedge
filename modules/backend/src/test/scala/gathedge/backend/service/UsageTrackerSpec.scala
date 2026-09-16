@@ -31,12 +31,16 @@ import zio.test.*
   */
 object UsageTrackerSpec extends ZIOSpecDefault {
 
-  /** Fails the insert whenever the row's status is 599 — the suite's sentinel for "make the write throw" — and
-    * delegates everything else. Used to prove the drain fiber swallows a failed write and keeps going.
+  /** Fails the insert whenever a row's status is 599 — the suite's sentinel for "make the write throw" — and delegates
+    * everything else. Used to prove the drain fiber swallows a failed write and keeps going. The batch form fails on
+    * the whole batch if any row in it is the sentinel, which is what a failed `executeBatch` does.
     */
   final case class FlakyUsageEventRepository(delegate: UsageEventRepository) extends UsageEventRepository {
     def insert(row: UsageEventRow): Task[UsageEventRow]                = {
       if (row.status == 599) ZIO.fail(new RuntimeException("boom")) else delegate.insert(row)
+    }
+    def insertAll(rows: List[UsageEventRow]): Task[Long]               = {
+      if (rows.exists(_.status == 599)) ZIO.fail(new RuntimeException("boom")) else delegate.insertAll(rows)
     }
     def countsByRoute(since: Long): Task[List[(String, String, Long)]] = delegate.countsByRoute(since)
     def countsByUser(since: Long): Task[List[(Long, Long)]]            = delegate.countsByUser(since)

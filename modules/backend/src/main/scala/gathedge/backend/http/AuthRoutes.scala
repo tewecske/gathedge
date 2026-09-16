@@ -237,7 +237,7 @@ object AuthRoutes {
           withContext { (user: User) =>
             // A failure here is a bug or a dead database, not something the caller can act on:
             // die and let Main's route-level handler log the cause and answer a generic 500.
-            AuthService.updateTheme(user.id, body.theme).orDie.map(AuthResponse(_))
+            AuthService.updateTheme(user, body.theme).orDie.map(AuthResponse(_))
           }
         }
       )
@@ -250,7 +250,7 @@ object AuthRoutes {
           withContext { (user: User) =>
             // Persisting only. The page the caller is looking at is already in some language, chosen
             // by its URL prefix; the picker navigates to the other prefix separately.
-            AuthService.updateLocale(user.id, body.locale).orDie.map(AuthResponse(_))
+            AuthService.updateLocale(user, body.locale).orDie.map(AuthResponse(_))
           }
         }
       )

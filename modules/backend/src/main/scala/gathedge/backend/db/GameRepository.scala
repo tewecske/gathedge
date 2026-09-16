@@ -37,6 +37,11 @@ trait GameRepository {
 
   def tagsOf(gameId: Long): Task[List[TagRow]]
 
+  /** [[tagsOf]] across a whole page of games, as one join rather than one query per row — what the games listing reads.
+    * A game with no tags is simply absent from the map, the same split [[playCounts]] draws.
+    */
+  def tagsOfGames(gameIds: List[Long]): Task[Map[Long, List[TagRow]]]
+
   /** Rows affected — `0` means `id` does not exist, or its `version` no longer matches `expectedVersion`. Ownership is
     * the service's job: this only writes. Bumps `version`.
     */
@@ -98,6 +103,17 @@ trait GameRepository {
     * tie) is a business rule, not a projection, so it is the service's job.
     */
   def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]]
+
+  /** [[eligibleWordPairs]] narrowed to the source words in `wordIds`, in the `WHERE` clause rather than in Scala — what
+    * the two callers that only ever look up a handful of words read, so scoring one answer no longer rebuilds the
+    * game's entire eligible pool. Same non-dedup rule. An empty list skips the query.
+    */
+  def eligibleTranslationsOf(
+    gameId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+    wordIds: List[Long],
+  ): Task[List[(Long, Long)]]
 
   /** The same join shape as [[eligibleWordPairs]], through an explicit tag id list instead of `game_tags` — what the
     * setup screen's word-list preview reads before a game (and its `game_tags` rows) exist at all.
@@ -217,6 +233,9 @@ object GameRepository {
   def tagsOf(gameId: Long): RIO[GameRepository, List[TagRow]] =
     ZIO.serviceWithZIO[GameRepository](_.tagsOf(gameId))
 
+  def tagsOfGames(gameIds: List[Long]): RIO[GameRepository, Map[Long, List[TagRow]]] =
+    ZIO.serviceWithZIO[GameRepository](_.tagsOfGames(gameIds))
+
   def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt, expectedVersion))
 
@@ -260,6 +279,14 @@ object GameRepository {
     targetLanguage: String,
   ): RIO[GameRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleWordPairs(gameId, sourceLanguage, targetLanguage))
+
+  def eligibleTranslationsOf(
+    gameId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+    wordIds: List[Long],
+  ): RIO[GameRepository, List[(Long, Long)]] =
+    ZIO.serviceWithZIO[GameRepository](_.eligibleTranslationsOf(gameId, sourceLanguage, targetLanguage, wordIds))
 
   def eligibleWordPairsForTags(
     tagIds: List[Long],
@@ -428,6 +455,26 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(run(ctx.run(q)))(rows => s"games.tagsOf id=$gameId rows=${rows.size}")
   }
 
+  def tagsOfGames(gameIds: List[Long]): Task[Map[Long, List[TagRow]]] = {
+    if (gameIds.isEmpty)
+      ZIO.succeed(Map.empty)
+    else {
+      val q       = quote {
+        gameTags
+          .filter(link => liftQuery(gameIds).contains(link.gameId))
+          .join(tags)
+          .on { case (link, tag) =>
+            link.tagId == tag.id
+          }
+          .map { case (link, tag) => (link.gameId, tag) }
+      }
+      val grouped = run(ctx.run(q)).map { rows =>
+        rows.groupBy(_._1).map { case (gameId, pairs) => gameId -> pairs.map(_._2) }
+      }
+      logged(grouped)(byGame => s"games.tagsOfGames games=${gameIds.size} rows=${byGame.values.map(_.size).sum}")
+    }
+  }
+
   def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): Task[Long] = {
     val q = quote {
       games
@@ -495,6 +542,29 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
     logged(run(ctx.run(q))) { rows =>
       s"games.eligibleWordPairs game=$gameId source=$sourceLanguage target=$targetLanguage rows=${rows.size}"
+    }
+  }
+
+  def eligibleTranslationsOf(
+    gameId: Long,
+    sourceLanguage: String,
+    targetLanguage: String,
+    wordIds: List[Long],
+  ): Task[List[(Long, Long)]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        for {
+          link   <- gameTags.filter(_.gameId == lift(gameId))
+          pair   <- wordTagPairs.join(p => p.tagId == link.tagId && liftQuery(wordIds).contains(p.wordId))
+          source <- words.join(w => w.id == pair.wordId && w.language == lift(sourceLanguage))
+          target <- words.join(w => w.id == pair.translationWordId && w.language == lift(targetLanguage))
+        } yield (pair.wordId, pair.translationWordId)
+      }
+      logged(run(ctx.run(q))) { rows =>
+        s"games.eligibleTranslationsOf game=$gameId words=${wordIds.size} rows=${rows.size}"
+      }
     }
   }
 

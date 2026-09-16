@@ -3,8 +3,8 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import gathedge.shared.domain.{LanguageProfile, PairMatch, TranslationFilter, WordLanguage}
-import gathedge.shared.dto.WordSort
+import gathedge.shared.domain.{LanguageProfile, PairMatch, Tag, TagScope, TranslationFilter, WordLanguage}
+import gathedge.shared.dto.{TagSort, WordSort}
 import zio.*
 
 import javax.sql.DataSource
@@ -126,6 +126,30 @@ trait WordRepository {
     * two tag dropdowns mark and sort on.
     */
   def listTags(viewerId: Long): Task[List[(TagRow, Long, Boolean)]]
+
+  /** One page of the same rows, narrowed, ordered and cut '''by the database''' — what the wordlist catalog reads,
+    * where [[listTags]] answers the whole table for the two dropdowns that genuinely need every row. Answers the page
+    * and the total the same narrowing would return across all pages.
+    *
+    * `memberGroupIds` are the study groups `viewerId` belongs to, resolved by the caller. Together with `viewerId` they
+    * are the whole of `scope`, so the three-way own/group/everyone-else classification happens in the `WHERE` clause
+    * instead of over every tag in Scala — and, with no `sort` asked for, in the `ORDER BY` as well.
+    *
+    * The word counts are computed for the page's own tag ids, not for the table: the one aggregate over `word_tags`
+    * that has to see every row is [[TagSort.words]]'s `ORDER BY`, and that one is a correlated count the database can
+    * answer from `idx_word_tags_tag`.
+    */
+  def listTagsPage(
+    viewerId: Long,
+    memberGroupIds: List[Long],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): Task[(List[(TagRow, Long, Boolean)], Long)]
+
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]]
   def findTagById(id: Long): Task[Option[TagRow]]
   def insertTag(
@@ -308,8 +332,21 @@ trait WordRepository {
 
   /** The editor's rows: each source word, its marked answer if any, and the two import flags — ordered by
     * `word_tags.id` so a bulk import's text order survives, bidirectional pairs collapsed to one row.
+    *
+    * `sourceLanguage` is the tag's own, and decides which half of each pair is the row's source. It is a parameter
+    * rather than a read: every caller has the tag row in hand already.
     */
-  def tagEntries(tagId: Long): Task[List[TagEntryRow]]
+  def tagEntries(tagId: Long, sourceLanguage: String): Task[List[TagEntryRow]]
+
+  /** One editor row, read by its own key instead of by rebuilding the tag — what a single-row write answers with.
+    * `targetWordId` is `None` for a membership no pair names. Three statements, flat in the size of the tag, where
+    * [[tagEntries]] is four and linear in it: on a 500-entry wordlist that is the difference between pulling one row
+    * back and pulling all five hundred.
+    *
+    * Unlike [[tagEntries]], the orientation is the caller's, not the tag's: the pair is matched in either direction and
+    * rendered with `sourceWordId` as the source. `None` when no `words` row exists for `sourceWordId`.
+    */
+  def tagEntry(tagId: Long, sourceWordId: Long, targetWordId: Option[Long]): Task[Option[TagEntryRow]]
 
   /** Of `wordIds`, the ones that are a member of some tag `userId` owns other than `exceptTagId` — what the editor's
     * "only in this tag" filter is the complement of. One query; an empty `wordIds` skips it.
@@ -352,6 +389,12 @@ trait WordRepository {
     * without an `ON CONFLICT` clause the two dialects spell differently.
     */
   def findWordsByKeys(language: String, textNorms: List[String]): Task[List[WordRow]]
+
+  /** [[findWordsByKeys]] over several languages in one statement, for a caller asking the same set of spellings of each
+    * of them — the column-language check's whole question. Each row carries its own `language`, so splitting the answer
+    * back up per language is the caller's job; the rows returned are the cross product's hits, not one language's.
+    */
+  def findWordsAcrossLanguages(languages: List[String], textNorms: List[String]): Task[List[WordRow]]
 
   /** Every dictionary word in `language` whose `textNorm` length falls in `[minLength, maxLength]` — the candidate pool
     * bulk-upload's suggestion pass narrows edit-distance comparisons to, one batched query per language pass rather
@@ -513,6 +556,21 @@ object WordRepository {
   def listTags(viewerId: Long): RIO[WordRepository, List[(TagRow, Long, Boolean)]] =
     ZIO.serviceWithZIO[WordRepository](_.listTags(viewerId))
 
+  def listTagsPage(
+    viewerId: Long,
+    memberGroupIds: List[Long],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): RIO[WordRepository, (List[(TagRow, Long, Boolean)], Long)] = {
+    ZIO.serviceWithZIO[WordRepository](
+      _.listTagsPage(viewerId, memberGroupIds, offset, limit, sort, descending, search, scope)
+    )
+  }
+
   def findTag(userId: Long, nameNorm: String): RIO[WordRepository, Option[TagRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findTag(userId, nameNorm))
 
@@ -655,8 +713,15 @@ object WordRepository {
   def swapTagLanguages(tagId: Long, sourceLanguage: String, targetLanguage: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.swapTagLanguages(tagId, sourceLanguage, targetLanguage))
 
-  def tagEntries(tagId: Long): RIO[WordRepository, List[TagEntryRow]] =
-    ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId))
+  def tagEntries(tagId: Long, sourceLanguage: String): RIO[WordRepository, List[TagEntryRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId, sourceLanguage))
+
+  def tagEntry(
+    tagId: Long,
+    sourceWordId: Long,
+    targetWordId: Option[Long],
+  ): RIO[WordRepository, Option[TagEntryRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.tagEntry(tagId, sourceWordId, targetWordId))
 
   def sourceWordsInMyOtherTags(
     userId: Long,
@@ -692,6 +757,12 @@ object WordRepository {
 
   def findWordsByKeys(language: String, textNorms: List[String]): RIO[WordRepository, List[WordRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findWordsByKeys(language, textNorms))
+
+  def findWordsAcrossLanguages(
+    languages: List[String],
+    textNorms: List[String],
+  ): RIO[WordRepository, List[WordRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.findWordsAcrossLanguages(languages, textNorms))
 
   def findWordsByLengthRange(language: String, minLength: Int, maxLength: Int): RIO[WordRepository, List[WordRow]] =
     ZIO.serviceWithZIO[WordRepository](_.findWordsByLengthRange(language, minLength, maxLength))
@@ -1093,6 +1164,110 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     logged(listed)(rows => s"tags.list viewer=$viewerId rows=${rows.size}")
   }
 
+  /** The rows a catalog page is cut from, before ordering — the narrowing the page query and the total have to share,
+    * the same rule `GroupRepository.matching` states for its own listing.
+    *
+    * An empty `memberGroupIds` is not a `WHERE group_id IN ()`: a viewer in no study group has no group tags at all,
+    * and every tag that is not theirs is somebody else's.
+    */
+  private def matchingTags(
+    viewerId: Long,
+    memberGroupIds: List[Long],
+    search: Option[String],
+    scope: TagScope,
+  ): DynamicQuery[TagRow] = {
+    val pattern  = search.map(Tag.normalize).filter(_.nonEmpty).map(needle => s"%$needle%")
+    val narrowed = dynamicQuerySchema[TagRow]("tags")
+      .filterOpt(pattern)((row, needle) => quote(row.nameNorm.like(unquote(needle))))
+    (scope, memberGroupIds) match {
+      case (TagScope.All, _)          =>
+        narrowed
+      case (TagScope.Mine, _)         =>
+        narrowed.filter(row => quote(row.userId == lift(viewerId)))
+      case (TagScope.Group, Nil)      =>
+        narrowed.filter(_ => quote(false))
+      case (TagScope.Group, groupIds) =>
+        narrowed.filter(row =>
+          quote(row.userId != lift(viewerId) && row.groupId.exists(id => liftQuery(groupIds).contains(id)))
+        )
+      case (TagScope.Other, Nil)      =>
+        narrowed.filter(row => quote(row.userId != lift(viewerId)))
+      // `forall`, not `!exists`: an ungrouped tag has a NULL `group_id`, and `NOT (group_id IN (...))` is NULL for it
+      // — which `WHERE` reads as "no", dropping every tag nobody grouped. `forall` carries the `IS NULL` guard.
+      case (TagScope.Other, groupIds) =>
+        narrowed.filter(row =>
+          quote(row.userId != lift(viewerId) && row.groupId.forall(id => !liftQuery(groupIds).contains(id)))
+        )
+    }
+  }
+
+  /** The `dto.TagSort` vocabulary translated to an `ORDER BY`. Asked for neither column (the common case), the viewer's
+    * own tags come first, then a study group's, then everyone else's, alphabetically within each — the three-group
+    * order the catalog shows, as a `CASE` the database can sort on rather than a rank computed per row in Scala.
+    */
+  private def orderedTags(
+    query: DynamicQuery[TagRow],
+    viewerId: Long,
+    memberGroupIds: List[Long],
+    sort: Option[String],
+    descending: Boolean,
+  ): DynamicQuery[TagRow] = {
+    sort match {
+      case Some(TagSort.name)  =>
+        query.sortBy(_.nameNorm)(using ordering(descending))
+      case Some(TagSort.words) =>
+        query.sortBy(row => quote(wordTags.filter(link => link.tagId == row.id).size))(using ordering(descending))
+      case _                   =>
+        memberGroupIds match {
+          case Nil      =>
+            query.sortBy(row => quote((if (row.userId == lift(viewerId)) 0 else 2, row.nameNorm)))(using Ord.asc)
+          case groupIds =>
+            query.sortBy(row => {
+              quote(
+                (
+                  if (row.userId == lift(viewerId)) 0
+                  else if (row.groupId.exists(id => liftQuery(groupIds).contains(id))) 1
+                  else 2,
+                  row.nameNorm,
+                )
+              )
+            })(using Ord.asc)
+        }
+    }
+  }
+
+  def listTagsPage(
+    viewerId: Long,
+    memberGroupIds: List[Long],
+    offset: Int,
+    limit: Int,
+    sort: Option[String],
+    descending: Boolean,
+    search: Option[String],
+    scope: TagScope,
+  ): Task[(List[(TagRow, Long, Boolean)], Long)] = {
+    val narrowed = matchingTags(viewerId, memberGroupIds, search, scope)
+    val page     = orderedTags(narrowed, viewerId, memberGroupIds, sort, descending).drop(offset).take(limit)
+    val listed   = for {
+      rows   <- run(ctx.run(page))
+      total  <- run(ctx.run(narrowed.size))
+      tagIds  = rows.map(_.id)
+      byTag  <- if (tagIds.isEmpty) ZIO.succeed(List.empty[(Long, Long)])
+                else {
+                  run(ctx.run(quote {
+                    wordTags.filter(link => liftQuery(tagIds).contains(link.tagId)).groupBy(_.tagId).map {
+                      case (tagId, links) => (tagId, links.size)
+                    }
+                  }))
+               }
+      counted = byTag.toMap
+    } yield (rows.map(tag => (tag, counted.getOrElse(tag.id, 0L), tag.userId == viewerId)), total)
+    logged(listed) { case (rows, total) =>
+      s"tags.listPage viewer=$viewerId offset=$offset limit=$limit sort=${sort.getOrElse("-")} " +
+        s"desc=$descending scope=${TagScope.code(scope)} rows=${rows.size} total=$total"
+    }
+  }
+
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]] = {
     val q = quote(tags.filter(tag => tag.userId == lift(userId) && tag.nameNorm == lift(nameNorm)))
     logged(run(ctx.run(q)).map(_.headOption))(found => s"tags.find user=$userId found=${found.isDefined}")
@@ -1352,12 +1527,19 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def tagsOfWord(userId: Long, wordId: Long): Task[List[TagRow]] = {
+    // Driven from `word_tags`, not from `tags`: `UNIQUE (word_id, tag_id)` answers "this word's memberships" as a
+    // leftmost prefix, where the owner-or-group predicate is not something any index on `tags` can narrow. Same answer
+    // as the other way round, the same way [[tagsFor]] reads it for a whole page of words.
     val q = quote {
-      tags.filter(tag => {
-        (tag.userId == lift(userId) ||
-          tag.groupId.exists(gid => groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty)) &&
-        wordTags.filter(link => link.tagId == tag.id && link.wordId == lift(wordId)).nonEmpty
-      })
+      wordTags
+        .filter(link => link.wordId == lift(wordId))
+        .join(tags)
+        .on((link, tag) => link.tagId == tag.id)
+        .filter { case (_, tag) =>
+          tag.userId == lift(userId) ||
+          tag.groupId.exists(gid => groupMembers.filter(m => m.groupId == gid && m.userId == lift(userId)).nonEmpty)
+        }
+        .map { case (_, tag) => tag }
     }
     logged(run(ctx.run(q)))(rows => s"tags.ofWord user=$userId word=$wordId rows=${rows.size}")
   }
@@ -1625,9 +1807,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     * language); memberships that no pair names become their own answer-less rows. Ordered by `word_tags.id`, so a bulk
     * import's text order survives.
     */
-  def tagEntries(tagId: Long): Task[List[TagEntryRow]] = {
+  def tagEntries(tagId: Long, sourceLanguage: String): Task[List[TagEntryRow]] = {
     val assembled = for {
-      tagRow      <- run(ctx.run(quote(tags.filter(_.id == lift(tagId))))).map(_.headOption)
       memberships <- run(ctx.run(quote(wordTags.filter(_.tagId == lift(tagId)).sortBy(_.id)(using Ord.asc))))
       pairRows    <- run(ctx.run(quote(wordTagPairs.filter(_.tagId == lift(tagId)))))
       wordIds      = (memberships.map(_.wordId) ++ pairRows.flatMap(p => List(p.wordId, p.translationWordId))).distinct
@@ -1638,17 +1819,16 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       val orderOf    = memberships.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
       val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
       val commentOf  = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
-      val srcLang    = tagRow.map(_.sourceLanguage)
 
       // One row per undirected pair, keyed on the chosen source side.
       val chosen = pairRows
         .flatMap { pair =>
           (byId.get(pair.wordId), byId.get(pair.translationWordId)) match {
             case (Some(a), Some(b)) =>
-              val aIsSource = srcLang match {
-                case Some(code) if a.language == code && b.language != code => true
-                case Some(code) if b.language == code && a.language != code => false
-                case _                                                      => a.id <= b.id
+              val aIsSource = {
+                if (a.language == sourceLanguage && b.language != sourceLanguage) true
+                else if (b.language == sourceLanguage && a.language != sourceLanguage) false
+                else a.id <= b.id
               }
               if (aIsSource) {
                 Some(
@@ -1677,6 +1857,41 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       )
     }
     logged(assembled)(rows => s"tags.entries tag=$tagId rows=${rows.size}")
+  }
+
+  def tagEntry(tagId: Long, sourceWordId: Long, targetWordId: Option[Long]): Task[Option[TagEntryRow]] = {
+    val wordIds   = (sourceWordId :: targetWordId.toList).distinct
+    val assembled = for {
+      memberships <- run(ctx.run(quote {
+                       wordTags.filter(link => link.tagId == lift(tagId) && liftQuery(wordIds).contains(link.wordId))
+                     }))
+      pairRows    <- targetWordId match {
+                       case Some(targetId) =>
+                         run(ctx.run(quote {
+                           wordTagPairs.filter(pair => {
+                             pair.tagId == lift(tagId) &&
+                             ((pair.wordId == lift(sourceWordId) && pair.translationWordId == lift(targetId)) ||
+                               (pair.wordId == lift(targetId) && pair.translationWordId == lift(sourceWordId)))
+                           })
+                         }))
+                       case None           => ZIO.succeed(List.empty[WordTagPairRow])
+                     }
+      wordRows    <- run(ctx.run(quote(words.filter(word => liftQuery(wordIds).contains(word.id)))))
+    } yield {
+      val byId      = wordRows.map(word => word.id -> word).toMap
+      val commentOf = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
+      byId.get(sourceWordId).map { source =>
+        TagEntryRow(
+          source,
+          targetWordId.flatMap(byId.get),
+          memberships.find(_.wordId == sourceWordId).exists(_.imported),
+          pairRows.headOption.map(pair => PairMatch.fromString(pair.matchKind)).getOrElse(PairMatch.Manual),
+          commentOf.get(sourceWordId),
+          targetWordId.flatMap(commentOf.get),
+        )
+      }
+    }
+    logged(assembled)(row => s"tags.entry tag=$tagId source=$sourceWordId found=${row.isDefined}")
   }
 
   def sourceWordsInMyOtherTags(userId: Long, exceptTagId: Long, wordIds: List[Long]): Task[Set[Long]] = {
@@ -1855,6 +2070,21 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       }
       logged(run(ctx.run(q)).map(_.sum)) { inserted =>
         s"wordTranslations.insertBatch rows=${rows.size} inserted=$inserted"
+      }
+    }
+  }
+
+  def findWordsAcrossLanguages(languages: List[String], textNorms: List[String]): Task[List[WordRow]] = {
+    if (languages.isEmpty || textNorms.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        words.filter(word => {
+          liftQuery(languages).contains(word.language) && liftQuery(textNorms).contains(word.textNorm)
+        })
+      }
+      logged(run(ctx.run(q))) { rows =>
+        s"words.findByKeysAcross languages=${languages.size} asked=${textNorms.size} rows=${rows.size}"
       }
     }
   }

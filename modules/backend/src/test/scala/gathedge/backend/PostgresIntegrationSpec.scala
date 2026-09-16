@@ -45,7 +45,7 @@ import gathedge.backend.service.{
   WordFailure,
   WordService,
 }
-import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, TagScope, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   ColumnSample,
   PairRef,
@@ -55,6 +55,7 @@ import gathedge.shared.dto.{
   TabularRow,
   TagPairInput,
   TagPairWord,
+  TagSort,
   WordSort,
 }
 import zio._
@@ -1252,6 +1253,102 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // lowers that to `LEN(...)`, a SQL Server spelling neither dialect has: SQLite's own suite already caught this
       // (`no such function: Len`) before the query was rewritten with an explicit `LENGTH(...)` infix. This is the
       // dialect that would otherwise have let the same mistake back in silently.
+      // `listTagsPage` is the most SQL of any Dynamic Query in this codebase and none of it is checked at compile
+      // time: a `CASE` in the `ORDER BY` for the three-group default order, a correlated `COUNT(*)` in the `ORDER BY`
+      // for the word-count column, and an `IS NULL`-guarded `forall` for "everyone else's". That last one is the
+      // trap — `NOT (group_id IN (...))` is NULL for an ungrouped tag, which `WHERE` reads as "no", so the plain
+      // negation silently drops every tag nobody grouped. Each of the three runs here against the real dialect.
+      pgTest("the wordlist catalog's scopes, orders and counts all render on the real dialect") {
+        for {
+          reader    <- AuthService.signup("pgcatalog@example.com", "password123").map(_._1)
+          stranger  <- AuthService.signup("pgcatalogother@example.com", "password123").map(_._1)
+          mine      <- WordRepository.insertTag(reader.id, "pgcat-mine", "pgcat-mine", 0L, "de", "hu")
+          theirs    <- WordRepository.insertTag(stranger.id, "pgcat-theirs", "pgcat-theirs", 0L, "de", "hu")
+          shared    <- WordRepository.insertTag(stranger.id, "pgcat-shared", "pgcat-shared", 0L, "de", "hu")
+          group     <- GroupRepository.insertGroup("PG Catalog", "pg catalog", "PGCA-TALO-G000-0001", stranger.id, 0L)
+          _         <- GroupRepository.insertMembership(group.id, reader.id, "member", 0L)
+          _         <- WordRepository.setTagGroup(shared.id, Some(group.id), shared.version)
+          word      <-
+            WordRepository.ensureWord(
+              WordRow(0L, "de", "Katalog", "katalog", "noun", "masculine", 1, "user", Some(reader.id), 0L, "katalog")
+            )
+          _         <- WordRepository.tagWord(word.id, mine.id, 0L)
+          groups     = List(group.id)
+          all       <- WordRepository.listTagsPage(reader.id, groups, 0, 50, None, false, Some("pgcat-"), TagScope.All)
+          onlyMine  <- WordRepository.listTagsPage(reader.id, groups, 0, 50, None, false, Some("pgcat-"), TagScope.Mine)
+          onlyGroup <-
+            WordRepository.listTagsPage(reader.id, groups, 0, 50, None, false, Some("pgcat-"), TagScope.Group)
+          onlyOther <-
+            WordRepository.listTagsPage(reader.id, groups, 0, 50, None, false, Some("pgcat-"), TagScope.Other)
+          // No study group at all: the `Other` branch that skips the `IN` list entirely, since an empty `liftQuery`
+          // renders `IN ()` and is not valid SQL on either dialect.
+          noGroups  <- WordRepository.listTagsPage(reader.id, Nil, 0, 50, None, false, Some("pgcat-"), TagScope.Other)
+          byWords   <- WordRepository
+                         .listTagsPage(reader.id, groups, 0, 50, Some(TagSort.words), true, Some("pgcat-"), TagScope.All)
+          byName    <- WordRepository
+                         .listTagsPage(reader.id, groups, 0, 50, Some(TagSort.name), true, Some("pgcat-"), TagScope.All)
+          firstPage <- WordRepository.listTagsPage(reader.id, groups, 0, 1, None, false, Some("pgcat-"), TagScope.All)
+        } yield assertTrue(
+          // Default order: own first, then the study group's, then everyone else's.
+          all._1.map(_._1.id) == List(mine.id, shared.id, theirs.id),
+          all._2 == 3L,
+          all._1.map { case (_, _, ownedByMe) => ownedByMe } == List(true, false, false),
+          // The word count is per tag, and only the page's own tags are counted.
+          all._1.map { case (tag, count, _) => tag.id -> count }.toMap == Map(
+            mine.id   -> 1L,
+            shared.id -> 0L,
+            theirs.id -> 0L,
+          ),
+          onlyMine._1.map(_._1.id) == List(mine.id),
+          onlyGroup._1.map(_._1.id) == List(shared.id),
+          // The ungrouped tag the NULL trap would have swallowed.
+          onlyOther._1.map(_._1.id) == List(theirs.id),
+          noGroups._1.map(_._1.id) == List(shared.id, theirs.id),
+          // Descending by word count puts the only tag holding a word first.
+          byWords._1.map(_._1.id).headOption.contains(mine.id),
+          byWords._2 == 3L,
+          byName._1.map(_._1.id) == List(theirs.id, shared.id, mine.id),
+          // The total counts every match, not the page.
+          firstPage._1.map(_._1.id) == List(mine.id),
+          firstPage._2 == 3L,
+        )
+      },
+      // The games listing reads its tags for a whole page in one join (`tagsOfGames`) rather than one query per row.
+      // `eligibleTranslationsOf` is the same shape narrowed to a word-id list, which is what scores an answer.
+      pgTest("the games listing's page-wide tag read and the narrowed pair read run on the real dialect") {
+        for {
+          owner  <- AuthService.signup("pggamebatch@example.com", "password123").map(_._1)
+          first  <- WordRepository.insertTag(owner.id, "pggb-one", "pggb-one", 0L, "de", "hu")
+          second <- WordRepository.insertTag(owner.id, "pggb-two", "pggb-two", 0L, "de", "hu")
+          de     <- WordRepository.ensureWord(
+                      WordRow(0L, "de", "Spiel", "spiel", "noun", "neuter", 1, "user", Some(owner.id), 0L, "spiel")
+                    )
+          hu     <- WordRepository.ensureWord(
+                      WordRow(0L, "hu", "jatek", "jatek", "noun", "", 1, "user", Some(owner.id), 0L, "jatek")
+                    )
+          _      <- WordRepository.tagWord(de.id, first.id, 0L)
+          _      <- WordRepository.tagWord(hu.id, first.id, 0L)
+          _      <- WordRepository.pairTranslation(de.id, first.id, hu.id, 0L)
+          alpha  <- GameRepository.insertGame(
+                      GameRow(0L, owner.id, "pggb-alpha", "PG GB Alpha", "de", "hu", 0L, 0L),
+                      List(first.id, second.id),
+                    )
+          beta   <- GameRepository.insertGame(
+                      GameRow(0L, owner.id, "pggb-beta", "PG GB Beta", "de", "hu", 0L, 0L),
+                      List(second.id),
+                    )
+          byGame <- GameRepository.tagsOfGames(List(alpha.id, beta.id))
+          none   <- GameRepository.tagsOfGames(Nil)
+          narrow <- GameRepository.eligibleTranslationsOf(alpha.id, "de", "hu", List(de.id))
+          absent <- GameRepository.eligibleTranslationsOf(alpha.id, "de", "hu", List(hu.id))
+        } yield assertTrue(
+          byGame.get(alpha.id).map(_.map(_.id).sorted) == Some(List(first.id, second.id).sorted),
+          byGame.get(beta.id).map(_.map(_.id)) == Some(List(second.id)),
+          none.isEmpty,
+          narrow == List(de.id -> hu.id),
+          absent.isEmpty,
+        )
+      },
       pgTest("findWordsByLengthRange filters by textNorm length on the real dialect") {
         for {
           _        <- WordRepository.ensureWord(
