@@ -558,6 +558,19 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           favCounts     <- GameRepository.favoriteCounts(List(gameA.id, gameB.id))
           favIds        <- GameRepository.favoritedGameIds(bob.id, List(gameA.id, gameB.id))
           bySort        <- GameRepository.listAllGamesPage(Some("pg tracked"), None, 0, 20, Some("likeCount"), true)
+          // The wordlist and language filters, only ever SQL here too: `gameTags.nonEmpty` (a subquery through a table
+          // this repository already reads for `tagsOf`/`tagsOfGames`) and the two "pair contains this code" `OR`s
+          // chained onto `matchingAllGames` — see `GameService.allGames`'s doc comment for why order does not matter.
+          byTag         <-
+            GameRepository.listAllGamesPage(Some("pg tracked"), None, 0, 20, None, false, tagId = Some(tag.id))
+          byLang        <-
+            GameRepository.listAllGamesPage(Some("pg tracked"), None, 0, 20, None, false, language1 = Some("de"))
+          byLangMiss    <- GameRepository.countAllGamesMatching(
+                             Some("pg tracked"),
+                             None,
+                             language1 = Some("de"),
+                             language2 = Some("en"),
+                           )
           removed       <- GameRepository.removeFavorite(alice.id, gameB.id)
           removedAgain  <- GameRepository.removeFavorite(alice.id, gameB.id)
         } yield assertTrue(
@@ -584,6 +597,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           favCounts == Map(gameA.id -> 1L, gameB.id -> 2L),
           favIds == Set(gameA.id, gameB.id),
           bySort.map(_.id) == List(gameB.id, gameA.id),
+          // Both games share `tag` and are `de -> hu`, so the wordlist filter keeps both and so does a language filter
+          // naming just one of the pair; naming both German and a language neither game carries matches neither.
+          byTag.map(_.id).toSet == Set(gameA.id, gameB.id),
+          byLang.map(_.id).toSet == Set(gameA.id, gameB.id),
+          byLangMiss == 0L,
           removed == 1L,
           removedAgain == 0L,
         )

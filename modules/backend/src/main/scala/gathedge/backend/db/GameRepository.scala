@@ -57,7 +57,10 @@ trait GameRepository {
 
   /** One page of every account's games, most recent first unless `sort` says otherwise — the games listing's source
     * rows. `nameContains` narrows to games whose name contains it, case-insensitively. `favoritesOf`, when set, keeps
-    * only games that account has marked as a favorite (`game_favorites`).
+    * only games that account has marked as a favorite (`game_favorites`). `tagId`, when set, keeps only games carrying
+    * that `game_tags` link. `language1`/`language2` (`WordLanguage.code` strings), when set, each require the game's
+    * `sourceLanguage`/`targetLanguage` pair to contain that code — see `GameService.allGames`'s doc comment for why
+    * that makes order not matter.
     */
   def listAllGamesPage(
     nameContains: Option[String],
@@ -66,12 +69,19 @@ trait GameRepository {
     limit: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
   ): Task[List[GameRow]]
 
-  /** How many games [[listAllGamesPage]] would return across every page, under the same `nameContains`/`favoritesOf`
-    * narrowing.
-    */
-  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): Task[Long]
+  /** How many games [[listAllGamesPage]] would return across every page, under the same narrowing. */
+  def countAllGamesMatching(
+    nameContains: Option[String],
+    favoritesOf: Option[Long],
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
+  ): Task[Long]
 
   /** Marks `gameId` as `userId`'s favorite — idempotent: a second call for a pair already marked is a no-op, not a
     * unique-constraint error. Ownership is not checked; anyone may favorite any game.
@@ -249,11 +259,23 @@ object GameRepository {
     limit: Int,
     sort: Option[String],
     descending: Boolean,
-  ): RIO[GameRepository, List[GameRow]] =
-    ZIO.serviceWithZIO[GameRepository](_.listAllGamesPage(nameContains, favoritesOf, offset, limit, sort, descending))
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
+  ): RIO[GameRepository, List[GameRow]] = {
+    ZIO.serviceWithZIO[GameRepository](
+      _.listAllGamesPage(nameContains, favoritesOf, offset, limit, sort, descending, tagId, language1, language2)
+    )
+  }
 
-  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.countAllGamesMatching(nameContains, favoritesOf))
+  def countAllGamesMatching(
+    nameContains: Option[String],
+    favoritesOf: Option[Long],
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
+  ): RIO[GameRepository, Long] =
+    ZIO.serviceWithZIO[GameRepository](_.countAllGamesMatching(nameContains, favoritesOf, tagId, language1, language2))
 
   def addFavorite(userId: Long, gameId: Long, now: Long): RIO[GameRepository, Unit] =
     ZIO.serviceWithZIO[GameRepository](_.addFavorite(userId, gameId, now))
@@ -863,12 +885,31 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     * [[countAllGamesMatching]] have to share. The name filter is a plain predicate on `games` itself, not a correlated
     * subquery like [[matchingMyPlays]]'s: this query already reads that table. The column is lowered ([[namePattern]]
     * lowers the needle to match) since a game's name is a display string, not normalised on write.
+    *
+    * `language1`/`language2` are chained as two independent "the pair contains this code" predicates rather than one
+    * "the pair equals this set" predicate — see `GameService.allGames`'s doc comment for why that is the same thing for
+    * a row with only two language slots, and cheaper to build against a `DynamicQuery` than a set comparison would be.
     */
-  private def matchingAllGames(nameContains: Option[String], favoritesOf: Option[Long]): DynamicQuery[GameRow] = {
+  private def matchingAllGames(
+    nameContains: Option[String],
+    favoritesOf: Option[Long],
+    tagId: Option[Long],
+    language1: Option[String],
+    language2: Option[String],
+  ): DynamicQuery[GameRow] = {
     dynamicQuerySchema[GameRow]("games")
       .filterOpt(namePattern(nameContains))((game, pattern) => quote(game.name.toLowerCase.like(unquote(pattern))))
       .filterOpt(favoritesOf)((game, uid) =>
         quote(gameFavorites.filter(fav => fav.gameId == game.id && fav.userId == unquote(uid)).nonEmpty)
+      )
+      .filterOpt(tagId)((game, tid) =>
+        quote(gameTags.filter(link => link.gameId == game.id && link.tagId == unquote(tid)).nonEmpty)
+      )
+      .filterOpt(language1)((game, lang) =>
+        quote(game.sourceLanguage == unquote(lang) || game.targetLanguage == unquote(lang))
+      )
+      .filterOpt(language2)((game, lang) =>
+        quote(game.sourceLanguage == unquote(lang) || game.targetLanguage == unquote(lang))
       )
   }
 
@@ -901,18 +942,32 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     limit: Int,
     sort: Option[String],
     descending: Boolean,
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
   ): Task[List[GameRow]] = {
-    val page =
-      orderedAllGames(matchingAllGames(nameContains, favoritesOf), sort, descending).drop(offset).take(limit)
+    val page = {
+      orderedAllGames(matchingAllGames(nameContains, favoritesOf, tagId, language1, language2), sort, descending)
+        .drop(offset)
+        .take(limit)
+    }
     // The name filter is a fragment of a game's name, so it stays out of the message, the same as every other one.
     logged(run(ctx.run(page))) { rows =>
-      s"games.listAllGamesPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} mine=${favoritesOf.isDefined} rows=${rows.size}"
+      s"games.listAllGamesPage offset=$offset limit=$limit sort=${sort.getOrElse("-")} mine=${favoritesOf.isDefined} " +
+        s"tag=${tagId.isDefined} lang=${language1.isDefined || language2.isDefined} rows=${rows.size}"
     }
   }
 
-  def countAllGamesMatching(nameContains: Option[String], favoritesOf: Option[Long]): Task[Long] = {
-    logged(run(ctx.run(matchingAllGames(nameContains, favoritesOf).size))) { count =>
-      s"games.countAllGamesMatching mine=${favoritesOf.isDefined} count=$count"
+  def countAllGamesMatching(
+    nameContains: Option[String],
+    favoritesOf: Option[Long],
+    tagId: Option[Long] = None,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
+  ): Task[Long] = {
+    logged(run(ctx.run(matchingAllGames(nameContains, favoritesOf, tagId, language1, language2).size))) { count =>
+      s"games.countAllGamesMatching mine=${favoritesOf.isDefined} tag=${tagId.isDefined} " +
+        s"lang=${language1.isDefined || language2.isDefined} count=$count"
     }
   }
 

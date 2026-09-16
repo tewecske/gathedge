@@ -335,6 +335,73 @@ object GameServiceSpec extends ZIOSpecDefault {
           miss.total == 0L,
         )
       },
+      test("allGames narrows to one wordlist, and to games whose language pair contains the chosen languages") {
+        // Unique name token, same reason the other narrowing tests use one — the listing is not owner-scoped.
+        for {
+          owner      <- newUser()
+          tagDeHu    <- eligibleTagWithPairs(owner, "vindalooDe", WordLanguage.De, WordLanguage.Hu, count = 1)
+          tagEnHu    <- eligibleTagWithPairs(owner, "vindalooEn", WordLanguage.En, WordLanguage.Hu, count = 1)
+          gameDeHu   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagDeHu))
+          gameEnHu   <- GameService.createGame(owner, WordLanguage.En, WordLanguage.Hu, List(tagEnHu))
+          _          <- GameService.rename(gameDeHu.slug, "Vindaloo DeHu", owner)
+          _          <- GameService.rename(gameEnHu.slug, "Vindaloo EnHu", owner)
+          byTag      <-
+            GameService.allGames(Some(owner), Some("vindaloo"), false, 1, 20, None, false, tagId = Some(tagDeHu))
+          byLang1    <- GameService.allGames(
+                          Some(owner),
+                          Some("vindaloo"),
+                          false,
+                          1,
+                          20,
+                          None,
+                          false,
+                          language1 = Some(WordLanguage.De),
+                        )
+          // Order does not matter for which games match — see `GameService.allGames`'s doc comment — so the pair given
+          // the other way round still finds the same game.
+          byPairFwd  <- GameService.allGames(
+                          Some(owner),
+                          Some("vindaloo"),
+                          false,
+                          1,
+                          20,
+                          None,
+                          false,
+                          language1 = Some(WordLanguage.De),
+                          language2 = Some(WordLanguage.Hu),
+                        )
+          byPairRev  <- GameService.allGames(
+                          Some(owner),
+                          Some("vindaloo"),
+                          false,
+                          1,
+                          20,
+                          None,
+                          false,
+                          language1 = Some(WordLanguage.Hu),
+                          language2 = Some(WordLanguage.De),
+                        )
+          // Neither game carries both German and English, so a pair naming both matches nothing — two slots require
+          // both to be present, not either.
+          byMismatch <- GameService.allGames(
+                          Some(owner),
+                          Some("vindaloo"),
+                          false,
+                          1,
+                          20,
+                          None,
+                          false,
+                          language1 = Some(WordLanguage.De),
+                          language2 = Some(WordLanguage.En),
+                        )
+        } yield assertTrue(
+          byTag.items.map(_.slug) == List(gameDeHu.slug),
+          byLang1.items.map(_.slug) == List(gameDeHu.slug),
+          byPairFwd.items.map(_.slug) == List(gameDeHu.slug),
+          byPairRev.items.map(_.slug) == List(gameDeHu.slug),
+          byMismatch.items.isEmpty,
+        )
+      },
       test("favoriteGame drives the like count, the my-heart state, the favorites filter and the like-count sort") {
         // Unique name token so the shared DB's other games do not leak into the filtered assertions.
         for {
