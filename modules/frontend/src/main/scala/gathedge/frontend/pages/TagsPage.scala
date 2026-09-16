@@ -2,14 +2,14 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.frontend.api.{ApiError, WordApiClient}
+import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, Pagination, SortHeader, TagImportDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.TagQuery
-import gathedge.frontend.state.AppState
+import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{Tag, TagScope}
-import gathedge.shared.dto.{TagExportFile, TagPage, TagSort}
+import gathedge.shared.domain.{Tag, TagScope, User}
+import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
 import gathedge.shared.i18n.UiKeys
 import zio.json._
 
@@ -76,6 +76,21 @@ private class TagsPage(
   private val loadingSignal = loadingVar.signal
 
   private val importDialog = new TagImportDialog(onImported = Observer[Unit](_ => reloadBus.emit(())))
+
+  /** A row's "create game" button, carrying the whole row: the game is built from the wordlist's own declared language
+    * pair, so the click needs the [[Tag]] and not only its id.
+    */
+  private val createGameBus = new EventBus[Tag]()
+
+  /** Which row's game is being created, or `None`. Drives that row's spinner and disables every row's button, so a
+    * second click cannot mint a second game while the first is still in flight.
+    */
+  private val creatingTagIdVar = Var(Option.empty[Long])
+
+  /** Mirrors who the reader is at the moment the button is pressed — signals cannot be read outside a subscription, and
+    * the guest detour needs `.now()`. Same trick as `GameSetupPage.readerVar`.
+    */
+  private val readerVar = Var(Option.empty[User])
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
@@ -155,6 +170,21 @@ private class TagsPage(
           case Left(err)   =>
             errorVar.set(Some(err.message))
         },
+      AppState.currentUserSignal --> readerVar.writer,
+      createGameBus.events --> Observer[Tag](tag => Var.set(creatingTagIdVar -> Some(tag.id), errorVar -> None)),
+      createGameBus.events.flatMapSwitch(tag =>
+        asReader(() => GameApiClient.create(tag.sourceLanguage, tag.targetLanguage, List(tag.id)))
+      ) -->
+        Observer[Either[ApiError, GameCreated]] {
+          case Right(created) =>
+            creatingTagIdVar.set(None)
+            // This browser is the one that created it, so it is offered the rename control — the same mark
+            // `GameSetupPage` makes after its own create.
+            GameOwnership.markOwned(created.slug)
+            AppRouter.router.pushState(Page.GameInstance(created.slug))
+          case Left(err)      =>
+            Var.set(creatingTagIdVar -> None, errorVar -> Some(err.message))
+        },
       onMountCallback(_ => reloadBus.emit(())),
     )
   }
@@ -164,6 +194,25 @@ private class TagsPage(
     */
   private val queryChanges: EventStream[TagQuery] =
     changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) }
+
+  /** A write with the guest detour in front of it — copied from `GameSetupPage.asReader`. `POST /api/games` needs a
+    * session and this page is readable signed out, so a guest is minted first and the call is retried against the
+    * session that creates. Signed in, the mint is skipped entirely.
+    */
+  private def asReader[A](write: () => EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
+    readerVar.now() match {
+      case Some(_) =>
+        write()
+      case None    =>
+        ApiClient.createGuest.flatMapSwitch {
+          case Right(response) =>
+            AppState.setUser(response.user)
+            write()
+          case Left(err)       =>
+            EventStream.fromValue(Left(err))
+        }
+    }
+  }
 
   private def load(query: TagQuery): EventStream[Either[ApiError, TagPage]] = {
     WordApiClient.listTagsPage(
@@ -265,6 +314,8 @@ private class TagsPage(
             SortHeader.render(I18n.t(UiKeys.tagsListColName), TagSort.name, sortSignal, onSort),
             th(I18n.t(UiKeys.tagsListColOwner)),
             SortHeader.render(I18n.t(UiKeys.tagsListColWords), TagSort.words, sortSignal, onSort),
+            // The action column carries no visible heading; the label a screen reader needs is the button's own.
+            th(span(cls := "sr-only", I18n.t(UiKeys.tagsListCreateGame))),
           )
         ),
         tbody(children <-- tagsSignal.splitSeq(_.id)(row => renderRow(row.key, row))),
@@ -284,6 +335,31 @@ private class TagsPage(
       ),
       renderOwnerCell(row),
       td(child.text <-- row.map(_.wordCount.toString)),
+      renderCreateGameCell(id, row),
+    )
+  }
+
+  /** Turns one row straight into a quiz: a game over that wordlist alone, in the pair the wordlist itself declares,
+    * then the game's own page. It saves the detour through `GameSetupPage`, where the reader would have to re-pick the
+    * language pair and find the wordlist again.
+    *
+    * Offered on every row, the reader's own or not — a game is built from a wordlist, not owned through it, and
+    * `GameSetupPage` already lists everybody's eligible wordlists. A wordlist with no marked translation in its own
+    * direction is not eligible, which only the server knows; that answer arrives as the page's own error alert.
+    */
+  private def renderCreateGameCell(id: Long, row: Signal[Tag]): HtmlElement = {
+    td(
+      button(
+        typ := "button",
+        // The label is two words in English and three in Hungarian; without this the narrow action column wraps it.
+        cls := "btn btn-xs btn-soft whitespace-nowrap",
+        disabled <-- creatingTagIdVar.signal.map(_.isDefined),
+        child.maybe <-- creatingTagIdVar.signal.map(creating =>
+          Option.when(creating.contains(id))(span(cls := "loading loading-spinner loading-xs"))
+        ),
+        I18n.t(UiKeys.tagsListCreateGame),
+        onClick.compose(_.sample(row)) --> createGameBus.writer,
+      )
     )
   }
 

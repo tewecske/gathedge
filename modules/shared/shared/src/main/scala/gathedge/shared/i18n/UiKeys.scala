@@ -1178,6 +1178,9 @@ object UiKeys {
   val tagsListResetFilters: String      = key("ui.tagsList.resetFilters")
   val tagsListCount: String             = pluralKey("ui.tagsList.count")
 
+  /** The per-row button that turns one wordlist straight into a quiz — see `TagsPage.renderCreateGameCell`. */
+  val tagsListCreateGame: String = key("ui.tagsList.createGame")
+
   // -- Tag export / import -----------------------------------------------------------------------
   // Export writes a tag (or every owned tag) to a JSON file; import rebuilds it here. `TagImportDialog`, plus a button
   // on `TagEditorPage` and two on `TagsPage`.
