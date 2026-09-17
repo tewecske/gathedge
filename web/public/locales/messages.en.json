@@ -904,6 +904,7 @@
   "ui.tagsList.count.one": "{0} wordlist",
   "ui.tagsList.count.other": "{0} wordlists",
   "ui.tagsList.createGame": "Create game",
+  "ui.tagsList.viewGames": "View games",
   "ui.tags.export.button": "Export",
   "ui.tags.export.allButton": "Export all wordlists",
   "ui.tags.import.button": "Import",

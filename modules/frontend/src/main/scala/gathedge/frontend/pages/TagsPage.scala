@@ -5,7 +5,7 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, Pagination, SortHeader, TagImportDialog}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.listing.TagQuery
+import gathedge.frontend.listing.{AllGameQuery, TagQuery}
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{Tag, TagScope, User}
@@ -314,8 +314,9 @@ private class TagsPage(
             SortHeader.render(I18n.t(UiKeys.tagsListColName), TagSort.name, sortSignal, onSort),
             th(I18n.t(UiKeys.tagsListColOwner)),
             SortHeader.render(I18n.t(UiKeys.tagsListColWords), TagSort.words, sortSignal, onSort),
-            // The action column carries no visible heading; the label a screen reader needs is the button's own.
+            // The action columns carry no visible heading; the label a screen reader needs is each button's own.
             th(span(cls := "sr-only", I18n.t(UiKeys.tagsListCreateGame))),
+            th(span(cls := "sr-only", I18n.t(UiKeys.tagsListViewGames))),
           )
         ),
         tbody(children <-- tagsSignal.splitSeq(_.id)(row => renderRow(row.key, row))),
@@ -336,6 +337,7 @@ private class TagsPage(
       renderOwnerCell(row),
       td(child.text <-- row.map(_.wordCount.toString)),
       renderCreateGameCell(id, row),
+      renderViewGamesCell(id),
     )
   }
 
@@ -359,6 +361,20 @@ private class TagsPage(
         ),
         I18n.t(UiKeys.tagsListCreateGame),
         onClick.compose(_.sample(row)) --> createGameBus.writer,
+      )
+    )
+  }
+
+  /** Takes the reader straight to the [[Page.AllGames]] catalog, pre-filtered to this one wordlist — the browsable
+    * counterpart of [[renderCreateGameCell]]'s "build a game from it". Offered on every row, the reader's own or not,
+    * since the catalog itself is public.
+    */
+  private def renderViewGamesCell(id: Long): HtmlElement = {
+    td(
+      a(
+        cls := "btn btn-xs btn-soft whitespace-nowrap",
+        AppRouter.router.navigateTo(Page.AllGames(AllGameQuery.default.copy(tagId = Some(id)))),
+        I18n.t(UiKeys.tagsListViewGames),
       )
     )
   }
