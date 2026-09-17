@@ -59,8 +59,18 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private val nameSignal: Signal[String] = detailVar.signal.map(_.map(_.name).getOrElse("")).distinct
 
-  private val isAdminSignal: Signal[Boolean] =
-    detailVar.signal.map(_.exists(_.viewerRole.contains(GroupRole.Admin))).distinct
+  /** Whether the reader may run this group: one of its own admins, or a global administrator, who runs every group
+    * without joining it (`GroupService.requireAdmin`). `viewerRole` stays the truth about membership — it is what
+    * decides whether "leave" makes sense — so the admin half is ORed in here rather than written into the role.
+    */
+  private val mayAdminSignal: Signal[Boolean] = {
+    Signal
+      .combine(detailVar.signal, AppState.isGlobalAdminSignal)
+      .map { case (detail, globalAdmin) =>
+        detail.exists(_.viewerRole.contains(GroupRole.Admin)) || (detail.isDefined && globalAdmin)
+      }
+      .distinct
+  }
 
   private val reloadBus       = new EventBus[Unit]()
   private val leaveBus        = new EventBus[Unit]()
@@ -90,14 +100,16 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             cls := "flex items-center justify-between gap-2",
             inlineRename.renderTitle(
               nameSignal,
-              isAdminSignal,
+              mayAdminSignal,
               I18n.t(UiKeys.groupDetailRenameEdit),
               I18n.t(UiKeys.groupDetailRenameLabel),
               "input input-sm",
             ),
             a(cls := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups()), "←"),
           ),
-          child.maybe <-- detailVar.signal.map(_.map(renderBody)),
+          child.maybe <-- Signal
+            .combine(detailVar.signal, AppState.isGlobalAdminSignal)
+            .map { case (detail, globalAdmin) => detail.map(renderBody(_, globalAdmin)) },
         ),
       ),
       reloadBus.events.flatMapSwitch(_ => GroupApiClient.get(groupId)) -->
@@ -183,22 +195,26 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     )
   }
 
-  private def renderBody(detail: GroupDetail): HtmlElement = {
+  /** `globalAdmin` travels down through the whole body rather than being read per control: the roster, the invite code
+    * and the tag rows all ask the same question, and the server has already answered the data half of it — a global
+    * administrator gets `members` and `inviteCode` whether or not they joined.
+    */
+  private def renderBody(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
     div(
       cls := "flex flex-col gap-6 mt-2",
-      renderRoster(detail),
+      renderRoster(detail, globalAdmin),
       div(cls := "divider"),
       Option.when(detail.inviteCode.isDefined)(renderInviteCode(detail)),
       Option.when(detail.inviteCode.isDefined)(div(cls := "divider")),
-      renderTags(detail),
+      renderTags(detail, globalAdmin),
     )
   }
 
-  private def renderRoster(detail: GroupDetail): HtmlElement = {
-    val isAdmin = detail.viewerRole.contains(GroupRole.Admin)
+  private def renderRoster(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
+    val isAdmin = detail.viewerRole.contains(GroupRole.Admin) || globalAdmin
     div(
       h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailRosterTitle)),
-      if (detail.viewerRole.isEmpty) {
+      if (detail.viewerRole.isEmpty && !globalAdmin) {
         p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailRosterHidden))
       } else {
         div(
@@ -211,14 +227,17 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             ),
           ),
           div(
-            button(
-              cls := "btn btn-sm btn-outline",
-              typ := "button",
-              disabled <-- busyVar.signal,
-              I18n.t(UiKeys.groupDetailLeaveButton),
-              onClick.mapToUnit --> Observer[Unit] { _ =>
-                if (dom.window.confirm(I18n.t(UiKeys.groupDetailLeaveConfirm))) leaveBus.emit(())
-              },
+            // Membership, not permission: an administrator who never joined has nothing to leave.
+            Option.when(detail.viewerRole.isDefined)(
+              button(
+                cls := "btn btn-sm btn-outline",
+                typ := "button",
+                disabled <-- busyVar.signal,
+                I18n.t(UiKeys.groupDetailLeaveButton),
+                onClick.mapToUnit --> Observer[Unit] { _ =>
+                  if (dom.window.confirm(I18n.t(UiKeys.groupDetailLeaveConfirm))) leaveBus.emit(())
+                },
+              )
             )
           ),
         )
@@ -296,20 +315,20 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     dom.window.location.origin + AppRouter.router.relativeUrlForPage(Page.GroupJoin(code))
   }
 
-  private def renderTags(detail: GroupDetail): HtmlElement = {
+  private def renderTags(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
     div(
       h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailTagsTitle)),
       Option.when(detail.tags.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailTagsEmpty))),
       ul(
         cls  := "flex flex-col divide-y divide-base-300",
-        detail.tags.map(tag => renderTagRow(tag, detail)),
+        detail.tags.map(tag => renderTagRow(tag, detail, globalAdmin)),
       ),
-      Option.when(detail.viewerRole.isDefined)(renderAttachControl()),
+      Option.when(detail.viewerRole.isDefined || globalAdmin)(renderAttachControl()),
     )
   }
 
-  private def renderTagRow(tag: GroupTagSummary, detail: GroupDetail): HtmlElement = {
-    val isAdmin = detail.viewerRole.contains(GroupRole.Admin)
+  private def renderTagRow(tag: GroupTagSummary, detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
+    val isAdmin = detail.viewerRole.contains(GroupRole.Admin) || globalAdmin
     li(
       cls := "flex items-center justify-between gap-4 py-3",
       a(

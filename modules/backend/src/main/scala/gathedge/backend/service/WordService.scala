@@ -6,6 +6,7 @@ import gathedge.backend.db.{
   TagEntryRow,
   TagRow,
   TextSearch,
+  UserRepository,
   WordFormRow,
   WordRepository,
   WordRow,
@@ -802,9 +803,15 @@ object WordService {
   ): ZIO[WordService, TagImportFailure, TagImportResponse] =
     ZIO.serviceWithZIO[WordService](_.importTags(file, resolutions, userId))
 
-  val live: URLayer[WordRepository & GroupRepository & AppConfig & RateLimiter, WordService] = {
-    ZLayer.fromFunction((repo: WordRepository, groupRepo: GroupRepository, config: AppConfig, limiter: RateLimiter) =>
-      WordServiceLive(repo, groupRepo, config.quotas, config.languageCheck, limiter)
+  val live: URLayer[WordRepository & GroupRepository & UserRepository & AppConfig & RateLimiter, WordService] = {
+    ZLayer.fromFunction(
+      (
+        repo: WordRepository,
+        groupRepo: GroupRepository,
+        userRepo: UserRepository,
+        config: AppConfig,
+        limiter: RateLimiter,
+      ) => WordServiceLive(repo, groupRepo, userRepo, config.quotas, config.languageCheck, limiter)
     )
   }
 
@@ -899,6 +906,7 @@ private object RowOutcome {
 final case class WordServiceLive(
   repo: WordRepository,
   groupRepo: GroupRepository,
+  userRepo: UserRepository,
   quotas: QuotaSection,
   languageCheck: LanguageCheckSection,
   limiter: RateLimiter,
@@ -1493,10 +1501,13 @@ final case class WordServiceLive(
                          .orDie
       (rows, total)  = paged
       groupRefs     <- resolveGroupRefs(rows.map { case (row, _, _) => row })
+      // A global administrator may write to every wordlist there is, so every row of every page comes back editable —
+      // the same rule `requireEditableTag` enforces, restated here so the catalog offers the control.
+      globalAdmin   <- GlobalAdmin.isReader(userRepo, reader)
       memberGroups   = memberGroupIds.toSet
     } yield {
       val items = rows.map { case (row, count, ownedByMe) =>
-        val editableByMe = ownedByMe || row.groupId.exists(memberGroups.contains)
+        val editableByMe = ownedByMe || globalAdmin || row.groupId.exists(memberGroups.contains)
         toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
       }
       TagPage(items, total)
@@ -1519,8 +1530,9 @@ final case class WordServiceLive(
       // `WordService.requireEditableTag` makes a write against, restated here so the tag bar/collect picker can offer
       // it without the reader having to click first and find out.
       memberGroupIds = memberships.map(_.groupId).toSet
+      globalAdmin   <- GlobalAdmin.isReader(userRepo, reader)
     } yield rows.map { case (row, count, ownedByMe) =>
-      val editableByMe = ownedByMe || row.groupId.exists(memberGroupIds.contains)
+      val editableByMe = ownedByMe || globalAdmin || row.groupId.exists(memberGroupIds.contains)
       toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
     }
   }
@@ -1745,15 +1757,19 @@ final case class WordServiceLive(
     }
   }
 
+  /** The owner the write is scoped to is the tag's own, not the caller's: a global administrator renaming somebody
+    * else's wordlist must not collide with their own list of that name, and `updateTag` filters on the owning row.
+    */
   def renameTag(tagId: Long, name: String, userId: Long): IO[WordFailure, TagResponse] = {
     for {
       existing        <- requireOwnTag(tagId, userId)
-      prepared        <- prepareTagName(name, userId, excludeTagId = Some(tagId))
+      owner            = existing.userId
+      prepared        <- prepareTagName(name, owner, excludeTagId = Some(tagId))
       (valid, normal)  = prepared
-      rows            <- repo.updateTag(tagId, userId, valid, normal, existing.version).orDie
+      rows            <- repo.updateTag(tagId, owner, valid, normal, existing.version).orDie
       _               <- OptimisticLock.resolve(
                            rows,
-                           repo.findTagById(tagId).orDie.map(_.exists(_.userId == userId)),
+                           repo.findTagById(tagId).orDie.map(_.exists(_.userId == owner)),
                            WordFailure.StaleWrite,
                            WordFailure.TagNotFound,
                          )
@@ -1761,7 +1777,7 @@ final case class WordServiceLive(
       group           <- resolveGroupRef(existing.groupId)
       (source, target) = tagLanguages(existing)
     } yield TagResponse(
-      Tag(tagId, valid, wordCount, ownedByMe = true, group, editableByMe = true, source, target),
+      Tag(tagId, valid, wordCount, owner == userId, group, editableByMe = true, source, target),
       None,
     )
   }
@@ -1801,7 +1817,7 @@ final case class WordServiceLive(
         tagId,
         existing.name,
         wordCount,
-        ownedByMe = true,
+        existing.userId == userId,
         group,
         editableByMe = true,
         sourceLanguage,
@@ -1814,10 +1830,11 @@ final case class WordServiceLive(
   def deleteTag(tagId: Long, userId: Long): IO[WordFailure, Unit] = {
     for {
       existing <- requireOwnTag(tagId, userId)
-      rows     <- repo.deleteTag(tagId, userId, existing.version).orDie
+      owner     = existing.userId
+      rows     <- repo.deleteTag(tagId, owner, existing.version).orDie
       _        <- OptimisticLock.resolve(
                     rows,
-                    repo.findTagById(tagId).orDie.map(_.exists(_.userId == userId)),
+                    repo.findTagById(tagId).orDie.map(_.exists(_.userId == owner)),
                     WordFailure.StaleWrite,
                     WordFailure.TagNotFound,
                   )
@@ -1828,19 +1845,25 @@ final case class WordServiceLive(
     * tag a given id is is not something an account may learn by trying. Deliberately narrower than
     * [[requireEditableTag]]: structural changes to a tag (its name, its existence) stay the owner's alone even when the
     * tag belongs to a group, unlike editing its content.
+    *
+    * A global administrator is the one way past it that is not ownership — see [[GlobalAdmin]]. The lookup runs only
+    * once the owner test has failed, so an owner's own rename costs nothing for it.
     */
   private def requireOwnTag(tagId: Long, userId: Long): IO[WordFailure, TagRow] = {
-    repo
-      .findTagById(tagId)
-      .orDie
-      .someOrFail(WordFailure.TagNotFound)
-      .filterOrFail(_.userId == userId)(WordFailure.TagNotFound)
+    for {
+      tag     <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      allowed <- if (tag.userId == userId) ZIO.succeed(true) else GlobalAdmin.is(userRepo, userId)
+      _       <- ZIO.unless(allowed)(ZIO.fail(WordFailure.TagNotFound))
+    } yield tag
   }
 
   /** Editing a tag's *content* — putting a word on it, marking a practice pair, bulk-uploading into it: the owner, or
     * any member (admin or plain member alike) of the group it belongs to, per the write-access rule agreed for
     * classroom collaboration. `TagNotFound` covers both "no such tag" and "not the owner and not in its group" — same
     * 404-hides-existence rule [[requireOwnTag]] follows, just with one more way in.
+    *
+    * A global administrator is the third way in, and the only one that needs no relationship to the tag at all — see
+    * [[GlobalAdmin]]. It is tried last, after both cheaper tests have said no.
     */
   private def requireEditableTag(tagId: Long, userId: Long): IO[WordFailure, TagRow] = {
     for {
@@ -1848,12 +1871,13 @@ final case class WordServiceLive(
       allowed <- if (tag.userId == userId)
                    ZIO.succeed(true)
                  else {
-                   tag.groupId match {
+                   val inGroup = tag.groupId match {
                      case Some(groupId) =>
                        groupRepo.findMembership(groupId, userId).orDie.map(_.isDefined)
                      case None          =>
                        ZIO.succeed(false)
                    }
+                   inGroup.flatMap(member => if (member) ZIO.succeed(true) else GlobalAdmin.is(userRepo, userId))
                  }
       _       <- ZIO.unless(allowed)(ZIO.fail(WordFailure.TagNotFound))
     } yield tag

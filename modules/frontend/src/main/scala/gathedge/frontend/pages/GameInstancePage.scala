@@ -187,6 +187,17 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val isOwnerVar = Var(GameOwnership.isOwned(slug))
 
+  /** Whether the reader may rename or delete this game, and read its results: the browser's own ownership hint, or a
+    * global administrator, who may do it to anybody's game (`GameService.requireOwnGame`). A signal rather than a
+    * second `Var` — the account arrives from `/api/me` after this page is built, so the controls appear when it lands.
+    */
+  private val mayManageSignal: Signal[Boolean] = {
+    Signal
+      .combine(isOwnerVar.signal, AppState.isGlobalAdminSignal)
+      .map { case (owner, globalAdmin) => owner || globalAdmin }
+      .distinct
+  }
+
   /** The delete-confirm modal's open state, the in-flight flag while the call runs, and the click that fires it —
     * modelled on `TagEditorPage`'s tag-delete modal.
     */
@@ -367,7 +378,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         cls := "card-body",
         inlineRename.renderTitle(
           nameVar.signal,
-          isOwnerVar.signal,
+          mayManageSignal,
           I18n.t(UiKeys.gameInstanceRenameEdit),
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
@@ -401,16 +412,17 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private def pageUrl(): String = dom.window.location.href
 
-  /** Owner-only, and only once the owner opted into `trackResults` at creation — see `GameRow.trackResults`'s doc
-    * comment. Links to the results listing rather than opening it here, the same split `AllGamesPage`/`GameInstance`
-    * already draw between "this game" and "a listing about it". Passed to `InlineRename.renderTitle` as `extra`, so it
-    * is absent from the title only in edit mode, same as the pencil beside it.
+  /** For the owner (or a global administrator), and only once the owner opted into `trackResults` at creation — see
+    * `GameRow.trackResults`'s doc comment. Links to the results listing rather than opening it here, the same split
+    * `AllGamesPage`/`GameInstance` already draw between "this game" and "a listing about it". Passed to
+    * `InlineRename.renderTitle` as `extra`, so it is absent from the title only in edit mode, same as the pencil beside
+    * it.
     */
   private def resultsLink(): Modifier[HtmlElement] = {
     // Owner-only. Links to the results listing rather than opening it here, the same split
     // `AllGamesPage`/`GameInstance` already draw between "this game" and "a listing about it".
-    child.maybe <-- isOwnerVar.signal.map { owner =>
-      Option.when(owner)(
+    child.maybe <-- mayManageSignal.map { mayManage =>
+      Option.when(mayManage)(
         a(
           cls := "btn btn-ghost btn-xs",
           AppRouter.router.navigateTo(Page.GameResults(slug)),
@@ -420,11 +432,11 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     }
   }
 
-  /** The trash icon beside the pencil, gated on the same local ownership hint — see `TagEditorPage.deleteIcon`, which
-    * this mirrors. Passed to `InlineRename.renderTitle` as `extra`, so it drops out in edit mode with the pencil.
+  /** The trash icon beside the pencil, gated the same way as the pencil — see `TagEditorPage.deleteIcon`, which this
+    * mirrors. Passed to `InlineRename.renderTitle` as `extra`, so it drops out in edit mode with the pencil.
     */
   private def deleteIcon(): Modifier[HtmlElement] = {
-    child.maybe <-- isOwnerVar.signal.map(
+    child.maybe <-- mayManageSignal.map(
       Option.when(_)(
         InlineRename.iconButton(
           I18n.t(UiKeys.gameInstanceDeleteButton),

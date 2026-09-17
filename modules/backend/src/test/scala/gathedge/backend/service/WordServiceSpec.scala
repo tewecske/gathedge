@@ -2,7 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordRepository, WordRow}
+import gathedge.backend.db.{GroupRepository, TextSearch, UserRepository, WordFormRow, WordRepository, WordRow}
 import gathedge.shared.domain.{
   EntryBucket,
   Gender,
@@ -51,7 +51,7 @@ import java.util.concurrent.TimeUnit
 object WordServiceSpec extends ZIOSpecDefault {
 
   private val layer = {
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
       AppConfig.live ++ RateLimiter.live >+> WordService.live
   }
 
@@ -69,7 +69,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         )
       })
     })
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
       config ++ RateLimiter.live >+> WordService.live
   }
 
@@ -80,7 +80,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     val config = AppConfig.live.project(cfg => {
       cfg.copy(languageCheck = cfg.languageCheck.copy(sampleSize = sampleSize, unrecognizedThreshold = threshold))
     })
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test)) ++
+    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
       config ++ RateLimiter.live >+> WordService.live
   }
 
@@ -116,6 +116,17 @@ object WordServiceSpec extends ZIOSpecDefault {
       // The tag is freshly created and never renamed here, so its version is still 0.
       _     <- WordRepository.setTagGroup(tagId, Some(group.id), expectedVersion = 0L).orDie
     } yield ()
+  }
+
+  /** A real `users` row with `is_admin` set — the one fixture the global-administrator tests need, since `GlobalAdmin`
+    * reads the flag off the table rather than taking it from the caller. Every other user id in this spec is a bare
+    * number with no row behind it, which `findById` answers `None` for: not an administrator, the ordinary case.
+    */
+  private def adminUserId(email: String): ZIO[UserRepository, Nothing, Long] = {
+    for {
+      now  <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      user <- UserRepository.insert(email, Some("hash"), isAdmin = true, "light", "en", now, None).orDie
+    } yield user.id
   }
 
   private def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Tag] = {
@@ -3075,6 +3086,88 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provide(layerWithLanguageCheck(sampleSize = 20, threshold = 2))
   }
 
+  /** A global administrator passes every ownership gate here — see `gathedge.backend.service.GlobalAdmin`. The wordlist
+    * they act on belongs to somebody else in all of these, and the owner never changes.
+    */
+  private val globalAdminSpec = {
+    suite("global admin")(
+      test("renames and deletes a wordlist owned by somebody else") {
+        for {
+          admin   <- adminUserId("admin-tags@example.com")
+          tag     <- createTag("theirs", 7L)
+          renamed <- WordService.renameTag(tag.id, "renamed by admin", admin)
+          after   <- WordRepository.findTagById(tag.id).orDie
+          _       <- WordService.deleteTag(tag.id, admin)
+          gone    <- WordRepository.findTagById(tag.id).orDie
+        } yield assertTrue(
+          renamed.tag.name == "renamed by admin",
+          // The rename does not hand the wordlist over: the row still belongs to 7L, and the answer says so.
+          !renamed.tag.ownedByMe,
+          after.exists(_.userId == 7L),
+          gone.isEmpty,
+        )
+      },
+      test("a rename is checked against the owner's other wordlists, not the administrator's own") {
+        for {
+          admin    <- adminUserId("admin-names@example.com")
+          _        <- createTag("shared name", admin)
+          theirs   <- createTag("theirs", 7L)
+          _        <- createTag("taken", 7L)
+          // The administrator owns "shared name" already; the owner does not, so this is no collision.
+          reused   <- WordService.renameTag(theirs.id, "shared name", admin).either
+          // "taken" is the owner's own, so it is one.
+          collided <- WordService.renameTag(theirs.id, "taken", admin).either
+        } yield assertTrue(
+          reused.isRight,
+          collided == Left(WordFailure.DuplicateTag),
+        )
+      },
+      test("edits the content of a wordlist owned by somebody else") {
+        for {
+          _     <- seed
+          admin <- adminUserId("admin-content@example.com")
+          tag   <- createTag("theirs", 7L)
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          added <- WordService.tagWord(haus.id, tag.id, admin).either
+          rows  <- WordRepository.tagMemberships(tag.id).orDie
+        } yield assertTrue(added.isRight, rows.map(_.wordId) == List(haus.id))
+      },
+      test("listTags marks every wordlist editable for an administrator, and none of them owned") {
+        for {
+          admin  <- adminUserId("admin-list@example.com")
+          theirs <- createTag("theirs", 7L)
+          own    <- createTag("mine", admin)
+          seen   <- WordService.listTags(Some(admin))
+          plain  <- WordService.listTags(Some(8L))
+        } yield assertTrue(
+          seen.find(_.id == theirs.id).exists(t => !t.ownedByMe && t.editableByMe),
+          seen.find(_.id == own.id).exists(t => t.ownedByMe && t.editableByMe),
+          // The contrast: an ordinary account sees the same rows and may edit neither.
+          plain.find(_.id == theirs.id).exists(t => !t.ownedByMe && !t.editableByMe),
+        )
+      },
+      test("listTagsPaged marks them editable too") {
+        for {
+          admin  <- adminUserId("admin-paged@example.com")
+          theirs <- createTag("theirs", 7L)
+          page   <- WordService.listTagsPaged(Some(admin), 1, 50, None, descending = false, None, TagScope.All)
+        } yield assertTrue(page.items.find(_.id == theirs.id).exists(t => !t.ownedByMe && t.editableByMe))
+      },
+      test("an ordinary account is still refused both the rename and the content edit") {
+        for {
+          _       <- seed
+          tag     <- createTag("theirs", 7L)
+          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          renamed <- WordService.renameTag(tag.id, "nope", 8L).either
+          added   <- WordService.tagWord(haus.id, tag.id, 8L).either
+        } yield assertTrue(
+          renamed == Left(WordFailure.TagNotFound),
+          added == Left(WordFailure.TagNotFound),
+        )
+      },
+    ).provide(layer)
+  }
+
   def spec = {
     suite("WordService (SQLite)")(
       coreSpec,
@@ -3091,6 +3184,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       suggestionsSpec,
       wordFormsSpec,
       tagTransferSpec,
+      globalAdminSpec,
     ) @@ TestAspect.timeout(60.seconds)
   }
 }
