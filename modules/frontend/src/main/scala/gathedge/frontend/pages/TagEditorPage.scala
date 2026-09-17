@@ -8,17 +8,17 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{EntryBucket, PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkImportResponse,
   ColumnLanguageCheckResponse,
   ColumnLanguageGuess,
   ColumnSample,
   LanguageCheckResponse,
-  Paging,
   TabularImportResponse,
   TabularRow,
   TagEntry,
+  TagEntryPage,
   TagExportFile,
   TagPairInput,
   TagPairWord,
@@ -59,72 +59,10 @@ object TagEditorPage {
     AppShell.render(Page.TagDetail(tagId), new TagEditorPage(tagId, recognize, query, onQuery).render())
   }
 
-  /** The rows one page holds, cut from the rows the filters show.
-    *
-    * `page` is clamped rather than trusted: a hand-edited URL, a narrowing filter or a deleted row all leave a number
-    * pointing past the end, and the last page is a better answer than an empty table. The arithmetic is `Pagination`'s
-    * and `Paging`'s, so the slice and the buttons above it cannot disagree about which page is which.
-    */
-  private[pages] def pageSlice(rows: List[TagEntry], page: Int, pageSize: Int): List[TagEntry] = {
-    val current = Pagination.clampPage(page, Paging.pageCount(rows.size.toLong, pageSize))
-    val from    = Paging.offset(current, pageSize)
-    rows.slice(from, from + pageSize)
-  }
-
-  /** Which page holds one row, or `None` when the filters hide it — what the editor jumps to when a write names a row
-    * the reader cannot currently see: the duplicate it flashes, or the row an add appended past the end of the page.
-    */
-  private[pages] def pageOfRow(rows: List[TagEntry], key: (Long, Option[Long]), pageSize: Int): Option[Int] = {
-    val index = rows.indexWhere(row => rowKey(row) == key)
-    Option.when(index >= 0 && pageSize > 0)(index / pageSize + Paging.firstPage)
-  }
-
   /** A row's identity in the editor. One source word can carry more than one translation row, so the target id is part
     * of the key — keying on the source alone makes "edit" and the duplicate flash hit every row of that word.
     */
   private[pages] def rowKey(entry: TagEntry): (Long, Option[Long]) = (entry.source.id, entry.target.map(_.id))
-
-  /** `addPair` is idempotent, so re-adding an existing pair returns a row already on the list. Same source *and* same
-    * target — a different translation of the same word is not a duplicate.
-    */
-  private[pages] def isDuplicate(existing: List[TagEntry], entry: TagEntry): Boolean =
-    existing.exists(row => rowKey(row) == rowKey(entry))
-
-  /** The four mutually-exclusive provenance buckets, read off a row's import flags. `Verified` and `Paired` are the two
-    * kinds of pair an import writes — one the dictionary already linked, one the imported row asserted — and `Other` is
-    * an imported row whose pair the reader marked by hand.
-    */
-  private[pages] enum EntryFilter { case Verified, Paired, Other, Unmatched }
-
-  private[pages] def stateOf(entry: TagEntry): Option[EntryFilter] = {
-    entry.matchKind match {
-      case PairMatch.Verified                                           =>
-        Some(EntryFilter.Verified)
-      case PairMatch.Paired                                             =>
-        Some(EntryFilter.Paired)
-      case PairMatch.Manual if entry.imported && entry.target.isDefined =>
-        Some(EntryFilter.Other)
-      case PairMatch.Manual if entry.imported                           =>
-        Some(EntryFilter.Unmatched)
-      case PairMatch.Manual                                             =>
-        None
-    }
-  }
-
-  /** Whether the filters show a row: the selected buckets are OR'd (none = every bucket), and "imported by me" / "only
-    * in this tag" AND on top of that.
-    */
-  private[pages] def rowVisible(
-    entry: TagEntry,
-    buckets: Set[EntryFilter],
-    importedByMe: Boolean,
-    uniqueToTag: Boolean,
-  ): Boolean = {
-    val bucketOk = buckets.isEmpty || stateOf(entry).exists(buckets.contains)
-    val mineOk   = !importedByMe || (entry.createdByMe && entry.imported)
-    val uniqueOk = !uniqueToTag || !entry.inMyOtherTags
-    bucketOk && mineOk && uniqueOk
-  }
 
   /** A word earns the "New word" badge when this reader minted it (`createdByMe`) and it is in no other tag of theirs
     * (`!inMyOtherTags`) — the dictionary did not have it before. Read per side: `sourceIsNew` off the row's own flags,
@@ -257,19 +195,26 @@ private final class TagEditorPage(
   /** Ceiling on a bulk-import file, matching `BulkUploadDialog.maxBytes`. */
   private val maxBulkBytes = 2 * 1024 * 1024
 
-  // -- Paging --------------------------------------------------------------------------------
-  // The page of rows to draw, from the URL. Unlike every other listing here, turning the page asks the server for
-  // nothing: `WordApiClient.tagEntries` answers with the whole wordlist, and the editor needs it whole — see
-  // `TagEntryQuery`'s doc comment. So `page` cuts `visibleEntries` and nothing else reloads.
+  // -- Paging and filtering ------------------------------------------------------------------
+  // Which page of which rows, from the URL — `GET /api/tags/{tagId}/entries/page` is asked exactly this, so the
+  // address and the request say the same thing. The database cuts the page and applies the chips; nothing here
+  // filters rows itself, which is why the four provenance chips and the two toggles are in the query rather than in
+  // `Var`s of their own.
 
-  /** `.distinct` because every reader of this treats an emission as "redraw the rows". */
+  /** `.distinct` because every reader of this treats an emission as "ask the server again". */
   private val querySignal = pageQuery.distinct
 
   private val pageSignal     = querySignal.map(_.page).distinct
   private val pageSizeSignal = querySignal.map(_.pageSize).distinct
 
-  /** Every way this page asks for a different page, as edits applied to whatever the address bar says — the arrangement
-    * `TagsPage`/`WordsPage` use, and for the same reason: the state is in the URL, not in a local `Var`.
+  /** The query as a value that can be read synchronously — a `Signal` has no public `now`, and a write that has just
+    * landed needs to know which page it should leave the reader on. Kept in step by a subscription in [[render]], the
+    * mirror idiom `TagsPage.readerVar` uses.
+    */
+  private val queryVar = Var(TagEntryQuery.default)
+
+  /** Every way this page asks for a different listing, as edits applied to whatever the address bar says — the
+    * arrangement `TagsPage`/`WordsPage` use, and for the same reason: the state is in the URL, not in a local `Var`.
     */
   private val changeBus = new EventBus[TagEntryQuery => TagEntryQuery]()
 
@@ -278,6 +223,35 @@ private final class TagEditorPage(
   /** Those edits resolved against the query in the address bar — what [[render]] hands back to the router. */
   private val queryChanges: EventStream[TagEntryQuery] =
     changeBus.events.withCurrentValueOf(querySignal).map { case (edit, current) => edit(current) }
+
+  /** An empty page with rows behind it: the address named a page past the end, or the last row of the last page has
+    * just been deleted. The server does not clamp — it cannot know the total before it has counted — so this is the
+    * browser correcting itself, which is what the honest total is for.
+    *
+    * `replaceState`, not `pushState`: nobody chose the page that is not there, so the back button must not offer to
+    * return to it.
+    */
+  private def correctPagePastTheEnd(page: TagEntryPage): Unit = {
+    val current = queryVar.now()
+    if (page.items.isEmpty && page.total > 0L) {
+      val last = Pagination.lastPage(page.total, current.pageSize)
+      if (last != current.page) {
+        AppRouter.router.replaceState(Page.TagDetail(tagId, current.copy(page = last)))
+      }
+    }
+  }
+
+  /** Re-reads the rows after a write, on the page the reader should end up on.
+    *
+    * Two ways to the same place, and the difference matters: a *different* page goes through the address bar, whose
+    * change is itself what reloads; the *same* page has no address change to ride on, so it asks again directly. Doing
+    * both would race — the query change and the reload would each sample a query the other was about to replace.
+    */
+  private def reloadRows(pageAfter: TagEntryQuery => Int = _.page): Unit = {
+    val current = queryVar.now()
+    val wanted  = current.copy(page = pageAfter(current))
+    if (wanted == current) entriesBus.emit(()) else change(_ => wanted)
+  }
 
   private val tagVar: Var[Option[Tag]]        = Var(None)
   private val entriesVar: Var[List[TagEntry]] = Var(List.empty[TagEntry])
@@ -309,19 +283,19 @@ private final class TagEditorPage(
     )
   }
 
-  /** The answer from `addPair` and `attachWord` alike: append the new row and clear the add controls, or — since both
-    * writes are idempotent — flash the row already there when the write named one the list has.
+  /** The answer from `addPair` and `attachWord` alike: a row was written, or — since both writes are idempotent — the
+    * wordlist already held it.
     *
-    * Either way the rows move under a paged list, so both branches take the reader to the page the row is on. A new row
-    * is appended, so it is on the last page; the duplicate may be anywhere, and a flash on a page nobody is looking at
-    * is no answer at all. When the row is already on screen the page does not change, and
-    * [[gathedge.frontend.App.onTagDetailQuery]] writes no history entry for it.
+    * `alreadyPresent` is the server's word for it. The editor used to work this out by looking down the whole list; it
+    * holds one page now, and a row it cannot see is not a row that is not there. A written row is appended, so the
+    * reader is taken to the last page to see it land; an already-present one leaves the listing alone and says so with
+    * a toast, lighting the row up when it happens to be on the page in front of them.
     */
   private def onEntryAdded(result: Either[ApiError, gathedge.shared.dto.TagEntryResponse]): Unit = {
     result match {
       case Right(response) =>
         val entry = response.entry
-        if (TagEditorPage.isDuplicate(entriesVar.now(), entry)) {
+        if (response.alreadyPresent) {
           // Leave both inputs as they are — the reader edits one side rather than retyping the whole thing.
           showToast(
             I18n.t(
@@ -330,28 +304,29 @@ private final class TagEditorPage(
               entry.target.map(Word.display).getOrElse(""),
             )
           )
-          val key = TagEditorPage.rowKey(entry)
-          flashRow(key)
-          change(query => {
-            TagEditorPage
-              .pageOfRow(filteredNow(entriesVar.now()), key, query.pageSize)
-              .fold(query)(page => query.copy(page = page))
-          })
+          flashRow(TagEditorPage.rowKey(entry))
         } else {
-          val rows = entriesVar.now() :+ entry
-          entriesVar.set(rows)
-          change(query => query.copy(page = Pagination.lastPage(filteredNow(rows).size.toLong, query.pageSize)))
           warningVar.set(response.warning.map(I18n.resolve))
           Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None, addTargetPos -> None)
           addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
+          // One more word than the count the page was drawn from — enough to know which page the new row is on
+          // without asking twice.
+          reloadRows(query => Pagination.lastPage(totalVar.now() + 1, query.pageSize))
         }
       case Left(err)       =>
         errorVar.set(Some(err.message))
     }
   }
 
-  private val reloadBus     = new EventBus[Unit]()
-  private val entriesBus    = new EventBus[Unit]()
+  private val reloadBus  = new EventBus[Unit]()
+  private val entriesBus = new EventBus[Unit]()
+
+  /** Every reason to ask for a page of rows: the address bar names a different one, or a write changed what is on this
+    * one. Both carry the query to ask for, so there is one request shape and one place it is built.
+    */
+  private val listRequests: EventStream[TagEntryQuery] =
+    EventStream.merge(querySignal.updates, entriesBus.events.sample(querySignal))
+
   private val deleteOpenVar = Var(false)
   private val deleteBus     = new EventBus[Unit]()
 
@@ -375,57 +350,34 @@ private final class TagEditorPage(
   // present on some row). The swap button only trades the two selects locally — a view choice, no request: the
   // headings, the rows (`TagEditorPage.orient`) and the add/edit boxes all follow these two, and the server accepts a
   // pair whichever way round, so add and edit stay live in either orientation.
-  private val sourceLangVar                = Var(WordLanguage.De)
-  private val targetLangVar                = Var(WordLanguage.Hu)
-  private val langsLocked: Signal[Boolean] = entriesVar.signal.map(_.exists(_.target.isDefined)).distinct
+  private val sourceLangVar = Var(WordLanguage.De)
+  private val targetLangVar = Var(WordLanguage.Hu)
+
+  /** Whether the wordlist holds any practice pair at all — the answer comes with each page (`TagEntryPage.hasPairs`)
+    * rather than from the rows on it, since the pair that locks the selects may be on another page. The server refuses
+    * a relanguage on a locked wordlist whatever this says; the lock is what stops the reader being refused.
+    */
+  private val hasPairsVar                  = Var(false)
+  private val langsLocked: Signal[Boolean] = hasPairsVar.signal.distinct
   private val langBus                      = new EventBus[(WordLanguage, WordLanguage)]()
 
   // -- Filters --------------------------------------------------------------------------------
+  // Four mutually-exclusive provenance buckets, OR'd within the set (none selected shows every bucket), and two
+  // predicates that AND on top: "imported by me" — a word this reader minted that a bulk import wrote — and "only in
+  // this wordlist". They live in the query rather than in `Var`s here because the database applies them: it decides
+  // which words the page holds, and `TagEntryFilter.matches` which of a word's rows are drawn. See
+  // `shared.domain.TagEntryFilter`.
 
-  import TagEditorPage.EntryFilter
+  private val bucketsSignal     = querySignal.map(_.buckets).distinct
+  private val importedBySignal  = querySignal.map(_.importedByMe).distinct
+  private val uniqueToTagSignal = querySignal.map(_.uniqueToTag).distinct
 
-  // Three mutually-exclusive buckets read off the import flags, OR'd within the set: none selected shows every bucket.
-  private val filtersVar = Var(Set.empty[EntryFilter])
+  /** How many words the filter admits, across every page — what the page control counts its buttons off. */
+  private val totalVar                  = Var(0L)
+  private val totalSignal: Signal[Long] = totalVar.signal.distinct
 
-  // Two independent predicates that AND on top of the buckets. "Imported by me" — a word this reader minted (never in
-  // the dictionary) that a bulk import wrote. "Only in this tag" — the source word is in no other tag the reader owns.
-  private val importedByMeVar = Var(false)
-  private val uniqueToTagVar  = Var(false)
-
-  private val visibleEntries: Signal[List[TagEntry]] = {
-    Signal
-      .combine(entriesVar.signal, filtersVar.signal, importedByMeVar.signal, uniqueToTagVar.signal)
-      .map { case (entries, buckets, importedByMe, uniqueToTag) =>
-        if (buckets.isEmpty && !importedByMe && !uniqueToTag) entries
-        else entries.filter(entry => TagEditorPage.rowVisible(entry, buckets, importedByMe, uniqueToTag))
-      }
-  }
-
-  /** The filtered rows the current page holds — what the table draws. Everything else about the editor still reads
-    * [[visibleEntries]] or `entriesVar`: the selection is scoped to what the filters show rather than to one page, and
-    * the whole list is what the duplicate check and the language lock are asked about.
-    */
-  private val pagedEntries: Signal[List[TagEntry]] = {
-    Signal
-      .combine(visibleEntries, pageSignal, pageSizeSignal)
-      .map { case (rows, page, size) => TagEditorPage.pageSlice(rows, page, size) }
-  }
-
-  /** How many rows the filters show, for the page control's own count and buttons. */
-  private val totalSignal: Signal[Long] = visibleEntries.map(_.size.toLong).distinct
-
-  /** The rows as the filters show them *now*, read synchronously — what [[onEntryAdded]] needs to work out which page a
-    * just-written row landed on. It restates [[visibleEntries]] rather than sampling it because a `Signal` has no
-    * public `now`, and because a write made inside an observer propagates in the *next* transaction: the signal is
-    * still holding the old list at the moment this is asked.
-    */
-  private def filteredNow(rows: List[TagEntry]): List[TagEntry] = {
-    val buckets      = filtersVar.now()
-    val importedByMe = importedByMeVar.now()
-    val uniqueToTag  = uniqueToTagVar.now()
-    if (buckets.isEmpty && !importedByMe && !uniqueToTag) rows
-    else rows.filter(entry => TagEditorPage.rowVisible(entry, buckets, importedByMe, uniqueToTag))
-  }
+  private val loadingVar                     = Var(false)
+  private val loadingSignal: Signal[Boolean] = loadingVar.signal.distinct
 
   // -- Add-a-row control --------------------------------------------------------------------
 
@@ -552,12 +504,12 @@ private final class TagEditorPage(
     }
   }
 
-  /** The keys of the rows the filters currently show — kept in step with [[visibleEntries]] so "Select all" can read
-    * them synchronously (a `Signal` has no public `now`).
+  /** The keys of the rows on the page, kept in step with the rows themselves so "Select all" can read them
+    * synchronously (a `Signal` has no public `now`).
     *
-    * Every row the filters show, not only the page on screen: "Select all" and the bulk deletes behind it are about the
-    * wordlist the reader has narrowed to, which paging only draws a slice of. The table heading's own tick box is the
-    * per-page one — see [[renderRows]].
+    * One page, not the whole wordlist: the browser holds a page now, and the two bulk deletes behind this send the keys
+    * they were given. "Select all" therefore means "all of these", which is also the only promise the editor can keep —
+    * a row on another page is one the reader has not seen.
     */
   private val visibleKeysVar = Var(List.empty[(Long, Option[Long])])
 
@@ -846,14 +798,7 @@ private final class TagEditorPage(
       ),
       // -- paging --
       queryChanges --> onQuery,
-      // A filter change starts again at the first page: page 4 of the wider list says nothing about the narrowed one,
-      // the rule `TagEntryQuery.reset` carries for every other listing. Only when there is a page to leave — the
-      // filter chips must not write a history entry each on the first page.
-      Signal
-        .combine(filtersVar.signal, importedByMeVar.signal, uniqueToTagVar.signal)
-        .updates
-        .sample(querySignal)
-        .filter(_.page != Paging.firstPage) --> Observer[TagEntryQuery](_ => change(_.reset(identity))),
+      querySignal --> queryVar.writer,
       // -- data --
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
         case Right(tags) =>
@@ -862,11 +807,23 @@ private final class TagEditorPage(
           found.foreach(applyLangsFrom)
         case Left(err)   => errorVar.set(Some(err.message))
       },
-      entriesBus.events
-        .flatMapSwitch(_ => WordApiClient.tagEntries(tagId)) --> Observer[Either[ApiError, List[TagEntry]]] {
-        case Right(rows) => entriesVar.set(rows)
-        case Left(err)   => errorVar.set(Some(err.message))
-      },
+      // One page of rows: whenever the address bar says a different one, and whenever a write has changed what is on
+      // this one. `flatMapSwitch`, so a reader turning two pages quickly is answered by the second.
+      listRequests --> Observer[TagEntryQuery](_ => Var.set(loadingVar -> true, errorVar -> None)),
+      listRequests.flatMapSwitch(query => WordApiClient.tagEntriesPage(tagId, query)) -->
+        Observer[Either[ApiError, TagEntryPage]] {
+          case Right(page) =>
+            Var.set(
+              entriesVar  -> page.items,
+              totalVar    -> page.total,
+              hasPairsVar -> page.hasPairs,
+              loadingVar  -> false,
+              errorVar    -> None,
+            )
+            correctPagePastTheEnd(page)
+          case Left(err)   =>
+            Var.set(loadingVar -> false, errorVar -> Some(err.message))
+        },
       // Saving a relanguage: one of the two selects changed while the tag has no practice pair. A failure (someone
       // raced a pair in) reverts the selects; success re-seeds them and re-fetches the rows. The swap button does
       // not come through here — it only trades the selects locally.
@@ -924,11 +881,14 @@ private final class TagEditorPage(
           deletingRowsVar.update(_ - key)
           result match {
             case Right(_)  =>
-              // Drop only the row that was removed. A source word with several marked translations keeps its other
-              // rows; an answer-less row (`targetWordId` empty) takes the whole source word with it.
+              // Drop only the row that was removed, so it goes at once. A source word with several marked
+              // translations keeps its other rows; an answer-less row (`targetWordId` empty) takes the whole source
+              // word with it. Then re-read the page: a page is a cut of a longer list, and the row that has just left
+              // it is a place for the next one to move up into.
               entriesVar.update(_.filterNot { row =>
                 row.source.id == key._1 && (key._2.isEmpty || row.target.map(_.id) == key._2)
               })
+              reloadRows()
             case Left(err) => errorVar.set(Some(err.message))
           }
         },
@@ -1026,9 +986,9 @@ private final class TagEditorPage(
           Var.set(tablePendingVar -> None, tableLangWarnVar -> None)
           errorVar.set(Some(err.message))
       },
-      // A selected row that a filter change hides drops out of the selection, so "Select all" only ever holds visible
-      // rows and the bulk delete cannot touch a row the reader can't see.
-      visibleEntries --> Observer[List[TagEntry]] { rows =>
+      // A selected row that leaves the page — a turn, a filter change, a delete — drops out of the selection, so
+      // "Select all" only ever holds rows the reader can see and the bulk delete cannot touch one they cannot.
+      entriesVar.signal --> Observer[List[TagEntry]] { rows =>
         val shown = rows.map(TagEditorPage.rowKey)
         visibleKeysVar.set(shown)
         selectedVar.update(_.intersect(shown.toSet))
@@ -1153,34 +1113,40 @@ private final class TagEditorPage(
     )
   }
 
+  /** The chip row. Every chip writes to the address bar rather than to a `Var` of its own, and every one of them starts
+    * the listing again at the first page — page 4 of the wider list says nothing about the narrowed one, the rule
+    * `TagEntryQuery.reset` carries for every listing here.
+    */
   private def renderFilters(): HtmlElement = {
-    def chip(f: EntryFilter, labelKey: String)       = {
+    def chip(bucket: EntryBucket, labelKey: String) = {
       button(
         typ := "button",
         cls := "btn btn-xs",
-        cls("btn-primary") <-- filtersVar.signal.map(_.contains(f)),
+        cls("btn-primary") <-- bucketsSignal.map(_.contains(bucket)),
         I18n.t(labelKey),
-        onClick.mapToUnit --> Observer[Unit](_ => filtersVar.update(s => if (s.contains(f)) s - f else s + f)),
+        onClick.mapToUnit --> Observer[Unit](_ => change(_.toggleBucket(bucket))),
       )
     }
-    def toggle(flag: Var[Boolean], labelKey: String) = {
+
+    def toggle(on: Signal[Boolean], labelKey: String, edit: TagEntryQuery => TagEntryQuery) = {
       button(
         typ := "button",
         cls := "btn btn-xs",
-        cls("btn-primary") <-- flag.signal,
+        cls("btn-primary") <-- on,
         I18n.t(labelKey),
-        onClick.mapToUnit --> Observer[Unit](_ => flag.update(!_)),
+        onClick.mapToUnit --> Observer[Unit](_ => change(_.reset(edit))),
       )
     }
+
     div(
       cls := "flex flex-wrap items-center gap-2 mt-3",
       span(cls := "text-sm opacity-70", I18n.t(UiKeys.tagsEditorFilterHeading)),
-      chip(EntryFilter.Verified, UiKeys.tagsEditorFilterVerified),
-      chip(EntryFilter.Paired, UiKeys.tagsEditorFilterPaired),
-      chip(EntryFilter.Other, UiKeys.tagsEditorFilterOther),
-      chip(EntryFilter.Unmatched, UiKeys.tagsEditorFilterUnmatched),
-      toggle(importedByMeVar, UiKeys.tagsEditorFilterImportedByMe),
-      toggle(uniqueToTagVar, UiKeys.tagsEditorFilterUniqueToTag),
+      chip(EntryBucket.Verified, UiKeys.tagsEditorFilterVerified),
+      chip(EntryBucket.Paired, UiKeys.tagsEditorFilterPaired),
+      chip(EntryBucket.Other, UiKeys.tagsEditorFilterOther),
+      chip(EntryBucket.Unmatched, UiKeys.tagsEditorFilterUnmatched),
+      toggle(importedBySignal, UiKeys.tagsEditorFilterImportedByMe, q => q.copy(importedByMe = !q.importedByMe)),
+      toggle(uniqueToTagSignal, UiKeys.tagsEditorFilterUniqueToTag, q => q.copy(uniqueToTag = !q.uniqueToTag)),
     )
   }
 
@@ -1218,12 +1184,12 @@ private final class TagEditorPage(
     )
   }
 
-  /** The page control under the rows, hidden while the wordlist shows none — the table already says so in words, and a
+  /** The page control under the rows, hidden while the filter admits none — the table already says so in words, and a
     * row of buttons over an empty table offers nothing to press. Built once and kept, rather than rebuilt with every
     * row change: the boolean it follows is `.distinct`.
     *
-    * No `busy` flag: paging here draws what the browser already holds, so there is no request for the buttons to wait
-    * on.
+    * `total` counts the words the filter admits, not the rows drawn: a word with two marked answers brings both, so a
+    * page can hold a row or two more than its size. The count and the wording agree on that — "121 words".
     */
   private def renderPagination(): HtmlElement = {
     div(
@@ -1239,6 +1205,7 @@ private final class TagEditorPage(
               onPage = Observer[Int](page => change(_.copy(page = page))),
               onPageSize = Observer[Int](size => change(_.reset(_.copy(pageSize = size)))),
               summary = totalSignal.map(total => I18n.plural(UiKeys.tagsEditorCount, total)).distinct,
+              busy = loadingSignal,
             )
           )
         )
@@ -1248,7 +1215,7 @@ private final class TagEditorPage(
   private def renderRows(): HtmlElement = {
     div(
       cls := "mt-4",
-      child <-- pagedEntries.map { rows =>
+      child <-- entriesVar.signal.map { rows =>
         if (rows.isEmpty) p(cls := "opacity-60 text-sm", I18n.t(UiKeys.tagsEditorEmpty))
         else {
           // This page's rows, which is what the heading's tick box acts on — the selection bar's "Select all" is the

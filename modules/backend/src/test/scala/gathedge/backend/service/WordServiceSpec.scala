@@ -3,7 +3,17 @@ package gathedge.backend.service
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{GroupRepository, TextSearch, WordFormRow, WordRepository, WordRow}
-import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, TagScope, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{
+  EntryBucket,
+  Gender,
+  PairMatch,
+  PartOfSpeech,
+  Tag,
+  TagEntryFilter,
+  TagScope,
+  TranslationFilter,
+  WordLanguage,
+}
 import gathedge.shared.dto.{
   BulkUploadManualPair,
   TagExportEntry,
@@ -2465,6 +2475,212 @@ object WordServiceSpec extends ZIOSpecDefault {
   /** A tabular row with no extra columns — the common two-column shape. */
   private def row(source: String, target: String): TabularRow = TabularRow(source, target, None, None)
 
+  /** The paged, filtered read the editor itself uses — the one listing here whose narrowing is half SQL and half Scala,
+    * which is what these pin.
+    *
+    * A page is `pageSize` source *words*: `total` counts words, a word carrying two answers brings both its rows, and
+    * the database's idea of which words those are has to agree with `TagEntryFilter.matches`'s idea of which of their
+    * rows to draw. A disagreement shows up here as a page that is short of rows, or as a count that does not match what
+    * paging through actually yields.
+    */
+  private def tagEntryPagingSpec = {
+    val de = WordLanguage.De
+    val hu = WordLanguage.Hu
+
+    def pairOf(tagId: Long, source: String, target: String) = {
+      WordService.addPair(
+        tagId,
+        TagPairInput(
+          TagPairWord.New(de, source, PartOfSpeech.Other, None),
+          TagPairWord.New(hu, target, PartOfSpeech.Other, None),
+        ),
+        1L,
+      )
+    }
+
+    def page(tagId: Long, number: Int, size: Int, filter: TagEntryFilter = TagEntryFilter.none) = {
+      WordService.tagEntriesPaged(tagId, Some(1L), number, size, filter)
+    }
+
+    suite("tag editor paging")(
+      test("a page holds its own words, in the order they were added, and the total counts them all") {
+        for {
+          tag    <- createTag("paged", 1L, de, hu)
+          _      <- ZIO.foreachDiscard(1 to 7)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
+          first  <- page(tag.id, 1, 3)
+          second <- page(tag.id, 2, 3)
+          last   <- page(tag.id, 3, 3)
+          past   <- page(tag.id, 9, 3)
+        } yield assertTrue(
+          first.items.map(_.source.text) == List("wort1", "wort2", "wort3"),
+          second.items.map(_.source.text) == List("wort4", "wort5", "wort6"),
+          last.items.map(_.source.text) == List("wort7"),
+          // Past the end is an empty page with an honest total, which is what lets the browser correct itself.
+          past.items.isEmpty,
+          List(first, second, last, past).forall(_.total == 7L),
+        )
+      },
+      test("a word with two marked answers keeps both rows on one page, and still counts once") {
+        for {
+          tag   <- createTag("two-answers", 1L, de, hu)
+          _     <- pairOf(tag.id, "Schloss", "kastely")
+          _     <- pairOf(tag.id, "Schloss", "zar")
+          _     <- pairOf(tag.id, "Haus", "haz")
+          first <- page(tag.id, 1, 1)
+        } yield assertTrue(
+          // One word asked for, both of its rows drawn: splitting them across a page boundary would orphan one.
+          first.items.map(_.source.text) == List("Schloss", "Schloss"),
+          first.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
+          first.total == 2L,
+        )
+      },
+      // The answer word carries the tag too, and is a `word_tags` row like any other. It heads no row of its own,
+      // which is the whole reason the page is cut over "words that head a row" rather than over memberships.
+      test("an answer word is not a page of its own") {
+        for {
+          tag  <- createTag("answers", 1L, de, hu)
+          _    <- pairOf(tag.id, "Haus", "haz")
+          rows <- page(tag.id, 1, 50)
+        } yield assertTrue(rows.total == 1L, rows.items.map(_.source.text) == List("Haus"))
+      },
+      test("the provenance chips narrow the page and the count together") {
+        for {
+          haus     <- WordRepository.ensureWord(dictionaryWord(de, "Haus", gender = Some(Gender.Neuter)))
+          haz      <- WordRepository.ensureWord(dictionaryWord(hu, "ház"))
+          _        <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
+          tag      <- createTag("chips", 1L, de, hu)
+          // One verified row (the dictionary already linked the two), one paired row (a table asserted it), one
+          // unmatched row (an imported word with no answer), and one hand-added row in no bucket at all.
+          _        <- WordService.bulkImport(tag.id, "Haus ház", de, hu, 1L)
+          _        <- WordService.tabularImport(tag.id, List(row("Dach", "tető")), de, hu, 1L)
+          _        <- WordService.bulkImport(tag.id, "brandneu", de, hu, 1L)
+          _        <- pairOf(tag.id, "Fenster", "ablak")
+          all      <- page(tag.id, 1, 50)
+          verified <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Verified)))
+          paired   <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Paired)))
+          loose    <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Unmatched)))
+          both     <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Verified, EntryBucket.Paired)))
+        } yield assertTrue(
+          all.total == 4L,
+          verified.items.map(_.source.text) == List("Haus"),
+          paired.items.map(_.source.text) == List("Dach"),
+          loose.items.map(_.source.text) == List("brandneu"),
+          both.items.map(_.source.text) == List("Haus", "Dach"),
+          // Every count is of the page's own set, which is what the buttons are drawn from.
+          verified.total == 1L,
+          paired.total == 1L,
+          loose.total == 1L,
+          both.total == 2L,
+        )
+      },
+      // The filter has to narrow twice: the database admits the *word*, and `TagEntryFilter.matches` then keeps only
+      // the rows that were asked for. Without the second half this page would draw the hand-marked row too.
+      test("a word whose two answers came from different writers shows only the rows the chips asked for") {
+        for {
+          tag    <- createTag("mixed", 1L, de, hu)
+          _      <- WordService.tabularImport(tag.id, List(row("Schloss", "kastely")), de, hu, 1L)
+          _      <- WordService.addPair(
+                      tag.id,
+                      TagPairInput(
+                        TagPairWord.New(de, "Schloss", PartOfSpeech.Other, None),
+                        TagPairWord.New(hu, "zar", PartOfSpeech.Other, None),
+                      ),
+                      1L,
+                    )
+          all    <- page(tag.id, 1, 50)
+          paired <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Paired)))
+        } yield assertTrue(
+          all.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
+          paired.items.map(_.target.map(_.text)) == List(Some("kastely")),
+          paired.total == 1L,
+        )
+      },
+      test("\"only in this wordlist\" drops a word another tag of mine holds") {
+        for {
+          first  <- createTag("first", 1L, de, hu)
+          second <- createTag("second", 1L, de, hu)
+          _      <- pairOf(first.id, "Haus", "haz")
+          _      <- pairOf(first.id, "Dach", "teto")
+          shared <- page(first.id, 1, 50).map(_.items.find(_.source.text == "Haus").map(_.source.id))
+          _      <- ZIO.foreachDiscard(shared)(id => WordService.tagWord(id, second.id, 1L))
+          unique <- page(first.id, 1, 50, TagEntryFilter(uniqueToTag = true))
+        } yield assertTrue(
+          unique.items.map(_.source.text) == List("Dach"),
+          unique.total == 1L,
+        )
+      },
+      test("\"imported by me\" keeps only words this reader minted through an import") {
+        for {
+          tag      <- createTag("mine", 1L, de, hu)
+          // Minted by the import, so `created_by` is this reader and the membership is `imported`.
+          _        <- WordService.bulkImport(tag.id, "brandneu", de, hu, 1L)
+          // Hand-added: minted by the reader, but no import wrote it.
+          _        <- pairOf(tag.id, "Fenster", "ablak")
+          imported <- page(tag.id, 1, 50, TagEntryFilter(importedByMe = true))
+          // Somebody else asking sees none of it as theirs.
+          theirs   <- WordService.tagEntriesPaged(tag.id, Some(2L), 1, 50, TagEntryFilter(importedByMe = true))
+          visitor  <- WordService.tagEntriesPaged(tag.id, None, 1, 50, TagEntryFilter(uniqueToTag = true))
+        } yield assertTrue(
+          imported.items.map(_.source.text) == List("brandneu"),
+          imported.total == 1L,
+          theirs.items.isEmpty,
+          theirs.total == 0L,
+          // "Only in this wordlist" is true of every row for somebody who owns no other tag — a visitor included.
+          visitor.total == 2L,
+        )
+      },
+      test("hasPairs answers for the whole wordlist, not for the page in front of the reader") {
+        for {
+          tag    <- createTag("locked", 1L, de, hu)
+          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Haus", PartOfSpeech.Other, None)), 1L)
+          before <- page(tag.id, 1, 50)
+          _      <- pairOf(tag.id, "Dach", "teto")
+          // The pair is on the second page; the first page must still say the wordlist has one.
+          after  <- page(tag.id, 1, 1)
+        } yield assertTrue(
+          !before.hasPairs,
+          after.items.map(_.source.text) == List("Haus"),
+          after.hasPairs,
+        )
+      },
+      test("an unpaged read and paging through it yield the same rows") {
+        for {
+          tag   <- createTag("same", 1L, de, hu)
+          _     <- ZIO.foreachDiscard(1 to 5)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
+          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "allein", PartOfSpeech.Other, None)), 1L)
+          whole <- WordService.tagEntries(tag.id, Some(1L))
+          pages <- ZIO.foreach(List(1, 2, 3))(number => page(tag.id, number, 2).map(_.items))
+        } yield assertTrue(
+          pages.flatten.map(r => (r.source.text, r.target.map(_.text))) ==
+            whole.map(r => (r.source.text, r.target.map(_.text)))
+        )
+      },
+      test("a write says whether the wordlist already held the row") {
+        for {
+          tag   <- createTag("again", 1L, de, hu)
+          first <- pairOf(tag.id, "Haus", "haz")
+          again <- WordService.addPair(
+                     tag.id,
+                     TagPairInput(
+                       TagPairWord.New(de, "Haus", PartOfSpeech.Other, None),
+                       TagPairWord.New(hu, "haz", PartOfSpeech.Other, None),
+                     ),
+                     1L,
+                   )
+          word  <-
+            WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
+          twice <-
+            WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
+        } yield assertTrue(
+          !first.alreadyPresent,
+          again.alreadyPresent,
+          !word.alreadyPresent,
+          twice.alreadyPresent,
+        )
+      },
+    ).provide(layer)
+  }
+
   private def tabularImportSpec = {
     suite("tabular import")(
       test("a row's pairing is taken as given, even for words the dictionary has never seen") {
@@ -2829,6 +3045,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       quotaSpec,
       tagCreationSpec,
       tagEditorSpec,
+      tagEntryPagingSpec,
       bulkImportSpec,
       tabularImportSpec,
       columnLanguageCheckSpec,

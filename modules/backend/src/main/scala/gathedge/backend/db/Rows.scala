@@ -134,6 +134,18 @@ final case class AuditLogRow(
   * a correlated subquery — see `V20__words_is_form.sql`. It defaults to `false` because a word starts out belonging to
   * nobody's inflection table, and only [[WordRepository.insertForms]]/`.deleteWordForms` may change it.
   */
+/** What `words.source` records about where a row came from: the imported dictionary, or somebody typing it.
+  *
+  * Here rather than on `WordService` — which is where these two strings used to be spelled — because the paged
+  * wordlist-editor query narrows on the column ("a word this reader minted"), and the database layer may not read the
+  * service layer. `WordService.userSource`/`.dictionarySource` now point at these, so there is still one spelling of
+  * each stored code.
+  */
+object WordSource {
+  val dictionary: String = "dictionary"
+  val user: String       = "user"
+}
+
 final case class WordRow(
   id: Long,
   language: String,

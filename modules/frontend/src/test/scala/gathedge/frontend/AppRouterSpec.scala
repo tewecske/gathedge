@@ -12,7 +12,7 @@ import gathedge.frontend.listing.{
   WordQuery,
 }
 import gathedge.shared.domain.Locale.urlPrefix
-import gathedge.shared.domain.{PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{EntryBucket, PartOfSpeech, WordLanguage}
 import gathedge.shared.dto.{AllGameSort, GamePlaySort, Paging, UserSort, WordSort}
 import zio.test._
 
@@ -314,6 +314,13 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.router
             .pageForRelativeUrl(s"$prefix/tags/5?size=100000")
             .contains(Page.TagDetail(5, TagEntryQuery(pageSize = Paging.maxPageSize))),
+          // The chips are in the address beside the page, since the database is what applies them.
+          AppRouter.router.relativeUrlForPage(
+            Page.TagDetail(5, TagEntryQuery(buckets = Set(EntryBucket.Unmatched), uniqueToTag = true))
+          ) == s"$prefix/tags/5?match=unmatched&unique=true",
+          AppRouter.router
+            .pageForRelativeUrl(s"$prefix/tags/5?match=unmatched&unique=true")
+            .contains(Page.TagDetail(5, TagEntryQuery(buckets = Set(EntryBucket.Unmatched), uniqueToTag = true))),
           // The history tag carries the page too, and the one-part tag an older build wrote still opens the editor.
           AppRouter.deserialize(AppRouter.serialize(second)) == second,
           AppRouter.deserialize(AppRouter.serialize(Page.TagDetail(5))) == Page.TagDetail(5),

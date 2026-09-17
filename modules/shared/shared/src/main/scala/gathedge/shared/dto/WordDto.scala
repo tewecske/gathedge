@@ -268,10 +268,31 @@ final case class TagEntry(
   targetComment: Option[String] = None,
 ) derives JsonCodec
 
+/** One page of one wordlist's rows — what `GET /api/tags/{tagId}/entries/page` answers, unlike the unpaged
+  * [[gathedge.shared.api.WordEndpoints.tagEntries]].
+  *
+  * `total` counts the *words* the filter admits, not the rows drawn: a page holds that many source words, and a word
+  * carrying two marked answers brings both its rows rather than having them split across a page boundary. That is why
+  * the editor's count reads "120 words" and a page can draw a row or two more than its size.
+  *
+  * `hasPairs` is the one fact about the whole wordlist that a page cannot carry: whether any practice pair exists in it
+  * at all. It is what locks the two language selects — the pair the wordlist declares may only be changed while it has
+  * no pair — and no page of rows can answer it, since the pair may be on another page.
+  */
+final case class TagEntryPage(items: List[TagEntry], total: Long, hasPairs: Boolean) derives JsonCodec
+
 /** [[gathedge.shared.api.WordEndpoints.addPair]]/`.replacePair`'s answer: the row as it now stands, plus the same
   * soft-quota warning [[PairSelectionResponse]] carries when the write crossed the pair quota's soft threshold.
+  *
+  * `alreadyPresent` says the write named a row the wordlist already held — every one of these endpoints is idempotent,
+  * so that is an ordinary answer rather than a failure. The editor tells the reader with a toast instead of appending
+  * the row twice; it cannot work this out for itself now that it holds one page rather than the whole list.
   */
-final case class TagEntryResponse(entry: TagEntry, warning: Option[MessageRef]) derives JsonCodec
+final case class TagEntryResponse(
+  entry: TagEntry,
+  warning: Option[MessageRef],
+  alreadyPresent: Boolean = false,
+) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
   * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may

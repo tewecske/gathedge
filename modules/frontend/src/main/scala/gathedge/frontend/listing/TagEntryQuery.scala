@@ -1,53 +1,81 @@
 package gathedge.frontend.listing
 
+import com.raquo.waypoint._
 import urldsl.vocabulary.Codec
+import gathedge.shared.domain.{EntryBucket, TagEntryFilter}
 import gathedge.shared.dto.Paging
 
-/** Which page of one wordlist's rows the editor shows — the argument of the `/tags/{id}` route, and the smallest of
-  * these listing queries: two numbers and nothing else.
+/** Which rows of one wordlist the editor shows — the argument of the `/tags/{id}` route, and everything
+  * `GET /api/tags/{tagId}/entries/page` is asked.
   *
   * It carries no `sort` and no `dir`, unlike [[TagQuery]] and the rest. The editor's rows are in the order they were
   * added (a bulk import keeps the pasted text's order, which is the reader's own), so no heading orders them and there
-  * is nothing for those two parameters to say. Its six provenance filters stay page-local `Var`s rather than joining
-  * this: they are read off each row's import flags, which is a question about the rows already in the browser, not a
-  * narrowing the server could answer.
+  * is nothing for those two parameters to say. What it does carry that no other listing does is the provenance chips,
+  * because they are this listing's filter: the database narrows the page and the count by them, so they belong in the
+  * address beside the page number rather than in a `Var` the URL knows nothing about.
   *
-  * It also differs from every other listing query in what turns the page. The rows of one wordlist arrive in one answer
-  * — `WordEndpoints.tagEntries` is not paged, and the editor needs the whole list anyway: to refuse a duplicate pair,
-  * to lock the language pair while any row holds an answer, and to drop a deleted row without asking again — so `page`
-  * cuts what is drawn rather than what is fetched. It is still in the URL, for the reason every other listing's is: a
-  * page of a long wordlist is a place a reader can be sent back to.
+  * A page is `pageSize` *source words*, not rows — a word with two marked answers brings both — so `total` counts words
+  * and the editor's summary says so. See `dto.TagEntryPage`.
   */
 final case class TagEntryQuery(
   page: Int = Paging.firstPage,
   pageSize: Int = Paging.tagEntryPageSize,
+  buckets: Set[EntryBucket] = Set.empty,
+  importedByMe: Boolean = false,
+  uniqueToTag: Boolean = false,
 ) {
 
-  /** Any change other than turning the page starts again at the first one — the rule [[TagQuery.reset]] follows. Here
-    * the change is often no change at all (`reset(identity)`): a filter chip narrows the rows without touching this
-    * query, and page 4 of the wider list says nothing about the narrowed one.
+  /** Any change other than turning the page starts again at the first one — the rule [[TagQuery.reset]] follows. Page 4
+    * of the wider list says nothing about the narrowed one.
     */
   def reset(change: TagEntryQuery => TagEntryQuery): TagEntryQuery = change(this).copy(page = Paging.firstPage)
+
+  /** The three filters as the API takes them, which is also how the database reads them. */
+  def filter: TagEntryFilter = TagEntryFilter(buckets, importedByMe, uniqueToTag)
+
+  /** The chip a reader just pressed, on or off — every chip is a toggle, and every toggle is a new listing. */
+  def toggleBucket(bucket: EntryBucket): TagEntryQuery = {
+    reset(query => query.copy(buckets = if (buckets.contains(bucket)) buckets - bucket else buckets + bucket))
+  }
 }
 
 object TagEntryQuery {
 
-  /** The first page at the editor's own page size — what `/tags/{id}` means with no query string at all. */
+  /** The unfiltered first page at the editor's own page size — what `/tags/{id}` means with no query string at all. */
   val default: TagEntryQuery = TagEntryQuery()
 
-  private val codec: Codec[ListingParams.Paged, TagEntryQuery] = {
+  private type Args = (Option[Int], Option[Int], Option[String], Option[String], Option[String])
+
+  private val codec: Codec[Args, TagEntryQuery] = {
     Codec.factory(
-      (args: ListingParams.Paged) => {
-        val (page, size) = args
+      (args: Args) => {
+        val (page, size, matchKinds, mine, unique) = args
         TagEntryQuery(
           page = ListingParams.decodePage(page),
           pageSize = ListingParams.decodePageSize(size, Paging.tagEntryPageSize),
+          buckets = TagEntryFilter.parse(matchKinds),
+          importedByMe = mine.contains("true"),
+          uniqueToTag = unique.contains("true"),
         )
       },
-      (query: TagEntryQuery) => ListingParams.encodePaging(query.page, query.pageSize, Paging.tagEntryPageSize),
+      (query: TagEntryQuery) => {
+        val (page, size) = ListingParams.encodePaging(query.page, query.pageSize, Paging.tagEntryPageSize)
+        (
+          page,
+          size,
+          Option(TagEntryFilter.codes(query.buckets)).filter(_.nonEmpty),
+          Option.when(query.importedByMe)("true"),
+          Option.when(query.uniqueToTag)("true"),
+        )
+      },
     )
   }
 
-  /** The query half of `/tags/{id}`. */
-  val params = ListingParams.paging.as[TagEntryQuery](using codec)
+  /** The query half of `/tags/{id}`. `match` is the chip row, comma-joined; `mine` and `unique` are the two toggles
+    * beside it — the same names and the same spellings the endpoint takes, so the address and the request read alike.
+    */
+  val params = {
+    (ListingParams.paging & param[String]("match").? & param[String]("mine").? & param[String]("unique").?)
+      .as[TagEntryQuery](using codec)
+  }
 }
