@@ -2,18 +2,20 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.frontend.api.{ApiError, WordApiClient}
+import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination, WordPicker}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.listing.TagEntryQuery
+import gathedge.frontend.listing.{AllGameQuery, TagEntryQuery}
 import gathedge.frontend.ocr.ImageOcr
+import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{EntryBucket, PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{EntryBucket, PairMatch, PartOfSpeech, Tag, User, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkImportResponse,
   ColumnLanguageCheckResponse,
   ColumnLanguageGuess,
   ColumnSample,
+  GameCreated,
   LanguageCheckResponse,
   TabularImportResponse,
   TabularRow,
@@ -334,6 +336,18 @@ private final class TagEditorPage(
     * `WordApiClient.exportTag` and the import/export pair on `TagsPage`.
     */
   private val exportBus = new EventBus[Unit]()
+
+  /** "Create game"/"View games" — the same pair of buttons `TagsPage` offers on every row, copied here since this page
+    * *is* one row's detail. Offered to every reader, editor or not, for the same reason `TagsPage` offers them
+    * unconditionally: a game is built from the wordlist, not owned through it, and the catalog it links to is public.
+    */
+  private val createGameBus   = new EventBus[Tag]()
+  private val creatingGameVar = Var(false)
+
+  /** Mirrors who the reader is at the moment "Create game" is pressed — signals cannot be read outside a subscription,
+    * and the guest detour needs `.now()`. Copied from `TagsPage.readerVar`.
+    */
+  private val readerVar = Var(Option.empty[User])
 
   private val inlineRename = new InlineRename[TagResponse](name => WordApiClient.renameTag(tagId, name))
 
@@ -749,6 +763,25 @@ private final class TagEditorPage(
     case _                             => None
   }
 
+  /** A write with the guest detour in front of it — copied from `TagsPage.asReader`/`GameSetupPage.asReader`.
+    * `POST /api/games` needs a session and this page is readable signed out, so a guest is minted first and the call is
+    * retried against the session that creates. Signed in, the mint is skipped entirely.
+    */
+  private def asReader[A](write: () => EventStream[Either[ApiError, A]]): EventStream[Either[ApiError, A]] = {
+    readerVar.now() match {
+      case Some(_) =>
+        write()
+      case None    =>
+        ApiClient.createGuest.flatMapSwitch {
+          case Right(response) =>
+            AppState.setUser(response.user)
+            write()
+          case Left(err)       =>
+            EventStream.fromValue(Left(err))
+        }
+    }
+  }
+
   /** Puts the two language selects on the tag's own stored pair — the tag is the source of truth now, not the rows. */
   private def applyLangsFrom(tag: Tag): Unit = {
     sourceLangVar.set(tag.sourceLanguage)
@@ -775,7 +808,7 @@ private final class TagEditorPage(
           child.maybe <-- canEditSignal.map(can =>
             Option.unless(can)(p(cls := "text-sm opacity-70 mt-2", I18n.t(UiKeys.tagsEditorReadOnly)))
           ),
-          child.maybe <-- tagVar.signal.map(_.map(_ => renderExportButton())),
+          child.maybe <-- tagVar.signal.map(_.map(renderActionButtons)),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
@@ -800,6 +833,21 @@ private final class TagEditorPage(
       queryChanges --> onQuery,
       querySignal --> queryVar.writer,
       // -- data --
+      AppState.currentUserSignal --> readerVar.writer,
+      createGameBus.events --> Observer[Tag](_ => Var.set(creatingGameVar -> true, errorVar -> None)),
+      createGameBus.events.flatMapSwitch(tag =>
+        asReader(() => GameApiClient.create(tag.sourceLanguage, tag.targetLanguage, List(tag.id)))
+      ) -->
+        Observer[Either[ApiError, GameCreated]] {
+          case Right(created) =>
+            creatingGameVar.set(false)
+            // This browser is the one that created it, so it is offered the rename control — the same mark
+            // `GameSetupPage`/`TagsPage` make after their own create.
+            GameOwnership.markOwned(created.slug)
+            AppRouter.router.pushState(Page.GameInstance(created.slug))
+          case Left(err)      =>
+            Var.set(creatingGameVar -> false, errorVar -> Some(err.message))
+        },
       reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
         case Right(tags) =>
           val found = tags.find(_.id == tagId)
@@ -1031,17 +1079,35 @@ private final class TagEditorPage(
     )
   }
 
-  /** The "Export" button under the title — saves the whole tag as a JSON file through [[exportBus]]. Shown to every
-    * reader, since any tag is exportable whoever owns it.
+  /** The row of buttons under the title: "Export" (saves the whole tag as a JSON file through [[exportBus]]), "Create
+    * game" (a game over this wordlist alone, in its own declared language pair, straight to the game's own page — the
+    * same shortcut `TagsPage.renderCreateGameCell` offers per row) and "View games" (the [[Page.AllGames]] catalog
+    * pre-filtered to this wordlist, `TagsPage.renderViewGamesCell`'s counterpart). All three are shown to every reader,
+    * since none of them is gated by ownership.
     */
-  private def renderExportButton(): HtmlElement = {
+  private def renderActionButtons(tag: Tag): HtmlElement = {
     div(
-      cls := "mt-2",
+      cls := "flex flex-wrap gap-2 mt-2",
       button(
         cls := "btn btn-sm",
         typ := "button",
         I18n.t(UiKeys.tagsExportButton),
         onClick.mapToUnit --> exportBus.writer,
+      ),
+      button(
+        typ := "button",
+        cls := "btn btn-sm btn-soft",
+        disabled <-- creatingGameVar.signal,
+        child.maybe <-- creatingGameVar.signal.map(creating =>
+          Option.when(creating)(span(cls := "loading loading-spinner loading-xs"))
+        ),
+        I18n.t(UiKeys.tagsListCreateGame),
+        onClick.mapToUnit --> Observer[Unit](_ => createGameBus.emit(tag)),
+      ),
+      a(
+        cls := "btn btn-sm btn-soft",
+        AppRouter.router.navigateTo(Page.AllGames(AllGameQuery.default.copy(tagId = Some(tag.id)))),
+        I18n.t(UiKeys.tagsListViewGames),
       ),
     )
   }
