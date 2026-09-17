@@ -326,6 +326,12 @@ The first feature: shared dictionary of English, German, Hungarian words, plus t
 
 **A word belongs to nobody; a tag is owned by one account but visible to all; tagging is "in my vocabulary."** No `user_words` table — `mine=true` is a join through `word_tags`. `POST /api/words` is *ensure and attach*, not create-or-409.
 
+**A global admin passes every ownership gate.** `backend/service/GlobalAdmin.scala` reads `users.is_admin` — the flag `/api/admin` already runs on — for the services outside it. `WordService.requireOwnTag`/`requireEditableTag`, `GameService.requireOwnGame` and `GroupService.requireAdmin` all fall through to it, and `Tag.editableByMe` comes back true on every row. Three rules hold:
+
+- **The lookup runs only after the ordinary test has said no**, so an owner's own write never pays for it.
+- **`GameService.requireOwnedPlay` is the one gate it does not open.** Answering into somebody's live session would write results they did not produce; a finished play is read through `/api/admin` or through the game's owner gate instead.
+- **`ownedByMe` and `GroupDetail.viewerRole` keep telling the truth.** They say who owns the row and who joined the group, which is what the listings, the collect picker and the quota that charges an owner read them for. The browser ORs `AppState.isGlobalAdminSignal` in where it gates a *control* on one of them; `editableByMe` is the permission half and that one the server sets. An admin's write is scoped to the row's own owner — `renameTag` checks the name against the owner's other lists, not the admin's.
+
 **Ownership gates writes, not visibility.** `WordService.requireOwnTag` answers `TagNotFound` for anyone else's id. `GET /api/tags` answers every tag, marked `ownedByMe`. `POST /api/tags/{id}/copy` seeds a copy of the copier's own from another tag's name and word memberships, in one transaction. Tag names are unique per owner, case-insensitively.
 
 **Two per-account quotas** (`AppConfig.quotas`): tags owned, and `word_tag_pairs` rows owned (a marked translation is two rows). Not time-windowed. Checked in `WordService` (`checkQuota`/`tagQuota`/`pairQuota`), never `RateLimitKey`. Each has a soft threshold (writes through with `dto.*Response.warning`) and a hard one (409 `WordFailure.*QuotaExceeded`). Enforced at `createTag`, `selectPair` (never charged for an already-marked pair), and `copyTag` (checks both dimensions before writing).

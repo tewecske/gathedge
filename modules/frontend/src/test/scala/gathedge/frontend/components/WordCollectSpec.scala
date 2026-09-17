@@ -1,6 +1,6 @@
 package gathedge.frontend.components
 
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, GroupRef, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{TaggedPair, TranslationOption, WordSummary}
 import zio.test._
 
@@ -52,9 +52,13 @@ object WordCollectSpec extends ZIOSpecDefault {
         )
       },
       test("a remembered tag this account cannot write to is dropped, not written against") {
-        val mine     = Tag(10L, "mine", 0L, ownedByMe = true, editableByMe = true)
-        val theirs   = Tag(11L, "theirs", 0L, ownedByMe = false, editableByMe = false)
-        val classTag = Tag(12L, "lesson1", 0L, ownedByMe = false, editableByMe = true)
+        val mine      = Tag(10L, "mine", 0L, ownedByMe = true, editableByMe = true)
+        val theirs    = Tag(11L, "theirs", 0L, ownedByMe = false, editableByMe = false)
+        // A wordlist somebody else owns is only editable through the group that shares it, so the fixture carries one
+        // — which is what tells it apart from the row below.
+        val classTag  = Tag(12L, "lesson1", 0L, ownedByMe = false, Some(GroupRef(1L, "Period 3")), editableByMe = true)
+        // What a global admin sees on a stranger's ungrouped wordlist: editable, and still not a collect tag.
+        val adminSees = Tag(13L, "stranger", 0L, ownedByMe = false, editableByMe = true)
         assertTrue(
           // The whole of the guest bug: `localStorage` outlives an account, so an id left there may name a tag the
           // reader cannot write to. Kept, it fails with "No such tag"; dropped, the first click makes a tag instead.
@@ -71,6 +75,11 @@ object WordCollectSpec extends ZIOSpecDefault {
           WordCollect.keptCollectTag(None, List(mine, classTag), explicitNone = true) == None,
           // A confirmed remembered id still wins over the explicit-none flag (they re-picked a real tag).
           WordCollect.keptCollectTag(Some(10L), List(mine), explicitNone = true) == Some(10L),
+          // A global administrator may write to every wordlist there is, which does not make every wordlist a place
+          // to collect into: with nothing of their own and nothing shared, the first click still makes a tag.
+          WordCollect.keptCollectTag(None, List(adminSees)) == None,
+          // Remembered on purpose, it is still kept — the reader picked it.
+          WordCollect.keptCollectTag(Some(13L), List(adminSees)) == Some(13L),
         )
       },
       test("marking a translation adds the tag and the pair") {

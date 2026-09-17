@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.db.{GroupMemberRow, GroupRepository, GroupRow, UserRow, WordRepository}
+import gathedge.backend.db.{GroupMemberRow, GroupRepository, GroupRow, UserRepository, UserRow, WordRepository}
 import gathedge.backend.security.Tokens
 import gathedge.shared.domain.{Group, GroupRole, WordLanguage}
 import gathedge.shared.dto.{GroupDetail, GroupMemberSummary, GroupPage, GroupTagSummary, Paging}
@@ -36,6 +36,9 @@ enum GroupFailure {
   * group they belong to opens that tag's *content* to every member — see `WordService.requireEditableTag`, which reads
   * `GroupRepository` directly rather than depending on this service, avoiding a service-to-service cycle (this service
   * depends on `WordRepository`, the other direction).
+  *
+  * A third role sits above both, and outside the roster: a global administrator (`GlobalAdmin`) runs every group here
+  * without joining it.
   */
 trait GroupService {
 
@@ -85,12 +88,12 @@ trait GroupService {
 
   /** Attaches one of `userId`'s own tags to a group they belong to. [[GroupFailure.NotMember]] covers `userId` not
     * belonging to `groupId`; [[GroupFailure.TagNotOwned]] covers not owning `tagId`; [[GroupFailure.TagAlreadyInGroup]]
-    * covers the tag already belonging to a group.
+    * covers the tag already belonging to a group. A global administrator needs neither the membership nor the tag.
     */
   def attachTag(groupId: Long, tagId: Long, userId: Long): IO[GroupFailure, Unit]
 
-  /** Detaches a tag, reverting it to owner-only edit rights. Callable by the tag's own owner or by any admin of the
-    * group it currently belongs to.
+  /** Detaches a tag, reverting it to owner-only edit rights. Callable by the tag's own owner, by any admin of the group
+    * it currently belongs to, or by a global administrator.
     */
   def detachTag(groupId: Long, tagId: Long, userId: Long): IO[GroupFailure, Unit]
 }
@@ -143,15 +146,20 @@ object GroupService {
   def detachTag(groupId: Long, tagId: Long, userId: Long): ZIO[GroupService, GroupFailure, Unit] =
     ZIO.serviceWithZIO[GroupService](_.detachTag(groupId, tagId, userId))
 
-  val live: URLayer[GroupRepository & WordRepository & RateLimiter, GroupService] = {
-    ZLayer.fromFunction((repo: GroupRepository, wordRepo: WordRepository, rateLimiter: RateLimiter) =>
-      GroupServiceLive(repo, wordRepo, rateLimiter)
+  val live: URLayer[GroupRepository & WordRepository & UserRepository & RateLimiter, GroupService] = {
+    ZLayer.fromFunction(
+      (repo: GroupRepository, wordRepo: WordRepository, userRepo: UserRepository, rateLimiter: RateLimiter) =>
+        GroupServiceLive(repo, wordRepo, userRepo, rateLimiter)
     )
   }
 }
 
-final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepository, rateLimiter: RateLimiter)
-    extends GroupService {
+final case class GroupServiceLive(
+  repo: GroupRepository,
+  wordRepo: WordRepository,
+  userRepo: UserRepository,
+  rateLimiter: RateLimiter,
+) extends GroupService {
 
   private def adminCode  = GroupRole.code(GroupRole.Admin)
   private def memberCode = GroupRole.code(GroupRole.Member)
@@ -180,12 +188,17 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
 
   /** The group, once `userId` is confirmed to be one of its admins. [[GroupFailure.NotAdmin]] covers both not being a
     * member at all and being a plain member — from the caller's side there is no difference worth surfacing.
+    *
+    * A global administrator runs every group without joining it — see [[GlobalAdmin]]. The lookup runs only once the
+    * roster has said no.
     */
   private def requireAdmin(groupId: Long, userId: Long): IO[GroupFailure, GroupRow] = {
     for {
       group      <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
       membership <- repo.findMembership(groupId, userId).orDie
-      _          <- ZIO.unless(membership.exists(_.role == adminCode))(ZIO.fail(GroupFailure.NotAdmin))
+      allowed    <- if (membership.exists(_.role == adminCode)) ZIO.succeed(true)
+                    else GlobalAdmin.is(userRepo, userId)
+      _          <- ZIO.unless(allowed)(ZIO.fail(GroupFailure.NotAdmin))
     } yield group
   }
 
@@ -213,12 +226,16 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
 
   def detail(groupId: Long, viewerId: Option[Long]): IO[GroupFailure, GroupDetail] = {
     for {
-      group      <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
-      membership <- viewerId.fold(ZIO.succeed(Option.empty[GroupMemberRow]))(repo.findMembership(groupId, _).orDie)
-      memberRows <- repo.membersWithUsers(groupId).orDie
-      tagRows    <- repo.tagsOfGroup(groupId).orDie
-      isMember    = membership.isDefined
-      isAdmin     = membership.exists(_.role == adminCode)
+      group       <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
+      membership  <- viewerId.fold(ZIO.succeed(Option.empty[GroupMemberRow]))(repo.findMembership(groupId, _).orDie)
+      memberRows  <- repo.membersWithUsers(groupId).orDie
+      tagRows     <- repo.tagsOfGroup(groupId).orDie
+      // The roster and the invite code are what an administrator needs to run the group at all, so they are answered
+      // whether or not they joined it. `viewerRole` stays the truth about membership — it is what the page reads to
+      // decide whether "leave" makes sense — so the browser ORs its own admin flag in for the controls.
+      globalAdmin <- GlobalAdmin.isReader(userRepo, viewerId)
+      isMember     = membership.isDefined || globalAdmin
+      isAdmin      = membership.exists(_.role == adminCode) || globalAdmin
     } yield GroupDetail(
       id = group.id,
       name = group.name,
@@ -349,19 +366,20 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
 
   def attachTag(groupId: Long, tagId: Long, userId: Long): IO[GroupFailure, Unit] = {
     for {
-      _          <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
-      membership <- repo.findMembership(groupId, userId).orDie
-      _          <- ZIO.when(membership.isEmpty)(ZIO.fail(GroupFailure.NotMember))
-      tag        <- wordRepo.findTagById(tagId).orDie.someOrFail(GroupFailure.TagNotFound)
-      _          <- ZIO.unless(tag.userId == userId)(ZIO.fail(GroupFailure.TagNotOwned))
-      _          <- ZIO.when(tag.groupId.isDefined)(ZIO.fail(GroupFailure.TagAlreadyInGroup))
-      rows       <- wordRepo.setTagGroup(tagId, Some(groupId), tag.version).orDie
-      _          <- OptimisticLock.resolve(
-                      rows,
-                      wordRepo.findTagById(tagId).orDie.map(_.isDefined),
-                      GroupFailure.StaleWrite,
-                      GroupFailure.TagNotFound,
-                    )
+      _           <- repo.findGroupById(groupId).orDie.someOrFail(GroupFailure.NotFound)
+      membership  <- repo.findMembership(groupId, userId).orDie
+      globalAdmin <- if (membership.isDefined) ZIO.succeed(false) else GlobalAdmin.is(userRepo, userId)
+      _           <- ZIO.when(membership.isEmpty && !globalAdmin)(ZIO.fail(GroupFailure.NotMember))
+      tag         <- wordRepo.findTagById(tagId).orDie.someOrFail(GroupFailure.TagNotFound)
+      _           <- ZIO.unless(tag.userId == userId || globalAdmin)(ZIO.fail(GroupFailure.TagNotOwned))
+      _           <- ZIO.when(tag.groupId.isDefined)(ZIO.fail(GroupFailure.TagAlreadyInGroup))
+      rows        <- wordRepo.setTagGroup(tagId, Some(groupId), tag.version).orDie
+      _           <- OptimisticLock.resolve(
+                       rows,
+                       wordRepo.findTagById(tagId).orDie.map(_.isDefined),
+                       GroupFailure.StaleWrite,
+                       GroupFailure.TagNotFound,
+                     )
     } yield ()
   }
 
@@ -371,7 +389,8 @@ final case class GroupServiceLive(repo: GroupRepository, wordRepo: WordRepositor
       _          <- ZIO.unless(tag.groupId.contains(groupId))(ZIO.fail(GroupFailure.TagNotInGroup))
       membership <- repo.findMembership(groupId, userId).orDie
       isAdmin     = membership.exists(_.role == adminCode)
-      _          <- ZIO.unless(tag.userId == userId || isAdmin)(ZIO.fail(GroupFailure.NotAdmin))
+      allowed    <- if (tag.userId == userId || isAdmin) ZIO.succeed(true) else GlobalAdmin.is(userRepo, userId)
+      _          <- ZIO.unless(allowed)(ZIO.fail(GroupFailure.NotAdmin))
       rows       <- wordRepo.setTagGroup(tagId, None, tag.version).orDie
       _          <- OptimisticLock.resolve(
                       rows,

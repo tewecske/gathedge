@@ -1,7 +1,7 @@
 package gathedge.backend.service
 
 import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
-import gathedge.backend.db.GroupRepository
+import gathedge.backend.db.{GroupRepository, UserRepository}
 import gathedge.shared.domain.{
   AnswerOutcome,
   GameMode,
@@ -376,9 +376,10 @@ object GameService {
   ): URIO[GameService, MyPlayPage] =
     ZIO.serviceWithZIO[GameService](_.playsOf(targetUserId, gameId, page, pageSize, sort, descending, nameContains))
 
-  val live: URLayer[GameRepository & GameWordList & GroupRepository, GameService] = {
-    ZLayer.fromFunction((repo: GameRepository, words: GameWordList, groupRepo: GroupRepository) =>
-      GameServiceLive(repo, words, groupRepo)
+  val live: URLayer[GameRepository & GameWordList & GroupRepository & UserRepository, GameService] = {
+    ZLayer.fromFunction(
+      (repo: GameRepository, words: GameWordList, groupRepo: GroupRepository, userRepo: UserRepository) =>
+        GameServiceLive(repo, words, groupRepo, userRepo)
     )
   }
 
@@ -393,8 +394,12 @@ object GameService {
   val maxAttempts = 30
 }
 
-final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, groupRepo: GroupRepository)
-    extends GameService {
+final case class GameServiceLive(
+  repo: GameRepository,
+  wordList: GameWordList,
+  groupRepo: GroupRepository,
+  userRepo: UserRepository,
+) extends GameService {
 
   private def toTag(row: TagRow, wordCount: Long, viewerId: Long, group: Option[GroupRef] = None): Tag = {
     Tag(
@@ -688,11 +693,16 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
     * shared by [[rename]], [[listPlays]] and [[getPlayDetail]]. Games reveal their existence to non-owners (a shared
     * link must be viewable by anyone), so this fails [[GameFailure.NotOwner]] rather than [[GameFailure.NotFound]] for
     * somebody else's game — the same 403, not 404, choice [[rename]] already made before this was extracted.
+    *
+    * A global administrator passes it whoever owns the game — see [[GlobalAdmin]], and note that [[requireOwnedPlay]]
+    * deliberately does '''not''' follow suit.
     */
   private def requireOwnGame(slug: String, requesterUserId: Long): IO[GameFailure, GameRow] = {
     for {
-      row <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      _   <- ZIO.unless(row.ownerUserId == requesterUserId)(ZIO.fail(GameFailure.NotOwner))
+      row     <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
+      allowed <- if (row.ownerUserId == requesterUserId) ZIO.succeed(true)
+                 else GlobalAdmin.is(userRepo, requesterUserId)
+      _       <- ZIO.unless(allowed)(ZIO.fail(GameFailure.NotOwner))
     } yield row
   }
 
@@ -859,6 +869,11 @@ final case class GameServiceLive(repo: GameRepository, wordList: GameWordList, g
 
   /** Loads `playId` and checks it belongs to `requesterUserId` — the ownership check every play-id endpoint needs,
     * mirroring [[rename]]'s check for a game's slug.
+    *
+    * The one gate a global administrator does '''not''' pass. This one guards a running session — `nextPrompt`,
+    * `submitAnswer`, `getResults` — and answering into it would write somebody else's results under their name. A
+    * finished play is readable through `/api/admin` and through [[getPlayDetail]], which is owner-gated on the game
+    * instead and does let an administrator through.
     */
   private def requireOwnedPlay(playId: Long, requesterUserId: Long): IO[GameFailure, GamePlayRow] = {
     for {

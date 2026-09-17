@@ -127,8 +127,16 @@ object WordCollect {
   def keptCollectTag(remembered: Option[Long], tags: List[Tag], explicitNone: Boolean = false): Option[Long] = {
     val confirmed = remembered.filter(id => tags.exists(tag => tag.id == id && tag.editableByMe))
     if (confirmed.isEmpty && explicitNone) None
-    else confirmed.orElse(tags.find(_.ownedByMe).map(_.id)).orElse(tags.find(_.editableByMe).map(_.id))
+    else confirmed.orElse(tags.find(_.ownedByMe).map(_.id)).orElse(tags.find(collectable).map(_.id))
   }
+
+  /** Whether a tag is one the reader may *collect into*, which is narrower than one they may write to. A global
+    * administrator may write to every tag there is (`editableByMe` says so on every row), and a dropdown of every
+    * wordlist in the database is not a collect tag — so the fallback and the select below also ask that the row be the
+    * reader's own or shared through some group, which is what "a list I take part in" means here. For everybody else
+    * the two questions already have the same answer.
+    */
+  def collectable(tag: Tag): Boolean = tag.editableByMe && (tag.ownedByMe || tag.group.isDefined)
 
   /** Folds a tag the reader just gained into a list they already had, replacing any existing entry for the same id
     * rather than appending beside it.
@@ -162,7 +170,7 @@ object WordCollect {
     * existed.
     */
   def mineOptions(tags: List[Tag]): List[HtmlElement] = {
-    val editable         = tags.filter(_.editableByMe)
+    val editable         = tags.filter(collectable)
     val (mine, byOthers) = editable.partition(_.ownedByMe)
     val mineOpts         = mine.sortBy(_.name.toLowerCase).map(tagOption)
     val groupOpts        = byOthers
@@ -438,7 +446,7 @@ final class WordCollect(
       case Some(id) =>
         EventStream.fromValue(Right(id))
       case None     =>
-        tagsVar.now().find(_.ownedByMe).orElse(tagsVar.now().find(_.editableByMe)) match {
+        tagsVar.now().find(_.ownedByMe).orElse(tagsVar.now().find(WordCollect.collectable)) match {
           case Some(tag) =>
             EventStream.fromValue(Right(tag.id))
           case None      =>

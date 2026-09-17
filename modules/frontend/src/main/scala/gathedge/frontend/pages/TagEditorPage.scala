@@ -351,10 +351,21 @@ private final class TagEditorPage(
 
   private val inlineRename = new InlineRename[TagResponse](name => WordApiClient.renameTag(tagId, name))
 
-  /** Content editing — the owner or any member of the tag's group. Rename/delete stay owner-only, like `TagDetailPage`.
+  /** Content editing — the owner, any member of the tag's group, or a global administrator, all three folded into
+    * `editableByMe` by the server.
     */
   private val canEditSignal: Signal[Boolean] = tagVar.signal.map(_.exists(_.editableByMe)).distinct
-  private val ownedSignal: Signal[Boolean]   = tagVar.signal.map(_.exists(_.ownedByMe)).distinct
+
+  /** Renaming the wordlist, deleting it, and relanguaging it: the owner alone — plus a global administrator, who may do
+    * it to anybody's (`WordService.requireOwnTag`). `ownedByMe` keeps saying who owns the row, so the admin half is
+    * ORed in here rather than folded into the mark.
+    */
+  private val mayManageSignal: Signal[Boolean] = {
+    Signal
+      .combine(tagVar.signal, AppState.isGlobalAdminSignal)
+      .map { case (tag, globalAdmin) => tag.exists(_.ownedByMe) || (tag.isDefined && globalAdmin) }
+      .distinct
+  }
 
   private val tagNameSignal: Signal[String] =
     tagVar.signal.map(_.map(_.name).getOrElse(I18n.t(UiKeys.tagDetailTitle))).distinct
@@ -799,7 +810,7 @@ private final class TagEditorPage(
           cls := "card-body",
           inlineRename.renderTitle(
             tagNameSignal,
-            ownedSignal,
+            mayManageSignal,
             I18n.t(UiKeys.wordsTagRenameButton),
             I18n.t(UiKeys.wordsTagRenameLabel),
             "input text-xl",
@@ -1067,7 +1078,7 @@ private final class TagEditorPage(
   }
 
   private def deleteIcon(): Modifier[HtmlElement] = {
-    child.maybe <-- ownedSignal.map(
+    child.maybe <-- mayManageSignal.map(
       Option.when(_)(
         InlineRename.iconButton(
           I18n.t(UiKeys.wordsTagDeleteButton),

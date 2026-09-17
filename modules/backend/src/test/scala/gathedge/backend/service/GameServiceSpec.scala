@@ -35,6 +35,12 @@ object GameServiceSpec extends ZIOSpecDefault {
 
   private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L, None).map(_.id)
 
+  /** An account with `users.is_admin` set — a global administrator passes `requireOwnGame` whoever owns the game, and
+    * `GlobalAdmin` reads the flag off the table rather than taking it from the caller.
+    */
+  private def newAdmin(email: String): RIO[UserRepository, Long] =
+    UserRepository.insert(email, Some("hash"), isAdmin = true, "light", "en", 0L, None).map(_.id)
+
   private def dictionaryWord(
     language: WordLanguage,
     text: String,
@@ -451,6 +457,44 @@ object GameServiceSpec extends ZIOSpecDefault {
           blocked == Left(GameFailure.NotOwner),
           renamed.name == "New name",
           renamed.slug == created.slug,
+        )
+      },
+      test("a global admin renames, deletes and reads the plays of a game they do not own") {
+        for {
+          owner   <- newUser()
+          admin   <- newAdmin("gameadmin@example.com")
+          tagId   <- eligibleTagWithPairs(owner, "adminGuard", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started <- GameService.startPlay(created.slug, owner)
+          _       <- playThrough(started.playId, "adminGuard", owner)
+          listed  <- GameService.listPlays(created.slug, admin, 1, 20, None, None, false).either
+          detail  <- GameService.getPlayDetail(created.slug, started.playId, admin).either
+          renamed <- GameService.rename(created.slug, "Renamed by admin", admin)
+          _       <- GameService.deleteGame(created.slug, admin)
+          gone    <- GameService.getBySlug(created.slug).either
+        } yield assertTrue(
+          listed.exists(_.total == 1L),
+          detail.isRight,
+          renamed.name == "Renamed by admin",
+          gone == Left(GameFailure.NotFound),
+        )
+      },
+      test("a global admin is still refused somebody else's running play") {
+        for {
+          owner         <- newUser()
+          admin         <- newAdmin("playadmin@example.com")
+          tagId         <- eligibleTagWithPairs(owner, "playGuard", WordLanguage.De, WordLanguage.Hu, count = 1)
+          created       <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          started       <- GameService.startPlay(created.slug, owner)
+          promptResult  <- GameService.nextPrompt(started.playId, admin).either
+          submitResult  <- GameService.submitAnswer(started.playId, 0L, "anything", admin).either
+          resultsResult <- GameService.getResults(started.playId, admin).either
+        } yield assertTrue(
+          // Reading a finished play is the game owner's right, which the administrator now has; driving a live one is
+          // the player's alone, administrator or not.
+          promptResult == Left(GameFailure.NotOwner),
+          submitResult == Left(GameFailure.NotOwner),
+          resultsResult == Left(GameFailure.NotOwner),
         )
       },
       test("renaming to a blank name fails validation") {

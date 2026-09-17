@@ -1439,6 +1439,29 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           absent.isEmpty,
         )
       },
+      // A global administrator's writes land on rows owned by somebody else, so `updateTag`/`deleteTag` run here with
+      // an owner id that is not the caller's — and every query over `users` belongs on this dialect, where `user` is a
+      // reserved word and Quill names its alias after the quoted lambda's parameter.
+      pgTest("a global admin renames and deletes a wordlist owned by another account on the real dialect") {
+        for {
+          admin     <- AdminService.createUser(AdminActor.system, "pgtagadmin@example.com", "password123", isAdmin = true)
+          signup    <- AuthService.signup("pgtagowner@example.com", "password123")
+          (owner, _) = signup
+          tag       <- WordService.createTag("pgadmin-list", WordLanguage.De, WordLanguage.Hu, owner.id)
+          renamed   <- WordService.renameTag(tag.tag.id, "pgadmin-renamed", admin.id)
+          stored    <- WordRepository.findTagById(tag.tag.id)
+          seen      <- WordService.listTags(Some(admin.id))
+          _         <- WordService.deleteTag(tag.tag.id, admin.id)
+          gone      <- WordRepository.findTagById(tag.tag.id)
+        } yield assertTrue(
+          renamed.tag.name == "pgadmin-renamed",
+          !renamed.tag.ownedByMe,
+          // The rename touched the name and nothing else: the row still belongs to the account that made it.
+          stored.exists(row => row.name == "pgadmin-renamed" && row.userId == owner.id),
+          seen.find(_.id == tag.tag.id).exists(t => !t.ownedByMe && t.editableByMe),
+          gone.isEmpty,
+        )
+      },
       pgTest("findWordsByLengthRange filters by textNorm length on the real dialect") {
         for {
           _        <- WordRepository.ensureWord(

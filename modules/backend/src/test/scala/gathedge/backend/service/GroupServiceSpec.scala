@@ -43,6 +43,13 @@ object GroupServiceSpec extends ZIOSpecDefault {
     AuthService.signup(email, "password123").orDieWith(failure => new RuntimeException(failure.toString)).map(_._1.id)
   }
 
+  /** An account with `users.is_admin` set. Minted through the repository rather than `AuthService.signup`, which has no
+    * way to ask for the flag — and `GlobalAdmin` reads it off the table.
+    */
+  private def adminId(email: String): ZIO[UserRepository, Nothing, Long] = {
+    UserRepository.insert(email, Some("hash"), isAdmin = true, "light", "en", 0L, None).orDie.map(_.id)
+  }
+
   private def tagId(name: String, owner: Long): ZIO[WordService, Nothing, Long] = {
     WordService
       .createTag(name, WordLanguage.De, WordLanguage.Hu, owner)
@@ -206,6 +213,42 @@ object GroupServiceSpec extends ZIOSpecDefault {
           byOwner.isRight,
           byAdmin.isRight,
         )
+      },
+      test("a global admin runs a group they never joined, and the roster still says they are not in it") {
+        for {
+          owner   <- userId("owner11@example.com")
+          member  <- userId("member11@example.com")
+          admin   <- adminId("admin11@example.com")
+          created <- GroupService.create("Group11", owner)
+          _       <- GroupService.join(created.inviteCode.get, member)
+          seen    <- GroupService.detail(created.id, Some(admin))
+          renamed <- GroupService.renameGroup(created.id, "Renamed by admin", admin)
+          code    <- GroupService.regenerateInviteCode(created.id, admin).either
+          promote <- GroupService.setMemberRole(created.id, admin, member, GroupRole.Admin).either
+          removed <- GroupService.removeMember(created.id, admin, member).either
+          after   <- GroupService.detail(created.id, Some(owner))
+        } yield assertTrue(
+          // The roster and the code are answered so the screen can act on them...
+          seen.members.map(_.userId).toSet == Set(owner, member),
+          seen.inviteCode.isDefined,
+          // ...but `viewerRole` keeps saying what it always said: the administrator is not a member.
+          seen.viewerRole.isEmpty,
+          renamed.name == "Renamed by admin",
+          code.isRight,
+          promote.isRight,
+          removed.isRight,
+          after.members.map(_.userId) == List(owner),
+        )
+      },
+      test("a global admin attaches and detaches a tag they do not own, in a group they never joined") {
+        for {
+          owner    <- userId("owner12@example.com")
+          admin    <- adminId("admin12@example.com")
+          created  <- GroupService.create("Group12", owner)
+          tag      <- tagId("theirs", owner)
+          attached <- GroupService.attachTag(created.id, tag, admin).either
+          detached <- GroupService.detachTag(created.id, tag, admin).either
+        } yield assertTrue(attached.isRight, detached.isRight)
       },
       test("a group's tag list carries each tag's declared language pair") {
         for {

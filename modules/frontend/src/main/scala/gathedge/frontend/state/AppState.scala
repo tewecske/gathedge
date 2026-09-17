@@ -27,6 +27,14 @@ object AppState {
   val themeSignal: Signal[Theme]        = themeVar.signal.distinct
   val isSignedInSignal: Signal[Boolean] = currentUserSignal.map(_.isDefined).distinct
 
+  /** Whether the signed-in account holds `users.is_admin`. The admin screens have their own gate in `App.renderFor`;
+    * this is for the ordinary pages, where a global administrator may rename, delete or run things they do not own
+    * (`gathedge.backend.service.GlobalAdmin`) and the control has to be offered before the click.
+    *
+    * A hint, like every permission the browser decides: the server checks each write again.
+    */
+  val isGlobalAdminSignal: Signal[Boolean] = currentUserSignal.map(_.exists(_.isAdmin)).distinct
+
   /** The theme in force right now, read outside a subscription — for the one caller that needs it synchronously rather
     * than reactively: minting a guest has to send this browser's current preference along with the request, before
     * there is anywhere to `-->` a stream into.
