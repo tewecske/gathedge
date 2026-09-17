@@ -904,6 +904,7 @@
   "ui.tagsList.count.one": "{0} szógyűjtemény",
   "ui.tagsList.count.other": "{0} szógyűjtemény",
   "ui.tagsList.createGame": "Játék létrehozása",
+  "ui.tagsList.viewGames": "Játékok megtekintése",
   "ui.tags.export.button": "Exportálás",
   "ui.tags.export.allButton": "Összes szógyűjtemény exportálása",
   "ui.tags.import.button": "Importálás",
