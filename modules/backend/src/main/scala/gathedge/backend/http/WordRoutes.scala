@@ -2,7 +2,7 @@ package gathedge.backend.http
 
 import gathedge.backend.service.{AuthService, WordService}
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{PartOfSpeech, TagScope, TranslationFilter, User, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, TagEntryFilter, TagScope, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkDeletePairsRequest,
@@ -287,6 +287,36 @@ object WordRoutes {
     )
   }
 
+  private val tagEntriesPageRoute = {
+    WordEndpoints.tagEntriesPage.implementHandler(
+      handler {
+        (
+          tagId: Long,
+          page: Option[Int],
+          pageSize: Option[Int],
+          matchKinds: Option[String],
+          mine: Option[Boolean],
+          unique: Option[Boolean],
+        ) =>
+          reader.flatMap { who =>
+            WordService
+              .tagEntriesPaged(
+                tagId = tagId,
+                reader = who,
+                page = Paging.boundedPage(page),
+                pageSize = Paging.boundedPageSize(pageSize, Paging.tagEntryPageSize),
+                filter = TagEntryFilter(
+                  buckets = TagEntryFilter.parse(matchKinds),
+                  importedByMe = mine.getOrElse(false),
+                  uniqueToTag = unique.getOrElse(false),
+                ),
+              )
+              .mapError(ApiFailures.word)
+          }
+      }
+    )
+  }
+
   private val addPairRoute = {
     WordEndpoints.addPair.implementHandler(
       handler { (tagId: Long, body: TagPairInput) =>
@@ -412,8 +442,16 @@ object WordRoutes {
   /** Two `Routes` values because they are guarded differently, `++`'d and then given the CSRF check together — the
     * arrangement `AuthRoutes` uses for the same reason.
     */
-  private val publicRoutes =
-    Routes(listRoute, getRoute, listTagsRoute, listTagsPageRoute, tagEntriesRoute) @@ RouteSupport.optionalUser
+  private val publicRoutes = {
+    Routes(
+      listRoute,
+      getRoute,
+      listTagsRoute,
+      listTagsPageRoute,
+      tagEntriesRoute,
+      tagEntriesPageRoute,
+    ) @@ RouteSupport.optionalUser
+  }
 
   private val sessionRoutes = {
     Routes(

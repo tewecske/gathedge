@@ -45,7 +45,16 @@ import gathedge.backend.service.{
   WordFailure,
   WordService,
 }
-import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, TagScope, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{
+  EntryBucket,
+  Gender,
+  PairMatch,
+  PartOfSpeech,
+  TagEntryFilter,
+  TagScope,
+  TranslationFilter,
+  WordLanguage,
+}
 import gathedge.shared.dto.{
   ColumnSample,
   PairRef,
@@ -809,6 +818,69 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // Removing the row took its pair and the now-orphaned answer with it; the unmatched row is untouched.
           afterRm.map(_.source.text) == List("brandneu"),
           pairsRm.isEmpty,
+        )
+      },
+      // The editor's paged read is the one query here whose predicate is boolean algebra over three nested `EXISTS`
+      // clauses, with a lifted flag per provenance chip. SQLite takes almost anything for a boolean; Postgres does
+      // not, and it is the only dialect that ships — so the page, the count and every chip run here on real rows.
+      pgTest("the tag editor's paged read cuts, counts and narrows on the real dialect") {
+        val filter = (buckets: Set[EntryBucket]) => TagEntryFilter(buckets = buckets)
+        for {
+          reader   <- AuthService.createGuest(Some("10.9.2.11")).map(_._1)
+          tag      <- WordService.createTag("pgpaged", WordLanguage.De, WordLanguage.Hu, reader.id).map(_.tag)
+          haus     <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "Pgphaus", "pgphaus", "noun", "neuter", 1, "user", None, 0L, "pgphaus")
+                      )
+          haz      <- WordRepository.ensureWord(
+                        WordRow(0L, "hu", "Pgphaz", "pgphaz", "noun", "", 1, "user", None, 0L, "pgphaz")
+                      )
+          _        <- WordRepository.insertTranslationPair(haus.id, haz.id, "dictionary", None, 0L)
+          // One verified row, one paired row, one unmatched row, and one hand-added row in no bucket at all.
+          _        <- WordService.bulkImport(tag.id, "Pgphaus Pgphaz pgpneu", WordLanguage.De, WordLanguage.Hu, reader.id)
+          _        <- WordService.tabularImport(
+                        tag.id,
+                        List(TabularRow("Pgpdach", "pgpteto", None, None)),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        reader.id,
+                      )
+          _        <- WordService.addPair(
+                        tag.id,
+                        TagPairInput(
+                          TagPairWord.New(WordLanguage.De, "Pgpfenster", PartOfSpeech.Other, None),
+                          TagPairWord.New(WordLanguage.Hu, "pgpablak", PartOfSpeech.Other, None),
+                        ),
+                        reader.id,
+                      )
+          whole    <- WordService.tagEntries(tag.id, Some(reader.id))
+          first    <- WordService.tagEntriesPaged(tag.id, Some(reader.id), 1, 2, TagEntryFilter.none)
+          second   <- WordService.tagEntriesPaged(tag.id, Some(reader.id), 2, 2, TagEntryFilter.none)
+          verified <- WordService.tagEntriesPaged(tag.id, Some(reader.id), 1, 50, filter(Set(EntryBucket.Verified)))
+          paired   <- WordService.tagEntriesPaged(tag.id, Some(reader.id), 1, 50, filter(Set(EntryBucket.Paired)))
+          loose    <- WordService.tagEntriesPaged(tag.id, Some(reader.id), 1, 50, filter(Set(EntryBucket.Unmatched)))
+          mine     <- WordService
+                        .tagEntriesPaged(tag.id, Some(reader.id), 1, 50, TagEntryFilter(importedByMe = true))
+          unique   <- WordService
+                        .tagEntriesPaged(tag.id, Some(reader.id), 1, 50, TagEntryFilter(uniqueToTag = true))
+        } yield assertTrue(
+          // Paging through yields exactly the unpaged read, in the same order.
+          (first.items ++ second.items).map(r => (r.source.text, r.target.map(_.text))) ==
+            whole.map(r => (r.source.text, r.target.map(_.text))),
+          first.items.map(_.source.text) == List("Pgphaus", "pgpneu"),
+          first.total == 4L,
+          first.hasPairs,
+          // Each chip narrows the page and the count to the same set.
+          verified.items.map(_.source.text) == List("Pgphaus"),
+          verified.total == 1L,
+          paired.items.map(_.source.text) == List("Pgpdach"),
+          paired.total == 1L,
+          loose.items.map(_.source.text) == List("pgpneu"),
+          loose.total == 1L,
+          // "Imported by me" keeps the three words this reader's own imports minted, never the hand-added pair.
+          mine.items.map(_.source.text) == List("pgpneu", "Pgpdach"),
+          mine.total == 2L,
+          // Every word here is in this one wordlist only, so "only in this wordlist" changes nothing.
+          unique.total == 4L,
         )
       },
       // `removePair`'s targeted delete-plus-conditional-prune is its own SQL shape: a source word with two marked

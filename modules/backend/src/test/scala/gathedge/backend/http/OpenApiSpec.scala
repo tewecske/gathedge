@@ -101,6 +101,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/import",
               "/api/tags/with-pairs",
               "/api/tags/{tagId}/entries",
+              "/api/tags/{tagId}/entries/page",
               "/api/tags/{tagId}/pairs",
               "/api/tags/{tagId}/pairs/{sourceWordId}",
               "/api/tags/{tagId}/pairs/bulk-delete",
@@ -299,6 +300,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // follows the same 404/409 rules as with-pairs. Removing a row is idempotent 204. Bulk import shares the
               // upload rate-limit budget.
               ("GET", "/api/tags/{tagId}/entries")                                        ->
+                Set(Ok, BadRequest, NotFound),
+              // The editor's own paged read of the same rows, public and failing the same two ways: a filter that
+              // matches nothing is an empty page, not an error.
+              ("GET", "/api/tags/{tagId}/entries/page")                                   ->
                 Set(Ok, BadRequest, NotFound),
               ("POST", "/api/tags/{tagId}/pairs")                                         ->
                 Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
@@ -515,7 +520,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 317,
+          declared == 319,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -625,6 +630,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/tags"),
               ("GET", "/api/tags/page"),
               ("GET", "/api/tags/{tagId}/entries"),
+              ("GET", "/api/tags/{tagId}/entries/page"),
               // The group catalog and one group's detail — a signed-out visitor browses and opens any group read-only,
               // the same reasoning as the wordlist catalog.
               ("GET", "/api/groups"),
@@ -637,7 +643,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 21,
+          guarded.size == operations.size - 22,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

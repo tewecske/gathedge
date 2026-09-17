@@ -2,7 +2,8 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.shared.api.WordEndpoints
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TagScope, TranslationFilter, WordLanguage}
+import gathedge.frontend.listing.TagEntryQuery
+import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TagEntryFilter, TagScope, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
   BulkImportRequest,
@@ -33,6 +34,7 @@ import gathedge.shared.dto.{
   SetGenderRequest,
   SetTagLanguagesRequest,
   TagEntry,
+  TagEntryPage,
   TagEntryResponse,
   TagExportFile,
   TagImportChoice,
@@ -217,6 +219,24 @@ object WordApiClient {
   /** The unified tag editor's rows, in the order they were added. */
   def tagEntries(tagId: Long): EventStream[Either[ApiError, List[TagEntry]]] = {
     run(executor(WordEndpoints.tagEntries(tagId)))
+  }
+
+  /** One page of them, narrowed by the editor's own chips — `TagEditorPage`'s own call. [[tagEntries]] above stays as
+    * the unpaged read of a whole wordlist, the same split [[listTags]]/[[listTagsPage]] draw.
+    */
+  def tagEntriesPage(tagId: Long, query: TagEntryQuery): EventStream[Either[ApiError, TagEntryPage]] = {
+    run(
+      executor(
+        WordEndpoints.tagEntriesPage(
+          tagId,
+          Some(query.page),
+          Some(query.pageSize),
+          Option(TagEntryFilter.codes(query.buckets)).filter(_.nonEmpty),
+          Option.when(query.importedByMe)(true),
+          Option.when(query.uniqueToTag)(true),
+        )
+      )
+    )
   }
 
   /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */

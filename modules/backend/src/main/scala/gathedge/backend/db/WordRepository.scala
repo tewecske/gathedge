@@ -3,7 +3,16 @@ package gathedge.backend.db
 import io.getquill.*
 import io.getquill.context.qzio.ZioJdbcContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import gathedge.shared.domain.{LanguageProfile, PairMatch, Tag, TagScope, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{
+  EntryBucket,
+  LanguageProfile,
+  PairMatch,
+  Tag,
+  TagEntryFilter,
+  TagScope,
+  TranslationFilter,
+  WordLanguage,
+}
 import gathedge.shared.dto.{TagSort, WordSort}
 import zio.*
 
@@ -222,8 +231,12 @@ trait WordRepository {
 
   /** Idempotent: tagging a word that already carries the tag is nothing to do, not a conflict. That is what lets the
     * listing's one-click toggle be safe to double-click.
+    *
+    * Answers whether it wrote the membership, the way [[ensureWordCounted]] answers whether it wrote the word, and for
+    * the same reason: only the statement itself knows, and `createdAt` is no substitute — a frozen test clock and a
+    * same-millisecond write both make it a lie. `WordService.attachWord` turns it into the editor's "already there".
     */
-  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit]
+  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Boolean]
 
   /** Removes the tag from the word — and with it every practice pair naming that word inside that tag, in both
     * directions. A pair whose word is no longer in the tag is a question with a missing half, and it is invisible to
@@ -337,6 +350,42 @@ trait WordRepository {
     * rather than a read: every caller has the tag row in hand already.
     */
   def tagEntries(tagId: Long, sourceLanguage: String): Task[List[TagEntryRow]]
+
+  /** One page of [[tagEntries]], cut and narrowed by the database.
+    *
+    * A page is `limit` **source words**, not `limit` rows: a word carrying two marked answers brings both its rows, so
+    * neither is orphaned across a page boundary — see `dto.TagEntryPage`. [[countTagEntryPage]] counts the same set, so
+    * the buttons the browser draws and the rows it is sent cannot disagree.
+    *
+    * `filter` is the editor's provenance chips and its two reader flags, applied as SQL: it decides which words the
+    * page holds. It cannot decide which of a word's rows are drawn — `shared.domain.TagEntryFilter.matches` does that
+    * to the assembled rows, and the two definitions have to stay in step.
+    *
+    * `reader` is who is asking, needed by the two reader-dependent flags alone; `None` (a signed-out visitor) makes
+    * "imported by me" match nothing and "only in this wordlist" match everything, which is what both mean for somebody
+    * who has minted no word and owns no tag.
+    */
+  def tagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+    offset: Int,
+    limit: Int,
+  ): Task[List[TagEntryRow]]
+
+  /** How many source words [[tagEntryPage]] has to offer under the same filter — the listing's `total`. */
+  def countTagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+  ): Task[Long]
+
+  /** Whether the tag holds any practice pair at all — the one fact about a wordlist that no page of its rows can
+    * answer, and what locks its two language selects. A `COUNT`-free `EXISTS`, not [[pairsInTag]]'s whole table.
+    */
+  def tagHasPairs(tagId: Long): Task[Boolean]
 
   /** One editor row, read by its own key instead of by rebuilding the tag — what a single-row write answers with.
     * `targetWordId` is `None` for a membership no pair names. Three statements, flat in the size of the tag, where
@@ -637,7 +686,7 @@ object WordRepository {
   ): RIO[WordRepository, (TagRow, Long, Long)] =
     ZIO.serviceWithZIO[WordRepository](_.copyTag(sourceId, userId, name, nameNorm, createdAt))
 
-  def tagWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Unit] =
+  def tagWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Boolean] =
     ZIO.serviceWithZIO[WordRepository](_.tagWord(wordId, tagId, createdAt))
 
   def untagWord(wordId: Long, tagId: Long): RIO[WordRepository, Long] =
@@ -715,6 +764,27 @@ object WordRepository {
 
   def tagEntries(tagId: Long, sourceLanguage: String): RIO[WordRepository, List[TagEntryRow]] =
     ZIO.serviceWithZIO[WordRepository](_.tagEntries(tagId, sourceLanguage))
+
+  def tagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+    offset: Int,
+    limit: Int,
+  ): RIO[WordRepository, List[TagEntryRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.tagEntryPage(tagId, sourceLanguage, filter, reader, offset, limit))
+
+  def countTagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+  ): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.countTagEntryPage(tagId, sourceLanguage, filter, reader))
+
+  def tagHasPairs(tagId: Long): RIO[WordRepository, Boolean] =
+    ZIO.serviceWithZIO[WordRepository](_.tagHasPairs(tagId))
 
   def tagEntry(
     tagId: Long,
@@ -1259,7 +1329,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                       case (tagId, links) => (tagId, links.size)
                     }
                   }))
-               }
+                }
       counted = byTag.toMap
     } yield (rows.map(tag => (tag, counted.getOrElse(tag.id, 0L), tag.userId == viewerId)), total)
     logged(listed) { case (rows, total) =>
@@ -1421,8 +1491,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     }
   }
 
-  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Unit] = {
-    logged(run(linkOnce(wordId, tagId, createdAt)))(added => s"wordTags.tag word=$wordId tag=$tagId added=$added").unit
+  def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Boolean] = {
+    logged(run(linkOnce(wordId, tagId, createdAt)))(added => s"wordTags.tag word=$wordId tag=$tagId added=$added")
   }
 
   /** [[tagWord]], but the membership is marked `imported` — and an existing hand-added one is promoted to it. */
@@ -1812,51 +1882,272 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       memberships <- run(ctx.run(quote(wordTags.filter(_.tagId == lift(tagId)).sortBy(_.id)(using Ord.asc))))
       pairRows    <- run(ctx.run(quote(wordTagPairs.filter(_.tagId == lift(tagId)))))
       wordIds      = (memberships.map(_.wordId) ++ pairRows.flatMap(p => List(p.wordId, p.translationWordId))).distinct
-      wordRows    <- if (wordIds.isEmpty) ZIO.succeed(List.empty[WordRow])
-                     else run(ctx.run(quote(words.filter(w => liftQuery(wordIds).contains(w.id)))))
-    } yield {
-      val byId       = wordRows.map(w => w.id -> w).toMap
-      val orderOf    = memberships.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
-      val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
-      val commentOf  = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
-
-      // One row per undirected pair, keyed on the chosen source side.
-      val chosen = pairRows
-        .flatMap { pair =>
-          (byId.get(pair.wordId), byId.get(pair.translationWordId)) match {
-            case (Some(a), Some(b)) =>
-              val aIsSource = {
-                if (a.language == sourceLanguage && b.language != sourceLanguage) true
-                else if (b.language == sourceLanguage && a.language != sourceLanguage) false
-                else a.id <= b.id
-              }
-              if (aIsSource) {
-                Some(
-                  TagEntryRow(
-                    a,
-                    Some(b),
-                    importedOf.getOrElse(a.id, false),
-                    PairMatch.fromString(pair.matchKind),
-                    commentOf.get(a.id),
-                    commentOf.get(b.id),
-                  )
-                )
-              } else None
-            case _                  => None
-          }
-        }
-        .distinctBy(row => (row.source.id, row.target.map(_.id)))
-
-      val pairedIds = chosen.flatMap(row => row.source.id :: row.target.toList.map(_.id)).toSet
-      val loose     = memberships
-        .filterNot(m => pairedIds.contains(m.wordId))
-        .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, PairMatch.Manual, m.comment)))
-
-      (chosen ++ loose).sortBy(row =>
-        (orderOf.getOrElse(row.source.id, Int.MaxValue), row.target.map(_.id).getOrElse(-1L))
-      )
-    }
+      wordRows    <- findWordRows(wordIds)
+    } yield assemble(memberships, memberships, pairRows, wordRows, sourceLanguage)
     logged(assembled)(rows => s"tags.entries tag=$tagId rows=${rows.size}")
+  }
+
+  /** The words of `ids`, or nothing at all rather than a query with an empty `IN`. */
+  private def findWordRows(ids: List[Long]): Task[List[WordRow]] = {
+    if (ids.isEmpty) ZIO.succeed(List.empty[WordRow])
+    else run(ctx.run(quote(words.filter(word => liftQuery(ids).contains(word.id)))))
+  }
+
+  /** Turns memberships, pairs and words into editor rows — shared by [[tagEntries]] (the whole wordlist) and
+    * [[tagEntryPage]] (one page of it), so a page cannot be assembled by a different rule than the list it is cut from.
+    *
+    * `heads` are the memberships that get a row of their own, in the order they should appear; `memberships` is every
+    * membership the rows touch, heads and answer words alike, which is where `imported` and the two notes are read
+    * from. For the unpaged read the two are the same list. A head with no pair in the tag becomes an answer-less row; a
+    * membership that is only ever somebody else's answer heads nothing, which is exactly what `word_tag_pairs` being
+    * stored in both directions would otherwise show twice.
+    */
+  private def assemble(
+    heads: List[WordTagRow],
+    memberships: List[WordTagRow],
+    pairRows: List[WordTagPairRow],
+    wordRows: List[WordRow],
+    sourceLanguage: String,
+  ): List[TagEntryRow] = {
+    val byId       = wordRows.map(w => w.id -> w).toMap
+    val orderOf    = heads.zipWithIndex.map { case (m, i) => m.wordId -> i }.toMap
+    val importedOf = memberships.map(m => m.wordId -> m.imported).toMap
+    val commentOf  = memberships.flatMap(m => m.comment.map(m.wordId -> _)).toMap
+    val headIds    = heads.map(_.wordId).toSet
+
+    // One row per undirected pair, keyed on the chosen source side.
+    val chosen = pairRows
+      .flatMap { pair =>
+        (byId.get(pair.wordId), byId.get(pair.translationWordId)) match {
+          case (Some(a), Some(b)) =>
+            if (headsPair(a, b, sourceLanguage)) {
+              Some(
+                TagEntryRow(
+                  a,
+                  Some(b),
+                  importedOf.getOrElse(a.id, false),
+                  PairMatch.fromString(pair.matchKind),
+                  commentOf.get(a.id),
+                  commentOf.get(b.id),
+                )
+              )
+            } else None
+          case _                  => None
+        }
+      }
+      .filter(row => headIds.contains(row.source.id))
+      .distinctBy(row => (row.source.id, row.target.map(_.id)))
+
+    val pairedIds = chosen.flatMap(row => row.source.id :: row.target.toList.map(_.id)).toSet
+    val loose     = heads
+      .filterNot(m => pairedIds.contains(m.wordId))
+      .flatMap(m => byId.get(m.wordId).map(w => TagEntryRow(w, None, m.imported, PairMatch.Manual, m.comment)))
+
+    (chosen ++ loose).sortBy(row =>
+      (orderOf.getOrElse(row.source.id, Int.MaxValue), row.target.map(_.id).getOrElse(-1L))
+    )
+  }
+
+  /** Which half of a stored pair heads the row the editor draws: the one in the tag's own source language, falling back
+    * to the lower word id when that does not decide it (a pair whose two words share a language, which only a write
+    * predating the tag's language pair can have left).
+    *
+    * The `headsThePair` predicate below is this same rule in SQL, and [[tagEntryPage]] cuts its page by it. If the two
+    * ever disagree, a page holds words whose rows this then refuses to build — so they are written one under the other,
+    * and `WordServiceSpec` pins them together.
+    */
+  private def headsPair(a: WordRow, b: WordRow, sourceLanguage: String): Boolean = {
+    if (a.language == sourceLanguage && b.language != sourceLanguage) true
+    else if (b.language == sourceLanguage && a.language != sourceLanguage) false
+    else a.id <= b.id
+  }
+
+  /** [[headsPair]] as a SQL predicate: does `wordId`, in a pair whose other half is `translationWordId`, head the row?
+    *
+    * Written as boolean algebra over the two languages and the two ids rather than as the nested `if` its Scala twin
+    * is, because that is what renders on both dialects. With `aS` = "this word is in the tag's source language" and
+    * `bS` the same of the other half, it is `(aS && !bS) || ((!bS || aS) && thisId <= otherId)`.
+    */
+  private inline def headsThePair = quote {
+    (wordId: Long, sourceLang: String, tagSource: String, translationWordId: Long) =>
+      words
+        .filter(other => {
+          other.id == translationWordId &&
+          ((sourceLang == tagSource && other.language != tagSource) ||
+            ((other.language != tagSource || sourceLang == tagSource) && wordId <= other.id))
+        })
+        .nonEmpty
+  }
+
+  /** True when the tag holds a pair this word heads. */
+  private inline def headsAnyPair = quote { (tagId: Long, wordId: Long, sourceLang: String, tagSource: String) =>
+    wordTagPairs
+      .filter(pair => {
+        pair.tagId == tagId && pair.wordId == wordId &&
+        headsThePair(wordId, sourceLang, tagSource, pair.translationWordId)
+      })
+      .nonEmpty
+  }
+
+  /** [[headsAnyPair]], narrowed to pairs a particular writer left behind — `word_tag_pairs.match_kind`, which is what
+    * three of the editor's four provenance chips read.
+    */
+  private inline def headsPairOfKind = quote {
+    (tagId: Long, wordId: Long, sourceLang: String, tagSource: String, kind: String) =>
+      wordTagPairs
+        .filter(pair => {
+          pair.tagId == tagId && pair.wordId == wordId && pair.matchKind == kind &&
+          headsThePair(wordId, sourceLang, tagSource, pair.translationWordId)
+        })
+        .nonEmpty
+  }
+
+  /** True when any pair in the tag names this word, either way round — what makes a membership an "unmatched" row when
+    * it is false, and what stops a word that is only ever an answer from heading a row of its own.
+    */
+  private inline def namedByAnyPair = quote { (tagId: Long, wordId: Long) =>
+    wordTagPairs
+      .filter(pair => pair.tagId == tagId && (pair.wordId == wordId || pair.translationWordId == wordId))
+      .nonEmpty
+  }
+
+  /** True when the word is in another tag this account owns — [[sourceWordsInMyOtherTags]] as a row predicate, for the
+    * "only in this wordlist" chip.
+    */
+  private inline def inMyOtherTag = quote { (tagId: Long, wordId: Long, userId: Long) =>
+    wordTags
+      .filter(link => {
+        link.wordId == wordId && link.tagId != tagId &&
+        tags.filter(tag => tag.id == link.tagId && tag.userId == userId).nonEmpty
+      })
+      .nonEmpty
+  }
+
+  /** The memberships that head a row of the editor, narrowed by the reader's filter — the set both [[tagEntryPage]] and
+    * [[countTagEntryPage]] are cut from, so the page and the count can never be of different things.
+    *
+    * The buckets are one expression with a lifted flag per chip rather than a query built up chip by chip: `FALSE AND
+    * EXISTS (...)` costs nothing on either dialect, and a single shape is one thing to read and one thing to get right.
+    * `reader` reaches the two reader-dependent chips as a lifted `-1`-style absent id — a word's `created_by` is never
+    * that, and no tag is owned by it, which is the honest answer for a visitor with no session.
+    */
+  private def entryHeads(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+  ): DynamicQuery[(WordTagRow, WordRow)] = {
+    val noReader      = -1L
+    val readerId      = reader.getOrElse(noReader)
+    val wantVerified  = filter.buckets.contains(EntryBucket.Verified)
+    val wantPaired    = filter.buckets.contains(EntryBucket.Paired)
+    val wantOther     = filter.buckets.contains(EntryBucket.Other)
+    val wantUnmatched = filter.buckets.contains(EntryBucket.Unmatched)
+
+    dynamicQuerySchema[WordTagRow]("word_tags")
+      .filter(link => quote(link.tagId == lift(tagId)))
+      .join(quote(words))
+      .on((link, word) => quote(link.wordId == word.id))
+      // Heads a row: it heads a pair, or no pair in the tag names it at all. `row._1` is the membership and `row._2`
+      // its word — a quoted tuple is read through its accessors, never destructured, since the pattern would bind the
+      // halves outside the quotation.
+      .filter(row => {
+        quote(
+          headsAnyPair(lift(tagId), row._1.wordId, row._2.language, lift(sourceLanguage)) ||
+            !namedByAnyPair(lift(tagId), row._1.wordId)
+        )
+      })
+      .filterOpt(Option.when(filter.buckets.nonEmpty)(true))((row, _) => {
+        quote(
+          (lift(wantVerified) &&
+            headsPairOfKind(
+              lift(tagId),
+              row._1.wordId,
+              row._2.language,
+              lift(sourceLanguage),
+              lift(PairMatch.code(PairMatch.Verified)),
+            )) ||
+            (lift(wantPaired) &&
+              headsPairOfKind(
+                lift(tagId),
+                row._1.wordId,
+                row._2.language,
+                lift(sourceLanguage),
+                lift(PairMatch.code(PairMatch.Paired)),
+              )) ||
+            (lift(wantOther) && row._1.imported &&
+              headsPairOfKind(
+                lift(tagId),
+                row._1.wordId,
+                row._2.language,
+                lift(sourceLanguage),
+                lift(PairMatch.code(PairMatch.Manual)),
+              )) ||
+            (lift(wantUnmatched) && row._1.imported && !namedByAnyPair(lift(tagId), row._1.wordId))
+        )
+      })
+      // "Imported by me": a word this reader minted that a bulk import filed here.
+      .filterOpt(Option.when(filter.importedByMe)(readerId))((row, id) =>
+        quote(row._1.imported && row._2.source == lift(WordSource.user) && row._2.createdBy.contains(unquote(id)))
+      )
+      .filterOpt(Option.when(filter.uniqueToTag)(readerId))((row, id) =>
+        quote(!inMyOtherTag(lift(tagId), row._1.wordId, unquote(id)))
+      )
+  }
+
+  def tagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+    offset: Int,
+    limit: Int,
+  ): Task[List[TagEntryRow]] = {
+    // `word_tags.id` ascending, so a bulk import's text order survives paging the way it survives the unpaged read.
+    val page      = entryHeads(tagId, sourceLanguage, filter, reader)
+      .sortBy(row => quote(row._1.id))(using Ord.asc)
+      .drop(offset)
+      .take(limit)
+      .map(row => quote(row._1))
+    val assembled = for {
+      heads       <- run(ctx.run(page))
+      headIds      = heads.map(_.wordId)
+      pairRows    <- if (headIds.isEmpty) ZIO.succeed(List.empty[WordTagPairRow])
+                     else {
+                       run(ctx.run(quote {
+                         wordTagPairs.filter(pair => {
+                           pair.tagId == lift(tagId) && liftQuery(headIds).contains(pair.wordId)
+                         })
+                       }))
+                  }
+      answerIds    = pairRows.map(_.translationWordId).distinct
+      // The answer words' own memberships, for their notes — every other fact a row carries is on the head's.
+      answerLinks <- if (answerIds.isEmpty) ZIO.succeed(List.empty[WordTagRow])
+                     else {
+                       run(ctx.run(quote {
+                         wordTags.filter(link => {
+                           link.tagId == lift(tagId) && liftQuery(answerIds).contains(link.wordId)
+                         })
+                       }))
+                     }
+      wordRows    <- findWordRows((headIds ++ answerIds).distinct)
+    } yield assemble(heads, heads ++ answerLinks, pairRows, wordRows, sourceLanguage)
+    logged(assembled)(rows => s"tags.entryPage tag=$tagId offset=$offset limit=$limit rows=${rows.size}")
+  }
+
+  def countTagEntryPage(
+    tagId: Long,
+    sourceLanguage: String,
+    filter: TagEntryFilter,
+    reader: Option[Long],
+  ): Task[Long] = {
+    val q = entryHeads(tagId, sourceLanguage, filter, reader).size
+    logged(run(ctx.run(q)))(count => s"tags.countEntryPage tag=$tagId count=$count")
+  }
+
+  def tagHasPairs(tagId: Long): Task[Boolean] = {
+    val q = quote(wordTagPairs.filter(pair => pair.tagId == lift(tagId)).nonEmpty)
+    logged(run(ctx.run(q)))(has => s"tags.hasPairs tag=$tagId has=$has")
   }
 
   def tagEntry(tagId: Long, sourceWordId: Long, targetWordId: Option[Long]): Task[Option[TagEntryRow]] = {

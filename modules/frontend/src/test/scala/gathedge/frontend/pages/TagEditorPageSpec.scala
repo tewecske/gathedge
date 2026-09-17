@@ -6,7 +6,7 @@ import org.scalajs.dom
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, Paging, TabularRow, TagEntry}
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -16,11 +16,13 @@ import scala.concurrent.Future
   * page's own furniture. With no catalog loaded a message resolves to its own key, so they are on `UiKeys` constants —
   * `MessagesSpec` owns whether those keys have copy in both languages.
   *
-  * The `rowKey` / `isDuplicate` suite pins three regressions found by hand, all the same root cause — a row was keyed
-  * by its source word alone, so a word with several translations had every one of its rows react at once:
+  * The `rowKey` suite pins two regressions found by hand, both the same root cause — a row was keyed by its source word
+  * alone, so a word with several translations had every one of its rows react at once:
   *   - clicking "edit" on one translation put them all into edit mode;
-  *   - the duplicate-pair flash lit every translation row;
-  *   - adding a second translation of a word was mistaken for a duplicate.
+  *   - the duplicate-pair flash lit every translation row.
+  *
+  * The filter rules that used to be pinned here moved to `shared.domain.TagEntryFilterSpec` when they moved to the
+  * server: the database narrows the page now, and the browser only draws what it is sent.
   */
 object TagEditorPageSpec extends ZIOSpecDefault {
 
@@ -106,7 +108,7 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           !text.contains(UiKeys.tagsEditorAddWordOnlyHint),
         )
       },
-      suite("rowKey / isDuplicate")(
+      suite("rowKey")(
         test("a row is keyed by source AND target, so a word's translations are separate rows") {
           val a = entry(5, Some(10))
           val b = entry(5, Some(20))
@@ -120,118 +122,6 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(
             editing.contains(TagEditorPage.rowKey(entry(5, Some(10)))),
             !editing.contains(TagEditorPage.rowKey(entry(5, Some(20)))),
-          )
-        },
-        test("re-adding the same pair is a duplicate; another translation of the same word is not") {
-          val existing = List(entry(5, Some(10)), entry(7, None))
-          assertTrue(
-            TagEditorPage.isDuplicate(existing, entry(5, Some(10))),
-            !TagEditorPage.isDuplicate(existing, entry(5, Some(20))),
-            !TagEditorPage.isDuplicate(existing, entry(9, Some(10))),
-          )
-        },
-        test("a loose row duplicates only another loose row for the same source") {
-          val existing = List(entry(7, None))
-          assertTrue(
-            TagEditorPage.isDuplicate(existing, entry(7, None)),
-            !TagEditorPage.isDuplicate(existing, entry(7, Some(10))),
-          )
-        },
-      ),
-      // What paging comes to on this page: the filtered rows, cut. The editor still holds every row — the duplicate
-      // check, the language lock and the row deletes all read the whole list — so the cut is the only thing the page
-      // number changes.
-      suite("pageSlice / pageOfRow")(
-        test("a page holds its own rows, in order") {
-          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
-          assertTrue(
-            TagEditorPage.pageSlice(rows, Paging.firstPage, 3).map(_.source.id) == List(1L, 2L, 3L),
-            TagEditorPage.pageSlice(rows, 2, 3).map(_.source.id) == List(4L, 5L, 6L),
-            // The last page is the short one.
-            TagEditorPage.pageSlice(rows, 3, 3).map(_.source.id) == List(7L),
-          )
-        },
-        test("a page past the end reads as the last page, not as an empty table") {
-          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
-          assertTrue(
-            TagEditorPage.pageSlice(rows, 99, 3).map(_.source.id) == List(7L),
-            // Below the first page is the first page, the same rule `Paging.boundedPage` follows.
-            TagEditorPage.pageSlice(rows, 0, 3).map(_.source.id) == List(1L, 2L, 3L),
-            TagEditorPage.pageSlice(Nil, 4, 3) == Nil,
-          )
-        },
-        test("a row's page is where a write takes the reader") {
-          val rows = (1 to 7).toList.map(id => entry(id.toLong, None))
-          assertTrue(
-            TagEditorPage.pageOfRow(rows, (1L, None), 3).contains(Paging.firstPage),
-            TagEditorPage.pageOfRow(rows, (4L, None), 3).contains(2),
-            TagEditorPage.pageOfRow(rows, (7L, None), 3).contains(3),
-            // A row the filters hide has no page to go to.
-            TagEditorPage.pageOfRow(rows, (99L, None), 3).isEmpty,
-          )
-        },
-      ),
-      suite("rowVisible")(
-        test("no filter selected shows every row") {
-          val row = entry(1, Some(2))
-          assertTrue(TagEditorPage.rowVisible(row, Set.empty, importedByMe = false, uniqueToTag = false))
-        },
-        test("the buckets are OR'd; a row matches when its bucket is among the selected") {
-          val verifiedRow  = entry(1, Some(2), imported = true, matchKind = PairMatch.Verified)
-          val unmatchedRow = entry(3, None, imported = true)
-          val selected     = Set(TagEditorPage.EntryFilter.Verified, TagEditorPage.EntryFilter.Unmatched)
-          assertTrue(
-            TagEditorPage.rowVisible(verifiedRow, selected, importedByMe = false, uniqueToTag = false),
-            TagEditorPage.rowVisible(unmatchedRow, selected, importedByMe = false, uniqueToTag = false),
-            !TagEditorPage.rowVisible(
-              entry(4, Some(5), imported = true),
-              selected,
-              importedByMe = false,
-              uniqueToTag = false,
-            ),
-          )
-        },
-        test("a tabular import's pair is its own bucket, never the verified one") {
-          val pairedRow = entry(1, Some(2), imported = true, matchKind = PairMatch.Paired)
-          assertTrue(
-            TagEditorPage.stateOf(pairedRow).contains(TagEditorPage.EntryFilter.Paired),
-            !TagEditorPage.rowVisible(
-              pairedRow,
-              Set(TagEditorPage.EntryFilter.Verified),
-              importedByMe = false,
-              uniqueToTag = false,
-            ),
-            TagEditorPage.rowVisible(
-              pairedRow,
-              Set(TagEditorPage.EntryFilter.Paired),
-              importedByMe = false,
-              uniqueToTag = false,
-            ),
-          )
-        },
-        test("\"imported by me\" needs both createdByMe and imported, and ANDs with the buckets") {
-          val mineImported = entry(1, None, imported = true, createdByMe = true)
-          val mineByHand   = entry(2, None, imported = false, createdByMe = true)
-          val theirsImport = entry(3, None, imported = true, createdByMe = false)
-          assertTrue(
-            TagEditorPage.rowVisible(mineImported, Set.empty, importedByMe = true, uniqueToTag = false),
-            !TagEditorPage.rowVisible(mineByHand, Set.empty, importedByMe = true, uniqueToTag = false),
-            !TagEditorPage.rowVisible(theirsImport, Set.empty, importedByMe = true, uniqueToTag = false),
-            // still has to be in a selected bucket when one is active
-            !TagEditorPage.rowVisible(
-              mineImported,
-              Set(TagEditorPage.EntryFilter.Verified),
-              importedByMe = true,
-              uniqueToTag = false,
-            ),
-          )
-        },
-        test("\"only in this tag\" keeps a row only when it is in none of my other tags") {
-          val onlyHere  = entry(1, Some(2), inMyOtherTags = false)
-          val alsoOther = entry(3, Some(4), inMyOtherTags = true)
-          assertTrue(
-            TagEditorPage.rowVisible(onlyHere, Set.empty, importedByMe = false, uniqueToTag = true),
-            !TagEditorPage.rowVisible(alsoOther, Set.empty, importedByMe = false, uniqueToTag = true),
           )
         },
       ),

@@ -159,3 +159,126 @@ object TagScope {
     */
   def fromString(value: String): TagScope = all.find(scope => code(scope) == value.toLowerCase).getOrElse(All)
 }
+
+/** Which kind of row the wordlist editor's four provenance chips narrow to — read off a row's `imported` flag, its
+  * [[PairMatch]] and whether it has an answer at all, and never stored.
+  *
+  * The four are mutually exclusive, and one kind of row is in none of them: a pair the reader marked by hand on a
+  * membership no import wrote. That is why an empty selection means "every row" rather than "no row" — there would
+  * otherwise be no chip that shows it.
+  */
+enum EntryBucket derives JsonCodec, CanEqual {
+
+  /** An import found the two words already linked in the dictionary. */
+  case Verified
+
+  /** A tabular import put the two cells on one line. Nothing has checked the pair. */
+  case Paired
+
+  /** An imported row whose pair the reader marked by hand afterwards. */
+  case Other
+
+  /** An imported word that still has no answer. */
+  case Unmatched
+}
+
+object EntryBucket {
+
+  val all: List[EntryBucket] = List(Verified, Paired, Other, Unmatched)
+
+  /** What the `match` query parameter spells. Written out rather than derived from `toString`, the rule
+    * [[PairMatch.code]] follows: renaming a case must not change an address somebody bookmarked.
+    */
+  def code(bucket: EntryBucket): String = {
+    bucket match {
+      case Verified  =>
+        "verified"
+      case Paired    =>
+        "paired"
+      case Other     =>
+        "other"
+      case Unmatched =>
+        "unmatched"
+    }
+  }
+
+  def fromString(value: String): Option[EntryBucket] = all.find(bucket => code(bucket) == value.trim.toLowerCase)
+
+  /** The bucket a row falls in, or `None` for the hand-marked row that is in none of them.
+    *
+    * Stated over the three facts a row carries rather than over a row type, so the browser can ask it of a rendered row
+    * and the server of a projection it is about to send — and so the database predicate behind the paged listing has
+    * exactly one definition to mirror.
+    */
+  def of(imported: Boolean, matchKind: PairMatch, hasTarget: Boolean): Option[EntryBucket] = {
+    matchKind match {
+      case PairMatch.Verified                        =>
+        Some(Verified)
+      case PairMatch.Paired                          =>
+        Some(Paired)
+      case PairMatch.Manual if imported && hasTarget =>
+        Some(Other)
+      case PairMatch.Manual if imported              =>
+        Some(Unmatched)
+      case PairMatch.Manual                          =>
+        None
+    }
+  }
+}
+
+/** Everything the editor's filter bar narrows its rows by, in one value — the wordlist editor's counterpart to the
+  * other listings' filters, and, since that listing is paged by the database, a value both ends read.
+  *
+  * The browser puts it in the URL, `GET /api/tags/{tagId}/entries/page` takes it as query parameters, and the database
+  * narrows the page and the count by it. [[matches]] is what keeps the three in step: the SQL decides which *words*
+  * have a row the filter admits, and this decides which of that word's rows are shown, so a word carrying two answers
+  * under two different provenances shows only the one that was asked for.
+  *
+  * The two flags AND on top of the buckets, and both are about the reader: with nobody signed in, `createdByMe` is
+  * never true and `inMyOtherTags` never is either, so "imported by me" answers empty and "only in this wordlist" lets
+  * everything through. That is the honest reading of both for a visitor, not a special case.
+  */
+final case class TagEntryFilter(
+  buckets: Set[EntryBucket] = Set.empty,
+  importedByMe: Boolean = false,
+  uniqueToTag: Boolean = false,
+) {
+
+  /** Whether this narrows anything at all — what lets the listing skip the whole predicate. */
+  def isEmpty: Boolean = buckets.isEmpty && !importedByMe && !uniqueToTag
+
+  /** Whether one row passes: its bucket is among those selected (none selected is every bucket), and both flags hold.
+    */
+  def matches(
+    imported: Boolean,
+    matchKind: PairMatch,
+    hasTarget: Boolean,
+    createdByMe: Boolean,
+    inMyOtherTags: Boolean,
+  ): Boolean = {
+    val bucketOk = buckets.isEmpty || EntryBucket.of(imported, matchKind, hasTarget).exists(buckets.contains)
+    val mineOk   = !importedByMe || (createdByMe && imported)
+    val uniqueOk = !uniqueToTag || !inMyOtherTags
+    bucketOk && mineOk && uniqueOk
+  }
+}
+
+object TagEntryFilter {
+
+  /** The unfiltered listing — every row of the wordlist. */
+  val none: TagEntryFilter = TagEntryFilter()
+
+  /** The buckets as one query parameter: their codes, comma-joined, in [[EntryBucket.all]]'s order so the same
+    * selection always spells the same address. Empty when nothing is selected, which writes no parameter at all.
+    */
+  def codes(buckets: Set[EntryBucket]): String = {
+    EntryBucket.all.filter(buckets.contains).map(EntryBucket.code).mkString(",")
+  }
+
+  /** Reads that parameter back. Anything unrecognised is dropped rather than refused — the lenient rule every other
+    * listing filter in a query string follows, so a stale link still opens a list of rows.
+    */
+  def parse(value: Option[String]): Set[EntryBucket] = {
+    value.toList.flatMap(_.split(',').toList).flatMap(code => EntryBucket.fromString(code)).toSet
+  }
+}

@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// The tag editor's page control (`/tags/{id}`, `?page=`, `?size=`), on a wordlist long enough to need one.
+// The tag editor's page control (`/tags/{id}`, `?page=`, `?size=`, `?match=`), on a wordlist long enough to need one.
 //
-// The rows arrive in one answer and the browser cuts them, so what is worth locking down is the cut and the address:
-//   - a page holds the editor's own fifty rows, and the page number is in the URL (so the back button works);
-//   - a page past the end lands on the last page rather than on an empty table;
-//   - a filter change gives up the page it was on — page 4 of the wider list says nothing about the narrowed one;
+// The database cuts the page and applies the chips, so what is worth locking down is that the address, the request and
+// what is on screen all say the same thing:
+//   - a page holds the editor's own fifty words, and the page number is in the URL (so the back button works);
+//   - a page past the end corrects itself to the last one rather than showing an empty table;
+//   - a chip is part of the address, and narrowing gives up the page it was on;
 //   - a row added at the bottom is on the page the editor turns to, not on a page nobody is looking at.
 //
 // Requires the real stack (see playwright.config.ts). The 120 rows go in through `tabular-import` rather than through
@@ -81,7 +82,7 @@ test('the rows are cut into pages of fifty, and the page is in the address', asy
   await expect(firstRow()).toContainText(word(0));
 });
 
-test('the page size is the reader’s, and a page past the end is the last one', async () => {
+test('the page size is the reader’s, and a page past the end corrects itself', async () => {
   await page.goto(`/en/tags/${tagId}`);
 
   await page.getByRole('combobox', { name: 'Rows per page' }).selectOption('100');
@@ -89,22 +90,34 @@ test('the page size is the reader’s, and a page past the end is the last one',
   await expect(page.getByText('Page 1 of 2')).toBeVisible();
   await expect(bodyRows()).toHaveCount(100);
 
-  // Hand-edited, and bounded rather than refused: the last page, not an empty table.
+  // The server answers an empty page with an honest total; the browser replaces the address with the last page,
+  // rather than leaving the reader looking at an empty table.
   await page.goto(`/en/tags/${tagId}?page=99`);
+  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}\\?page=3$`));
   await expect(page.getByText('Page 3 of 3')).toBeVisible();
   await expect(bodyRows()).toHaveCount(rows - 100);
   await expect(firstRow()).toContainText(word(100));
 });
 
-test('a filter change gives up the page, and an added row is on the page shown', async () => {
+test('a chip is part of the address, and an added row is on the page shown', async () => {
   await page.goto(`/en/tags/${tagId}?page=2`);
   await expect(firstRow()).toContainText(word(50));
 
-  // "Paired rows" matches every imported row here, so the list does not narrow — the page still goes back to one.
+  // Every row here was written by the tabular import, so "Paired rows" narrows to all of them — the chip still
+  // starts again at page one, and the address says which chip is on.
   await page.getByRole('button', { name: 'Paired rows' }).click();
-  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}$`));
+  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}\\?match=paired$`));
   await expect(firstRow()).toContainText(word(0));
+  await expect(page.getByText(`${rows} words`)).toBeVisible();
+
+  // A chip that matches nothing here empties the listing rather than failing it.
+  await page.getByRole('button', { name: 'Verified matches' }).click();
+  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}\\?match=verified%2Cpaired$`));
   await page.getByRole('button', { name: 'Paired rows' }).click();
+  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}\\?match=verified$`));
+  await expect(page.getByText('No words yet.')).toBeVisible();
+  await page.getByRole('button', { name: 'Verified matches' }).click();
+  await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}$`));
 
   const added = `Pgadd${unique}`;
   await addSourceInput().fill(added);

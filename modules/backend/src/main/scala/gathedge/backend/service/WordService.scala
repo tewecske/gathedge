@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   WordFormRow,
   WordRepository,
   WordRow,
+  WordSource,
   WordTagPairRow,
   WordTagRow,
   WordTranslationRow,
@@ -22,6 +23,7 @@ import gathedge.shared.domain.{
   PairMatch,
   PartOfSpeech,
   Tag,
+  TagEntryFilter,
   TagScope,
   TranslationFilter,
   Word,
@@ -48,6 +50,7 @@ import gathedge.shared.dto.{
   PairRef,
   ReplacePairRequest,
   TagEntry,
+  TagEntryPage,
   TagEntryResponse,
   TagExportEntry,
   TagExportFile,
@@ -324,6 +327,24 @@ trait WordService {
     * all cleared.
     */
   def tagEntries(tagId: Long, reader: Option[Long]): IO[WordFailure, List[TagEntry]]
+
+  /** One page of those rows, cut, ordered and narrowed by the database — what the editor itself reads.
+    *
+    * A page is `pageSize` source words rather than rows, so a word with two marked answers keeps both of them on one
+    * page; `dto.TagEntryPage.total` counts the same words. `filter` narrows twice over, and has to: the database
+    * decides which words the page holds, and [[gathedge.shared.domain.TagEntryFilter.matches]] then decides which of
+    * each word's rows are drawn — a word whose two answers came from different writers shows only the one the chips
+    * asked for.
+    *
+    * Public like [[tagEntries]]: `TagNotFound` is only an id that names nothing.
+    */
+  def tagEntriesPaged(
+    tagId: Long,
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    filter: TagEntryFilter,
+  ): IO[WordFailure, TagEntryPage]
 
   /** Adds one bilingual pair to a tag, written straight away. Either side may be a brand-new word, created on the fly.
     * Charges the pair quota exactly as [[selectPair]] does — the tag owner's, not the caller's, and never for a pair
@@ -628,6 +649,15 @@ object WordService {
   def tagEntries(tagId: Long, reader: Option[Long]): ZIO[WordService, WordFailure, List[TagEntry]] =
     ZIO.serviceWithZIO[WordService](_.tagEntries(tagId, reader))
 
+  def tagEntriesPaged(
+    tagId: Long,
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    filter: TagEntryFilter,
+  ): ZIO[WordService, WordFailure, TagEntryPage] =
+    ZIO.serviceWithZIO[WordService](_.tagEntriesPaged(tagId, reader, page, pageSize, filter))
+
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): ZIO[WordService, WordFailure, TagEntryResponse] =
     ZIO.serviceWithZIO[WordService](_.addPair(tagId, pair, userId))
 
@@ -769,9 +799,11 @@ object WordService {
     )
   }
 
-  /** What a word row a user typed is marked as, against the dictionary's own. */
-  val userSource       = "user"
-  val dictionarySource = "dictionary"
+  /** What a word row a user typed is marked as, against the dictionary's own. The strings themselves live in
+    * `db.WordSource`, which is where the paged editor query reads them from too.
+    */
+  val userSource       = WordSource.user
+  val dictionarySource = WordSource.dictionary
 
   /** Origins a translation edge can have. `pivot` is a non-English pair (German–Hungarian, German–Spanish, …) inferred
     * through a shared English sense rather than asserted anywhere; `form` is a form-to-form pair inferred through its
@@ -1981,6 +2013,47 @@ final case class WordServiceLive(
     } yield out
   }
 
+  def tagEntriesPaged(
+    tagId: Long,
+    reader: Option[Long],
+    page: Int,
+    pageSize: Int,
+    filter: TagEntryFilter,
+  ): IO[WordFailure, TagEntryPage] = {
+    for {
+      tag      <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      rows     <- repo
+                    .tagEntryPage(
+                      tagId,
+                      tag.sourceLanguage,
+                      filter,
+                      reader,
+                      gathedge.shared.dto.Paging.offset(page, pageSize),
+                      pageSize,
+                    )
+                    .orDie
+      entries  <- toTagEntries(tag, rows, reader)
+      total    <- repo.countTagEntryPage(tagId, tag.sourceLanguage, filter, reader).orDie
+      hasPairs <- repo.tagHasPairs(tagId).orDie
+      // The second half of the filter: the database admitted the *words* whose rows it matches, and this keeps only
+      // those rows. Skipped outright when nothing is selected, which is the ordinary case.
+      shown     = if (filter.isEmpty) entries else entries.filter(matchesFilter(filter, _))
+    } yield TagEntryPage(shown, total, hasPairs)
+  }
+
+  /** One row against the reader's chips — the same question `TagEditorPage` used to ask of every row in the browser,
+    * asked here instead now that the browser holds one page.
+    */
+  private def matchesFilter(filter: TagEntryFilter, entry: TagEntry): Boolean = {
+    filter.matches(
+      entry.imported,
+      entry.matchKind,
+      entry.target.isDefined,
+      entry.createdByMe,
+      entry.inMyOtherTags,
+    )
+  }
+
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
       tag                 <- requireEditableTag(tagId, userId)
@@ -1993,7 +2066,9 @@ final case class WordServiceLive(
                              else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
       _                   <- pairInTag(sourceId, tagId, targetId)
       entry               <- entryAfterWrite(tag, sourceId, Some(targetId), userId)
-    } yield TagEntryResponse(entry, warning)
+      // `already` was read before the write, so it says the wordlist held this row when the reader asked for it —
+      // which is what the editor tells them instead of drawing the row a second time.
+    } yield TagEntryResponse(entry, warning, alreadyPresent = already)
   }
 
   def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
@@ -2005,10 +2080,11 @@ final case class WordServiceLive(
       checked         <- checkWord(input.word, Set(source, target))
       wordId          <- createWord(checked._1, userId)
       now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      // Membership only — no `word_tag_pairs` row, so no quota is charged. Idempotent, like `repo.tagWord` everywhere.
-      _               <- repo.tagWord(wordId, tagId, now).orDie
+      // Membership only — no `word_tag_pairs` row, so no quota is charged. Idempotent, like `repo.tagWord` everywhere;
+      // `added` is false when the word was already in the wordlist, which is the editor's "already there" answer.
+      added           <- repo.tagWord(wordId, tagId, now).orDie
       entry           <- entryAfterWrite(tag, wordId, None, userId)
-    } yield TagEntryResponse(entry, warning = None)
+    } yield TagEntryResponse(entry, warning = None, alreadyPresent = !added)
   }
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {

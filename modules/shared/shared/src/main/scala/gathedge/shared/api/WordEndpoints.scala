@@ -30,6 +30,7 @@ import gathedge.shared.dto.{
   TagImportResponse,
   TabularImportRequest,
   TabularImportResponse,
+  TagEntryPage,
   TagPage,
   TagPairInput,
   TagResponse,
@@ -86,6 +87,12 @@ object WordEndpoints {
   private val scopeQuery    = HttpCodec.query[String]("scope").optional
   private val trQuery       = HttpCodec.query[String]("tr").optional
   private val mainQuery     = HttpCodec.query[Boolean]("main").optional
+
+  /** The wordlist editor's own three filters — see [[tagEntriesPage]]. `match` is a comma-joined list rather than a
+    * repeated parameter, so the whole chip row is one readable parameter in an address a reader may send on.
+    */
+  private val matchQuery  = HttpCodec.query[String]("match").optional
+  private val uniqueQuery = HttpCodec.query[Boolean]("unique").optional
 
   private val targetWordIdQuery = HttpCodec.query[Long]("targetWordId").optional
 
@@ -394,6 +401,30 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.notFound)
   }
 
+  /** The same rows, paged, ordered and narrowed by the database — what the editor itself reads, leaving [[tagEntries]]
+    * above as the unpaged read of a whole wordlist, the same split [[listTags]]/[[listTagsPage]] draw.
+    *
+    * A page is `pageSize` *source words* rather than rows: a word carrying two marked answers brings both its rows, so
+    * neither of them is orphaned on the other side of a page boundary. `match` is the provenance chips, as
+    * `EntryBucket.code`s joined by commas, and anything unrecognised in it is dropped rather than refused. `mine`
+    * ("imported by me") and `unique` ("only in this wordlist") are the two flags that AND on top; both are about the
+    * caller, so both simply answer for a reader with no session — see `TagEntryFilter`.
+    *
+    * Public like [[tagEntries]], and failing the same two ways: 400 for a query parameter that does not decode, 404 for
+    * an id that names no wordlist. A filter that matches nothing is an empty page, not an error.
+    */
+  val tagEntriesPage = {
+    Endpoint(Method.GET / "api" / "tags" / tagId / "entries" / "page")
+      .query(pageQuery)
+      .query(pageSizeQuery)
+      .query(matchQuery)
+      .query(mineQuery)
+      .query(uniqueQuery)
+      .withCodecError
+      .out[TagEntryPage]
+      .outErrors(failure.badRequest, failure.notFound)
+  }
+
   /** Adds one bilingual pair to a tag, saved immediately — the unified editor's add-row action. Either side may be a
     * brand-new word (`TagPairWord.New`), created on the fly, exactly as [[createTagWithPairs]] allows. 404 is a tag
     * that is not the caller's (or their group's) or a `TagPairWord.Existing` naming no word; 409 is the pair quota's
@@ -598,6 +629,7 @@ object WordEndpoints {
       selectPair,
       deselectPair,
       tagEntries,
+      tagEntriesPage,
       addPair,
       attachWord,
       replacePair,
@@ -616,5 +648,6 @@ object WordEndpoints {
   /** The four that answer without a session — the two dictionary reads and the two wordlist reads. `DocsRoutes` marks
     * every other operation as needing the session cookie, and `OpenApiSpec` pins both halves of that split.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(list, get, listTags, listTagsPage, tagEntries)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] =
+    List(list, get, listTags, listTagsPage, tagEntries, tagEntriesPage)
 }

@@ -244,7 +244,7 @@ Local drill-down: `docker compose -f docker-compose.yml -f docker-compose.observ
 
 `GET /api/admin/users` and `GET /api/admin/audit` are paged, ordered, and narrowed **by the database**, answering `{items, total}`.
 
-`dto.Paging` is the single source of policy (`firstPage`, `defaultPageSize`, `pageSizes`, `maxPageSize`, `pageCount`). **Pages are numbered from one, everywhere.** `?page=0` is the first page.
+`dto.Paging` is the single source of policy (`firstPage`, `defaultPageSize`, `pageSizes`, `maxPageSize`, `pageCount`). **Pages are numbered from one, everywhere.** `?page=0` is the first page. `tagEntryPageSize` (50) is the wordlist editor's own default — one of `pageSizes`, so the dropdown can offer it.
 
 Ordering is three-state per column: unsorted → ascending → descending → unsorted. An unrecognized `sort` value falls through to the default. Two columns are unsortable: the user list's sign-in badge and the audit trail's target.
 
@@ -263,6 +263,14 @@ Five things:
 - **The search box follows the query, never the reverse.**
 
 `Page.Admin`/`Page.AdminAudit` are case classes; `AdminSubmenu` matches by type. Nav links always point at `Page.Admin()`.
+
+**The wordlist editor is one of these listings** (`GET /api/tags/{tagId}/entries/page`, `TagEntryQuery`, `Page.TagDetail(id, query)`), with three differences worth knowing:
+
+- **A page is `pageSize` source *words*, not rows.** A word with two marked answers brings both its rows rather than having them split across a page boundary, so `total` counts words and a page can draw a row or two more than its size.
+- **The filter narrows twice.** `TagEntryFilter` (in `shared/domain/Tag.scala`) is the provenance chips plus the two reader toggles: the SQL decides which words the page holds, and `TagEntryFilter.matches` then decides which of each word's rows are drawn. The two definitions must agree — `WordServiceSpec`'s paging suite and `PostgresIntegrationSpec` pin them against real rows.
+- **It has a path segment *and* a query**, so its two routes are `Route.withQueryPF` + a bare-path `Route.applyPF` rather than the static pair above — the first page keeps the `/tags/5` the catalog links to.
+
+Two consequences of the editor holding one page rather than the whole wordlist: `TagEntryResponse.alreadyPresent` is how a write says the row was already there (the browser can no longer look), and `TagEntryPage.hasPairs` is what locks the language selects (the pair may be on another page).
 
 ### Internationalization
 
