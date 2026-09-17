@@ -1,98 +1,76 @@
 package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
+import gathedge.frontend.api.WordApiClient
 import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.shared.dto.TagPage
 import org.scalajs.dom
 
-/** A name-search dropdown over an already-fetched pool of tags — "filter by wordlist", wherever a listing wants one.
+/** A server-searched name dropdown over the wordlist catalog — "filter by wordlist", wherever a listing wants one.
   * First user: `AllGamesPage`'s wordlist filter; built as its own component because the ticket that asked for it
   * expects a second page to want the same control later.
   *
-  * Unlike [[WordPicker]] this never calls the server itself: `tags` is the whole pool the caller already holds (the
-  * catalog is small — the same `GET /api/tags` every tag `<select>` on the site reads unpaged), and this component only
-  * narrows and ranks it client-side as the reader types. There is also no "create new" row — picking an existing tag is
-  * the only thing a filter can mean.
+  * The dropdown is empty until the reader types something: an untouched or emptied box shows the placeholder, never
+  * "every wordlist there is" — narrowing to a spoken need is the whole point of a search box, and the catalog is public
+  * and can be large. Each keystroke is debounced [[debounceMs]] (the same delay `WordPicker`'s own dictionary search
+  * uses) into `GET /api/tags/page?q=...`, which already answers a case-insensitive substring match across every
+  * account's wordlists — the same call `TagsPage` itself reads. There is also no "create new" row: picking an existing
+  * wordlist is the only thing this filter can mean.
   *
-  * `languages`, when non-empty, narrows the pool to tags whose `sourceLanguage`/`targetLanguage` pair contains every
-  * language given — order does not matter for that narrowing, the same "contains" rule `GameService.allGames` filters
-  * games by. The order the reader chose them in still matters for ranking: with the pool already narrowed to pairs that
-  * contain both, a tag whose own pair reads in that same order is offered above one that reads the other way round —
-  * ahead of plain alphabetical order, but behind how well the typed text matches the name.
+  * `languages`, when non-empty, narrows the server's page to tags whose `sourceLanguage`/`targetLanguage` pair contains
+  * every language given — the server has no language filter of its own, so this happens client-side over the (small,
+  * page-sized) response, in [[TagPicker.rank]]. Order does not matter for that narrowing, the same "contains" rule
+  * `GameService.allGames` filters games by. The order the reader chose them in still matters for ranking.
   *
-  * `selected` is read only to *hydrate* the field (a bookmarked filter, or a page arriving with one already chosen) —
-  * typing here never reads it back, so a reader retyping over an old choice is not fighting a value this component
-  * keeps re-asserting. Clearing the filter is the caller's own control (a "×" button beside this one, typically), not
-  * something typing an empty query does on its own: an empty box while closed still shows the placeholder, not "every
-  * tag ever", so [[onSelect]] fires only from [[commit]], on a dropdown pick.
+  * `selectedTag` is read only to *hydrate* the field (a bookmarked filter, or the page arriving with one already
+  * chosen) — typing here never reads it back, so a reader retyping over an old choice is not fighting a value this
+  * component keeps re-asserting. Clearing the filter is the caller's own control (a "×" button beside this one,
+  * typically), not something typing an empty query does on its own — see [[clear]].
   */
 final class TagPicker(
-  tags: Signal[List[Tag]],
   languages: Signal[List[WordLanguage]],
-  selected: Signal[Option[Long]],
-  onSelect: Observer[Option[Long]],
+  selectedTag: Signal[Option[Tag]],
+  onSelect: Observer[Tag],
   placeholderText: String,
 ) {
 
   private val queryVar     = Var("")
   private val openVar      = Var(false)
   private val highlightVar = Var(-1)
+  private val resultsVar   = Var(List.empty[Tag])
+  private val typedBus     = new EventBus[String]()
 
-  // `.now()` is only public on a `Var`, not on the `Signal`s the caller hands in — the same reason `WordPicker` mirrors
-  // its own `language`/`partOfSpeech` — so a keyboard handler (not a subscription) can read the current pool and
-  // languages without them.
-  private val tagsMirror      = Var(List.empty[Tag])
+  // `.now()` is only public on a `Var`, not on the `languages` signal the caller hands in — the same reason
+  // `WordPicker` mirrors its own `language`/`partOfSpeech` — so a keyboard handler (not a subscription) can read the
+  // current choice without it.
   private val languagesMirror = Var(List.empty[WordLanguage])
 
-  private val maxRows = 8
+  private val debounceMs = 250
+
+  /** How many rows the server is asked for — wider than [[maxRows]] shown, since the language filter below still has to
+    * narrow the answer, and a page already limited to [[maxRows]] would leave too few once it does.
+    */
+  private val fetchSize = 20
+  private val maxRows   = 8
 
   /** Empties the box — the caller's own "clear filter" control, since typing an empty query does not fire [[onSelect]]
     * on its own; see the class doc.
     */
-  def clear(): Unit = { queryVar.set(""); openVar.set(false); highlightVar.set(-1) }
+  def clear(): Unit = { queryVar.set(""); openVar.set(false); highlightVar.set(-1); resultsVar.set(Nil) }
 
-  /** Tags whose pair contains every chosen language — see the class doc for why order does not matter here. */
-  private def languageFiltered(pool: List[Tag], wanted: List[WordLanguage]): List[Tag] = {
-    pool.filter(tag => wanted.forall(lang => tag.sourceLanguage == lang || tag.targetLanguage == lang))
-  }
-
-  /** Whether `tag`'s own pair reads in the same order the reader chose — `0` (ranked first) when it does, `1` when the
-    * pool was narrowed to exactly two languages read the other way round, and `0` (nothing to prefer) for zero or one
-    * chosen language, where there is no "reversed" to distinguish it from.
-    */
-  private def orderRank(tag: Tag, wanted: List[WordLanguage]): Int = {
-    wanted match {
-      case a :: b :: Nil if tag.sourceLanguage == a && tag.targetLanguage == b => 0
-      case _ :: _ :: Nil                                                       => 1
-      case _                                                                   => 0
-    }
-  }
-
-  /** `pool`, already narrowed to `wanted`, matching `search` by name — ranked exact/prefix/contains first, then by
-    * [[orderRank]], then alphabetically — and cut to [[maxRows]].
-    */
-  private def matches(pool: List[Tag], search: String, wanted: List[WordLanguage]): List[Tag] = {
-    val low      = search.toLowerCase
-    val narrowed = languageFiltered(pool, wanted)
-    val bySearch = if (low.isEmpty) narrowed else narrowed.filter(_.name.toLowerCase.contains(low))
-    bySearch
-      .sortBy { tag =>
-        val name     = tag.name.toLowerCase
-        val nameRank = if (name == low) 0 else if (name.startsWith(low)) 1 else 2
-        (nameRank, orderRank(tag, wanted), name)
-      }
-      .take(maxRows)
-  }
+  private def currentOptions(): List[Tag] =
+    TagPicker.rank(resultsVar.now(), queryVar.now().trim, languagesMirror.now()).take(maxRows)
 
   private val optionsSignal: Signal[List[Tag]] = {
-    queryVar.signal.combineWith(tags, languages).map { case (raw, pool, wanted) => matches(pool, raw.trim, wanted) }
+    queryVar.signal.combineWith(resultsVar.signal, languages).map { case (raw, results, wanted) =>
+      TagPicker.rank(results, raw.trim, wanted).take(maxRows)
+    }
   }
-
-  private def currentOptions(): List[Tag] = matches(tagsMirror.now(), queryVar.now().trim, languagesMirror.now())
 
   private def commit(tag: Tag): Unit = {
     queryVar.set(tag.name)
     openVar.set(false)
-    onSelect.onNext(Some(tag.id))
+    onSelect.onNext(tag)
   }
 
   private def handleKey(ev: dom.KeyboardEvent): Unit = {
@@ -128,6 +106,7 @@ final class TagPicker(
         onInput.mapToValue --> Observer[String] { text =>
           Var.set(queryVar -> text, highlightVar -> -1)
           openVar.set(true)
+          typedBus.emit(text)
         },
       ),
       onFocus.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
@@ -137,19 +116,26 @@ final class TagPicker(
       onKeyDown --> Observer[dom.KeyboardEvent](handleKey),
       // Hydrates the box from a filter the reader already had — a bookmarked `?tag=`, or the page arriving mid-session
       // with one chosen — without fighting whatever they are typing; see the class doc. A modifier of this element
-      // itself (after `controlled`), not of the wrapping `div`: on the same element as the `value <-- queryVar.signal`
-      // binding it writes into, it is guaranteed to activate no earlier than that binding is ready for it.
-      selected.combineWith(tags) --> Observer[(Option[Long], List[Tag])] { case (id, pool) =>
-        id.flatMap(tid => pool.find(_.id == tid)).foreach(tag => queryVar.set(tag.name))
-      },
+      // itself (after `controlled`), on the same element as the `value <-- queryVar.signal` binding it writes into.
+      selectedTag --> Observer[Option[Tag]](_.foreach(tag => queryVar.set(tag.name))),
     )
 
     div(
       cls := "relative",
       field,
       child.maybe <-- dropdown(),
-      tags --> tagsMirror.writer,
       languages --> languagesMirror.writer,
+      // Debounced server search — empty while the box is empty, so a focused-but-untyped field shows nothing, never
+      // "every wordlist there is"; see the class doc.
+      typedBus.events.debounce(debounceMs).flatMapSwitch { typed =>
+        val trimmed = typed.trim
+        if (trimmed.isEmpty) EventStream.fromValue(List.empty[Tag])
+        else {
+          WordApiClient
+            .listTagsPage(search = Some(trimmed), pageSize = Some(fetchSize))
+            .map(_.getOrElse(TagPage(Nil, 0L)).items)
+        }
+      } --> resultsVar.writer,
     )
   }
 
@@ -174,6 +160,40 @@ final class TagPicker(
           },
         )
       )
+    }
+  }
+}
+
+object TagPicker {
+
+  /** Tags whose pair contains every chosen language — see the class doc for why order does not matter here. */
+  private def languageFiltered(pool: List[Tag], wanted: List[WordLanguage]): List[Tag] = {
+    pool.filter(tag => wanted.forall(lang => tag.sourceLanguage == lang || tag.targetLanguage == lang))
+  }
+
+  /** Whether `tag`'s own pair reads in the same order the reader chose — `0` (ranked first) when it does, `1` when
+    * exactly two languages were chosen and it reads the other way round, and `0` (nothing to prefer) for zero or one
+    * chosen language, where there is no "reversed" to distinguish it from.
+    */
+  private def orderRank(tag: Tag, wanted: List[WordLanguage]): Int = {
+    wanted match {
+      case a :: b :: Nil if tag.sourceLanguage == a && tag.targetLanguage == b => 0
+      case _ :: _ :: Nil                                                       => 1
+      case _                                                                   => 0
+    }
+  }
+
+  /** `results` — a server search page, already narrowed by name — further narrowed to `wanted` and ranked: an exact
+    * name match first, then a prefix match, then the rest, [[orderRank]] breaking ties within each, then
+    * alphabetically. A `def` on the companion rather than a method of the class, so it is testable without a server:
+    * the server owns the name search itself, but this decides what the dropdown shows and in what order.
+    */
+  def rank(results: List[Tag], search: String, wanted: List[WordLanguage]): List[Tag] = {
+    val low = search.toLowerCase
+    languageFiltered(results, wanted).sortBy { tag =>
+      val name     = tag.name.toLowerCase
+      val nameRank = if (name == low) 0 else if (name.startsWith(low)) 1 else 2
+      (nameRank, orderRank(tag, wanted), name)
     }
   }
 }
