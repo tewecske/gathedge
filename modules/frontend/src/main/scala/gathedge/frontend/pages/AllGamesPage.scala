@@ -63,7 +63,9 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private val searchDebounceMs = 300
 
   /** Every wordlist there is — the same unpaged, public `GET /api/tags` every tag `<select>` on the site reads —
-    * fetched once on mount for [[tagPicker]] to search client-side.
+    * fetched once on mount. [[tagPicker]] searches the server on its own now; this is read only to resolve a `tagId`
+    * the URL already names (a bookmarked filter, or the page arriving mid-session with one chosen) into the [[Tag]]
+    * [[selectedTagSignal]] and [[tagPicker]]'s own hydration need.
     */
   private val tagsVar    = Var(List.empty[Tag])
   private val tagsSignal = tagsVar.signal
@@ -84,23 +86,14 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private val languagesLockedSignal: Signal[Boolean] = selectedTagSignal.map(_.isDefined)
 
   private val tagPicker = new TagPicker(
-    tags = tagsSignal,
     languages = selectedLanguagesSignal,
-    selected = querySignal.map(_.tagId).distinct,
-    onSelect = Observer[Option[Long]] {
-      case Some(id) =>
-        val pair = tagsVar.now().find(_.id == id).map(tag => (tag.sourceLanguage, tag.targetLanguage))
-        change(
-          _.reset(query => {
-            query.copy(
-              tagId = Some(id),
-              language1 = pair.map(_._1).orElse(query.language1),
-              language2 = pair.map(_._2).orElse(query.language2),
-            )
-          })
+    selectedTag = selectedTagSignal,
+    onSelect = Observer[Tag] { tag =>
+      change(
+        _.reset(
+          _.copy(tagId = Some(tag.id), language1 = Some(tag.sourceLanguage), language2 = Some(tag.targetLanguage))
         )
-      case None     =>
-        change(_.reset(_.copy(tagId = None)))
+      )
     },
     placeholderText = I18n.t(UiKeys.allGamesTagFilterPlaceholder),
   )
