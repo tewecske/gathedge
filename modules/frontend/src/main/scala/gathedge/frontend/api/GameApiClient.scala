@@ -1,7 +1,6 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
-import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{GameMode, Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   AllGamePage,
@@ -20,10 +19,11 @@ import gathedge.shared.dto.{
   StartPlayRequest,
   SubmitAnswerRequest,
 }
+import zio.json._
 
-import EndpointClient.{executor, run}
+import HttpClient.{query, segment}
 
-/** The game catalog's calls, generated from `GameEndpoints` the same way [[WordApiClient]] is from `WordEndpoints`.
+/** The game catalog's calls, over [[HttpClient]] the same way [[WordApiClient]] is.
   *
   * [[setup]] and [[create]] require a session — see `GameSetupPage`'s guest detour, which sits in front of each.
   * [[get]] and [[playSetup]] do not — both are `optionalUser` reads a shared game link is opened through: the variant
@@ -34,7 +34,9 @@ object GameApiClient {
 
   /** The tags eligible for a quiz between `source` and `target`, own tags first — see `Tag.sorted`. */
   def setup(source: WordLanguage, target: WordLanguage): EventStream[Either[ApiError, List[Tag]]] = {
-    run(executor(GameEndpoints.setup(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)))))
+    HttpClient.get[List[Tag]](
+      s"/api/games/setup${query("sourceLanguage" -> Some(WordLanguage.code(source)), "targetLanguage" -> Some(WordLanguage.code(target)))}"
+    )
   }
 
   /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from. */
@@ -44,7 +46,13 @@ object GameApiClient {
     tagIds: Set[Long],
   ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
     val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
-    run(executor(GameEndpoints.setupWords(Some(WordLanguage.code(source)), Some(WordLanguage.code(target)), joined)))
+    HttpClient.get[List[GameSetupWord]](
+      s"/api/games/setup/words${query(
+          "sourceLanguage" -> Some(WordLanguage.code(source)),
+          "targetLanguage" -> Some(WordLanguage.code(target)),
+          "tagIds"         -> joined,
+        )}"
+    )
   }
 
   /** Every account's games, one page at a time, for the games table. `tagId` narrows to one wordlist; `language1`/
@@ -61,31 +69,29 @@ object GameApiClient {
     language1: Option[WordLanguage] = None,
     language2: Option[WordLanguage] = None,
   ): EventStream[Either[ApiError, AllGamePage]] = {
-    run(
-      executor(
-        GameEndpoints.allGames(
-          page,
-          pageSize,
-          sort,
-          dir,
-          search,
-          favoritesOnly,
-          tagId,
-          language1.map(WordLanguage.code),
-          language2.map(WordLanguage.code),
-        )
-      )
+    HttpClient.get[AllGamePage](
+      s"/api/games/all${query(
+          "page"      -> page,
+          "pageSize"  -> pageSize,
+          "sort"      -> sort,
+          "dir"       -> dir,
+          "q"         -> search,
+          "favorites" -> favoritesOnly,
+          "tag"       -> tagId,
+          "lang1"     -> language1.map(WordLanguage.code),
+          "lang2"     -> language2.map(WordLanguage.code),
+        )}"
     )
   }
 
   /** Marks `slug` as the caller's favorite — idempotent, answers 204. */
   def favorite(slug: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GameEndpoints.favorite(slug)))
+    HttpClient.unit(_.POST, s"/api/games/${segment(slug)}/favorite")
   }
 
   /** Clears the caller's favorite mark on `slug` — idempotent, answers 204. */
   def unfavorite(slug: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GameEndpoints.unfavorite(slug)))
+    HttpClient.unit(_.DELETE, s"/api/games/${segment(slug)}/favorite")
   }
 
   def create(
@@ -93,22 +99,22 @@ object GameApiClient {
     target: WordLanguage,
     tagIds: List[Long],
   ): EventStream[Either[ApiError, GameCreated]] = {
-    run(executor(GameEndpoints.create(CreateGameRequest(source, target, tagIds))))
+    HttpClient.post[GameCreated]("/api/games", Some(CreateGameRequest(source, target, tagIds).toJson))
   }
 
   /** A shared game link's detail — playable, and readable, by anybody. */
   def get(slug: String): EventStream[Either[ApiError, GameDetail]] = {
-    run(executor(GameEndpoints.get(slug)))
+    HttpClient.get[GameDetail](s"/api/games/${segment(slug)}")
   }
 
   /** Owner-only — see `GameEndpoints.rename`'s doc comment. */
   def rename(slug: String, name: String): EventStream[Either[ApiError, GameDetail]] = {
-    run(executor(GameEndpoints.rename(slug, RenameGameRequest(name))))
+    HttpClient.patch[GameDetail](s"/api/games/${segment(slug)}", Some(RenameGameRequest(name).toJson))
   }
 
   /** Owner-only — removes the game and every play, answer and favorite scoped to it. Answers 204. */
   def delete(slug: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(GameEndpoints.delete(slug)))
+    HttpClient.unit(_.DELETE, s"/api/games/${segment(slug)}")
   }
 
   /** Starts a fresh attempt at `slug` under the given variant — see [[StartPlayRequest]]. */
@@ -120,13 +126,9 @@ object GameApiClient {
     wordPreference: WordPreference = WordPreference.All,
     mode: GameMode = GameMode.Typing,
   ): EventStream[Either[ApiError, PlayStarted]] = {
-    run(
-      executor(
-        GameEndpoints.startPlay(
-          slug,
-          StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode),
-        )
-      )
+    HttpClient.post[PlayStarted](
+      s"/api/games/${segment(slug)}/plays",
+      Some(StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode).toJson),
     )
   }
 
@@ -138,21 +140,26 @@ object GameApiClient {
     swapDirection: Boolean,
     wordPreference: WordPreference,
   ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
-    run(executor(GameEndpoints.playSetup(slug, Some(swapDirection), Some(WordPreference.code(wordPreference)))))
+    HttpClient.get[List[GameSetupWord]](
+      s"/api/games/${segment(slug)}/plays/setup${query("swapDirection" -> Some(swapDirection), "wordPreference" -> Some(WordPreference.code(wordPreference)))}"
+    )
   }
 
   def nextPrompt(playId: Long): EventStream[Either[ApiError, GamePrompt]] = {
-    run(executor(GameEndpoints.nextPrompt(playId)))
+    HttpClient.get[GamePrompt](s"/api/games/plays/$playId/prompt")
   }
 
   /** Answers with the graded row, which is what the play loop shows the player before it moves on. */
   def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, GameAnswerResult]] = {
-    run(executor(GameEndpoints.submitAnswer(playId, SubmitAnswerRequest(wordId, answerText))))
+    HttpClient.post[GameAnswerResult](
+      s"/api/games/plays/$playId/answers",
+      Some(SubmitAnswerRequest(wordId, answerText).toJson),
+    )
   }
 
   /** The finished play's score, full answer history, and the variant it ran under. */
   def getResults(playId: Long): EventStream[Either[ApiError, GameResults]] = {
-    run(executor(GameEndpoints.results(playId)))
+    HttpClient.get[GameResults](s"/api/games/plays/$playId/results")
   }
 
   /** Owner-only: one page of `slug`'s plays. */
@@ -164,12 +171,14 @@ object GameApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, GamePlayPage]] = {
-    run(executor(GameEndpoints.listPlays(slug, page, pageSize, sort, dir, search)))
+    HttpClient.get[GamePlayPage](
+      s"/api/games/${segment(slug)}/plays${query("page" -> page, "pageSize" -> pageSize, "sort" -> sort, "dir" -> dir, "q" -> search)}"
+    )
   }
 
   /** Owner-only equivalent of [[getResults]]: one play's full answer history, for the result modal. */
   def getPlayDetail(slug: String, playId: Long): EventStream[Either[ApiError, GamePlayDetail]] = {
-    run(executor(GameEndpoints.playDetail(slug, playId)))
+    HttpClient.get[GamePlayDetail](s"/api/games/${segment(slug)}/plays/$playId")
   }
 
   /** The caller's own play history across every game — always the caller's own data, unlike [[listPlays]]. */
@@ -181,6 +190,15 @@ object GameApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    run(executor(GameEndpoints.myPlays(gameId, page, pageSize, sort, dir, search)))
+    HttpClient.get[MyPlayPage](
+      s"/api/games/plays/mine${query(
+          "gameId"   -> gameId,
+          "page"     -> page,
+          "pageSize" -> pageSize,
+          "sort"     -> sort,
+          "dir"      -> dir,
+          "q"        -> search,
+        )}"
+    )
   }
 }

@@ -122,11 +122,12 @@ Before writing `V2`: SQLite can't drop a `UNIQUE` column or alter a constraint; 
 
 ### Backend request flow
 
-**Every endpoint is described once** in `shared`'s `api/*Endpoints.scala`, via zio-http's `Endpoint` API. Three things derive from it:
+**Every endpoint is described once** in `shared`'s `api/*Endpoints.scala`, via zio-http's `Endpoint` API. Two things derive from it on the backend:
 
 - `backend/http/*Routes.scala` implements handlers via `implementHandler`.
 - `backend/http/DocsRoutes.scala` generates the OpenAPI document, served with Swagger UI at `/api/docs/openapi`. Public endpoints are hand-listed in `DocsRoutes.publicEndpoints`.
-- `frontend/api/ApiClient.scala`/`AdminApiClient.scala` call the endpoints through `EndpointClient.scala`.
+
+The frontend does **not** use the zio-http `Endpoint` client: `frontend/api/HttpClient.scala` is a thin wrapper over Airstream's `FetchStream` and zio-json, and `ApiClient.scala`/`AdminApiClient.scala`/the other `*ApiClient.scala` files spell out each call's path and method by hand against it. Keeping zio-http off the JS classpath's *used* surface is what lets the Scala.js linker drop the endpoint-executor/zio-schema machinery from the bundle; the descriptions in `shared` stay what the backend and the OpenAPI document are built from, and the DTOs going over `HttpClient` are the same case classes, decoded via their `derives JsonCodec` zio-json instances rather than the endpoint's zio-schema codecs.
 
 The two OAuth routes (`/api/auth/{provider}/start` and `/callback`) are plain `Method / path -> handler`, built as top-level 302 navigations. They're absent from the OpenAPI document and exempt from the CSRF header. `GET /api/auth/providers` is an ordinary described endpoint.
 
@@ -145,7 +146,7 @@ One mapping per service failure enum lives in `backend/http/ApiFailures.scala`, 
 Things to know before extending the API:
 
 - **Each endpoint declares exactly the statuses a caller can get, as the union of its error channel.** `.outErrors(...)`; add 401 wherever `authenticated`/`adminOnly` guards it.
-  - Three statuses are deliberately undescribed: the aspects' 403, 429, 500. `EndpointClient.run` flattens each into `ApiError(0, ...)`. Exceptions: login declares 403 for `EmailNotVerified`; signup/login/verification-resend declare 429 for `RateLimited`.
+  - Three statuses are deliberately undescribed: the aspects' 403, 429, 500. They stay absent from the OpenAPI document and from `.outErrors`, but `RouteSupport`'s aspects still answer them with an `ErrorResponse`-shaped body, so `frontend/api/HttpClient` still decodes a real status and message for them like any other failure — undescribed only means "not part of the documented contract," not "unreadable by the SPA." `ApiError(0, ...)` is reserved for a call that got no HTTP answer at all. Exceptions: login declares 403 for `EmailNotVerified`; signup/login/verification-resend declare 429 for `RateLimited`.
   - Keep `.outErrors` and the codec list in step by hand.
   - `OpenApiSpec` pins the per-operation status table. `ApiEndpointsSpec` pins that aspect-built bodies stay `ApiFailure`-shaped.
 - **`codecError` covers what fails before the handler runs.** Apply `ApiEndpoint.withCodecError` to every endpoint with an input/query/header codec, and declare `failure.badRequest`.
@@ -316,7 +317,7 @@ Pages render through `components/AppShell`. `AppShell.render` is authenticated; 
 
 `components/OAuthButtons` are plain anchors, never `ApiClient` calls.
 
-`ApiClient`/`AdminApiClient` are generated from the endpoint descriptions, returning `EventStream[Either[ApiError, A]]`. `EndpointClient.run` maps declared failures to `ApiError` and flattens everything else into status `0`.
+`ApiClient`/`AdminApiClient`/the other `*ApiClient` objects are hand-written against `HttpClient`, one method per call, returning `EventStream[Either[ApiError, A]]`. `HttpClient` decodes every non-2xx body as `dto.ErrorResponse` into an `ApiError` carrying the real status; only a call with no HTTP answer at all (offline, a dead socket, a response nothing could decode) becomes `ApiError(0, ...)`.
 
 **Laminar note**: `.split` is deprecated in favor of `.splitSeq`.
 

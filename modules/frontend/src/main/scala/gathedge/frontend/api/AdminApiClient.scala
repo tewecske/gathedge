@@ -1,7 +1,6 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
-import gathedge.shared.api.AdminEndpoints
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{
   AdminUserDetail,
@@ -21,11 +20,12 @@ import gathedge.shared.dto.{
   UserPage,
   WordFormAnomaly,
 }
+import zio.json._
 
-import EndpointClient.{executor, run}
+import HttpClient.{query, segment}
 
 /** The admin pages' calls. Split from [[ApiClient]] only because the admin pages are the only callers; it is built the
-  * same way, from the descriptions in `shared`.
+  * same way, over [[HttpClient]].
   */
 object AdminApiClient {
 
@@ -40,27 +40,29 @@ object AdminApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, UserPage]] = {
-    run(executor(AdminEndpoints.listUsers(page, pageSize, sort, dir, search)))
+    HttpClient.get[UserPage](
+      s"/api/admin/users${query("page" -> page, "pageSize" -> pageSize, "sort" -> sort, "dir" -> dir, "q" -> search)}"
+    )
   }
 
   def getUser(id: Long): EventStream[Either[ApiError, User]] = {
-    run(executor(AdminEndpoints.getUser(id)))
+    HttpClient.get[User](s"/api/admin/users/$id")
   }
 
   def createUser(request: CreateUserRequest): EventStream[Either[ApiError, User]] = {
-    run(executor(AdminEndpoints.createUser(request)))
+    HttpClient.post[User]("/api/admin/users", Some(request.toJson))
   }
 
   def updateUser(id: Long, request: UpdateUserRequest): EventStream[Either[ApiError, User]] = {
-    run(executor(AdminEndpoints.updateUser(id, request)))
+    HttpClient.put[User](s"/api/admin/users/$id", Some(request.toJson))
   }
 
   def deleteUser(id: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.deleteUser(id)))
+    HttpClient.unit(_.DELETE, s"/api/admin/users/$id")
   }
 
   def userDetail(id: Long): EventStream[Either[ApiError, AdminUserDetail]] = {
-    run(executor(AdminEndpoints.userDetail(id)))
+    HttpClient.get[AdminUserDetail](s"/api/admin/users/$id/detail")
   }
 
   /** One page of `id`'s game plays across every game. `search` is a case-insensitive substring of the game's name. */
@@ -73,34 +75,43 @@ object AdminApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    run(executor(AdminEndpoints.userPlays(id, gameId, page, pageSize, sort, dir, search)))
+    HttpClient.get[MyPlayPage](
+      s"/api/admin/users/$id/plays${query(
+          "gameId"   -> gameId,
+          "page"     -> page,
+          "pageSize" -> pageSize,
+          "sort"     -> sort,
+          "dir"      -> dir,
+          "q"        -> search,
+        )}"
+    )
   }
 
   /** One of `id`'s finished plays, with its score and full answer history — the admin-scoped counterpart of
     * `GameApiClient.getResults`, which is owner-only.
     */
   def userPlayResults(id: Long, playId: Long): EventStream[Either[ApiError, GameResults]] = {
-    run(executor(AdminEndpoints.userPlayResults(id, playId)))
+    HttpClient.get[GameResults](s"/api/admin/users/$id/plays/$playId/results")
   }
 
   def verifyUserEmail(id: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.verifyUserEmail(id)))
+    HttpClient.unit(_.POST, s"/api/admin/users/$id/verify-email")
   }
 
   def resendUserVerification(id: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.resendUserVerification(id)))
+    HttpClient.unit(_.POST, s"/api/admin/users/$id/verification/resend")
   }
 
   def revokeUserSessions(id: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.revokeUserSessions(id)))
+    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/sessions")
   }
 
   def unlinkUserIdentity(id: Long, provider: OAuthProvider): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.unlinkUserIdentity(id, OAuthProvider.wireName(provider))))
+    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/identities/${segment(OAuthProvider.wireName(provider))}")
   }
 
   def clearUserLockout(id: Long): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.clearUserLockout(id)))
+    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/lockout")
   }
 
   /** The query parameters are all optional, so a page that wants the first page of everything passes nothing. */
@@ -113,43 +124,59 @@ object AdminApiClient {
     actorId: Option[Long] = None,
     targetId: Option[String] = None,
   ): EventStream[Either[ApiError, AuditPage]] = {
-    run(executor(AdminEndpoints.auditLog(page, pageSize, sort, dir, action, actorId, targetId)))
+    HttpClient.get[AuditPage](
+      s"/api/admin/audit${query(
+          "page"     -> page,
+          "pageSize" -> pageSize,
+          "sort"     -> sort,
+          "dir"      -> dir,
+          "action"   -> action,
+          "actorId"  -> actorId,
+          "targetId" -> targetId,
+        )}"
+    )
   }
 
   def loginAttempts(
     limit: Option[Int] = None,
     outcome: Option[String] = None,
   ): EventStream[Either[ApiError, List[LoginAttemptEntry]]] = {
-    run(executor(AdminEndpoints.loginAttempts(limit, outcome)))
+    HttpClient.get[List[LoginAttemptEntry]](
+      s"/api/admin/login-attempts${query("limit" -> limit, "outcome" -> outcome)}"
+    )
   }
 
   def rateLimits: EventStream[Either[ApiError, List[RateLimitEntry]]] = {
-    run(executor(AdminEndpoints.rateLimits(())))
+    HttpClient.get[List[RateLimitEntry]]("/api/admin/rate-limits")
   }
 
   /** `None` clears every key. */
   def clearRateLimits(key: Option[String]): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.clearRateLimits(ClearRateLimitRequest(key))))
+    HttpClient.unit(_.POST, "/api/admin/rate-limits/clear", Some(ClearRateLimitRequest(key).toJson))
   }
 
   def systemOverview: EventStream[Either[ApiError, SystemOverview]] = {
-    run(executor(AdminEndpoints.systemOverview(())))
+    HttpClient.get[SystemOverview]("/api/admin/system")
   }
 
   def systemPrune: EventStream[Either[ApiError, PruneResult]] = {
-    run(executor(AdminEndpoints.systemPrune(())))
+    HttpClient.post[PruneResult]("/api/admin/system/prune")
   }
 
   def wordFormAnomalies: EventStream[Either[ApiError, List[WordFormAnomaly]]] = {
-    run(executor(AdminEndpoints.wordFormAnomalies(())))
+    HttpClient.get[List[WordFormAnomaly]]("/api/admin/word-forms/anomalies")
   }
 
   def deleteWordFormAnomaly(formWordId: Long, relation: String): EventStream[Either[ApiError, Unit]] = {
-    run(executor(AdminEndpoints.deleteWordFormAnomaly(DeleteWordFormRequest(formWordId, relation))))
+    HttpClient.unit(
+      _.POST,
+      "/api/admin/word-forms/anomalies/delete",
+      Some(DeleteWordFormRequest(formWordId, relation).toJson),
+    )
   }
 
   def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {
-    run(executor(AdminEndpoints.usageRoutes(windowHours)))
+    HttpClient.get[List[RouteUsage]](s"/api/admin/usage/routes${query("windowHours" -> windowHours)}")
   }
 
   def usageSuspicious(
@@ -157,6 +184,8 @@ object AdminApiClient {
     actionThreshold: Option[Int] = None,
     ipThreshold: Option[Int] = None,
   ): EventStream[Either[ApiError, List[SuspiciousUser]]] = {
-    run(executor(AdminEndpoints.usageSuspicious(windowHours, actionThreshold, ipThreshold)))
+    HttpClient.get[List[SuspiciousUser]](
+      s"/api/admin/usage/suspicious${query("windowHours" -> windowHours, "actionThreshold" -> actionThreshold, "ipThreshold" -> ipThreshold)}"
+    )
   }
 }
