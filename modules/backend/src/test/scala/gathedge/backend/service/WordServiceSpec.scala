@@ -416,6 +416,43 @@ object WordServiceSpec extends ZIOSpecDefault {
           byOther.find(_.id == tag.id).exists(t => !t.ownedByMe && !t.editableByMe),
         )
       },
+      test("getTag answers the one tag asked for, marked for its owner") {
+        for {
+          _       <- seed
+          tag     <- createTag("mine", 1L)
+          byOwner <- WordService.getTag(tag.id, Some(1L))
+        } yield assertTrue(byOwner == tag.copy(ownedByMe = true, editableByMe = true))
+      },
+      test("getTag marks somebody else's tag unowned, and a visitor with no session the same way") {
+        for {
+          _         <- seed
+          tag       <- createTag("theirGetTag", 1L)
+          byOther   <- WordService.getTag(tag.id, Some(2L))
+          byVisitor <- WordService.getTag(tag.id, None)
+        } yield assertTrue(
+          byOther == tag.copy(ownedByMe = false, editableByMe = false),
+          byVisitor == tag.copy(ownedByMe = false, editableByMe = false),
+        )
+      },
+      test("getTag marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
+        for {
+          _        <- seed
+          tag      <- createTag("sharedGetTag", 1L)
+          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+          byOwner  <- WordService.getTag(tag.id, Some(1L))
+          byMember <- WordService.getTag(tag.id, Some(2L))
+          byOther  <- WordService.getTag(tag.id, Some(3L))
+        } yield assertTrue(
+          byOwner.ownedByMe && byOwner.editableByMe,
+          !byMember.ownedByMe && byMember.editableByMe,
+          !byOther.ownedByMe && !byOther.editableByMe,
+        )
+      },
+      test("getTag answers TagNotFound for an id that names nothing") {
+        for {
+          missing <- WordService.getTag(9999L, Some(1L)).either
+        } yield assertTrue(missing == Left(WordFailure.TagNotFound))
+      },
       test("listTagsPaged orders own tags first, then a group's, then everyone else's, when unsorted") {
         for {
           _        <- seed

@@ -39,8 +39,8 @@ enum GroupFailure {
   */
 trait GroupService {
 
-  /** One page of groups, with the caller's own role in each — `None` for one they haven't joined, or for a visitor
-    * with no session at all.
+  /** One page of groups, with the caller's own role in each — `None` for one they haven't joined, or for a visitor with
+    * no session at all.
     */
   def listPage(
     viewerId: Option[Long],

@@ -133,11 +133,11 @@ private class LanguagePicker {
   /** Purely an affordance: without it the trigger is two letters that do not look like they open anything. */
   private def chevronIcon(): SvgElement = {
     svg.svg(
-      svg.cls         := "size-3 opacity-60",
-      svg.viewBox     := "0 0 24 24",
-      svg.fill        := "none",
-      svg.stroke      := "currentColor",
-      svg.strokeWidth := "3",
+      svg.cls            := "size-3 opacity-60",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "3",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
       svg.path(svg.d := "m19.5 8.25-7.5 7.5-7.5-7.5"),

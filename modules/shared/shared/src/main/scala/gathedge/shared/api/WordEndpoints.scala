@@ -202,6 +202,16 @@ object WordEndpoints {
     Endpoint(Method.GET / "api" / "tags").out[List[Tag]]
   }
 
+  /** One wordlist, by id — the fine-grained counterpart of [[listTags]] for a caller who already knows which tag it
+    * wants and would otherwise fetch the whole table just to filter it client-side. Public, like [[listTags]]: a caller
+    * with no session gets the row with `ownedByMe`/`editableByMe` false. 404 is an id that names no tag.
+    */
+  val getTag = {
+    Endpoint(Method.GET / "api" / "tags" / tagId).withCodecError
+      .out[Tag]
+      .outErrors(failure.badRequest, failure.notFound)
+  }
+
   /** The catalog's own listing, paged/sorted/filtered by the database like [[list]] — [[listTags]] above stays as it is
     * for every dropdown and collect bar, which still want the whole unpaged table. `scope` narrows to `TagScope.code`
     * (`mine`/`group`/`other`), `q` is a substring match on the name; either or both may narrow `sort`'s own order away.
@@ -614,6 +624,7 @@ object WordEndpoints {
       setGender,
       removeTranslation,
       listTags,
+      getTag,
       listTagsPage,
       createTag,
       createTagWithPairs,
@@ -649,5 +660,5 @@ object WordEndpoints {
     * every other operation as needing the session cookie, and `OpenApiSpec` pins both halves of that split.
     */
   val public: List[Endpoint[?, ?, ?, ?, ?]] =
-    List(list, get, listTags, listTagsPage, tagEntries, tagEntriesPage)
+    List(list, get, listTags, getTag, listTagsPage, tagEntries, tagEntriesPage)
 }

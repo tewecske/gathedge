@@ -309,10 +309,10 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
 
   private def hamburgerIcon(): SvgElement = {
     svg.svg(
-      svg.cls           := "size-5",
-      svg.viewBox       := "0 0 24 24",
-      svg.fill          := "none",
-      svg.stroke        := "currentColor",
+      svg.cls            := "size-5",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
       svg.strokeWidth    := "1.5",
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",

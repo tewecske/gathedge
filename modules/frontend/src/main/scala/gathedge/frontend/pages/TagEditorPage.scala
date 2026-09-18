@@ -848,12 +848,11 @@ private final class TagEditorPage(
           case Left(err)      =>
             Var.set(creatingGameVar -> false, errorVar -> Some(err.message))
         },
-      reloadBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
-        case Right(tags) =>
-          val found = tags.find(_.id == tagId)
-          tagVar.set(found)
-          found.foreach(applyLangsFrom)
-        case Left(err)   => errorVar.set(Some(err.message))
+      reloadBus.events.flatMapSwitch(_ => WordApiClient.getTag(tagId)) --> Observer[Either[ApiError, Tag]] {
+        case Right(tag) =>
+          tagVar.set(Some(tag))
+          applyLangsFrom(tag)
+        case Left(err)  => errorVar.set(Some(err.message))
       },
       // One page of rows: whenever the address bar says a different one, and whenever a write has changed what is on
       // this one. `flatMapSwitch`, so a reader turning two pages quickly is answered by the second.
