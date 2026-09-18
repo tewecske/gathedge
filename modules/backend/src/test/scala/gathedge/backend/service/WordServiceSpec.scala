@@ -3146,6 +3146,18 @@ object WordServiceSpec extends ZIOSpecDefault {
           plain.find(_.id == theirs.id).exists(t => !t.ownedByMe && !t.editableByMe),
         )
       },
+      test("getTag marks it editable too — the read the editor opens on") {
+        for {
+          admin  <- adminUserId("admin-get@example.com")
+          theirs <- createTag("theirs", 7L)
+          seen   <- WordService.getTag(theirs.id, Some(admin))
+          plain  <- WordService.getTag(theirs.id, Some(8L))
+        } yield assertTrue(
+          !seen.ownedByMe,
+          seen.editableByMe,
+          !plain.editableByMe,
+        )
+      },
       test("listTagsPaged marks them editable too") {
         for {
           admin  <- adminUserId("admin-paged@example.com")

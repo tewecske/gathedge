@@ -1467,7 +1467,10 @@ final case class WordServiceLive(
       group         <- resolveGroupRef(row.groupId)
       memberships   <- ZIO.foreach(reader)(groupRepo.listMembershipsFor).map(_.getOrElse(Nil)).orDie
       memberGroupIds = memberships.map(_.groupId).toSet
-      editableByMe   = ownedByMe || row.groupId.exists(memberGroupIds.contains)
+      // The same third way in the two listings answer with — this is the read the editor opens on, so an
+      // administrator arriving at somebody else's wordlist must not find it locked.
+      globalAdmin   <- GlobalAdmin.isReader(userRepo, reader)
+      editableByMe   = ownedByMe || globalAdmin || row.groupId.exists(memberGroupIds.contains)
     } yield toTag(row, wordCount, ownedByMe, group, editableByMe)
   }
 
