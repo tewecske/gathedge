@@ -1468,8 +1468,10 @@ private final class TagEditorPage(
       cls := "mt-6 flex flex-col gap-2",
       h2(cls               := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
       div(
-        // One column below `sm`: side by side, the two boxes are too narrow to type a word in on a phone.
-        cls                := "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start",
+        // One column below `sm`: side by side, the two boxes are too narrow to type a word in on a phone. `items-end`
+        // is what keeps the two fields on one line side by side — only a gendered side carries article buttons above
+        // its input, so aligning on the top would leave the other side's field a row higher.
+        cls                := "grid grid-cols-1 sm:grid-cols-2 gap-4 items-end",
         dataAttr("testid") := "tag-add-row",
         addSourcePicker.render(),
         addTargetPicker.render(),
