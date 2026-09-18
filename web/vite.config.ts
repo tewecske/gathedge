@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import scalaJSPlugin from '@scala-js/vite-plugin-scalajs'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 // Read from the repo-root .env (not web/.env — there isn't one), the same file `reStart / envVars`
 // feeds the backend from. This is what lets each git worktree pick its own dev ports in one place:
@@ -25,8 +26,11 @@ export default defineConfig(({ mode }) => {
     plugins: [
       tailwindcss(),
       scalaJSPlugin({ cwd: '..', projectID: 'frontend' }),
+      // `npm run build:analyze` — writes dist/stats.html, a treemap of what's actually in the bundle by byte.
+      process.env.ANALYZE && visualizer({ filename: 'dist/stats.html', gzipSize: true, brotliSize: true, template: 'treemap' }),
     ],
     build: {
+      sourcemap: !!process.env.ANALYZE,
       rollupOptions: {
         input: {
           main: 'index.html',

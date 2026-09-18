@@ -7,6 +7,7 @@
     "dev": "vite",
     "prebuild": "node scripts/copy-tesseract-assets.mjs && node scripts/gen-site-meta.mjs",
     "build": "vite build",
+    "build:analyze": "ANALYZE=1 vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -19,6 +20,7 @@
     "@scala-js/vite-plugin-scalajs": "^1.1.0",
     "@tailwindcss/vite": "^4.3.3",
     "daisyui": "^5.7.4",
+    "rollup-plugin-visualizer": "^7.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.5"
