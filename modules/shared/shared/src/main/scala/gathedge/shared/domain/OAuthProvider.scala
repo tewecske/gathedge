@@ -11,7 +11,8 @@ import zio.json.*
 enum OAuthProvider derives JsonCodec, CanEqual {
   case Google,
     Microsoft,
-    Discord
+    Discord,
+    Facebook
 }
 
 object OAuthProvider {
@@ -27,6 +28,8 @@ object OAuthProvider {
         "microsoft"
       case Discord   =>
         "discord"
+      case Facebook  =>
+        "facebook"
     }
   }
 
@@ -38,6 +41,8 @@ object OAuthProvider {
         Some(Microsoft)
       case "discord"   =>
         Some(Discord)
+      case "facebook"  =>
+        Some(Facebook)
       case _           =>
         None
     }
@@ -52,10 +57,12 @@ object OAuthProvider {
         "Microsoft"
       case Discord   =>
         "Discord"
+      case Facebook  =>
+        "Facebook"
     }
   }
 
-  val all: List[OAuthProvider] = List(Google, Microsoft, Discord)
+  val all: List[OAuthProvider] = List(Google, Microsoft, Discord, Facebook)
 
   extension (provider: OAuthProvider) {
     def wire: String    = wireName(provider)

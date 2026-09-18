@@ -50,6 +50,10 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-http://localhost:8080/api/auth/discord/callback}
+      FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
+      FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      FACEBOOK_REDIRECT_URI: ${FACEBOOK_REDIRECT_URI:-http://localhost:8080/api/auth/facebook/callback}
+      FACEBOOK_API_VERSION: ${FACEBOOK_API_VERSION:-v23.0}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
       MAIL_FROM: ${MAIL_FROM:-no-reply@localhost}
       # Empty host = mail is logged to the container's stdout instead of sent. Under

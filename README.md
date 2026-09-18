@@ -16,7 +16,8 @@ Under that sits the part of an application that is the same every time and tedio
   CSRF via a required custom header, and per-key rate limiting with a persisted attempt history.
 - **Email confirmation** — single-use tokens, a resend endpoint that is not an account-enumeration
   oracle, and a switch deciding whether an unconfirmed account may sign in at all.
-- **Social sign-in and account linking** — Google and Microsoft, behind one `OAuthClient` interface;
+- **Social sign-in and account linking** — Google, Microsoft, Discord and Facebook, behind one
+  `OAuthClient` interface;
   identities live in their own table and an unlinkable last credential is refused.
 - **An administrator surface** — user management, per-account diagnostics, an audit trail, and a
   system overview that reports the deployment without exposing a single configured secret.
@@ -167,7 +168,7 @@ Laminar source that draws it. Heroicons is MIT-licensed:
 
 > MIT License. Copyright (c) 2020 Refactoring UI Inc.
 
-Country flags, brand marks (Google, Microsoft, Discord, GitHub) and the language picker's flag
+Country flags, brand marks (Google, Microsoft, Discord, Facebook, GitHub) and the language picker's flag
 icons are hand-drawn or vendor-supplied instead — Heroicons has no equivalents for those.
 
 The UI is styled with [daisyUI](https://github.com/saadeghi/daisyui), also MIT-licensed:

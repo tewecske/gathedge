@@ -79,7 +79,20 @@ final case class MicrosoftSection(clientId: String, clientSecret: String, redire
   */
 final case class DiscordSection(clientId: String, clientSecret: String, redirectUri: String)
 
-final case class OAuthSection(google: GoogleSection, microsoft: MicrosoftSection, discord: DiscordSection)
+/** Facebook OAuth2 is not OIDC either: the identity comes from a second call to `GET /me`.
+  *
+  * `apiVersion` is in config for the reason `tenant` is: it is part of every Facebook endpoint URL, and each Graph API
+  * version is supported for about two years. A deployment that outlives the default can move to a newer one without a
+  * code change.
+  */
+final case class FacebookSection(clientId: String, clientSecret: String, redirectUri: String, apiVersion: String)
+
+final case class OAuthSection(
+  google: GoogleSection,
+  microsoft: MicrosoftSection,
+  discord: DiscordSection,
+  facebook: FacebookSection,
+)
 
 /** An empty `host` switches SMTP off the same way an empty client id switches a provider off: [[EmailSender.live]] then
   * falls back to the logging implementation, which is what makes the whole stack boot with no mail server at all.
@@ -170,6 +183,8 @@ final case class AppConfig(
         oauth.microsoft.clientId.nonEmpty && oauth.microsoft.clientSecret.nonEmpty
       case OAuthProvider.Discord   =>
         oauth.discord.clientId.nonEmpty && oauth.discord.clientSecret.nonEmpty
+      case OAuthProvider.Facebook  =>
+        oauth.facebook.clientId.nonEmpty && oauth.facebook.clientSecret.nonEmpty
     }
   }
 

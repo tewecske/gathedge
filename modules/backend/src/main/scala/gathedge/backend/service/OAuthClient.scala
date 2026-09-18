@@ -1,6 +1,6 @@
 package gathedge.backend.service
 
-import gathedge.backend.config.{AppConfig, DiscordSection, GoogleSection, MicrosoftSection}
+import gathedge.backend.config.{AppConfig, DiscordSection, FacebookSection, GoogleSection, MicrosoftSection}
 import gathedge.shared.domain.OAuthProvider
 import zio.*
 import zio.http.{Body, Client, Form, FormField, QueryParams, Request, Response, Status, URL}
@@ -25,10 +25,11 @@ private final case class TokenResponse(id_token: String) derives JsonDecoder
 private final case class GoogleTokenInfo(aud: String, sub: String, email: String, email_verified: String)
     derives JsonDecoder
 
-// Discord's token endpoint answers with an OAuth2 access token and no id_token; the identity is read
-// from a separate `/users/@me` call made with that token.
-private final case class DiscordTokenResponse(access_token: String) derives JsonDecoder
+// What a plain-OAuth2 token endpoint answers with: an access token and no id_token. Discord and Facebook
+// both read the identity from a separate call made with that token, so they decode the same reply.
+private final case class AccessTokenResponse(access_token: String) derives JsonDecoder
 private final case class DiscordUser(id: String, email: Option[String], verified: Option[Boolean]) derives JsonDecoder
+private final case class FacebookUser(id: String, email: Option[String]) derives JsonDecoder
 
 trait OAuthClient {
   def provider: OAuthProvider
@@ -333,7 +334,7 @@ final class DiscordOAuthClient(config: DiscordSection, client: Client) extends B
     for {
       tokenBody   <- exchangeCodeForResponseBody(code)
       accessToken <- ZIO
-                       .fromEither(tokenBody.fromJson[DiscordTokenResponse])
+                       .fromEither(tokenBody.fromJson[AccessTokenResponse])
                        .mapBoth(err => new RuntimeException(s"Malformed Discord token response: $err"), _.access_token)
       url         <- urlOf("https://discord.com/api/users/@me")
       response    <- send(Request.get(url).addHeader("Authorization", s"Bearer $accessToken"), "user fetch")
@@ -369,6 +370,81 @@ object DiscordOAuthClient {
   }
 }
 
+/** Server-side OAuth2 authorization-code flow against Facebook Login.
+  *
+  * Facebook is plain OAuth2, not OIDC: the token endpoint answers with an `access_token` and no `id_token`, so the
+  * identity comes from a second back-channel call to `GET /me`, the same shape the Discord client uses.
+  *
+  * Two things are Facebook's own. The token exchange is documented as a GET with the client secret in the query string;
+  * this posts the same five form fields every other provider here posts, which the Graph API accepts and which keeps
+  * the secret out of a URL. And `subject` is an *app-scoped* id: stable for this application and different for the same
+  * person in another one, which is exactly the scope `oauth_identities` stores it at.
+  */
+final class FacebookOAuthClient(config: FacebookSection, client: Client) extends BackChannelOAuthClient(client) {
+
+  val provider: OAuthProvider = OAuthProvider.Facebook
+
+  private val graphBase: String = s"https://graph.facebook.com/${config.apiVersion}"
+
+  protected val clientId: String      = config.clientId
+  protected val clientSecret: String  = config.clientSecret
+  protected val redirectUri: String   = config.redirectUri
+  protected val tokenEndpoint: String = s"$graphBase/oauth/access_token"
+
+  def authorizationUrl(state: String): String = {
+    val params = Map(
+      "client_id"     -> config.clientId,
+      "redirect_uri"  -> config.redirectUri,
+      "response_type" -> "code",
+      "scope"         -> "email",
+      "state"         -> state,
+    )
+    s"https://www.facebook.com/${config.apiVersion}/dialog/oauth?${queryString(params)}"
+  }
+
+  def exchangeAndVerify(code: String): Task[OAuthIdentity] = {
+    for {
+      tokenBody   <- exchangeCodeForResponseBody(code)
+      accessToken <- ZIO
+                       .fromEither(tokenBody.fromJson[AccessTokenResponse])
+                       .mapBoth(err => new RuntimeException(s"Malformed Facebook token response: $err"), _.access_token)
+      // `fields` is not optional: a bare `/me` answers with the id and the name only, never the address.
+      url         <- urlOf(s"$graphBase/me", QueryParams("fields" -> "id,email"))
+      response    <- send(Request.get(url).addHeader("Authorization", s"Bearer $accessToken"), "user fetch")
+      _           <-
+        ZIO
+          .unless(response.status == Status.Ok)(
+            ZIO.fail(new RuntimeException(s"Facebook user fetch failed with status ${response.status.code}"))
+          )
+          .unit
+      body        <- response.body.asString
+      identity    <- ZIO.fromEither(FacebookOAuthClient.identityFrom(body))
+    } yield identity
+  }
+}
+
+object FacebookOAuthClient {
+
+  /** Projects a `/me` response body onto [[OAuthIdentity]]. Passed the raw string rather than a parsed value so the
+    * failure cases are testable without an HTTP stub.
+    */
+  private[service] def identityFrom(userBody: String): Either[Throwable, OAuthIdentity] = {
+    val result = {
+      for {
+        user  <- userBody.fromJson[FacebookUser].left.map(err => s"user response: $err")
+        // The address is display metadata, but an account with none has nothing for the account menu to show.
+        // Facebook omits the field when the person declined the `email` scope or has no confirmed address.
+        email <- user.email.filter(_.nonEmpty).toRight("user response carries no email")
+      } yield {
+        // Facebook asserts no `email_verified` equivalent, so this reports unverified for the reason the Microsoft
+        // client does: nothing matches on the address, and "the provider did not say" is the honest reading.
+        OAuthIdentity(OAuthProvider.Facebook, user.id, email, emailVerified = false)
+      }
+    }
+    result.left.map(message => new RuntimeException(s"Facebook $message"))
+  }
+}
+
 final case class OAuthClientsLive(config: AppConfig, client: Client) extends OAuthClients {
 
   private val clients: Map[OAuthProvider, OAuthClient] = {
@@ -383,6 +459,8 @@ final case class OAuthClientsLive(config: AppConfig, client: Client) extends OAu
               new MicrosoftOAuthClient(config.oauth.microsoft, client): OAuthClient
             case OAuthProvider.Discord   =>
               new DiscordOAuthClient(config.oauth.discord, client): OAuthClient
+            case OAuthProvider.Facebook  =>
+              new FacebookOAuthClient(config.oauth.facebook, client): OAuthClient
           }
         }
         provider -> impl
