@@ -1468,7 +1468,8 @@ private final class TagEditorPage(
       cls := "mt-6 flex flex-col gap-2",
       h2(cls               := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
       div(
-        cls                := "grid grid-cols-2 gap-4 items-start",
+        // One column below `sm`: side by side, the two boxes are too narrow to type a word in on a phone.
+        cls                := "grid grid-cols-1 sm:grid-cols-2 gap-4 items-start",
         dataAttr("testid") := "tag-add-row",
         addSourcePicker.render(),
         addTargetPicker.render(),
