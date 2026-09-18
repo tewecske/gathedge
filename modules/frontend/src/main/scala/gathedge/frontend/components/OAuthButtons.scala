@@ -51,6 +51,8 @@ object OAuthButtons {
         "bg-[#2f2f2f] text-white border-[#2f2f2f]"
       case OAuthProvider.Discord   =>
         "bg-[#5865f2] text-white border-[#5865f2]"
+      case OAuthProvider.Facebook  =>
+        "bg-[#1877f2] text-white border-[#1877f2]"
     }
   }
 
@@ -98,6 +100,17 @@ object OAuthButtons {
                 " 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0" +
                 "-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568" +
                 " 2.4189z"
+            ),
+          ),
+        )
+      case OAuthProvider.Facebook  =>
+        svg.svg(
+          svg.cls     := "size-4",
+          svg.viewBox := "0 0 512 512",
+          svg.path(
+            svg.fill := "#fff",
+            svg.d    := (
+              "M280 472V256h88l16-72H280v-48c0-22 12-32 34-32h70V40h-88c-70 0-112 42-112 112v32h-56v72h56v216h96z"
             ),
           ),
         )

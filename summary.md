@@ -104,8 +104,8 @@ It is always redeemable. Whether an unconfirmed account may *sign in* is a deplo
 
 ## Social sign-in and account linking
 
-Users may sign in with a Google or a Microsoft account, and may attach either to an existing
-account from the settings screen.
+Users may sign in with a Google, Microsoft, Discord or Facebook account, and may attach any of
+them to an existing account from the settings screen.
 
 - Only the provider's own permanent account identifier decides which account a social sign-in
   enters. The email address a provider reports is display information and never grants access.

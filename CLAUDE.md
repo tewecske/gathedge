@@ -164,9 +164,9 @@ External identities live in `oauth_identities(provider, subject, user_id)`, uniq
 
 `AuthService.unlinkOAuth` refuses to remove an account's last credential (409).
 
-Providers are `OAuthClient` implementations behind `OAuthClients.forProvider` (returns `None` for anything unconfigured). Google verifies its `id_token` via the `tokeninfo` endpoint. `MicrosoftOAuthClient` decodes the payload and validates `iss`/`aud`/`exp` as plain fields (permitted only over a direct back-channel TLS call). `decodeIdTokenClaims` must never be reused on a token that reached the server any other way.
+Providers are `OAuthClient` implementations behind `OAuthClients.forProvider` (returns `None` for anything unconfigured). Google verifies its `id_token` via the `tokeninfo` endpoint. `MicrosoftOAuthClient` decodes the payload and validates `iss`/`aud`/`exp` as plain fields (permitted only over a direct back-channel TLS call). `decodeIdTokenClaims` must never be reused on a token that reached the server any other way. Discord and Facebook are plain OAuth2, not OIDC: there is no `id_token`, so each reads the identity from one more back-channel GET (`/users/@me`, `/me?fields=id,email`) carrying the access token, and `identityFrom` is the whole of the mapping.
 
-Config lives under `oauth.{google,microsoft}`; `MICROSOFT_TENANT` defaults to `common`.
+Config lives under `oauth.{google,microsoft,discord,facebook}`; `MICROSOFT_TENANT` defaults to `common`, and `FACEBOOK_API_VERSION` is config for the same reason — it is part of every Facebook endpoint URL and each Graph API version is supported for about two years.
 
 ### Username and display name
 
@@ -194,7 +194,7 @@ through `ProfileFailure`, its own enum for the reason the guest enums are theirs
 
 **Tokens are always issued and redeemable; `app.require-email-verification` (default `false`) only gates login.** With it on, `signup` returns no session, and `login` fails `EmailNotVerified` **after** the password check.
 
-`POST /api/auth/verification/resend` answers 204 for an unknown, verified, or fresh address alike. It has its own `RateLimitKey.verification` namespace. OAuth accounts start verified only when the provider asserts `email_verified` (Google does, Microsoft never); admin-created and bootstrap accounts start verified.
+`POST /api/auth/verification/resend` answers 204 for an unknown, verified, or fresh address alike. It has its own `RateLimitKey.verification` namespace. OAuth accounts start verified only when the provider asserts `email_verified` (Google and Discord do, Microsoft and Facebook never); admin-created and bootstrap accounts start verified.
 
 Mail goes through `EmailSender`: `SmtpEmailSender` when `mail.smtp.host` is set, `LoggingEmailSender` otherwise. `AppConfig.productionIssues` refuses to boot in production with verification required and no SMTP host. Tests use `RecordingEmailSender`.
 
