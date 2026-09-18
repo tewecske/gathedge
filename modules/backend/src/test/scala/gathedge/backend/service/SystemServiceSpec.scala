@@ -30,11 +30,11 @@ import zio.test._
 object SystemServiceSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ UsageEventRepository.test ++
-        MetricsRepository.test ++ GameRepository.test ++ WordRepository.test ++ GroupRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ UsageEventRepository.live ++
+        MetricsRepository.live ++ GameRepository.live ++ WordRepository.live ++ GroupRepository.live
     )
   }
 
@@ -46,7 +46,7 @@ object SystemServiceSpec extends ZIOSpecDefault {
     ) >+> (AdminService.live ++ SystemService.live)
   }
 
-  def spec = suite("SystemService (SQLite)")(
+  def spec = suite("SystemService")(
     test("reports no configured secret") {
       for {
         overview <- SystemService.overview

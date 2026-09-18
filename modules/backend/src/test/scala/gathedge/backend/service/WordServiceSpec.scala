@@ -43,16 +43,30 @@ import zio.test._
 
 import java.util.concurrent.TimeUnit
 
-/** The vocabulary against SQLite, which is where everything but referential integrity is exercised.
+/** The vocabulary against Postgres, its own schema.
   *
   * The service takes an `Option[Long]` reader throughout, and half of what is worth asserting here is what happens when
   * it is `None`: a visitor with no session sees the same words and none of the tag marks.
   */
 object WordServiceSpec extends ZIOSpecDefault {
 
+  /** Twenty throwaway `users` rows, seeded as soon as a fresh schema exists, so a test's bare numeric owner id (`1L`,
+    * `2L`, …) resolves to a real row instead of tripping `tags.user_id`'s foreign key — the tests below care about tag
+    * ownership and isolation, not who the account actually is. `adminUserId` inserts its own real row afterward for the
+    * one test that does care (`GlobalAdmin` reads `is_admin` off the table), so it never collides with these:
+    * `IDENTITY` keeps counting up from here, and twenty is comfortably past every bare id this file uses.
+    */
+  private def seedFixtureUsers(env: ZEnvironment[UserRepository]): Task[Unit] = {
+    ZIO.foreachDiscard(1 to 20)(_ => UserRepository.insertGuest("light", "en", 0L, None)).unit.provideEnvironment(env)
+  }
+
+  private def repos: ZLayer[Any, Throwable, WordRepository & GroupRepository & UserRepository] = {
+    (TestDataSource.postgres >>> (WordRepository.live ++ GroupRepository.live ++ UserRepository.live))
+      .tap(seedFixtureUsers)
+  }
+
   private val layer = {
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
-      AppConfig.live ++ RateLimiter.live >+> WordService.live
+    repos ++ AppConfig.live ++ RateLimiter.live >+> WordService.live
   }
 
   /** `AppConfig.live` with `quotas` overridden — the tests below need thresholds small enough to reach in a handful of
@@ -69,8 +83,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         )
       })
     })
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
-      config ++ RateLimiter.live >+> WordService.live
+    repos ++ config ++ RateLimiter.live >+> WordService.live
   }
 
   /** `AppConfig.live` with `languageCheck` overridden — the pre-import language check's tests want a miss threshold low
@@ -80,8 +93,7 @@ object WordServiceSpec extends ZIOSpecDefault {
     val config = AppConfig.live.project(cfg => {
       cfg.copy(languageCheck = cfg.languageCheck.copy(sampleSize = sampleSize, unrecognizedThreshold = threshold))
     })
-    (TestDataSource.sqlite >>> (WordRepository.test ++ GroupRepository.test ++ UserRepository.test)) ++
-      config ++ RateLimiter.live >+> WordService.live
+    repos ++ config ++ RateLimiter.live >+> WordService.live
   }
 
   /** Unwraps [[WordService.createTag]]'s [[gathedge.shared.dto.TagResponse]] down to the [[Tag]] most tests only need —
@@ -119,8 +131,8 @@ object WordServiceSpec extends ZIOSpecDefault {
   }
 
   /** A real `users` row with `is_admin` set — the one fixture the global-administrator tests need, since `GlobalAdmin`
-    * reads the flag off the table rather than taking it from the caller. Every other user id in this spec is a bare
-    * number with no row behind it, which `findById` answers `None` for: not an administrator, the ordinary case.
+    * reads the flag off the table rather than taking it from the caller. Every other user id in this spec resolves to
+    * one of [[seedFixtureUsers]]'s throwaway rows instead, none of which is an administrator.
     */
   private def adminUserId(email: String): ZIO[UserRepository, Nothing, Long] = {
     for {
@@ -3181,7 +3193,7 @@ object WordServiceSpec extends ZIOSpecDefault {
   }
 
   def spec = {
-    suite("WordService (SQLite)")(
+    suite("WordService")(
       coreSpec,
       genderSpec,
       quotaSpec,

@@ -3,7 +3,6 @@ package gathedge.backend.tools
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   DataSourceFactory,
-  DbDialect,
   FlywayMigrator,
   TextSearch,
   WordFormRow,
@@ -690,7 +689,7 @@ object DictionaryImport extends ZIOAppDefault {
       dataSource <- ZIO.service[DataSource]
       // The same migration `Main` runs, and for the same reason it is safe to run twice: without it a fresh clone has
       // to start the server once before it can load the dictionary, which is a footgun rather than a step.
-      _          <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql, Some(config.db.schema))
+      _          <- FlywayMigrator.migrate(dataSource, Some(config.db.schema))
       now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
       ids        <- storeWords(collected, now)
       _          <- ZIO.logInfo(s"Stored ${ids.size} word(s)")

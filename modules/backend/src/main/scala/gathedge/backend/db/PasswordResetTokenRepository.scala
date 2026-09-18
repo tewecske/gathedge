@@ -1,15 +1,11 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-/** Single-use "forgot password" links, the same dual-dialect shape as [[EmailVerificationTokenRepository]] — one
-  * generic implementation, two thin `ZLayer`s on the companion.
-  */
+/** Single-use "forgot password" links. */
 trait PasswordResetTokenRepository {
   def insert(row: PasswordResetTokenRow): Task[PasswordResetTokenRow]
   def findByToken(token: String): Task[Option[PasswordResetTokenRow]]
@@ -36,24 +32,13 @@ object PasswordResetTokenRepository {
   def deleteExpired(before: Long): RIO[PasswordResetTokenRepository, Long] =
     ZIO.serviceWithZIO[PasswordResetTokenRepository](_.deleteExpired(before))
 
-  val live: ZLayer[DataSource, Nothing, PasswordResetTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
-    new PasswordResetTokenRepositoryLive(
-      ds,
-      new PostgresZioJdbcContext(SnakeCase),
-    ): PasswordResetTokenRepository
-  })
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, PasswordResetTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new PasswordResetTokenRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): PasswordResetTokenRepository
-  )
+  val live: ZLayer[DataSource, Nothing, PasswordResetTokenRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new PasswordResetTokenRepositoryLive(ds): PasswordResetTokenRepository)
 }
 
 /** Reset tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
-final class PasswordResetTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class PasswordResetTokenRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with PasswordResetTokenRepository {
   import ctx._
 

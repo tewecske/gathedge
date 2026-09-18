@@ -114,12 +114,12 @@ sbt sharedJVM/test                                           # shared validation
 sbt frontend/test                                            # Laminar components, jsdom
 ```
 
-Backend and shared specs run against a fresh, migrated SQLite database per layer instantiation — no
-external services needed. Two exceptions:
+Backend specs need a reachable Docker daemon (testcontainers): each runs against a fresh, migrated
+Postgres schema of its own.
 
 ```bash
 docker compose up -d postgres
-RUN_POSTGRES_TESTS=1 sbt backend/test    # PostgresIntegrationSpec, via testcontainers
+sbt backend/test
 ```
 
 ```bash

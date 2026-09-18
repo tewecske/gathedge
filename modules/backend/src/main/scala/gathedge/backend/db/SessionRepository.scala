@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
@@ -67,21 +65,13 @@ object SessionRepository {
   def countAll: RIO[SessionRepository, Long] =
     ZIO.serviceWithZIO[SessionRepository](_.countAll)
 
-  val live: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new SessionRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): SessionRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, SessionRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new SessionRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): SessionRepository
-  )
+  val live: ZLayer[DataSource, Nothing, SessionRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new SessionRepositoryLive(ds): SessionRepository)
 }
 
 /** Session ids are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
-final class SessionRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class SessionRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with SessionRepository {
   import ctx._
 

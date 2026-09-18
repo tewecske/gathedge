@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import gathedge.shared.dto.AuditSort
 import zio.*
 
@@ -60,23 +58,15 @@ object AuditLogRepository {
   def countAll: RIO[AuditLogRepository, Long] =
     ZIO.serviceWithZIO[AuditLogRepository](_.countAll)
 
-  val live: ZLayer[DataSource, Nothing, AuditLogRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new AuditLogRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): AuditLogRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, AuditLogRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new AuditLogRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): AuditLogRepository
-  )
+  val live: ZLayer[DataSource, Nothing, AuditLogRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new AuditLogRepositoryLive(ds): AuditLogRepository)
 }
 
 /** `actorEmail` and `detail` are readable prose, and `detail` may name an account — neither belongs in a log line, see
   * [[QuillRepository.logged]]. The messages carry ids, the action and row counts only.
   */
-final class AuditLogRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class AuditLogRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with AuditLogRepository {
   import ctx._
 
@@ -93,9 +83,8 @@ final class AuditLogRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy
     *
     * Quill's dynamic-query DSL rather than a `quote` block: three independent optional narrowings would otherwise be
     * eight query shapes, and `filterOpt` drops the clause entirely when the argument is `None` instead of emitting an
-    * always-true predicate. Nothing is lost by it — the dialect is a type parameter here, so every query in this
-    * package is already rendered at runtime rather than by the macro. [[list]] and [[count]] share it so the total
-    * cannot count a different set than the page shows.
+    * always-true predicate. [[list]] and [[count]] share it so the total cannot count a different set than the page
+    * shows.
     */
   private def matching(
     action: Option[String],

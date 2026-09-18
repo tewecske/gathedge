@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
@@ -54,20 +52,12 @@ object GuestClaimCodeRepository {
   def countFor(userId: Long): RIO[GuestClaimCodeRepository, Long] =
     ZIO.serviceWithZIO[GuestClaimCodeRepository](_.countFor(userId))
 
-  val live: ZLayer[DataSource, Nothing, GuestClaimCodeRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GuestClaimCodeRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GuestClaimCodeRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, GuestClaimCodeRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GuestClaimCodeRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GuestClaimCodeRepository
-  )
+  val live: ZLayer[DataSource, Nothing, GuestClaimCodeRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new GuestClaimCodeRepositoryLive(ds): GuestClaimCodeRepository)
 }
 
-final class GuestClaimCodeRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class GuestClaimCodeRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with GuestClaimCodeRepository {
   import ctx._
 

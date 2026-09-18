@@ -1,7 +1,7 @@
 package gathedge.backend.tools
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{DataSourceFactory, DbDialect, FlywayMigrator}
+import gathedge.backend.db.{DataSourceFactory, FlywayMigrator}
 import zio.*
 
 import javax.sql.DataSource
@@ -26,7 +26,7 @@ object Migrate extends ZIOAppDefault {
     val migrated = for {
       config     <- ZIO.service[AppConfig]
       dataSource <- ZIO.service[DataSource]
-      _          <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql, Some(config.db.schema))
+      _          <- FlywayMigrator.migrate(dataSource, Some(config.db.schema))
       _          <- ZIO.logInfo(s"Migrated schema ${config.db.schema}")
     } yield ()
 

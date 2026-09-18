@@ -3,8 +3,6 @@ package gathedge.backend.db
 import gathedge.shared.domain.{Group, GroupRole}
 import gathedge.shared.dto.GroupSort
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
@@ -164,20 +162,12 @@ object GroupRepository {
   def delete(id: Long): RIO[GroupRepository, Long] =
     ZIO.serviceWithZIO[GroupRepository](_.delete(id))
 
-  val live: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GroupRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, GroupRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GroupRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GroupRepository
-  )
+  val live: ZLayer[DataSource, Nothing, GroupRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new GroupRepositoryLive(ds): GroupRepository)
 }
 
-final class GroupRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class GroupRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with GroupRepository {
   import ctx._
 

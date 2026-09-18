@@ -25,10 +25,10 @@ import zio.test._
 object GroupServiceSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GroupRepository.test ++ WordRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ GroupRepository.live ++ WordRepository.live
     )
   }
 
@@ -58,7 +58,7 @@ object GroupServiceSpec extends ZIOSpecDefault {
   }
 
   def spec = {
-    suite("Groups (SQLite)")(
+    suite("Groups")(
       test("creating a group mints the caller as its sole admin") {
         for {
           owner  <- userId("owner1@example.com")

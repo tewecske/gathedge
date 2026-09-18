@@ -48,7 +48,7 @@ Run every remaining step with `$WT` as the working directory.
 ## 3. Do the work
 
 - Implement the change on branch `$BR`. Follow `CLAUDE.md` — `-noindent` Scala 3
-  (explicit `{ }`), `-Werror`, ASD-STE100 writing style, the dual-dialect DB
+  (explicit `{ }`), `-Werror`, ASD-STE100 writing style, the database strategy
   rules, endpoint/DTO parity, i18n message-key rules, and anything else in scope.
 - Keep commits focused; write commit messages in the repo's style and end each with:
   `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`
@@ -57,10 +57,11 @@ Run every remaining step with `$WT` as the working directory.
 
 - `sbt scalafmtAll`
 - `sbt test` (add `sbt backend/test` / `sbt frontend/test` / `sbt sharedJVM/test`
-  as the change requires). These use the SQLite test DB and need none of the dev
-  ports or the cloned schema.
-- If you touched migrations or anything referential-integrity related, note that
-  `RUN_POSTGRES_TESTS=1 sbt backend/test` should be run and say why.
+  as the change requires). Backend specs need Docker up (testcontainers Postgres) —
+  the worktree's own cloned schema and dev ports aren't involved.
+- If you touched migrations or anything referential-integrity related, make sure
+  `PostgresIntegrationSpec` (part of `sbt backend/test`) covers it, and add a case
+  there if it doesn't.
 - Only start the dev stack (`npm run dev` from `$WT`) if you must verify behavior
   in the running app. It will use the ports and schema set up above. Stop it
   when done — a second sbt server plus Vite is heavy.

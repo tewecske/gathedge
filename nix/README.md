@@ -133,9 +133,9 @@ the server:     git pull && sudo nixos-rebuild switch --flake .
 
 **What "prepare" means depends on the diff, which is why the script computes it.** It diffs the
 newest `released/*` tag against `HEAD` and reports what that range implies: a hash to recompute, a
-migration to rehearse against real Postgres (`RUN_POSTGRES_TESTS=1`, plus a `pg_dump` on the server
-before switching), a new configuration key that may need to reach the deployment. Most releases
-need none of it and the script says so.
+migration to rehearse (`sbt backend/test`, plus a `pg_dump` on the server before switching), a new
+configuration key that may need to reach the deployment. Most releases need none of it and the
+script says so.
 
 It then builds both packages and asserts the four things that build green and fail at *runtime* —
 the catalogs being inside the backend jar, the launcher working with an empty `PATH`, the Tailwind

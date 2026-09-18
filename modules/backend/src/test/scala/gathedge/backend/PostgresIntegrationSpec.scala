@@ -7,7 +7,6 @@ import gathedge.backend.TestAuthLayers
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
-  DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
   GamePlayAnswerRow,
@@ -74,97 +73,61 @@ import java.util.concurrent.TimeUnit
 
 import javax.sql.DataSource
 
-/** Exercises the Postgres dialect for real — every other *ServiceSpec runs against SQLite (the test-side of the
-  * dual-dialect strategy per the plan). This is the one place `RETURNING id`, `GENERATED ALWAYS AS IDENTITY`, and the
-  * Postgres join SQL actually get executed rather than just compile-time-checked by Quill.
+/** Cascade, FK, and reserved-word/alias regression tests — the corner cases worth a dedicated suite even though every
+  * other *ServiceSpec now also runs on real Postgres (see `TestDataSource`). This is where `RETURNING id`,
+  * `GENERATED ALWAYS AS IDENTITY`, and the Postgres join SQL first got exercised end to end, and where the delete-user
+  * cascade, the reserved-word (`user`/`row`) alias trap, and the V14/V24 backfill migrations are pinned.
   *
-  * '''One container, one schema per test, the whole dictionary in each.''' The container is shared and started once;
-  * every test gets a schema named after itself, migrated from nothing, loaded from `DictionaryFixture` and dropped when
-  * the test ends. Two things follow. No test can see another's rows, so none of them has to prefix its fixtures to stay
-  * out of the way. And every query here runs against fifty thousand real words rather than the handful the test just
-  * wrote — which is the shape the production plans are chosen for, and the one no SQLite spec can reproduce.
+  * '''One container, one schema per test, the whole dictionary in each.''' The container is the same JVM-shared one
+  * `TestDataSource` gives every other spec; every test here gets its own schema on it, named after itself, migrated
+  * from nothing, loaded from `DictionaryFixture` and dropped when the test ends. Two things follow. No test can see
+  * another's rows, so none of them has to prefix its fixtures to stay out of the way. And every query here runs against
+  * fifty thousand real words rather than the handful the test just wrote — which is the shape the production plans are
+  * chosen for, and the one an empty schema can't reproduce.
   *
   * The cost is real: migrating and loading per test is most of this spec's runtime. It buys the isolation and the data,
-  * both of which the shared-schema arrangement it replaced could not have.
+  * both of which a shared-schema arrangement could not have.
   *
   * Needs a Docker daemon reachable by testcontainers, and the committed fixture (see
-  * `scripts/build-dictionary-fixture.sh`). Gated behind the `RUN_POSTGRES_TESTS=1` env var so `sbt test` doesn't fail
-  * in environments without Docker (this sandbox included, at the time this was written).
+  * `scripts/build-dictionary-fixture.sh`) — same as every other spec now.
   */
 object PostgresIntegrationSpec extends ZIOSpecDefault {
-
-  /** The Postgres server the whole spec shares — one container, started once.
-    *
-    * Only the connection details travel; the schema does not. Every test gets its own, created and dropped around it by
-    * [[schemaDataSource]], so no test can see another's rows and none of them has to prefix its fixtures to stay out of
-    * the way.
-    */
-  private final case class PostgresServer(jdbcUrl: String, username: String, password: String)
-
-  private val server: ZLayer[Any, Throwable, PostgresServer] = ZLayer.scoped {
-    ZIO
-      .acquireRelease(
-        ZIO.attempt {
-          PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:16-alpine")).start()
-        }
-      )(container => ZIO.attempt(container.stop()).orDie)
-      .map(container => PostgresServer(container.jdbcUrl, container.username, container.password))
-  }
-
-  /** The schema one test owns, named after it.
-    *
-    * Postgres caps an identifier at 63 bytes, so a long label is cut — and a cut label can collide with another cut to
-    * the same prefix, which is what the hash on the end rules out. Lower case throughout: an unquoted identifier folds
-    * to lower case anyway, and having the name read the same quoted and unquoted removes a whole class of confusion.
-    */
-  private def schemaFor(label: String): String = {
-    val slug = label.toLowerCase.replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "").take(40)
-    f"t_${slug}_${label.hashCode & 0x7fffffff}%08x"
-  }
 
   /** A pool pointed at a schema of this test's own: created and migrated on the way in, dropped on the way out, with
     * the committed dictionary loaded into it.
     *
-    * The dictionary is the reason this is worth the cost. Every other spec runs against an empty SQLite database, so
-    * nothing else in the suite ever asks how a query behaves with fifty thousand words in the table beside the handful
-    * the test wrote — and the Postgres query plans are the ones that ship.
+    * The dictionary is the reason this is worth the cost beyond what `TestDataSource.postgresSchema` already gives
+    * every other spec: nothing else in the suite asks how a query behaves with fifty thousand words in the table beside
+    * the handful the test wrote — and the Postgres query plans are the ones that ship.
     *
     * The drop is registered *after* the pool, so the finalizers run drop-then-close and the drop still has a connection
     * to run on.
     */
-  private def schemaDataSource(schema: String): ZLayer[PostgresServer, Throwable, DataSource] = ZLayer.scoped {
+  private def schemaDataSource(schema: String): ZLayer[Any, Throwable, DataSource] = ZLayer.scoped {
     for {
-      config <- ZIO.service[PostgresServer]
-      ds     <- ZIO.acquireRelease(
-                  ZIO.attempt {
-                    val hikari = new HikariConfig()
-                    hikari.setJdbcUrl(config.jdbcUrl)
-                    // Same reason as TestDataSource.sqlite: bypass DriverManager, whose registry is stale after
-                    // an sbt recompile hands the test run a new classloader.
-                    hikari.setDriverClassName("org.postgresql.Driver")
-                    hikari.setUsername(config.username)
-                    hikari.setPassword(config.password)
-                    // Set before the schema exists, exactly as production does it: Postgres accepts a search_path
-                    // naming a schema that is not there yet and simply skips it until Flyway's CREATE SCHEMA lands.
-                    hikari.setSchema(schema)
-                    new HikariDataSource(hikari)
-                  }
-                )(pool => ZIO.attempt(pool.close()).orDie)
-      _      <- ZIO.acquireRelease(ZIO.unit)(_ => dropSchema(ds, schema).orDie)
-      _      <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(schema))
-      _      <- DictionaryFixture.restore(ds, schema)
+      container <- ZIO.attempt(TestDataSource.Container.instance)
+      ds        <- ZIO.acquireRelease(
+                     ZIO.attempt {
+                       val hikari = new HikariConfig()
+                       hikari.setJdbcUrl(container.jdbcUrl)
+                       // Same reason as TestDataSource.postgresSchema: bypass DriverManager, whose registry is stale
+                       // after an sbt recompile hands the test run a new classloader.
+                       hikari.setDriverClassName("org.postgresql.Driver")
+                       hikari.setUsername(container.username)
+                       hikari.setPassword(container.password)
+                       // Set before the schema exists, exactly as production does it: Postgres accepts a search_path
+                       // naming a schema that is not there yet and simply skips it until Flyway's CREATE SCHEMA lands.
+                       hikari.setSchema(schema)
+                       // Small, same reason as TestDataSource.postgresSchema: this pool shares the container's
+                       // connection budget with every other spec's own pool.
+                       hikari.setMaximumPoolSize(2)
+                       new HikariDataSource(hikari)
+                     }
+                   )(pool => ZIO.attempt(pool.close()).orDie)
+      _         <- ZIO.acquireRelease(ZIO.unit)(_ => TestDataSource.dropSchema(ds, schema).orDie)
+      _         <- FlywayMigrator.migrate(ds, Some(schema))
+      _         <- DictionaryFixture.restore(ds, schema)
     } yield ds: DataSource
-  }
-
-  private def dropSchema(dataSource: DataSource, schema: String): Task[Unit] = {
-    ZIO.attemptBlocking {
-      val connection = dataSource.getConnection
-      try {
-        val statement = connection.createStatement()
-        try statement.execute(s"""DROP SCHEMA IF EXISTS "$schema" CASCADE""")
-        finally statement.close()
-      } finally connection.close()
-    }
   }
 
   /** Everything a test body may ask for. Spelled out because [[pgTest]] has to name it: the layer is built per test, so
@@ -180,7 +143,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   // cascade test below deletes a `words` row directly, which no repository method exposes -- there is no
   // `deleteWord` anywhere in the app. The same reason keeps the repositories beside the services: the delete-user
   // test asserts on the rows a cascade removed, which no service exposes once their owner is gone.
-  private def stack(schema: String): ZLayer[PostgresServer, Throwable, Env] = {
+  private def stack(schema: String): ZLayer[Any, Throwable, Env] = {
     val repositories = schemaDataSource(schema) >+> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
@@ -198,8 +161,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     * The layer is attached here rather than to the suite because that is what makes it per-test: a `provide` on the
     * suite would build one schema for all of them, which is the arrangement this replaced.
     */
-  private def pgTest(label: String)(assertion: => ZIO[Env, Any, TestResult]): Spec[PostgresServer, Any] = {
-    test(label)(assertion).provideSome[PostgresServer](stack(schemaFor(label)))
+  private def pgTest(label: String)(assertion: => ZIO[Env, Any, TestResult]): Spec[Any, Any] = {
+    test(label)(assertion).provide(stack(TestDataSource.schemaFor(label)))
   }
 
   /** The listing narrowed to main words, as the texts it returns — the one caller of `mainOnly` on this dialect. */
@@ -224,9 +187,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
 
   def spec = {
     suite("Postgres dialect (testcontainers)")(
-      // `RETURNING id` and `GENERATED ALWAYS AS IDENTITY` are the two things this dialect does differently from the
-      // SQLite one every other spec runs against, and a signup exercises both: the user row, the session row keyed by
-      // the id it just produced, and the verification token pointing back at it.
+      // `RETURNING id` and `GENERATED ALWAYS AS IDENTITY` are Postgres-specific, and a signup exercises both: the
+      // user row, the session row keyed by the id it just produced, and the verification token pointing back at it.
       pgTest("signup and login round-trip through real Postgres, with the rows keyed to the generated id") {
         for {
           signupResult <- AuthService.signup("pguser@example.com", "password123")
@@ -442,11 +404,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           after.isEmpty,
         )
       },
-      // `GameRepository.deleteGame` deletes the `games` row first (guarded by `version`); on Postgres its
-      // `ON DELETE CASCADE` clears `game_tags`, `game_favorites` and `game_plays` (and, through the play,
-      // `game_play_answers`/`game_play_words`). The explicit child deletes that follow are what make SQLite match —
-      // here they must run as harmless no-ops against the already-cascaded rows without raising a constraint
-      // violation. The tag itself is somebody's own row and must survive.
+      // `GameRepository.deleteGame` deletes the `games` row first (guarded by `version`); its `ON DELETE CASCADE`
+      // clears `game_tags`, `game_favorites` and `game_plays` (and, through the play, `game_play_answers`/
+      // `game_play_words`). The explicit child deletes that follow must run as harmless no-ops against the
+      // already-cascaded rows without raising a constraint violation. The tag itself is somebody's own row and must
+      // survive.
       pgTest("deleting a game removes its tag links, plays, answers and favorite marks, but not the tag") {
         for {
           owner   <- AuthService.signup("pggamedel@example.com", "password123").map(_._1)
@@ -616,8 +578,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         )
       },
       // `login_attempts`, `audit_log` and `usage_events` are the user references declared ON DELETE SET NULL rather
-      // than CASCADE, and the same blind spot applies: SQLite enforces neither, so the whole SQLite suite passes
-      // whichever. Getting it wrong in either direction is a real bug — CASCADE would erase the record of what was
+      // than CASCADE. Getting it wrong in either direction is a real bug — CASCADE would erase the record of what was
       // done to (or by) an account the moment it is deleted, and NO ACTION would make `deleteUser` answer 500 for
       // every account that has ever signed in or made a request.
       pgTest(
@@ -667,10 +628,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           usageAfter == 0L,
         )
       },
-      // Both of these are queries the SQLite suite runs happily and Postgres refuses, because Quill names the SQL
-      // alias after the lambda parameter and `user` is a reserved word there. `UPDATE users AS user SET ...` is a
-      // syntax error, and so is a `WHERE user.is_guest` in the reaper's subquery — the whole guest feature was
-      // green on SQLite and 500 on the real dialect. Anything touching `users` through a quoted lambda belongs here.
+      // Both of these are queries Postgres refuses, because Quill names the SQL alias after the lambda parameter and
+      // `user` is a reserved word there. `UPDATE users AS user SET ...` is a syntax error, and so is a
+      // `WHERE user.is_guest` in the reaper's subquery. Anything touching `users` through a quoted lambda belongs here.
       pgTest("a guest can be minted, carried by a transfer code and upgraded, on the real dialect") {
         for {
           minted    <- AuthService.createGuest(Some("10.9.0.1"))
@@ -738,9 +698,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           row2.version == row1.version,
         )
       },
-      // Three SQL shapes reach the real dialect here for the first time: `pairTranslation`'s four-statement transaction
-      // with `returningGenerated`, `unpairTranslation`'s two-statement one, and the `||` inside the `DELETE` that
-      // `untagWord` grew. SQLite would pass whatever any of them rendered to.
+      // Three SQL shapes worth pinning against the real dialect: `pairTranslation`'s four-statement transaction with
+      // `returningGenerated`, `unpairTranslation`'s two-statement one, and the `||` inside the `DELETE` that
+      // `untagWord` grew.
       pgTest("marking and unmarking a practice answer round-trips on the real dialect") {
         for {
           reader  <- AuthService.createGuest(Some("10.9.2.1")).map(_._1)
@@ -821,8 +781,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         )
       },
       // The editor's paged read is the one query here whose predicate is boolean algebra over three nested `EXISTS`
-      // clauses, with a lifted flag per provenance chip. SQLite takes almost anything for a boolean; Postgres does
-      // not, and it is the only dialect that ships — so the page, the count and every chip run here on real rows.
+      // clauses, with a lifted flag per provenance chip — the page, the count and every chip run here on real rows.
       pgTest("the tag editor's paged read cuts, counts and narrows on the real dialect") {
         val filter = (buckets: Set[EntryBucket]) => TagEntryFilter(buckets = buckets)
         for {
@@ -1052,7 +1011,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         )
       },
       // The "newest in tag" ordering is the one listing shape that joins `word_tags` and orders by a column outside
-      // `words`, so it is the one whose rendered SQL SQLite would accept whatever Postgres made of it.
+      // `words` — worth pinning against the real dialect on its own.
       pgTest("newest in tag orders the listing by the tick on the real dialect") {
         for {
           reader <- AuthService.createGuest(Some("10.9.2.9")).map(_._1)
@@ -1340,9 +1299,9 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       },
       // Not a referential-integrity case — `findWordsByLengthRange` touches only `words`, no FK. It earns a place here
       // anyway because it is the first query in this codebase to call `.length` on a quoted String column, and Quill
-      // lowers that to `LEN(...)`, a SQL Server spelling neither dialect has: SQLite's own suite already caught this
-      // (`no such function: Len`) before the query was rewritten with an explicit `LENGTH(...)` infix. This is the
-      // dialect that would otherwise have let the same mistake back in silently.
+      // lowers that to `LEN(...)`, a SQL Server spelling Postgres doesn't have: back when this ran on SQLite too, that
+      // suite caught it first (`no such function: Len`), before the query was rewritten with an explicit `LENGTH(...)`
+      // infix. Pinned here so the same mistake can't come back silently.
       // `listTagsPage` is the most SQL of any Dynamic Query in this codebase and none of it is checked at compile
       // time: a `CASE` in the `ORDER BY` for the three-group default order, a correlated `COUNT(*)` in the `ORDER BY`
       // for the word-count column, and an `IS NULL`-guarded `forall` for "everyone else's". That last one is the
@@ -1566,7 +1525,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                   new HikariDataSource(config)
                 }
               )(ds => ZIO.attempt(ds.close()).orDie)
-            _          <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema), target = Some("13"))
+            _          <- FlywayMigrator.migrate(ds, Some(testSchema), target = Some("13"))
             userId     <-
               rawInsert(
                 ds,
@@ -1589,7 +1548,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                    |VALUES (?, ?, ?, ?, ?) RETURNING id""".stripMargin,
                 List(gameId, userId, 10, 5, 0L),
               )
-            _          <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema))
+            _          <- FlywayMigrator.migrate(ds, Some(testSchema))
             backfilled <-
               rawSelectVariant(
                 ds,
@@ -1679,7 +1638,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                              config.setSchema(testSchema)
                              new HikariDataSource(config)
                            })(ds => ZIO.attempt(ds.close()).orDie)
-            _           <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema), target = Some("23"))
+            _           <- FlywayMigrator.migrate(ds, Some(testSchema), target = Some("23"))
             userId      <- rawInsert(
                              ds,
                              s"INSERT INTO $testSchema.users (email, created_at) VALUES (?, ?) RETURNING id",
@@ -1702,7 +1661,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                              List(en, member),
                            )
             empty       <- tag(ds, userId, "pgv24-empty")
-            _           <- FlywayMigrator.migrate(ds, DbDialect.Postgresql, Some(testSchema))
+            _           <- FlywayMigrator.migrate(ds, Some(testSchema))
             pairedLangs <- rawLangs(ds, testSchema, paired)
             memberLangs <- rawLangs(ds, testSchema, member)
             emptyLangs  <- rawLangs(ds, testSchema, empty)
@@ -1715,6 +1674,6 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           )
         }
       },
-    ).provideShared(server) @@ TestAspect.ifEnvSet("RUN_POSTGRES_TESTS") @@ TestAspect.sequential
+    ) @@ TestAspect.sequential
   }
 }

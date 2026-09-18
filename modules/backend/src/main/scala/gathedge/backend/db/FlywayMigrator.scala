@@ -5,62 +5,33 @@ import zio.*
 
 import javax.sql.DataSource
 
-enum DbDialect {
-  case Postgresql,
-    Sqlite
-}
-
 object FlywayMigrator {
 
-  /** `schema` is an `Option` rather than a `String` because only one dialect has the concept: on Postgres it names the
-    * schema this application owns, which Flyway creates if it is missing and puts its own history table in; SQLite has
-    * no schemas at all, so the test databases pass `None`. It must be the same value `DataSourceFactory` puts on the
-    * pool's connections as their `search_path` — migrating into one schema and querying another fails at the first
-    * request, long after this call has reported success.
+  /** `schema` is an `Option` because Flyway's `.schemas` call is what makes it issue the `CREATE SCHEMA` on a first
+    * boot and put `flyway_schema_history` inside the schema it manages rather than next to it in `public` — omitting it
+    * (`None`) leaves Flyway on whatever schema the connection's own `search_path` already names. It must be the same
+    * value `DataSourceFactory` puts on the pool's connections as their `search_path` — migrating into one schema and
+    * querying another fails at the first request, long after this call has reported success.
     *
     * `target` is `None` everywhere except one place: `PostgresIntegrationSpec`'s V14-backfill test, which needs to stop
     * at a specific version (`Some("13")`) to insert pre-migration-shaped rows before letting a second `migrate` call
     * (with `target = None`, i.e. Flyway's own default "latest") apply the migration under test against real data. Every
     * production caller (`Main`, `DictionaryImport`) and every other test always migrates to latest.
+    *
+    * `baselineOnMigrate` stays off: every schema this ever runs against, prod or test, starts empty and gets Flyway's
+    * own history table — a non-empty schema with no history table means someone applied migrations out of band, and
+    * baselining there would mark every version applied and skip it silently. Fail instead and let a human look.
     */
-  def migrate(
-    dataSource: DataSource,
-    dialect: DbDialect,
-    schema: Option[String],
-    target: Option[String] = None,
-  ): Task[Unit] = {
+  def migrate(dataSource: DataSource, schema: Option[String], target: Option[String] = None): Task[Unit] = {
     ZIO.attempt {
-      val location          = {
-        dialect match {
-          case DbDialect.Postgresql =>
-            "classpath:db/migration/postgresql"
-          case DbDialect.Sqlite     =>
-            "classpath:db/migration/sqlite"
-        }
-      }
-      // Baselining is only wanted for the throwaway SQLite test databases. Against a real
-      // Postgres, a non-empty schema with no history table means someone applied migrations
-      // out of band: baselining there would mark V1..Vn as applied and skip them silently,
-      // so fail instead and let a human look.
-      val baselineOnMigrate = {
-        dialect match {
-          case DbDialect.Postgresql =>
-            false
-          case DbDialect.Sqlite     =>
-            true
-        }
-      }
-      val configured        = {
+      val configured = {
         Flyway
           .configure()
           .dataSource(dataSource)
-          .locations(location)
-          .baselineOnMigrate(baselineOnMigrate)
+          .locations("classpath:db/migration/postgresql")
+          .baselineOnMigrate(false)
       }
-      // `.schemas` rather than leaving it to the connection's search_path: it is what makes Flyway
-      // issue the CREATE SCHEMA on a first boot, and what puts flyway_schema_history inside the
-      // schema it manages rather than next to it in public.
-      val withSchema        = schema.fold(configured)(name => configured.schemas(name))
+      val withSchema = schema.fold(configured)(name => configured.schemas(name))
       target
         .fold(withSchema)(version => withSchema.target(version))
         .load()

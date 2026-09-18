@@ -30,11 +30,11 @@ import zio.test._
 object AdminServiceSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GameRepository.test ++ WordRepository.test ++
-        GroupRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ GameRepository.live ++ WordRepository.live ++
+        GroupRepository.live
     )
   }
 
@@ -71,7 +71,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
     )
   }
 
-  def spec = suite("AdminService (SQLite)")(
+  def spec = suite("AdminService")(
     test("creates a user and lists it") {
       for {
         created <- AdminService.createUser(AdminActor.system, "new@example.com", "password123", isAdmin = false)

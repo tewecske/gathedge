@@ -1,14 +1,11 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-/** One row per API request. Same dual-dialect shape as every other repository here: one generic implementation, two
-  * thin `ZLayer`s on the companion.
+/** One row per API request.
   *
   * The write is on `RouteSupport.usageTracking`, once per request, and must never be able to fail it — that is the
   * caller's job, not this one's, exactly as `LoginAttemptRepository.insert` is. The reads are administrator-facing
@@ -64,23 +61,15 @@ object UsageEventRepository {
   def deleteOlderThan(before: Long): RIO[UsageEventRepository, Long] =
     ZIO.serviceWithZIO[UsageEventRepository](_.deleteOlderThan(before))
 
-  val live: ZLayer[DataSource, Nothing, UsageEventRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new UsageEventRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): UsageEventRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, UsageEventRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new UsageEventRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): UsageEventRepository
-  )
+  val live: ZLayer[DataSource, Nothing, UsageEventRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new UsageEventRepositoryLive(ds): UsageEventRepository)
 }
 
 /** Every row here is *about* a request; the message carries the surrogate id, the route and a row count only — never
   * the ip, per [[QuillRepository.logged]].
   */
-final class UsageEventRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class UsageEventRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with UsageEventRepository {
   import ctx._
 

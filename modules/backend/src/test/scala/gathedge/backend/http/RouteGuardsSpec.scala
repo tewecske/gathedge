@@ -52,12 +52,12 @@ import RouteRunner.{orDieWithFailure, runRoutes, withCsrf, withSession}
 object RouteGuardsSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++
-        OAuthIdentityRepository.test ++ EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++
-        LoginAttemptRepository.test ++ GuestClaimCodeRepository.test ++ AuditLogRepository.test ++
-        UsageEventRepository.test ++ MetricsRepository.test ++ WordRepository.test ++ GameRepository.test ++
-        GroupRepository.test ++ ProgressShareRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++
+        OAuthIdentityRepository.live ++ EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++
+        LoginAttemptRepository.live ++ GuestClaimCodeRepository.live ++ AuditLogRepository.live ++
+        UsageEventRepository.live ++ MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++
+        GroupRepository.live ++ ProgressShareRepository.live
     )
   }
 

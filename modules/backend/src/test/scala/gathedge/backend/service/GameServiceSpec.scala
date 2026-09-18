@@ -15,10 +15,10 @@ import gathedge.shared.dto.AllGameSort
 import zio._
 import zio.test._
 
-/** The game service against SQLite, the same dialect every other `*ServiceSpec` runs against per the dual-dialect
-  * strategy. Referential integrity is real here (unlike `WordServiceSpec`, which never needs a `users` row):
-  * `GameRepository.insertGame` reads back its own `RETURNING id`/`GENERATED` value and `games.owner_user_id` is
-  * exercised for real by [[UserRepository.insertGuest]]-minted rows.
+/** The game service against Postgres, the same dialect every other `*ServiceSpec` runs against. Referential integrity
+  * is exercised for real here (unlike `WordServiceSpec`, which never needs a `users` row): `GameRepository.insertGame`
+  * reads back its own `RETURNING id`/`GENERATED` value and `games.owner_user_id` is exercised for real by
+  * [[UserRepository.insertGuest]]-minted rows.
   */
 object GameServiceSpec extends ZIOSpecDefault {
 
@@ -28,8 +28,8 @@ object GameServiceSpec extends ZIOSpecDefault {
   private val fixedWordList = GameWordListLive(List("brave", "calm"), List("otter", "fox"))
 
   private val layer = {
-    (TestDataSource.sqlite >>> (WordRepository.test ++ UserRepository.test ++ GameRepository.test ++
-      GroupRepository.test)) ++
+    (TestDataSource.postgres >>> (WordRepository.live ++ UserRepository.live ++ GameRepository.live ++
+      GroupRepository.live)) ++
       ZLayer.succeed(fixedWordList: GameWordList) >+> GameService.live
   }
 

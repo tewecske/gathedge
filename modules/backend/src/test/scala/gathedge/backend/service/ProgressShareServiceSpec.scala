@@ -24,10 +24,10 @@ import zio.test._
 object ProgressShareServiceSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ ProgressShareRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ ProgressShareRepository.live
     )
   }
 
@@ -43,7 +43,7 @@ object ProgressShareServiceSpec extends ZIOSpecDefault {
   }
 
   def spec = {
-    suite("Progress sharing (SQLite)")(
+    suite("Progress sharing")(
       test("asking for the share code again answers the same one, not a fresh one") {
         for {
           sharer <- userId("sharer1@example.com")

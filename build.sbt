@@ -11,7 +11,6 @@ val zioConfigVersion = "4.0.8"
 val zioLoggingVersion = "2.5.3"
 val laminarVersion = "17.2.1"
 val waypointVersion = "10.0.0-M7"
-val sqliteJdbcVersion = "3.53.2.0"
 val jbcryptVersion = "0.4"
 val angusMailVersion = "2.0.3"
 val logbackVersion = "1.5.38"
@@ -153,10 +152,15 @@ lazy val backend = project
         "dev.zio" %% "zio-test" % zioVersion % Test,
         "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
         "dev.zio" %% "zio-http-testkit" % zioHttpVersion % Test,
-        "org.xerial" % "sqlite-jdbc" % sqliteJdbcVersion % Test,
         "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
       ),
     Compile / mainClass := Some("gathedge.backend.Main"),
+    // Every backend spec now opens its own Postgres schema and HikariCP pool against one shared
+    // testcontainers container (see `TestDataSource`). sbt runs spec classes concurrently by default,
+    // and enough of them at once exhausts the container's connection budget before any individual
+    // pool gets a chance to fail fast and retry — capped here rather than in Postgres config, since
+    // that budget is shared with whatever else is running against the same container.
+    Test / concurrentRestrictions += Tags.limit(Tags.Test, 4),
     // The message catalogs are one JSON file per language, canonically under `web/public/locales`,
     // where Vite serves them to the SPA in dev and nginx serves them out of the built image — both
     // with no configuration at all. The backend needs the same catalogs, because it renders the two

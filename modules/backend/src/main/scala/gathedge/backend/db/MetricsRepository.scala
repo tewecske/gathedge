@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
@@ -55,20 +53,12 @@ object MetricsRepository {
   def migrations: RIO[MetricsRepository, List[MigrationRow]] =
     ZIO.serviceWithZIO[MetricsRepository](_.migrations)
 
-  val live: ZLayer[DataSource, Nothing, MetricsRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new MetricsRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): MetricsRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, MetricsRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new MetricsRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): MetricsRepository
-  )
+  val live: ZLayer[DataSource, Nothing, MetricsRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new MetricsRepositoryLive(ds): MetricsRepository)
 }
 
-final class MetricsRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class MetricsRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with MetricsRepository {
   import ctx._
 

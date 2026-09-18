@@ -39,14 +39,15 @@ sbt sharedJVM/test
 sbt frontend/test
 npm --prefix web run typecheck
 ```
-Backend/shared specs run against a fresh, migrated SQLite DB per layer (`TestDataSource.sqlite`). Exception:
+Backend specs need a reachable Docker daemon (testcontainers):
 ```
 docker compose up -d postgres
-RUN_POSTGRES_TESTS=1 sbt backend/test
+sbt backend/test
 ```
-`PostgresIntegrationSpec` is the only place the Postgres dialect runs (testcontainers). It starts one container and
-gives **each test its own schema**, named after the test, migrated from nothing and dropped afterwards — so no test sees
-another's rows. Each schema is then loaded with the committed dictionary
+Every `*ServiceSpec` runs against a fresh, migrated Postgres schema per layer (`TestDataSource.postgres`), on one
+Postgres container shared by the whole test JVM. `PostgresIntegrationSpec` is the dedicated cascade/FK/reserved-word
+regression suite: it gives **each test its own schema**, named after the test, migrated from nothing and dropped
+afterwards — so no test sees another's rows. Each of its schemas is then loaded with the committed dictionary
 (`modules/backend/src/test/resources/dictionary-fixture.tsv.gz`, ~50k words), which is what makes those queries run
 against real data rather than an empty table. That is most of the spec's runtime.
 
@@ -102,23 +103,21 @@ Three-module sbt build: `modules/shared` (cross JVM/JS), `modules/backend` (ZIO 
 - **`-Werror`, not `-Xfatal-warnings`.** The latter is deprecated; don't reintroduce it.
 - `evictionErrorLevel := Level.Warn` is deliberate; don't remove without checking.
 
-### Dual-dialect database strategy
+### Database strategy
 
-Postgres is the only real target; SQLite exists only so tests need no Docker. Each repository is one trait + one `*RepositoryLive[Dialect, Naming]` + `live`/`test` ZLayers, in one file. `.test` is named that because only tests may wire it.
+Postgres only, in production and in tests. Each repository is one trait + one concrete `*RepositoryLive` + one `live` ZLayer, in one file — no dialect type parameter, since there's only one dialect to be generic over. Tests get their own instance the same way production does, just pointed at their own schema (see "Tests" above and `TestDataSource`).
 
 Each repository method logs one INFO line via `QuillRepository.logged`. That line must never carry a password hash, session id, token, OAuth subject, or email.
 
-Every query is a Quill Dynamic Query (rendered to SQL at runtime), since the dialect isn't known at the `quote` call site.
+Every ordinary `quote(...)` query is now a compile-time-checked Quill query — the concrete `PostgresZioJdbcContext` each repository is built with is what lets the macro specialize it, rather than falling back to a runtime-rendered Dynamic Query. A handful of repositories (`WordRepository`, `GameRepository`, `GroupRepository`, `UserRepository`, `AuditLogRepository`, `LoginAttemptRepository`) still use Quill's `dynamicQuerySchema`/`DynamicQuery` explicitly for listings with several independent optional filters — that's a deliberate choice to avoid combinatorial static-query variants, unrelated to the dialect.
 
-Flyway migrations are duplicated under `backend/src/main/resources/db/migration/{postgresql,sqlite}/`, kept schema-identical. Timestamps are epoch-millis `BIGINT`/`INTEGER`.
+Flyway migrations live under `backend/src/main/resources/db/migration/postgresql/`. Timestamps are epoch-millis `BIGINT`.
 
-Before writing `V2`: SQLite can't drop a `UNIQUE` column or alter a constraint; `ADD COLUMN` is supported.
+**Foreign keys are enforced everywhere now.** Cascades and constraints are exercised by every spec that touches the tables involved; `PostgresIntegrationSpec` is the dedicated regression suite for cascade/FK/reserved-word behavior. Any referential-integrity change (including a new table referencing `users`) needs a regression test there.
 
-**No foreign key is enforced on SQLite.** Cascades and constraints are exercised only by `PostgresIntegrationSpec`. Any referential-integrity change (including a new table referencing `users`) needs its regression test under `RUN_POSTGRES_TESTS=1`.
+`Main.scala` wires the same Postgres implementations tests do (`XRepository.live`); only the `DataSource` differs — `DataSourceFactory.postgresLive` in production, `TestDataSource.postgres`/`.postgresSchema` in tests.
 
-`Main.scala` wires the Postgres implementations. Tests wire SQLite via `TestDataSource.sqlite`.
-
-**The app owns a named Postgres schema (`db.schema`, `DB_SCHEMA`, default `gathedge`).** `FlywayMigrator.migrate` and `DataSourceFactory.postgresLive` must agree on it. The schema parameter is an `Option` because SQLite has no schemas.
+**The app owns a named Postgres schema (`db.schema`, `DB_SCHEMA`, default `gathedge`).** `FlywayMigrator.migrate` and `DataSourceFactory.postgresLive` must agree on it.
 
 ### Backend request flow
 
@@ -178,7 +177,7 @@ runs — an address always has one, and `Validation.validateUsername` refuses a 
 Three rules hold it together:
 
 - **The username is stored lowercased**, the rule `users.email` already follows, so the unique index over the column is
-  the whole of the case-insensitive uniqueness and no `lower()` has to mean the same thing in two dialects.
+  the whole of the case-insensitive uniqueness and no `lower()` is needed in the query.
 - **The rate-limit budget and the `login_attempts` row are keyed on the account's address**, not on what was typed.
   That is why `login` resolves the row *before* the lockout check: keying on the string would hand an attacker a second
   full budget per account for the price of knowing its username. `AdminService.lockoutKeysFor` still rebuilds the key
@@ -391,4 +390,4 @@ Four decisions:
 
 The four guest endpoints have three failure enums and four `ApiFailures` mappings.
 
-**Two Postgres-only traps:** Quill names a SQL alias after the quoted lambda's parameter, and `user` is a reserved word in Postgres — name every quoted lambda over `users` `row`. Any new query over `users` belongs in `PostgresIntegrationSpec`.
+**The reserved-word trap:** Quill names a SQL alias after the quoted lambda's parameter, and `user` is a reserved word in Postgres — name every quoted lambda over `users` `row`. Every spec runs on Postgres now, so a query that gets this wrong fails wherever it's tested; `PostgresIntegrationSpec` still carries the dedicated regression test for it.

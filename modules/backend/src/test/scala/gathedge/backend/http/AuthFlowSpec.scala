@@ -32,10 +32,10 @@ object AuthFlowSpec extends ZIOSpecDefault {
 
   private val services: ZLayer[Any, Throwable, AuthService & OAuthClients & AppConfig] = {
     val repos = {
-      TestDataSource.sqlite >>> (
-        UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-          AuditLogRepository.test ++ GuestClaimCodeRepository.test
+      TestDataSource.postgres >>> (
+        UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+          EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+          AuditLogRepository.live ++ GuestClaimCodeRepository.live
       )
     }
     AppConfig.live ++ (

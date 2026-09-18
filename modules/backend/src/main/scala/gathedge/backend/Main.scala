@@ -4,7 +4,6 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
   DataSourceFactory,
-  DbDialect,
   EmailVerificationTokenRepository,
   FlywayMigrator,
   GameRepository,
@@ -93,7 +92,7 @@ object Main extends ZIOAppDefault {
                        )
                      }
       dataSource  <- ZIO.service[DataSource]
-      _           <- FlywayMigrator.migrate(dataSource, DbDialect.Postgresql, Some(cfg.db.schema))
+      _           <- FlywayMigrator.migrate(dataSource, Some(cfg.db.schema))
       _           <- AdminSeeder.seedIfNeeded
       rateLimiter <- ZIO.service[RateLimiter]
       _           <- rateLimiter.runPruner.forkDaemon

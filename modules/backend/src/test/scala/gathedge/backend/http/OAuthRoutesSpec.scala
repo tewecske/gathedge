@@ -65,10 +65,10 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
 
   private val layer = {
     val repos = {
-      TestDataSource.sqlite >>> (
-        UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-          EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-          GuestClaimCodeRepository.test ++ AuditLogRepository.test
+      TestDataSource.postgres >>> (
+        UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+          EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+          GuestClaimCodeRepository.live ++ AuditLogRepository.live
       )
     }
     AppConfig.live ++ stubClients ++ (

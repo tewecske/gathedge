@@ -19,17 +19,16 @@ import gathedge.shared.validation.Validation
 import zio._
 import zio.test._
 
-/** Proves the signup -> login -> session -> currentUser -> logout round trip against SQLite (the dual-dialect DB
-  * strategy's test-side dialect), confirming the whole M1 wiring — Quill contexts, Flyway migrations, hashing, sessions
-  * — actually works before M2/M3 build on top of it.
+/** Proves the signup -> login -> session -> currentUser -> logout round trip against Postgres, confirming the whole M1
+  * wiring — Quill contexts, Flyway migrations, hashing, sessions — actually works before M2/M3 build on top of it.
   */
 object AuthServiceSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live
     )
   }
 
@@ -57,7 +56,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
     built >>> (AuthService.live ++ ZLayer.service[SentEmails])
   }
 
-  def spec = suite("AuthService (SQLite)")(coreSuite, verificationSuite, passwordResetSuite, captchaSuite)
+  def spec = suite("AuthService")(coreSuite, verificationSuite, passwordResetSuite, captchaSuite)
 
   private val coreSuite = suite("core")(
     test("signup, currentUser via session, login, logout invalidates the session") {

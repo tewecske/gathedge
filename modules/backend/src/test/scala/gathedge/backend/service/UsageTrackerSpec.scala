@@ -50,12 +50,12 @@ object UsageTrackerSpec extends ZIOSpecDefault {
   }
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ GameRepository.test ++ WordRepository.test ++
-        GroupRepository.test ++ MetricsRepository.test ++
-        (UsageEventRepository.test >>> ZLayer.fromFunction((d: UsageEventRepository) =>
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ GameRepository.live ++ WordRepository.live ++
+        GroupRepository.live ++ MetricsRepository.live ++
+        (UsageEventRepository.live >>> ZLayer.fromFunction((d: UsageEventRepository) =>
           FlakyUsageEventRepository(d): UsageEventRepository
         ))
     )
@@ -81,7 +81,7 @@ object UsageTrackerSpec extends ZIOSpecDefault {
     sessionId.fold(base)(sid => base.addCookie(Cookie.Request(SessionAuth.cookieName, sid)))
   }
 
-  def spec = suite("UsageTracker (SQLite)")(
+  def spec = suite("UsageTracker")(
     test("record enqueues and the drain fiber writes the row") {
       for {
         before <- UsageEventRepository.countAll

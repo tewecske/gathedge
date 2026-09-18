@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import gathedge.shared.dto.{AllGameSort, GamePlaySort}
 import zio.*
 
@@ -50,8 +48,8 @@ trait GameRepository {
   /** Removes the game and everything scoped to it — `game_tags`, `game_favorites`, and every `game_plays` row with its
     * `game_play_answers`/`game_play_words` children — as one transaction. Rows affected on `games` — `0` means `id`
     * does not exist, or its `version` no longer matches `expectedVersion`, and nothing else is touched. The game row is
-    * deleted first, guarded by `version`; on Postgres its `ON DELETE CASCADE` already clears the children, so the
-    * explicit child deletes are what make SQLite (no FK enforcement) match. Ownership is the service's job.
+    * deleted first, guarded by `version`; `ON DELETE CASCADE` already clears the children, so the explicit child
+    * deletes below are redundant no-ops kept for clarity. Ownership is the service's job.
     */
   def deleteGame(id: Long, expectedVersion: Long): Task[Long]
 
@@ -393,20 +391,12 @@ object GameRepository {
   ): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.countMyPlaysMatching(playerUserId, gameId, nameContains))
 
-  val live: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GameRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): GameRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, GameRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new GameRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): GameRepository
-  )
+  val live: ZLayer[DataSource, Nothing, GameRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new GameRepositoryLive(ds): GameRepository)
 }
 
-final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class GameRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with GameRepository {
   import ctx._
 
@@ -514,8 +504,8 @@ final class GameRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                 )
         _    <- ZIO.when(rows > 0L) {
                   for {
-                    // On Postgres the row above has already cascaded these away; SQLite enforces no foreign key, so
-                    // these explicit deletes are what actually clear them there.
+                    // The row above has already cascaded these away; the explicit deletes below are redundant
+                    // no-ops against the already-cascaded rows.
                     playIds <- ctx.run(quote(gamePlays.filter(_.gameId == lift(id)).map(_.id)))
                     _       <- ZIO.unless(playIds.isEmpty) {
                                  ctx.run(quote(gamePlayAnswers.filter(a => liftQuery(playIds).contains(a.playId)).delete))

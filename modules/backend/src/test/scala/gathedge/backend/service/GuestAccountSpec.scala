@@ -30,10 +30,10 @@ import zio.test._
 object GuestAccountSpec extends ZIOSpecDefault {
 
   private val repoLayers = {
-    TestDataSource.sqlite >>> (
-      UserRepository.test ++ SessionRepository.test ++ OAuthIdentityRepository.test ++
-        EmailVerificationTokenRepository.test ++ PasswordResetTokenRepository.test ++ LoginAttemptRepository.test ++
-        GuestClaimCodeRepository.test ++ AuditLogRepository.test ++ WordRepository.test ++ GroupRepository.test
+    TestDataSource.postgres >>> (
+      UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
+        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ WordRepository.live ++ GroupRepository.live
     )
   }
 
@@ -73,7 +73,7 @@ object GuestAccountSpec extends ZIOSpecDefault {
   }
 
   def spec = {
-    suite("Guest accounts (SQLite)")(
+    suite("Guest accounts")(
       test("a guest is an ordinary account with a session and no address") {
         for {
           minted        <- AuthService.createGuest(Some("10.0.0.1"))

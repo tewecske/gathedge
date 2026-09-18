@@ -7,7 +7,7 @@ import zio.test._
 
 object GameRepositorySpec extends ZIOSpecDefault {
 
-  private val layer = TestDataSource.sqlite >>> (UserRepository.test ++ WordRepository.test ++ GameRepository.test)
+  private val layer = TestDataSource.postgres >>> (UserRepository.live ++ WordRepository.live ++ GameRepository.live)
 
   private def newUser(): RIO[UserRepository, Long] = UserRepository.insertGuest("light", "en", 0L, None).map(_.id)
 
@@ -36,6 +36,8 @@ object GameRepositorySpec extends ZIOSpecDefault {
         for {
           owner            <- newUser()
           other            <- newUser()
+          source           <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "answers-source"))
+          target           <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "answers-target"))
           game             <-
             GameRepository.insertGame(GameRow(0L, owner.toLong, "repo-slug", "Repo Game", "de", "hu", 0L, 0L), Nil)
           otherGame        <-
@@ -84,30 +86,30 @@ object GameRepositorySpec extends ZIOSpecDefault {
               Nil,
             )
           _                <- GameRepository.recordAnswer(
-                                GamePlayAnswerRow(0L, play.id, 1L, 2L, 1, "x", "correct", 2, 0L),
+                                GamePlayAnswerRow(0L, play.id, source.id, target.id, 1, "x", "correct", 2, 0L),
                                 2,
                                 Some(0L),
                               )
           _                <- GameRepository.recordAnswer(
-                                GamePlayAnswerRow(0L, reverse.id, 1L, 2L, 1, "y", "wrong", 0, 0L),
+                                GamePlayAnswerRow(0L, reverse.id, source.id, target.id, 1, "y", "wrong", 0, 0L),
                                 0,
                                 Some(0L),
                               )
           _                <- GameRepository.recordAnswer(
-                                GamePlayAnswerRow(0L, otherPlayersPlay.id, 1L, 2L, 1, "z", "wrong", 0, 0L),
+                                GamePlayAnswerRow(0L, otherPlayersPlay.id, source.id, target.id, 1, "z", "wrong", 0, 0L),
                                 0,
                                 Some(0L),
                               )
           _                <- GameRepository.recordAnswer(
-                                GamePlayAnswerRow(0L, otherGamePlay.id, 1L, 2L, 1, "w", "wrong", 0, 0L),
+                                GamePlayAnswerRow(0L, otherGamePlay.id, source.id, target.id, 1, "w", "wrong", 0, 0L),
                                 0,
                                 Some(0L),
                               )
           deRows           <- GameRepository.answerOutcomesFor(game.id, owner, "de", "hu")
           huRows           <- GameRepository.answerOutcomesFor(game.id, owner, "hu", "de")
         } yield assertTrue(
-          deRows == List((1L, "correct")),
-          huRows == List((1L, "wrong")),
+          deRows == List((source.id, "correct")),
+          huRows == List((source.id, "wrong")),
         )
       },
       test("relatedWords answers both directions of word_forms, and nothing unlinked") {
@@ -160,6 +162,8 @@ object GameRepositorySpec extends ZIOSpecDefault {
         for {
           owner   <- newUser()
           player  <- newUser()
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "del-source"))
+          target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "del-target"))
           tag     <- WordRepository.insertTag(owner, "repodel", "repodel", 0L, "de", "hu")
           game    <- GameRepository.insertGame(
                        GameRow(0L, owner, "del-slug", "Del Game", "de", "hu", 0L, 0L),
@@ -167,10 +171,10 @@ object GameRepositorySpec extends ZIOSpecDefault {
                      )
           play    <- GameRepository.insertPlay(
                        GamePlayRow(0L, game.id, player, 0, 2, 1, 0L, None, sourceLanguage = "de", targetLanguage = "hu"),
-                       List((1L, 2L)),
+                       List((source.id, target.id)),
                      )
           _       <- GameRepository.recordAnswer(
-                       GamePlayAnswerRow(0L, play.id, 1L, 2L, 1, "x", "correct", 2, 0L),
+                       GamePlayAnswerRow(0L, play.id, source.id, target.id, 1, "x", "correct", 2, 0L),
                        2,
                        Some(0L),
                      )

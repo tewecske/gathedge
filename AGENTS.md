@@ -16,14 +16,12 @@ npm run dev            # backend :8080 + Scala.js watch + vite :5173 (needs Post
 npm run dev:tmux       # same, in tmux
 docker compose up -d postgres   # name the service — bare `up` builds the whole stack
 
-sbt test               # everything; backend/shared run on fresh migrated SQLite, no Docker
+sbt test               # everything; backend specs need Docker (testcontainers Postgres)
 sbt backend/test
 sbt "backend/testOnly gathedge.backend.service.AuthServiceSpec"   # single spec
 sbt sharedJVM/test
 sbt frontend/test      # Laminar, under jsdom
 npm --prefix web run typecheck
-
-RUN_POSTGRES_TESTS=1 sbt backend/test   # PostgresIntegrationSpec only (needs Postgres up)
 
 sbt scalafmtAll
 
@@ -47,15 +45,16 @@ brevity, clarity, humanity**. Short sentences. One idea per sentence. Active voi
   Editing `.env` needs `reload` (not just `reStart`). A real shell env var still wins.
 - `evictionErrorLevel := Level.Warn` is deliberate (`quill-jdbc-zio` pins an older `zio-json`); don't remove.
 
-## Database (dual-dialect) rules
+## Database rules
 
-- Postgres is the only real target; **SQLite exists only so `sbt test` needs no Docker.** Each repository
-  is one trait + one `*RepositoryLive[Dialect, Naming]` + `live`/`test` ZLayers, all in one file.
-- **Flyway migrations are duplicated** under `backend/src/main/resources/db/migration/{postgresql,sqlite}/`,
-  kept schema-identical. All timestamps are epoch-millis `BIGINT`/`INTEGER`.
-- **SQLite enforces no foreign keys** (`PRAGMA foreign_keys` is never enabled). Cascades and constraints
-  are exercised only by `PostgresIntegrationSpec` — any referential-integrity change (incl. a new table
-  referencing `users`) needs its regression test there; the whole SQLite suite passes regardless.
+- Postgres only, in production and in tests. Each repository is one trait + one concrete
+  `*RepositoryLive` + one `live` ZLayer, all in one file — no dialect type parameter. Tests get their
+  own instance in their own schema (`TestDataSource`), needing a reachable Docker daemon.
+- Flyway migrations live under `backend/src/main/resources/db/migration/postgresql/`. All timestamps
+  are epoch-millis `BIGINT`.
+- **Foreign keys are enforced everywhere.** Cascades and constraints are exercised by every spec that
+  touches the tables involved; `PostgresIntegrationSpec` is the dedicated cascade/FK regression suite —
+  any referential-integrity change (incl. a new table referencing `users`) needs a regression test there.
 - **`user` is a reserved word in Postgres.** Quill names a SQL alias after the quoted lambda's parameter,
   so name every quoted lambda over `users` `row`, never `user`.
 - The app owns a named schema (`db.schema`, default `gathedge`): `FlywayMigrator` and `DataSourceFactory`

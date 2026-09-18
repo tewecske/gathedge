@@ -1,15 +1,11 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-/** Single-use proof-of-address tokens issued at signup and on resend. Same dual-dialect shape as every other repository
-  * here: one generic implementation, two thin `ZLayer`s on the companion.
-  */
+/** Single-use proof-of-address tokens issued at signup and on resend. */
 trait EmailVerificationTokenRepository {
   def insert(row: EmailVerificationTokenRow): Task[EmailVerificationTokenRow]
   def findByToken(token: String): Task[Option[EmailVerificationTokenRow]]
@@ -57,24 +53,14 @@ object EmailVerificationTokenRepository {
   def countAll: RIO[EmailVerificationTokenRepository, Long] =
     ZIO.serviceWithZIO[EmailVerificationTokenRepository](_.countAll)
 
-  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) => {
-    new EmailVerificationTokenRepositoryLive(
-      ds,
-      new PostgresZioJdbcContext(SnakeCase),
-    ): EmailVerificationTokenRepository
-  })
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new EmailVerificationTokenRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): EmailVerificationTokenRepository
+  val live: ZLayer[DataSource, Nothing, EmailVerificationTokenRepository] = ZLayer.fromFunction((ds: DataSource) =>
+    new EmailVerificationTokenRepositoryLive(ds): EmailVerificationTokenRepository
   )
 }
 
 /** Verification tokens are bearer credentials, so no log line here carries one — see [[QuillRepository.logged]]. */
-final class EmailVerificationTokenRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class EmailVerificationTokenRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with EmailVerificationTokenRepository {
   import ctx._
 

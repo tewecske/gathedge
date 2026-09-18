@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import gathedge.shared.domain.{
   EntryBucket,
   LanguageProfile,
@@ -864,20 +862,12 @@ object WordRepository {
   def deleteWordForms(formWordId: Long, relation: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteWordForms(formWordId, relation))
 
-  val live: ZLayer[DataSource, Nothing, WordRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new WordRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): WordRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, WordRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new WordRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): WordRepository
-  )
+  val live: ZLayer[DataSource, Nothing, WordRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new WordRepositoryLive(ds): WordRepository)
 }
 
-final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class WordRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with WordRepository {
   import ctx._
 
@@ -2392,8 +2382,8 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def findWordsByLengthRange(language: String, minLength: Int, maxLength: Int): Task[List[WordRow]] = {
-    // Quill's own `.length` on a quoted String lowers to `LEN(...)`, a SQL Server spelling neither SQLite nor
-    // Postgres has — `LENGTH(...)` is the one function both dialects agree on.
+    // Quill's own `.length` on a quoted String lowers to `LEN(...)`, a SQL Server spelling Postgres doesn't have —
+    // `LENGTH(...)` is the function to use instead.
     val q = quote {
       words.filter(word => {
         val len = infix"LENGTH(${word.textNorm})".as[Int]

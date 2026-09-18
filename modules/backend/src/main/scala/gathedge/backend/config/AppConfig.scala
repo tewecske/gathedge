@@ -60,8 +60,7 @@ final case class AppSection(
 
 /** `schema` is the Postgres schema this application owns, and it is one setting read by two independent things that
   * must not disagree: `FlywayMigrator` creates it and migrates into it, and `DataSourceFactory` sets it as every pooled
-  * connection's `search_path`. Point them at different schemas and the app migrates one and queries another. SQLite has
-  * no schema concept and ignores it entirely.
+  * connection's `search_path`. Point them at different schemas and the app migrates one and queries another.
   */
 final case class DbSection(url: String, user: String, password: String, schema: String)
 final case class SessionSection(cookieSecure: Boolean)

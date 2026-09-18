@@ -1,16 +1,13 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import gathedge.shared.dto.UserSort
 import zio.*
 
 import javax.sql.DataSource
 
-/** Dialect-independent interface. [[UserRepository.live]] backs production (Postgres), [[UserRepository.test]] backs
-  * tests (SQLite) — see the plan's "dual-dialect DB strategy". Both wrap the same [[UserRepositoryLive]] below and are
-  * swapped in purely via ZLayer wiring.
+/** [[UserRepository.live]] wraps [[UserRepositoryLive]] via ZLayer wiring — production and tests both run against
+  * Postgres, the latter in its own schema (see `TestDataSource`).
   */
 trait UserRepository {
   def insert(
@@ -97,8 +94,7 @@ trait UserRepository {
 }
 
 /** Accessors, so a caller writes `UserRepository.findById(id)` instead of pulling the repository out of the environment
-  * first. Every repository in this package has one, alongside its two `ZLayer`s — `live` (Postgres) and `test`
-  * (SQLite).
+  * first. Every repository in this package has one, alongside its `live` `ZLayer`.
   */
 object UserRepository {
   def insert(
@@ -195,25 +191,12 @@ object UserRepository {
   def deleteById(id: Long): RIO[UserRepository, Long] =
     ZIO.serviceWithZIO[UserRepository](_.deleteById(id))
 
-  val live: ZLayer[DataSource, Nothing, UserRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new UserRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): UserRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, UserRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new UserRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): UserRepository
-  )
+  val live: ZLayer[DataSource, Nothing, UserRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new UserRepositoryLive(ds): UserRepository)
 }
 
-/** Dialect-generic implementation shared by both Postgres and SQLite. Quill's `ctx.run` dispatches SQL rendering off
-  * `ctx.idiom` at runtime, so a single quoted-query body works for any `ZioJdbcContext[Dialect, Naming]` — no need to
-  * hand-duplicate the query bodies per dialect, only the context instance differs (see `live`/`test` above). Every
-  * repository in this package is built the same way.
-  */
-final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class UserRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with UserRepository {
   import ctx._
 
@@ -251,9 +234,8 @@ final class UserRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   /** The lambda is `row`, not `user`, and that is not style: Quill names the SQL alias after the parameter, and `user`
-    * is a reserved word in Postgres — `UPDATE users AS user SET ...` is a syntax error there and perfectly fine on
-    * SQLite, so the whole SQLite suite passes while the real dialect refuses every call. The same rule applies to every
-    * quoted lambda in this file.
+    * is a reserved word in Postgres — `UPDATE users AS user SET ...` is a syntax error there. The same rule applies to
+    * every quoted lambda in this file.
     */
   def upgradeGuest(id: Long, email: String, passwordHash: String, emailVerifiedAt: Option[Long]): Task[Long] = {
     val q = quote(

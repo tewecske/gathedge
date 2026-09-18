@@ -72,30 +72,25 @@ the type system makes them agree. `ApiEndpointsSpec` asserts the agreement on re
 there if your type has an enum in it. Declaration order matters: enums before the types embedding
 them.
 
-## 3. The migration, in both dialects
+## 3. The migration
 
-`modules/backend/src/main/resources/db/migration/{postgresql,sqlite}/V2__notes.sql`
+`modules/backend/src/main/resources/db/migration/postgresql/V2__notes.sql`
 
-Two files, kept schema-identical. Postgres is the only real target; SQLite exists so `sbt test`
-needs no Docker. Conventions that are not optional:
+Conventions that are not optional:
 
-- **Every timestamp is epoch millis** in a `BIGINT` (`INTEGER` on SQLite), never a native timestamp
-  type — that is the one type the dialects genuinely disagree about.
+- **Every timestamp is epoch millis** in a `BIGINT`, never a native timestamp type.
 - **A user reference cascades**, unless the row is a record of something that happened, in which case
   it is `ON DELETE SET NULL` (see `login_attempts` and `audit_log` in `V1`).
-- SQLite cannot drop a `UNIQUE` column or alter a constraint; both need a table rebuild. Check what
-  a change costs on that side before writing it on the Postgres side.
 
-**Nothing enables `PRAGMA foreign_keys` on SQLite, so no constraint you write is enforced there.**
-Referential integrity is exercised only by `PostgresIntegrationSpec` under `RUN_POSTGRES_TESTS=1`,
-and that is where a regression test for a cascade belongs. Add your table's user reference to its
-delete-user test — an account that cannot be deleted because of your foreign key answers 500, and
-the whole SQLite suite passes regardless.
+**Foreign keys are enforced everywhere** — every spec that touches the tables involved exercises
+referential integrity, and `PostgresIntegrationSpec` is the dedicated regression suite for cascades.
+Add your table's user reference to its delete-user test there — an account that cannot be deleted
+because of your foreign key answers 500.
 
 ## 4. The repository
 
-`modules/backend/src/main/scala/<slug>/backend/db/NoteRepository.scala` — the trait, the generic
-implementation and both `ZLayer`s, all in one file.
+`modules/backend/src/main/scala/<slug>/backend/db/NoteRepository.scala` — the trait, the
+implementation and its `ZLayer`, all in one file.
 
 ```scala
 trait NoteRepository { def listForUser(userId: Long): Task[List[NoteRow]] /* … */ }
@@ -104,18 +99,17 @@ object NoteRepository {
   def listForUser(userId: Long): RIO[NoteRepository, List[NoteRow]] =
     ZIO.serviceWithZIO[NoteRepository](_.listForUser(userId))
 
-  val live: ZLayer[DataSource, Nothing, NoteRepository] = /* PostgresZioJdbcContext */
-  val test: ZLayer[DataSource, Nothing, NoteRepository] = /* SqliteZioJdbcContext  */
+  val live: ZLayer[DataSource, Nothing, NoteRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new NoteRepositoryLive(ds): NoteRepository)
 }
 
-final class NoteRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext) with NoteRepository { /* quoted queries */ }
+final class NoteRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
+    with NoteRepository { /* quoted queries */ }
 ```
 
-The dialect is a type parameter so the queries are written once. The SQLite layer is called `test`
-because nothing but tests may wire it. Add your row type to `db/Rows.scala`.
+Tests wire the same `live` layer, just pointed at their own schema (`TestDataSource.postgres`) —
+there's no separate test-only layer to keep in step. Add your row type to `db/Rows.scala`.
 
 Every method logs one INFO line through `QuillRepository.logged`. **That message must never carry a
 password hash, a session id, any opaque token, an OAuth subject or an email address** — log the
@@ -250,10 +244,10 @@ holds a `ui.` key nothing registers.
 
 | What | Where |
 |---|---|
-| Service behaviour, against SQLite | `backend/src/test/.../service/NoteServiceSpec.scala` |
+| Service behaviour, against Postgres, its own schema | `backend/src/test/.../service/NoteServiceSpec.scala` |
 | Wire encoding — statuses, enums as bare strings, empty 204s | a suite in `ApiEndpointsSpec` |
 | The OpenAPI status table | `OpenApiSpec` — it pins every operation, so it will fail until you add yours |
-| Cascades and constraints | `PostgresIntegrationSpec`, and nowhere else |
+| Cascades and constraints, dedicated regression coverage | `PostgresIntegrationSpec` |
 | The page | `frontend/src/test/.../pages/NotesPageSpec.scala`, under jsdom |
 | The whole path in a browser | `e2e/tests/golden-path.spec.ts` |
 
@@ -270,7 +264,7 @@ changing a string in `messages.en.json` changes that suite's fixtures.
 [ ] shared/api/NoteEndpoints.scala        — with 401s, .withCodecError, and no aspect statuses
 [ ] shared/domain + shared/dto            — case classes, derives JsonCodec
 [ ] shared/api/ApiSchemas.scala           — a Schema per type, enums first
-[ ] db/migration/{postgresql,sqlite}      — two files, schema-identical, epoch-millis timestamps
+[ ] db/migration/postgresql               — epoch-millis timestamps
 [ ] backend/db/Rows.scala + NoteRepository.scala
 [ ] backend/service/NoteService.scala     — with its failure enum
 [ ] backend/http/ApiFailures.scala        — one mapping, returning a union

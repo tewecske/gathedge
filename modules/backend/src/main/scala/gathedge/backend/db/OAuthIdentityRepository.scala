@@ -1,16 +1,11 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-/** Dialect-independent interface. [[OAuthIdentityRepository.live]] backs production (Postgres),
-  * [[OAuthIdentityRepository.test]] backs tests (SQLite) — see the plan's "dual-dialect DB strategy". Both wrap the
-  * same [[OAuthIdentityRepositoryLive]] below and are swapped in purely via ZLayer wiring.
-  */
+/** [[OAuthIdentityRepository.live]] wraps [[OAuthIdentityRepositoryLive]] via ZLayer wiring. */
 trait OAuthIdentityRepository {
 
   /** The only lookup that may decide *which account* a social sign-in lands in. Matching on `email` instead is the
@@ -40,23 +35,15 @@ object OAuthIdentityRepository {
   def deleteByUserAndProvider(userId: Long, provider: String): RIO[OAuthIdentityRepository, Long] =
     ZIO.serviceWithZIO[OAuthIdentityRepository](_.deleteByUserAndProvider(userId, provider))
 
-  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new OAuthIdentityRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): OAuthIdentityRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, OAuthIdentityRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new OAuthIdentityRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): OAuthIdentityRepository
-  )
+  val live: ZLayer[DataSource, Nothing, OAuthIdentityRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new OAuthIdentityRepositoryLive(ds): OAuthIdentityRepository)
 }
 
 /** The provider's `subject` identifies a person at that provider, so no log line here carries one — see
   * [[QuillRepository.logged]].
   */
-final class OAuthIdentityRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class OAuthIdentityRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with OAuthIdentityRepository {
   import ctx._
 

@@ -368,8 +368,7 @@ prepare_mode() {
   if [ "$migrations" = yes ]; then
     say "  * a database migration is in this release:"
     grep 'db/migration/' <<<"$changed" | sed 's/^/      /'
-    say "      -> the SQLite suite enforces no foreign key and never runs the Postgres dialect,"
-    say "         so this needs:  docker compose up -d postgres && RUN_POSTGRES_TESTS=1 sbt backend/test"
+    say "      -> sbt test already runs it against real Postgres (docker compose up -d postgres first)"
     say "      -> and a backup on the server before switching (printed at the end)"
   fi
   if [ "$config_change" = yes ]; then
@@ -463,19 +462,9 @@ prepare_mode() {
   if [ "$run_tests" = yes ]; then
     head1 "Tests"
     command -v sbt >/dev/null || die "sbt is not on PATH (use --no-tests to skip)"
+    command -v docker >/dev/null || die "docker is not on PATH — backend tests need it (testcontainers Postgres)"
     (cd "$REPO_ROOT" && sbt -batch test) || die "sbt test failed"
     ok "sbt test"
-    if [ "$migrations" = yes ]; then
-      if [ "${RUN_POSTGRES_TESTS:-}" = 1 ]; then
-        (cd "$REPO_ROOT" && RUN_POSTGRES_TESTS=1 sbt -batch backend/test) || die "Postgres integration tests failed"
-        ok "RUN_POSTGRES_TESTS=1 sbt backend/test"
-      else
-        bad "this release changes a migration, and PostgresIntegrationSpec did not run."
-        say "        docker compose up -d postgres"
-        say "        RUN_POSTGRES_TESTS=1 ./scripts/release.sh --no-tests   # then rerun with tests"
-        say "      or set RUN_POSTGRES_TESTS=1 for this script."
-      fi
-    fi
   fi
 
   write_stamp

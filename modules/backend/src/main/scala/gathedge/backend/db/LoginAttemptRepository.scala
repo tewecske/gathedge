@@ -1,14 +1,11 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
 
-/** Persistent sign-in history. Same dual-dialect shape as every other repository here: one generic implementation, two
-  * thin `ZLayer`s on the companion.
+/** Persistent sign-in history.
   *
   * Reads are administrator-facing (`AdminService.userDetail`, `AdminService.loginAttempts`); the write is on the login
   * path and must never be able to fail it, which is the caller's job, not this one's.
@@ -62,23 +59,15 @@ object LoginAttemptRepository {
   def deleteOlderThan(before: Long): RIO[LoginAttemptRepository, Long] =
     ZIO.serviceWithZIO[LoginAttemptRepository](_.deleteOlderThan(before))
 
-  val live: ZLayer[DataSource, Nothing, LoginAttemptRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new LoginAttemptRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): LoginAttemptRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, LoginAttemptRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new LoginAttemptRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): LoginAttemptRepository
-  )
+  val live: ZLayer[DataSource, Nothing, LoginAttemptRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new LoginAttemptRepositoryLive(ds): LoginAttemptRepository)
 }
 
 /** Every row here is *about* an email address and an origin, and neither may appear in a log line — see
   * [[QuillRepository.logged]]. The messages carry the surrogate id, the outcome and row counts only.
   */
-final class LoginAttemptRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class LoginAttemptRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with LoginAttemptRepository {
   import ctx._
 

@@ -1,8 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import io.getquill.context.qzio.ZioJdbcContext
-import io.getquill.context.sql.idiom.SqlIdiom
 import zio.*
 
 import javax.sql.DataSource
@@ -74,20 +72,12 @@ object ProgressShareRepository {
   def deleteShare(sharerUserId: Long, viewerUserId: Long): RIO[ProgressShareRepository, Long] =
     ZIO.serviceWithZIO[ProgressShareRepository](_.deleteShare(sharerUserId, viewerUserId))
 
-  val live: ZLayer[DataSource, Nothing, ProgressShareRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new ProgressShareRepositoryLive(ds, new PostgresZioJdbcContext(SnakeCase)): ProgressShareRepository
-  )
-
-  /** SQLite backs tests only — production is always Postgres, hence `test` rather than `live`. */
-  val test: ZLayer[DataSource, Nothing, ProgressShareRepository] = ZLayer.fromFunction((ds: DataSource) =>
-    new ProgressShareRepositoryLive(ds, new SqliteZioJdbcContext(SnakeCase)): ProgressShareRepository
-  )
+  val live: ZLayer[DataSource, Nothing, ProgressShareRepository] =
+    ZLayer.fromFunction((ds: DataSource) => new ProgressShareRepositoryLive(ds): ProgressShareRepository)
 }
 
-final class ProgressShareRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource,
-  quillContext: ZioJdbcContext[Dialect, Naming],
-) extends QuillRepository(dataSource, quillContext)
+final class ProgressShareRepositoryLive(dataSource: DataSource)
+    extends QuillRepository(dataSource, new PostgresZioJdbcContext(SnakeCase))
     with ProgressShareRepository {
   import ctx._
 
