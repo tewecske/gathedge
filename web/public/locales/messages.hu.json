@@ -80,6 +80,8 @@
   "ui.share.qrAlt": "QR-kód, mely erre az oldalra mutat",
   "ui.share.qrClose": "Bezárás",
   "ui.share.qrError": "A QR-kód létrehozása nem sikerült.",
+  "ui.share.via": "Megosztás itt: {0}",
+  "ui.share.email": "Megosztás e-mailben",
   "ui.nav.menu": "Főmenü",
   "ui.nav.language": "Nyelv",
   "ui.nav.admin": "Adminisztráció",

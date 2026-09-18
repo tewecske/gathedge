@@ -275,7 +275,9 @@ object AuthRoutes {
   private val providersRoute = {
     AuthEndpoints.providers
       .implementHandler(
-        handler((_: Unit) => withContext((cfg: AppConfig) => ProvidersResponse(cfg.configuredOAuthProviders)))
+        handler { (_: Unit) =>
+          withContext((cfg: AppConfig) => ProvidersResponse(cfg.configuredOAuthProviders, cfg.messengerAppId))
+        }
       )
   }
 

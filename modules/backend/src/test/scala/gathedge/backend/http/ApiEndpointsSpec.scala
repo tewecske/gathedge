@@ -60,6 +60,7 @@ import gathedge.shared.dto.{
   LoginRequest,
   PairSelectionResponse,
   Paging,
+  ProvidersResponse,
   ResendVerificationRequest,
   ResetPasswordRequest,
   SignupRequest,
@@ -303,6 +304,18 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
           } yield assertTrue(
             response.status == Status.Ok,
             raw.fromJson[CaptchaStatusResponse] == Right(CaptchaStatusResponse(None, 0, 2)),
+          )
+        },
+        // The same public, session-free read, and one field on it belongs to nothing in the sign-in forms:
+        // `messengerAppId` is what `components.ShareRow` builds Messenger's send dialog with. An unconfigured
+        // deployment answers none, which is what keeps that button off the share row.
+        test("the providers endpoint answers the unconfigured deployment with no provider and no Messenger app id") {
+          for {
+            response <- runRoutes(AuthRoutes.routes, Request.get("/api/auth/providers"))
+            raw      <- body(response)
+          } yield assertTrue(
+            response.status == Status.Ok,
+            raw.fromJson[ProvidersResponse] == Right(ProvidersResponse(Nil, None)),
           )
         },
         // Same non-committal shape as the verification resend: a known address and an unknown one both answer an
