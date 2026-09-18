@@ -17,7 +17,8 @@ import zio.http.*
 
 /** Shareable tag groups. `list`/`get` sit behind `optionalUser`, the same as `WordRoutes.list`/`.get` — a visitor with
   * no session sees the same groups and detail with no roster/invite-code/role, the way `GroupDetail` already narrows
-  * those for a signed-in non-member. Everything else still sits behind `authenticated`. See `shared.api.GroupEndpoints`.
+  * those for a signed-in non-member. Everything else still sits behind `authenticated`. See
+  * `shared.api.GroupEndpoints`.
   */
 object GroupRoutes {
 

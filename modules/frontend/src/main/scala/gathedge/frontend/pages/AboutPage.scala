@@ -123,7 +123,7 @@ object AboutPage {
             h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutIconsTitle)),
             p(I18n.t(UiKeys.aboutIconsBody)),
             div(
-              cls := "flex flex-col gap-1",
+              cls    := "flex flex-col gap-1",
               a(
                 cls    := "link link-primary",
                 href   := Branding.iconsUrl,
@@ -142,7 +142,7 @@ object AboutPage {
             h2(cls   := "card-title text-lg mt-4", I18n.t(UiKeys.aboutUiTitle)),
             p(I18n.t(UiKeys.aboutUiBody)),
             div(
-              cls := "flex flex-col gap-1",
+              cls    := "flex flex-col gap-1",
               a(
                 cls    := "link link-primary",
                 href   := Branding.daisyUiUrl,

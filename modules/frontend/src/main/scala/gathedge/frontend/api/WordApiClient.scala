@@ -120,6 +120,13 @@ object WordApiClient {
     run(executor(WordEndpoints.listTags(())))
   }
 
+  /** One wordlist, by id — the fine-grained counterpart of [[listTags]] for a caller who already knows which tag it
+    * wants, such as the wordlist detail page.
+    */
+  def getTag(tagId: Long): EventStream[Either[ApiError, Tag]] = {
+    run(executor(WordEndpoints.getTag(tagId)))
+  }
+
   /** The catalog's own paged/sorted/filtered listing — `GET /api/tags/page`, [[TagsPage]]'s own call. [[listTags]]
     * above stays as it is for every dropdown and collect bar, which still want the whole unpaged table.
     */

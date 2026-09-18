@@ -154,6 +154,12 @@ object WordRoutes {
     WordEndpoints.listTags.implementHandler(handler((_: Unit) => reader.flatMap(WordService.listTags)))
   }
 
+  private val getTagRoute = {
+    WordEndpoints.getTag.implementHandler(
+      handler((tagId: Long) => reader.flatMap(who => WordService.getTag(tagId, who).mapError(ApiFailures.word)))
+    )
+  }
+
   private type TagListQuery = (Option[Int], Option[Int], Option[String], Option[String], Option[String], Option[String])
 
   private val listTagsPageRoute = {
@@ -447,6 +453,7 @@ object WordRoutes {
       listRoute,
       getRoute,
       listTagsRoute,
+      getTagRoute,
       listTagsPageRoute,
       tagEntriesRoute,
       tagEntriesPageRoute,

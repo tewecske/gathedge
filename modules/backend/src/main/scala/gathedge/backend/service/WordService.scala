@@ -224,6 +224,12 @@ trait WordService {
     */
   def listTags(reader: Option[Long]): UIO[List[Tag]]
 
+  /** One wordlist, by id — for a caller who already knows which one it wants and would otherwise fetch [[listTags]]'s
+    * whole table just to filter it down to a single row. Same reader-marking rule as [[listTags]]; `TagNotFound` is an
+    * id that names nothing.
+    */
+  def getTag(tagId: Long, reader: Option[Long]): IO[WordFailure, Tag]
+
   /** The catalog's own paged/sorted/filtered listing — `GET /api/tags/page`, the sibling of [[list]] for the
     * dictionary. `sort`/`descending` are [[gathedge.shared.dto.TagSort]]'s two columns; asked for neither, the answer
     * keeps the listing's own order (own tags, then a study group's, then everyone else's, alphabetically within each)
@@ -578,6 +584,9 @@ object WordService {
 
   def listTags(reader: Option[Long]): URIO[WordService, List[Tag]] =
     ZIO.serviceWithZIO[WordService](_.listTags(reader))
+
+  def getTag(tagId: Long, reader: Option[Long]): ZIO[WordService, WordFailure, Tag] =
+    ZIO.serviceWithZIO[WordService](_.getTag(tagId, reader))
 
   def listTagsPaged(
     reader: Option[Long],
@@ -1441,6 +1450,18 @@ final case class WordServiceLive(
   }
 
   def listTags(reader: Option[Long]): UIO[List[Tag]] = classifiedTags(reader).map(Tag.sorted)
+
+  def getTag(tagId: Long, reader: Option[Long]): IO[WordFailure, Tag] = {
+    for {
+      row           <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      wordCount     <- repo.countWordsInTag(tagId).orDie
+      ownedByMe      = reader.contains(row.userId)
+      group         <- resolveGroupRef(row.groupId)
+      memberships   <- ZIO.foreach(reader)(groupRepo.listMembershipsFor).map(_.getOrElse(Nil)).orDie
+      memberGroupIds = memberships.map(_.groupId).toSet
+      editableByMe   = ownedByMe || row.groupId.exists(memberGroupIds.contains)
+    } yield toTag(row, wordCount, ownedByMe, group, editableByMe)
+  }
 
   def listTagsPaged(
     reader: Option[Long],

@@ -2119,7 +2119,7 @@ final class WordRepositoryLive[Dialect <: SqlIdiom, Naming <: NamingStrategy](
                            pair.tagId == lift(tagId) && liftQuery(headIds).contains(pair.wordId)
                          })
                        }))
-                  }
+                     }
       answerIds    = pairRows.map(_.translationWordId).distinct
       // The answer words' own memberships, for their notes — every other fact a row carries is on the head's.
       answerLinks <- if (answerIds.isEmpty) ZIO.succeed(List.empty[WordTagRow])
