@@ -8,8 +8,8 @@ import gathedge.shared.dto.{TagPairWord, WordDetail, WordPage}
 import org.scalajs.dom
 
 /** One side of a bilingual pair, as an input: a live dictionary autocomplete, and — for a gendered language — an
-  * [[ArticlePicker]] in front of the text field. There is '''no''' language control here; the language is a parameter
-  * the parent owns, so the same widget drops into a page that already chose the pair's languages.
+  * [[ArticlePicker]] above the text field. There is '''no''' language control here; the language is a parameter the
+  * parent owns, so the same widget drops into a page that already chose the pair's languages.
   *
   * The autocomplete is the one the tag pages always had: a debounced prefix search in the given language, every match
   * badged with its part of speech so `der See` reads apart from `die See`, and the typed text offered as a word to
@@ -188,15 +188,17 @@ final class WordPicker(
         // this the moment the source word was committed.
         if (suggestions.nonEmpty && bare(lang, queryVar.now()).isEmpty) highlightVar.set(0)
       },
-      div(
-        cls := "flex items-center gap-1",
-        child.maybe <-- language.map { lang =>
-          Option.when(LanguageProfile.of(lang).hasGenders)(
-            ArticlePicker.render(s"wp-${lang}-article", LanguageProfile.of(lang), queryVar, () => focus())
-          )
-        },
-        div(cls := "relative flex-1", field, child.maybe <-- dropdown()),
-      ),
+      // The article buttons sit *above* the field, the way the game play page shows them, not beside it: on a narrow
+      // screen a row of buttons in front of the input leaves too little of the line to type a word on. `self-start`
+      // keeps the `join` at its own width — a flex column stretches its items across otherwise.
+      child.maybe <-- language.map { lang =>
+        Option.when(LanguageProfile.of(lang).hasGenders)(
+          ArticlePicker
+            .render(s"wp-${lang}-article", LanguageProfile.of(lang), queryVar, () => focus())
+            .amend(cls := "self-start")
+        )
+      },
+      div(cls := "relative", field, child.maybe <-- dropdown()),
       // Debounced live prefix search in the given language, narrowed to the part of speech when one is known.
       typedBus.events
         .debounce(250)
