@@ -109,6 +109,6 @@ object ProgressShareServiceSpec extends ZIOSpecDefault {
           after == Left(ProgressShareFailure.NotShared),
         )
       },
-    ).provide(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
+    ).provideShared(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }

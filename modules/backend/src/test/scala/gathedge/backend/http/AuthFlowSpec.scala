@@ -162,7 +162,7 @@ object AuthFlowSpec extends ZIOSpecDefault {
             )
         } yield assertTrue(response.status == Status.Forbidden)
       },
-    ).provide(
+    ).provideShared(
       services,
       RateLimiter.live,
       TestServer.layer,

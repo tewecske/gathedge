@@ -350,7 +350,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
         result   <- AuthService.login("onebudget@example.com", "password123").either
       } yield assertTrue(result == Left(AuthFailure.RateLimited))
     },
-  ).provide(authServiceLayer(requireEmailVerification = false))
+  ).provideShared(authServiceLayer(requireEmailVerification = false)) @@ TestAspect.sequential
 
   /** The gate itself. Everything here runs with `require-email-verification` on except the two tests that pin what
     * changes when it is off — which is the whole point of the flag: the tokens are issued either way.
@@ -370,7 +370,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
             signedUp._2.isEmpty,
             !signedUp._1.emailVerified,
             blocked == Left(AuthFailure.EmailNotVerified),
-            sent.map(_.to) == Vector("verify-me@example.com"),
+            sent.count(_.to == "verify-me@example.com") == 1,
             loggedIn._1.emailVerified,
           )
         },
@@ -416,7 +416,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
           for {
             result <- AuthService.resendVerification("nobody@example.com").either
             sent   <- SentEmails.all
-          } yield assertTrue(result == Right(()), sent.isEmpty)
+          } yield assertTrue(result == Right(()), sent.forall(_.to != "nobody@example.com"))
         },
         test("a provider that asserts a verified email creates an already-verified account") {
           for {
@@ -441,7 +441,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
             _        <- SentEmails.all
           } yield assertTrue(loggedIn._1.emailVerified)
         },
-      ).provide(authServiceLayer(requireEmailVerification = true)),
+      ).provideShared(authServiceLayer(requireEmailVerification = true)) @@ TestAspect.sequential,
       suite("with the login gate off")(
         test("signup still opens a session and still sends a link") {
           for {
@@ -463,7 +463,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
             loggedIn <- AuthService.login("lenient-verify@example.com", "password123")
           } yield assertTrue(loggedIn._1.emailVerified)
         },
-      ).provide(authServiceLayer(requireEmailVerification = false)),
+      ).provideShared(authServiceLayer(requireEmailVerification = false)) @@ TestAspect.sequential,
     )
   }
 
@@ -519,7 +519,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
         for {
           result <- AuthService.forgotPassword("no-such-account@example.com").either
           sent   <- SentEmails.all
-        } yield assertTrue(result == Right(()), sent.isEmpty)
+        } yield assertTrue(result == Right(()), sent.forall(_.to != "no-such-account@example.com"))
       },
       test("a weak new password is refused without consuming the token") {
         for {
@@ -556,7 +556,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
           result <- AuthService.forgotPassword("reset-untouched@example.com").either
         } yield assertTrue(result.isRight)
       },
-    ).provide(authServiceLayer(requireEmailVerification = false))
+    ).provideShared(authServiceLayer(requireEmailVerification = false)) @@ TestAspect.sequential
   }
 
   /** Captcha is off in the shipped config, so these run against [[TestAuthLayers.configWithCaptcha]] and
@@ -645,7 +645,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
           fresh <- AuthService.login("cap-iso@example.com", "nope12345", Some("203.0.113.44")).either
         } yield assertTrue(fresh == Left(AuthFailure.InvalidCredentials))
       },
-    ).provide(captchaAuthServiceLayer())
+    ).provideShared(captchaAuthServiceLayer()) @@ TestAspect.sequential
   }
 
   private def identity(provider: OAuthProvider, subject: String, email: String): OAuthIdentity = {

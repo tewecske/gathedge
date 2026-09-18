@@ -288,6 +288,6 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         )
       },
       // `Routes#runZIO` opens a scope per request, so the suite has to supply one.
-    ).provide(layer, Scope.default) @@ TestAspect.timeout(60.seconds)
+    ).provideShared(layer, Scope.default) @@ TestAspect.timeout(60.seconds) @@ TestAspect.sequential
   }
 }

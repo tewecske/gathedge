@@ -186,7 +186,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   }
 
   def spec = {
-    suite("Postgres dialect (testcontainers)")(
+    suite("Postgres cascade and referential-integrity regressions")(
       // `RETURNING id` and `GENERATED ALWAYS AS IDENTITY` are Postgres-specific, and a signup exercises both: the
       // user row, the session row keyed by the id it just produced, and the verification token pointing back at it.
       pgTest("signup and login round-trip through real Postgres, with the rows keyed to the generated id") {

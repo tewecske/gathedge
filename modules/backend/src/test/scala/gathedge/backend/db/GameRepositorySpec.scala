@@ -200,6 +200,6 @@ object GameRepositorySpec extends ZIOSpecDefault {
           plays.isEmpty,
         )
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 }

@@ -367,5 +367,5 @@ object AdminServiceSpec extends ZIOSpecDefault {
         )
       },
     ),
-  ).provide(layer)
+  ).provideShared(layer) @@ TestAspect.sequential
 }

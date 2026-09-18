@@ -45,11 +45,9 @@ trait GameRepository {
     */
   def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): Task[Long]
 
-  /** Removes the game and everything scoped to it — `game_tags`, `game_favorites`, and every `game_plays` row with its
-    * `game_play_answers`/`game_play_words` children — as one transaction. Rows affected on `games` — `0` means `id`
-    * does not exist, or its `version` no longer matches `expectedVersion`, and nothing else is touched. The game row is
-    * deleted first, guarded by `version`; `ON DELETE CASCADE` already clears the children, so the explicit child
-    * deletes below are redundant no-ops kept for clarity. Ownership is the service's job.
+  /** Removes the game, guarded by `version`; `ON DELETE CASCADE` takes `game_tags`, `game_favorites`, and every
+    * `game_plays` row with its `game_play_answers`/`game_play_words` children with it. Rows affected on `games` — `0`
+    * means `id` does not exist, or its `version` no longer matches `expectedVersion`. Ownership is the service's job.
     */
   def deleteGame(id: Long, expectedVersion: Long): Task[Long]
 
@@ -497,30 +495,8 @@ final class GameRepositoryLive(dataSource: DataSource)
   }
 
   def deleteGame(id: Long, expectedVersion: Long): Task[Long] = {
-    val effect = transaction(
-      for {
-        rows <- ctx.run(
-                  quote(games.filter(game => game.id == lift(id) && game.version == lift(expectedVersion)).delete)
-                )
-        _    <- ZIO.when(rows > 0L) {
-                  for {
-                    // The row above has already cascaded these away; the explicit deletes below are redundant
-                    // no-ops against the already-cascaded rows.
-                    playIds <- ctx.run(quote(gamePlays.filter(_.gameId == lift(id)).map(_.id)))
-                    _       <- ZIO.unless(playIds.isEmpty) {
-                                 ctx.run(quote(gamePlayAnswers.filter(a => liftQuery(playIds).contains(a.playId)).delete))
-                               }
-                    _       <- ZIO.unless(playIds.isEmpty) {
-                                 ctx.run(quote(gamePlayWords.filter(w => liftQuery(playIds).contains(w.playId)).delete))
-                               }
-                    _       <- ctx.run(quote(gamePlays.filter(_.gameId == lift(id)).delete))
-                    _       <- ctx.run(quote(gameFavorites.filter(_.gameId == lift(id)).delete))
-                    _       <- ctx.run(quote(gameTags.filter(_.gameId == lift(id)).delete))
-                  } yield ()
-                }
-      } yield rows
-    )
-    logged(effect)(rows => s"games.delete id=$id rows=$rows")
+    val q = quote(games.filter(game => game.id == lift(id) && game.version == lift(expectedVersion)).delete)
+    logged(run(ctx.run(q)))(rows => s"games.delete id=$id rows=$rows")
   }
 
   def playCounts(gameIds: List[Long]): Task[Map[Long, Long]] = {

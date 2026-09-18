@@ -279,6 +279,6 @@ object GroupServiceSpec extends ZIOSpecDefault {
           gone == Left(GroupFailure.NotFound),
         )
       },
-    ).provide(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
+    ).provideShared(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }

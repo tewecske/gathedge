@@ -202,6 +202,6 @@ object GuestAccountSpec extends ZIOSpecDefault {
           minted  <- AuthService.createGuest(Some("10.0.3.2")).either
         } yield assertTrue(blocked == Left(GuestClaimFailure.RateLimited), minted.isRight)
       },
-    ).provide(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
+    ).provideShared(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }
