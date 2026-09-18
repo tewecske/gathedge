@@ -138,6 +138,15 @@ object GroupEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
+  /** Admin-only. Deletes the group outright — every attached tag reverts to owner-only edit rights and every membership
+    * row is dropped, both at the database level.
+    */
+  val deleteGroup = {
+    Endpoint(Method.DELETE / "api" / "groups" / groupId).withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
+  }
+
   /** Attaches one of the caller's own tags to a group they already belong to, opening its content to every member. 403
     * covers the caller not being a member of `groupId`, or not owning `tagId`. 409 covers the tag already belonging to
     * a group (possibly this one) — detach it first.
@@ -174,6 +183,7 @@ object GroupEndpoints {
       removeMember,
       attachTag,
       detachTag,
+      deleteGroup,
     )
   }
 }

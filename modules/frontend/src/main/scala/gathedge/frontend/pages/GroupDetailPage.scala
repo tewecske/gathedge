@@ -25,6 +25,10 @@ object GroupDetailPage {
   def render(groupId: Long, generateQr: String => Future[String]): HtmlElement = {
     AppShell.render(Page.GroupDetail(groupId), new GroupDetailPage(groupId, generateQr).render())
   }
+
+  private enum Tab {
+    case Wordlists, Members
+  }
 }
 
 private class GroupDetailPage(groupId: Long, generateQr: String => Future[String]) {
@@ -74,11 +78,18 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private val reloadBus       = new EventBus[Unit]()
   private val leaveBus        = new EventBus[Unit]()
+  private val deleteBus       = new EventBus[Unit]()
   private val regenerateBus   = new EventBus[Unit]()
   private val setRoleBus      = new EventBus[(Long, GroupRole)]()
   private val removeMemberBus = new EventBus[Long]()
   private val attachClickBus  = new EventBus[Unit]()
   private val detachBus       = new EventBus[Long]()
+
+  /** Which of the two tabs is showing — wordlists first, since it's the one most readers open this page for. Local page
+    * state, not URL state: unlike `AdminUsersPage`/`AdminAuditPage`'s listings, there's no filter/sort/page to lose on
+    * a refresh, so putting it in the route would only cost a round trip for nothing this page needs back.
+    */
+  private val activeTabVar: Var[GroupDetailPage.Tab] = Var(GroupDetailPage.Tab.Wordlists)
 
   /** The selected tag id at the moment the attach button is clicked — `sample`d rather than read via `.now()`, the same
     * pattern `SharedProgressPage.redeemStream` uses for its text input.
@@ -96,16 +107,13 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
         cls := "card bg-base-100 shadow mt-4",
         div(
           cls := "card-body",
-          div(
-            cls := "flex items-center justify-between gap-2",
-            inlineRename.renderTitle(
-              nameSignal,
-              mayAdminSignal,
-              I18n.t(UiKeys.groupDetailRenameEdit),
-              I18n.t(UiKeys.groupDetailRenameLabel),
-              "input input-sm",
-            ),
-            a(cls := "btn btn-sm", AppRouter.router.navigateTo(Page.Groups()), "←"),
+          inlineRename.renderTitle(
+            nameSignal,
+            mayAdminSignal,
+            I18n.t(UiKeys.groupDetailRenameEdit),
+            I18n.t(UiKeys.groupDetailRenameLabel),
+            "input input-sm",
+            deleteIcon(),
           ),
           child.maybe <-- Signal
             .combine(detailVar.signal, AppState.isGlobalAdminSignal)
@@ -138,6 +146,14 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
       inlineRename.bindings(onSaved = Observer[GroupDetail](detail => detailVar.set(Some(detail)))),
       leaveBus.events --> Observer[Unit](_ => Var.set(busyVar -> true, errorVar -> None)),
       leaveBus.events.flatMapSwitch(_ => GroupApiClient.leave(groupId)) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            AppRouter.router.pushState(Page.Groups())
+          case Left(err) =>
+            Var.set(busyVar -> false, errorVar -> Some(err.message))
+        },
+      deleteBus.events --> Observer[Unit](_ => Var.set(busyVar -> true, errorVar -> None)),
+      deleteBus.events.flatMapSwitch(_ => GroupApiClient.deleteGroup(groupId)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
             AppRouter.router.pushState(Page.Groups())
@@ -195,25 +211,82 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     )
   }
 
+  private def deleteIcon(): Modifier[HtmlElement] = {
+    child.maybe <-- mayAdminSignal.map(
+      Option.when(_)(
+        InlineRename.iconButton(
+          I18n.t(UiKeys.groupDetailDeleteButton),
+          trashMark(),
+          onClick.mapToUnit --> Observer[Unit] { _ =>
+            if (dom.window.confirm(I18n.t(UiKeys.groupDetailDeleteConfirm))) deleteBus.emit(())
+          },
+        )
+      )
+    )
+  }
+
+  private def trashMark(): SvgElement = svg.svg(
+    svg.cls            := "h-4 w-4",
+    svg.viewBox        := "0 0 24 24",
+    svg.fill           := "none",
+    svg.stroke         := "currentColor",
+    svg.strokeWidth    := "1.5",
+    svg.strokeLineCap  := "round",
+    svg.strokeLineJoin := "round",
+    svg.path(
+      svg.d := "m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+    ),
+  )
+
   /** `globalAdmin` travels down through the whole body rather than being read per control: the roster, the invite code
     * and the tag rows all ask the same question, and the server has already answered the data half of it — a global
     * administrator gets `members` and `inviteCode` whether or not they joined.
+    *
+    * Wordlists first, since that's what most readers open a group for; Members (with the invite code up top, since
+    * that's the one thing an admin comes to this tab to copy) second.
     */
   private def renderBody(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
     div(
-      cls := "flex flex-col gap-6 mt-2",
-      renderRoster(detail, globalAdmin),
-      div(cls := "divider"),
+      cls := "flex flex-col gap-4 mt-2",
+      renderTabBar(),
+      child <-- activeTabVar.signal.map {
+        case GroupDetailPage.Tab.Wordlists => renderTags(detail, globalAdmin)
+        case GroupDetailPage.Tab.Members   => renderMembersTab(detail, globalAdmin)
+      },
+    )
+  }
+
+  private def renderTabBar(): HtmlElement = {
+    div(
+      role := "tablist",
+      cls  := "tabs tabs-lift",
+      renderTab(GroupDetailPage.Tab.Wordlists, I18n.t(UiKeys.groupDetailTagsTitle)),
+      renderTab(GroupDetailPage.Tab.Members, I18n.t(UiKeys.groupDetailRosterTitle)),
+    )
+  }
+
+  private def renderTab(tab: GroupDetailPage.Tab, label: String): HtmlElement = {
+    button(
+      role := "tab",
+      typ  := "button",
+      cls <-- activeTabVar.signal.map(active => "tab" + (if (active == tab) " tab-active" else "")),
+      label,
+      onClick.mapToUnit --> Observer[Unit](_ => activeTabVar.set(tab)),
+    )
+  }
+
+  private def renderMembersTab(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-6 pt-4",
       Option.when(detail.inviteCode.isDefined)(renderInviteCode(detail)),
       Option.when(detail.inviteCode.isDefined)(div(cls := "divider")),
-      renderTags(detail, globalAdmin),
+      renderRoster(detail, globalAdmin),
     )
   }
 
   private def renderRoster(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
     val isAdmin = detail.viewerRole.contains(GroupRole.Admin) || globalAdmin
     div(
-      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailRosterTitle)),
       if (detail.viewerRole.isEmpty && !globalAdmin) {
         p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailRosterHidden))
       } else {
@@ -241,7 +314,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             )
           ),
         )
-      },
+      }
     )
   }
 
@@ -317,10 +390,10 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
 
   private def renderTags(detail: GroupDetail, globalAdmin: Boolean): HtmlElement = {
     div(
-      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.groupDetailTagsTitle)),
+      cls := "pt-4",
       Option.when(detail.tags.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailTagsEmpty))),
       ul(
-        cls  := "flex flex-col divide-y divide-base-300",
+        cls := "flex flex-col divide-y divide-base-300",
         detail.tags.map(tag => renderTagRow(tag, detail, globalAdmin)),
       ),
       Option.when(detail.viewerRole.isDefined || globalAdmin)(renderAttachControl()),

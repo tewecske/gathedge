@@ -83,4 +83,9 @@ object GroupApiClient {
   def detachTag(groupId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
     HttpClient.unit(_.DELETE, s"/api/groups/$groupId/tags/$tagId")
   }
+
+  /** Admin-only. */
+  def deleteGroup(groupId: Long): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.unit(_.DELETE, s"/api/groups/$groupId")
+  }
 }

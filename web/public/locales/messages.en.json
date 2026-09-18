@@ -968,6 +968,8 @@
   "ui.groupDetail.attachNoneAvailable": "You have no wordlists available to add.",
   "ui.groupDetail.detachButton": "Remove from study group",
   "ui.groupDetail.detachConfirm": "Remove this wordlist from the study group? Only you will be able to edit it afterwards.",
+  "ui.groupDetail.deleteButton": "Delete study group",
+  "ui.groupDetail.deleteConfirm": "Delete this study group? Its wordlists stay, but leave the group. This cannot be undone.",
   "ui.groupJoin.joining": "Joining the study group...",
   "ui.groupJoin.success": "You joined the study group.",
   "ui.groupJoin.viewGroups": "View my study groups",

@@ -968,6 +968,8 @@
   "ui.groupDetail.attachNoneAvailable": "Nincs hozzáadható szógyűjteményed.",
   "ui.groupDetail.detachButton": "Eltávolítás a tanulócsoportból",
   "ui.groupDetail.detachConfirm": "Eltávolítod ezt a szógyűjteményt a tanulócsoportból? Utána csak te fogod tudni szerkeszteni.",
+  "ui.groupDetail.deleteButton": "Tanulócsoport törlése",
+  "ui.groupDetail.deleteConfirm": "Törlöd ezt a tanulócsoportot? A szógyűjteményei megmaradnak, de kikerülnek a csoportból. Ez nem vonható vissza.",
   "ui.groupJoin.joining": "Csatlakozás a tanulócsoporthoz...",
   "ui.groupJoin.success": "Csatlakoztál a tanulócsoporthoz.",
   "ui.groupJoin.viewGroups": "Tanulócsoportjaim megtekintése",

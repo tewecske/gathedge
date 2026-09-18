@@ -264,6 +264,21 @@ object GroupServiceSpec extends ZIOSpecDefault {
           detail.tags.map(t => (t.sourceLanguage, t.targetLanguage)) == List((WordLanguage.En, WordLanguage.Es))
         )
       },
+      test("deleteGroup is admin-only, and removes the group outright once run") {
+        for {
+          owner   <- userId("owner13@example.com")
+          member  <- userId("member13@example.com")
+          created <- GroupService.create("Group13", owner)
+          _       <- GroupService.join(created.inviteCode.get, member)
+          refused <- GroupService.deleteGroup(created.id, member).either
+          deleted <- GroupService.deleteGroup(created.id, owner).either
+          gone    <- GroupService.detail(created.id, Some(owner)).either
+        } yield assertTrue(
+          refused == Left(GroupFailure.NotAdmin),
+          deleted.isRight,
+          gone == Left(GroupFailure.NotFound),
+        )
+      },
     ).provide(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }

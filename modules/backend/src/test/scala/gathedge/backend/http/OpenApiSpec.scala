@@ -509,6 +509,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // read and this write).
               ("DELETE", "/api/groups/{groupId}/tags/{tagId}")                            ->
                 Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // Admin-only, hence the 403; no 409 — a group has no "last" one to protect the way its roster does.
+              ("DELETE", "/api/groups/{groupId}")                                         ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound),
             )
         )
       },
@@ -523,7 +526,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 321,
+          declared == 325,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -554,6 +557,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("DELETE", "/api/groups/{groupId}/members/{userId}"),
               ("PUT", "/api/groups/{groupId}/tags/{tagId}"),
               ("DELETE", "/api/groups/{groupId}/tags/{tagId}"),
+              ("DELETE", "/api/groups/{groupId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,

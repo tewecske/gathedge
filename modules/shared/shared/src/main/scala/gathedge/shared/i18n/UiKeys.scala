@@ -1437,6 +1437,8 @@ object UiKeys {
   val groupDetailAttachNoneAvailable: String         = key("ui.groupDetail.attachNoneAvailable")
   val groupDetailDetachButton: String                = key("ui.groupDetail.detachButton")
   val groupDetailDetachConfirm: String               = key("ui.groupDetail.detachConfirm")
+  val groupDetailDeleteButton: String                = key("ui.groupDetail.deleteButton")
+  val groupDetailDeleteConfirm: String               = key("ui.groupDetail.deleteConfirm")
 
   // Where an invite link lands (`/groups/join/{code}`, see `Page.GroupJoin`) — join in progress, success, and failure.
   val groupJoinJoining: String    = key("ui.groupJoin.joining")

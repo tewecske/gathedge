@@ -144,6 +144,14 @@ object GroupRoutes {
     )
   }
 
+  private val deleteGroupRoute = {
+    GroupEndpoints.deleteGroup.implementHandler(
+      handler((groupId: Long) =>
+        userId.flatMap(id => GroupService.deleteGroup(groupId, id).mapError(ApiFailures.groupAdmin))
+      )
+    )
+  }
+
   private val publicRoutes = {
     Routes(listRoute, getRoute) @@ RouteSupport.optionalUser
   }
@@ -159,6 +167,7 @@ object GroupRoutes {
       removeMemberRoute,
       attachTagRoute,
       detachTagRoute,
+      deleteGroupRoute,
     ) @@ RouteSupport.authenticated @@ RouteSupport.csrf
   }
 

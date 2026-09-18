@@ -96,6 +96,11 @@ trait GroupService {
     * it currently belongs to, or by a global administrator.
     */
   def detachTag(groupId: Long, tagId: Long, userId: Long): IO[GroupFailure, Unit]
+
+  /** Admin-only. Deletes the group outright. Every attached tag's `group_id` and every membership row cascade at the
+    * database level (see the `V15__groups` migration), so nothing else needs cleaning up.
+    */
+  def deleteGroup(groupId: Long, userId: Long): IO[GroupFailure, Unit]
 }
 
 object GroupService {
@@ -145,6 +150,9 @@ object GroupService {
 
   def detachTag(groupId: Long, tagId: Long, userId: Long): ZIO[GroupService, GroupFailure, Unit] =
     ZIO.serviceWithZIO[GroupService](_.detachTag(groupId, tagId, userId))
+
+  def deleteGroup(groupId: Long, userId: Long): ZIO[GroupService, GroupFailure, Unit] =
+    ZIO.serviceWithZIO[GroupService](_.deleteGroup(groupId, userId))
 
   val live: URLayer[GroupRepository & WordRepository & UserRepository & RateLimiter, GroupService] = {
     ZLayer.fromFunction(
@@ -398,6 +406,13 @@ final case class GroupServiceLive(
                       GroupFailure.StaleWrite,
                       GroupFailure.TagNotFound,
                     )
+    } yield ()
+  }
+
+  def deleteGroup(groupId: Long, userId: Long): IO[GroupFailure, Unit] = {
+    for {
+      _ <- requireAdmin(groupId, userId)
+      _ <- repo.delete(groupId).orDie
     } yield ()
   }
 }
