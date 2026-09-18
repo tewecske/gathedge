@@ -87,8 +87,14 @@ final case class SetPasswordRequest(currentPassword: Option[String], newPassword
 
 /** The social providers this deployment has credentials for. Read by the sign-in and sign-up forms, which have no
   * session yet and so cannot get the same list from [[IdentitiesResponse]].
+  *
+  * `messengerAppId` is the one thing here that sign-in does not use: Messenger's send dialog takes the Facebook app id
+  * as a query parameter, so the share row reads it from here and leaves its Messenger button out when it is `None`. The
+  * id is not a credential — the same value is already in the address bar of every `/api/auth/facebook/start` redirect —
+  * which is why it may travel on a public endpoint beside the provider list.
   */
-final case class ProvidersResponse(providers: List[OAuthProvider]) derives JsonCodec
+final case class ProvidersResponse(providers: List[OAuthProvider], messengerAppId: Option[String] = None)
+    derives JsonCodec
 
 /** What the captcha-gated forms need to decide whether to render the Turnstile widget.
   *

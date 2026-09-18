@@ -1,7 +1,9 @@
 package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
+import gathedge.frontend.api.{ApiClient, ApiError}
 import gathedge.frontend.i18n.I18n
+import gathedge.shared.dto.ProvidersResponse
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -10,8 +12,13 @@ import scala.concurrent.Future
 import scala.scalajs.js
 import scala.util.{Failure, Success}
 
-/** Copy-link, Web Share and QR code for one URL — the row `GameInstancePage` and `GroupDetailPage` both put next to
-  * whatever they are sharing (a quiz's own URL for the former, an invite link built from a code for the latter).
+/** Copy-link, Web Share, QR code and one button per share page for one URL — the row `GameInstancePage` and
+  * `GroupDetailPage` both put next to whatever they are sharing (a quiz's own URL for the former, an invite link built
+  * from a code for the latter).
+  *
+  * The per-network buttons are [[ShareTarget]]: each opens that site's own share page with the link already in it, so
+  * nothing here talks to a network itself. The Web Share button stays in front of them, since a phone's own share sheet
+  * reaches every app installed on it rather than the seven listed here.
   *
   * `link`/`shareTitle` are read fresh on every click rather than captured once, since a group's invite link can change
   * under the page (regenerating the code) the way a game's own URL never does — see [[resetQr]] for the same reason on
@@ -61,8 +68,46 @@ final class ShareRow(
         I18n.t(UiKeys.shareQrGenerate),
         onClick.mapToUnit --> Observer[Unit](_ => openQr()),
       ),
+      children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetButton)),
       renderQrModal(),
+      // Left alone on a failure rather than cleared: a row that cannot reach the server has no news about the app id,
+      // and a cached one from an earlier page is still right. See [[ShareRow.messengerAppIdVar]].
+      ApiClient.providers -->
+        Observer[Either[ApiError, ProvidersResponse]] {
+          case Right(res) =>
+            ShareRow.messengerAppIdVar.set(res.messengerAppId)
+          case Left(_)    =>
+            ()
+        },
     )
+  }
+
+  /** One share page, as an icon with its name on the tooltip — the shape `GameSetupPage.renderSwap` uses for an icon
+    * button that has no room for a label.
+    *
+    * The URL is built in the click handler rather than put on an anchor's `href`, for the reason `link` is a function
+    * at all: a group's invite link changes under the page when its code is regenerated, and an `href` written at render
+    * time would go on pointing at the dead one.
+    */
+  private def targetButton(target: ShareTarget): HtmlElement = {
+    val name             = ShareTarget.label(target)
+    span(
+      cls             := "tooltip",
+      dataAttr("tip") := name,
+      button(
+        cls        := "btn btn-ghost btn-xs btn-square",
+        typ        := "button",
+        aria.label := name,
+        ShareTarget.icon(target),
+        onClick.mapToUnit --> Observer[Unit](_ => openTarget(target)),
+      ),
+    )
+  }
+
+  private def openTarget(target: ShareTarget): Unit = {
+    ShareTarget
+      .shareUrl(target, link(), shareTitle(), ShareRow.messengerAppIdVar.now())
+      .foreach(ShareRow.openExternally)
   }
 
   /** Feature-checked: the Clipboard API is absent in jsdom (which the frontend specs run under) and on older browsers,
@@ -153,5 +198,37 @@ final class ShareRow(
       // Closes on an outside click, same as `AppShell.renderSignInConfirmModal`'s `modal-backdrop`.
       div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false))),
     )
+  }
+}
+
+object ShareRow {
+
+  /** The Facebook app id [[ShareTarget.Messenger]] needs, cached here rather than in each row: it is the same for every
+    * reader and for the life of the deployment, so a second share row can draw its Messenger button at once while the
+    * one unauthenticated `GET /api/auth/providers` that confirms it is still in flight.
+    *
+    * `None` until the first answer arrives, and on a deployment with no Facebook credentials it stays that way — which
+    * is exactly when the Messenger button must not be offered.
+    */
+  private val messengerAppIdVar: Var[Option[String]] = Var(None)
+
+  /** Opens a share page. A hidden anchor is clicked rather than `window.open` called, the way `util.Download` hands the
+    * browser a file: a click-driven anchor gets past a popup blocker that would refuse a scripted window, and it is
+    * what lets `mailto:` reach the mail client instead of leaving an empty tab behind.
+    *
+    * Only an `http(s)` target gets a new tab. `rel` drops both the referrer and the opener, since every one of these
+    * pages belongs to somebody else.
+    */
+  private def openExternally(url: String): Unit = {
+    val anchor = dom.document.createElement("a").asInstanceOf[dom.html.Anchor]
+    anchor.href = url
+    if (!url.startsWith("mailto:")) {
+      anchor.setAttribute("target", "_blank")
+      anchor.setAttribute("rel", "noopener noreferrer")
+    }
+    anchor.style.display = "none"
+    dom.document.body.appendChild(anchor)
+    anchor.click()
+    dom.document.body.removeChild(anchor)
   }
 }

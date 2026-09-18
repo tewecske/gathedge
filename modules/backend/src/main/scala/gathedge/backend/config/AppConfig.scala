@@ -190,6 +190,14 @@ final case class AppConfig(
 
   def configuredOAuthProviders: List[OAuthProvider] = OAuthProvider.all.filter(isOAuthConfigured)
 
+  /** The Facebook app id, for the one use outside social sign-in: Messenger's send dialog, which the share row opens as
+    * `facebook.com/dialog/send?app_id=…`. Tied to [[isOAuthConfigured]] so one switch decides both — a deployment with
+    * no Facebook credentials offers neither the sign-in button nor the Messenger share button.
+    */
+  def messengerAppId: Option[String] = {
+    Option.when(isOAuthConfigured(OAuthProvider.Facebook))(oauth.facebook.clientId)
+  }
+
   /** No SMTP host means mail is logged rather than sent — fine in development, where the verification link is read off
     * stdout, and refused in production by [[productionIssues]] once verification is mandatory.
     */

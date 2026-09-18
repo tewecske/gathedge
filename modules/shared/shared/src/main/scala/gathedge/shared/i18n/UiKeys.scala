@@ -103,6 +103,13 @@ object UiKeys {
   val shareQrClose: String    = key("ui.share.qrClose")
   val shareQrError: String    = key("ui.share.qrError")
 
+  /** The per-network buttons beside them. `{0}` is the network's own name, which stays untranslated (the endonym rule
+    * the language picker and the brand follow), so one key covers all six. Email is not a brand and reads badly in that
+    * frame, so it has a line of its own.
+    */
+  val shareVia: String   = key("ui.share.via")
+  val shareEmail: String = key("ui.share.email")
+
   // -- Navigation ------------------------------------------------------------------------------
 
   val navMenu: String = key("ui.nav.menu")
