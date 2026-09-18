@@ -62,7 +62,9 @@ test('an account builds a tag and exports it to a file', async ({ browser }) => 
 
   await page.locator('input[type=search]').fill('mann');
   await wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
   await wordRow(page, 'der Mann').getByRole('button', { name: /^ember / }).click();
   await expect(wordRow(page, 'der Mann').getByRole('button', { name: /^ember / })).toHaveAttribute('aria-pressed', 'true');
 
@@ -114,7 +116,9 @@ test('another account imports that file and gets the tag, its word and its mark'
   // so this is how "the word and its mark came across" shows on that screen.
   await page.goto('/en/words?q=mann');
   await page.getByLabel('Collect into').selectOption(importedTagId!);
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
   await expect(wordRow(page, 'der Mann').getByRole('button', { name: /^ember / })).toHaveAttribute('aria-pressed', 'true');
 
   await context.close();

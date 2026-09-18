@@ -110,11 +110,15 @@ test('tagging a word mints a guest account and keeps the word', async () => {
   // The banner appears as soon as the guest exists, which is two requests before the word is actually
   // filed — reloading on the banner alone cancels the tag write in flight. The tick is the signal that
   // the write landed.
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 
   await page.reload();
   await page.locator('input[type=search]').fill('mann');
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 });
 
 test('a transfer code is shown once and carries the vocabulary to another browser', async ({ browser }) => {
@@ -134,7 +138,9 @@ test('a transfer code is shown once and carries the vocabulary to another browse
 
   await expect(elsewhere).toHaveURL(/\/en\/words/);
   await elsewhere.locator('input[type=search]').fill('mann');
-  await expect(wordRow(elsewhere, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(elsewhere, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
   await other.close();
 });
 
@@ -172,7 +178,9 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await page.waitForURL(/\/en\/$/);
 
   await page.goto('/en/words?q=mann');
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 });
 
 // The collect select says where a tick files, nothing more: picking a tag there does not narrow the
@@ -189,7 +197,9 @@ test('the collect select files ticks under a named tag, without touching the lis
 
   await page.locator('input[type=search]').fill('mann');
   await wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 
   // The tick really landed under "lesson1": the tag's own editor lists the word.
   await page.goto(`/en/tags/${tagId}`);
@@ -226,7 +236,7 @@ test('clicking a translation marks it as a practice answer, and files the transl
   await page.goto('/en/words?lang=hu&target=de&q=ember&mine=true');
   await expect(
     wordRow(page, 'ember').getByRole('button', { name: /my vocabulary/ }),
-  ).toContainText('✓');
+  ).toHaveAccessibleName(/remove from my vocabulary/);
 });
 
 // The word is unique per run because `words` is shared by every account: a fixed one would exist by the
@@ -243,7 +253,7 @@ test('a word the dictionary does not have can be added, with its article', async
   const form = page.locator('.card', { hasText: `Add “${newWord}”` });
   await expect(form.getByLabel('English')).toBeVisible();
   await form.getByLabel('Hungarian').fill('szilva');
-  await form.getByRole('button', { name: 'Add' }).click();
+  await form.getByRole('button', { name: 'Add', exact: true }).click();
 
   // Straight to the word: whatever anybody else already recorded about it is on that screen.
   await expect(page).toHaveURL(/\/en\/words\/\d+$/);
@@ -278,7 +288,9 @@ test('the detail page adds a translation in the language still missing', async (
 test('the detail page collects the word and marks a translation', async () => {
   // Still on the word from the previous test. It was added through the listing's form, so it arrived filed
   // under the collect tag: the tick here answers the same question the row's does.
-  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 
   // Adding the word through the listing form with a Hungarian translation already marked that pair, so the
   // chip starts pressed. Unmark it and mark it again — the chip is a control here, not a read-out.
@@ -294,13 +306,15 @@ test('the detail page collects the word and marks a translation', async () => {
 
   // Out of the vocabulary and back in: the tick is a control here, not a read-out of one.
   await page.getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('+');
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(/add to my vocabulary/);
   await page.getByRole('button', { name: /my vocabulary/ }).click();
-  await expect(page.getByRole('button', { name: /my vocabulary/ })).toContainText('✓');
+  await expect(page.getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(
+    /remove from my vocabulary/,
+  );
 
   // And the listing agrees, because there is one collect tag and not one per screen.
   await page.goto(`/en/words?lang=de&target=en&q=${newWord}`);
   await expect(
     page.locator('tr', { hasText: newWord }).getByRole('button', { name: /my vocabulary/ }),
-  ).toContainText('✓');
+  ).toHaveAccessibleName(/remove from my vocabulary/);
 });

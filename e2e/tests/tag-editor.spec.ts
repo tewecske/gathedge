@@ -145,7 +145,17 @@ test('multiselect: Select all then Delete selected clears the visible rows in on
   const addPair = async (source: string, target: string) => {
     await addSourceInput().fill(source);
     await addSourceInput().press('Enter');
+    // Committing the source hands focus to the answer box. Type this pair's answer, then wait for the box's
+    // own debounced dictionary search to catch up: pressing Enter while the dropdown still holds the previous
+    // answer's results commits that stale row instead of the word just typed (same race `addPair` above guards
+    // against).
+    await expect(addTargetInput()).toBeFocused();
+    const searched = page.waitForResponse(
+      (r) => r.url().includes('/api/words?') && new URL(r.url()).searchParams.get('q') === target,
+    );
     await addTargetInput().fill(target);
+    await expect(addTargetInput()).toHaveValue(target);
+    await searched;
     await addTargetInput().press('Enter');
     await expect(rowFor(target)).toBeVisible();
   };

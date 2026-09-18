@@ -106,7 +106,7 @@ test('a tag collects four words, each with its Hungarian translation marked', as
     // the reverse (Hungarian -> German) direction eligible too, further down.
     const form = page.locator('.card', { hasText: `Add “${term}”` });
     await form.getByLabel('Hungarian').fill(hu);
-    await form.getByRole('button', { name: 'Add' }).click();
+    await form.getByRole('button', { name: 'Add', exact: true }).click();
 
     await expect(page).toHaveURL(/\/en\/words\/\d+$/);
     await expect(page.getByText(hu)).toBeVisible();
