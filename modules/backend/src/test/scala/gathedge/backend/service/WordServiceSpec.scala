@@ -50,14 +50,15 @@ import java.util.concurrent.TimeUnit
   */
 object WordServiceSpec extends ZIOSpecDefault {
 
-  /** Twenty throwaway `users` rows, seeded as soon as a fresh schema exists, so a test's bare numeric owner id (`1L`,
+  /** 150 throwaway `users` rows, seeded as soon as a fresh schema exists, so a test's bare numeric owner id (`1L`,
     * `2L`, …) resolves to a real row instead of tripping `tags.user_id`'s foreign key — the tests below care about tag
     * ownership and isolation, not who the account actually is. `adminUserId` inserts its own real row afterward for the
     * one test that does care (`GlobalAdmin` reads `is_admin` off the table), so it never collides with these:
-    * `IDENTITY` keeps counting up from here, and twenty is comfortably past every bare id this file uses.
+    * `IDENTITY` keeps counting up from here. 150 covers every bare id this file uses, including the offset ids
+    * (`{block}+100`) a few shared suites use to keep an owner and a mismatched caller both fresh.
     */
   private def seedFixtureUsers(env: ZEnvironment[UserRepository]): Task[Unit] = {
-    ZIO.foreachDiscard(1 to 20)(_ => UserRepository.insertGuest("light", "en", 0L, None)).unit.provideEnvironment(env)
+    ZIO.foreachDiscard(1 to 150)(_ => UserRepository.insertGuest("light", "en", 0L, None)).unit.provideEnvironment(env)
   }
 
   private def repos: ZLayer[Any, Throwable, WordRepository & GroupRepository & UserRepository] = {
@@ -268,6 +269,8 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def coreSpec = {
     suite("core")(
+      // ISOLATED — each of these asserts an exact total/list/set over either the file's one shared "Haus"/"ház"
+      // dictionary entry or `listTags`' whole-schema visibility, so it needs a schema nothing else has touched.
       test("a search is a prefix of the word, commonest first, and carries its translations") {
         for {
           _    <- seed
@@ -280,7 +283,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           // No reader, so no tags — and no failure either.
           page.items.forall(_.tagIds.isEmpty),
         )
-      },
+      }.provide(layer),
       test("a search finds an accented word from an unaccented spelling, and vice versa") {
         for {
           _      <- seed
@@ -291,7 +294,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           hauser.items.map(_.word.text).contains("Häuser"),
           haz.items.map(_.word.text) == List("ház"),
         )
-      },
+      }.provide(layer),
       test("the translation filter narrows to words with a translation, in the target language or in any") {
         for {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
@@ -310,18 +313,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           target.items.map(_.word.text) == List("Haus"),
           any.items.map(_.word.text).toSet == Set("Haus", "hauen"),
         )
-      },
-      test("a German noun keeps its article, and two words differing only by it are two words") {
-        for {
-          lake <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Masculine)))
-          sea  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Feminine)))
-          page <- list(search = Some("see"))
-        } yield assertTrue(
-          lake.id != sea.id,
-          page.total == 2L,
-          page.items.flatMap(_.word.gender).toSet == Set(Gender.Masculine, Gender.Feminine),
-        )
-      },
+      }.provide(layer),
       test("adding a word that already exists answers the existing one, with everybody's translations on it") {
         for {
           _      <- seed
@@ -347,19 +339,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           detail.translations.map(_.word.text) == List("ház", "otthon"),
           detail.translations.map(_.origin) == List(WordService.dictionaryOrigin, WordService.userOrigin),
         )
-      },
-      test("the same translation twice from the same reader is a conflict; from another reader it is not") {
-        for {
-          _       <- seed
-          word    <- list(search = Some("haus")).map(_.items.head.word)
-          _       <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L)
-          again   <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L).either
-          another <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 2L)
-        } yield assertTrue(
-          again == Left(WordFailure.DuplicateTranslation),
-          another.translations.count(_.word.text == "otthon") == 2,
-        )
-      },
+      }.provide(layer),
       test("tagging is idempotent, and untagging something untagged is nothing to do") {
         for {
           _     <- seed
@@ -377,16 +357,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           gone.items.forall(_.tagIds.isEmpty),
           tags.map(_.name) == List("lesson1"),
         )
-      },
-      test("somebody else's tag answers the same as one that does not exist") {
-        for {
-          _      <- seed
-          tag    <- createTag("theirs", 1L)
-          word   <- list(search = Some("haus")).map(_.items.head.word)
-          denied <- WordService.tagWord(word.id, tag.id, 2L).either
-          absent <- WordService.tagWord(word.id, 9999L, 2L).either
-        } yield assertTrue(denied == Left(WordFailure.TagNotFound), absent == Left(WordFailure.TagNotFound))
-      },
+      }.provide(layer),
       test("a group member may now edit the group's tag content, but a non-member stranger still cannot") {
         for {
           _        <- seed
@@ -405,7 +376,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           byMember.items.head.tagIds == List(tag.id),
           stranger == Left(WordFailure.TagNotFound),
         )
-      },
+      }.provide(layer),
       test("a group member may mark a practice pair on the group's tag, charged against the tag owner's own quota") {
         for {
           _        <- seed
@@ -422,60 +393,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           byOwner.items.head.pairs == List(TaggedPair(tag.id, haz)),
           byMember.items.head.pairs == List(TaggedPair(tag.id, haz)),
         )
-      },
-      test("listTags marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
-        for {
-          _        <- seed
-          tag      <- createTag("shared4", 1L)
-          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
-          byOwner  <- WordService.listTags(Some(1L))
-          byMember <- WordService.listTags(Some(2L))
-          byOther  <- WordService.listTags(Some(3L))
-        } yield assertTrue(
-          byOwner.find(_.id == tag.id).exists(t => t.ownedByMe && t.editableByMe),
-          byMember.find(_.id == tag.id).exists(t => !t.ownedByMe && t.editableByMe),
-          // `listTags` still answers every tag globally, marked `ownedByMe` — a stranger sees the row, just not as
-          // editable, same as they see anyone else's ordinary tag.
-          byOther.find(_.id == tag.id).exists(t => !t.ownedByMe && !t.editableByMe),
-        )
-      },
-      test("getTag answers the one tag asked for, marked for its owner") {
-        for {
-          _       <- seed
-          tag     <- createTag("mine", 1L)
-          byOwner <- WordService.getTag(tag.id, Some(1L))
-        } yield assertTrue(byOwner == tag.copy(ownedByMe = true, editableByMe = true))
-      },
-      test("getTag marks somebody else's tag unowned, and a visitor with no session the same way") {
-        for {
-          _         <- seed
-          tag       <- createTag("theirGetTag", 1L)
-          byOther   <- WordService.getTag(tag.id, Some(2L))
-          byVisitor <- WordService.getTag(tag.id, None)
-        } yield assertTrue(
-          byOther == tag.copy(ownedByMe = false, editableByMe = false),
-          byVisitor == tag.copy(ownedByMe = false, editableByMe = false),
-        )
-      },
-      test("getTag marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
-        for {
-          _        <- seed
-          tag      <- createTag("sharedGetTag", 1L)
-          _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
-          byOwner  <- WordService.getTag(tag.id, Some(1L))
-          byMember <- WordService.getTag(tag.id, Some(2L))
-          byOther  <- WordService.getTag(tag.id, Some(3L))
-        } yield assertTrue(
-          byOwner.ownedByMe && byOwner.editableByMe,
-          !byMember.ownedByMe && byMember.editableByMe,
-          !byOther.ownedByMe && !byOther.editableByMe,
-        )
-      },
-      test("getTag answers TagNotFound for an id that names nothing") {
-        for {
-          missing <- WordService.getTag(9999L, Some(1L)).either
-        } yield assertTrue(missing == Left(WordFailure.TagNotFound))
-      },
+      }.provide(layer),
       test("listTagsPaged orders own tags first, then a group's, then everyone else's, when unsorted") {
         for {
           _        <- seed
@@ -494,7 +412,7 @@ object WordServiceSpec extends ZIOSpecDefault {
               scope = TagScope.All,
             )
         } yield assertTrue(page.items.map(_.id) == List(own.id, groupTag.id, other.id))
-      },
+      }.provide(layer),
       test("listTagsPaged sorts by name across every category once a column is asked for") {
         for {
           _        <- seed
@@ -512,7 +430,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                         scope = TagScope.All,
                       )
         } yield assertTrue(page.items.map(_.id) == List(groupTag.id, own.id, other.id))
-      },
+      }.provide(layer),
       test("listTagsPaged narrows by scope and by a case-insensitive name search") {
         for {
           _         <- seed
@@ -534,7 +452,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           otherOnly.items.map(_.id) == List(other.id),
           searched.items.map(_.id) == List(own.id),
         )
-      },
+      }.provide(layer),
       test("listTagsPaged counts every matching tag in `total` while slicing to one page") {
         for {
           _      <- seed
@@ -542,30 +460,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           first  <- WordService.listTagsPaged(Some(1L), 1, 2, Some(TagSort.name), false, None, TagScope.Mine)
           second <- WordService.listTagsPaged(Some(1L), 2, 2, Some(TagSort.name), false, None, TagScope.Mine)
         } yield assertTrue(first.items.size == 2, first.total == 3L, second.items.size == 1, second.total == 3L)
-      },
-      test("renaming or deleting a group's tag stays refused for a non-owner member — only content editing widened") {
-        for {
-          _       <- seed
-          tag     <- createTag("shared3", 1L)
-          _       <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
-          renamed <- WordService.renameTag(tag.id, "nope", 2L).either
-          deleted <- WordService.deleteTag(tag.id, 2L).either
-        } yield assertTrue(renamed == Left(WordFailure.TagNotFound), deleted == Left(WordFailure.TagNotFound))
-      },
-      test("a tag name is unique per account, case-insensitively, and may not be one the practice screen reserves") {
-        for {
-          _         <- createTag("Lesson1", 1L)
-          duplicate <- createTag("lesson1", 1L).either
-          otherUser <- createTag("lesson1", 2L).either
-          reserved  <- createTag("all_unknown", 1L).either
-          blank     <- createTag("   ", 1L).either
-        } yield assertTrue(
-          duplicate == Left(WordFailure.DuplicateTag),
-          otherUser.isRight,
-          reserved.isLeft,
-          blank.isLeft,
-        )
-      },
+      }.provide(layer),
       test(
         "renaming a tag keeps its own current name usable, refuses a different tag's, and answers TagNotFound for somebody else's"
       ) {
@@ -584,27 +479,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           denied == Left(WordFailure.TagNotFound),
           tags.map(_.name).toSet == Set("Renamed", "lesson2"),
         )
-      },
-      test("a version-guarded tag write refuses a stale version and advances the counter") {
-        for {
-          lesson <- createTag("lesson1", 1L)
-          v0     <- WordRepository.findTagById(lesson.id).map(_.get.version)
-          hit    <- WordRepository.updateTag(lesson.id, 1L, "renamed", "renamed", v0)
-          v1     <- WordRepository.findTagById(lesson.id).map(_.get.version)
-          stale  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v0)
-          name   <- WordRepository.findTagById(lesson.id).map(_.get.name)
-          fresh  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v1)
-        } yield assertTrue(v0 == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "renamed", fresh == 1L)
-      },
-      test("renameTag and deleteTag pass the version they read, so a plain edit advances the counter") {
-        for {
-          lesson <- createTag("lesson1", 1L)
-          _      <- WordService.renameTag(lesson.id, "renamed", 1L)
-          bumped <- WordRepository.findTagById(lesson.id).map(_.get.version)
-          _      <- WordService.deleteTag(lesson.id, 1L)
-          gone   <- WordRepository.findTagById(lesson.id)
-        } yield assertTrue(bumped == 1L, gone.isEmpty)
-      },
+      }.provide(layer),
       test("listing tags answers every account's, own first, each marked whether the caller owns it") {
         for {
           _      <- createTag("zebra", 2L)
@@ -620,79 +495,265 @@ object WordServiceSpec extends ZIOSpecDefault {
           theirs.map(_.ownedByMe) == List(true, false),
           mine.ownedByMe,
         )
-      },
-      test("copying a tag copies its word memberships and marked pairs as an independent snapshot") {
-        for {
-          _                       <- seed
-          shared                  <- createTag("shared", 1L)
-          page                    <- list(search = Some("haus"), reader = Some(1L))
-          word                     = page.items.head.word
-          haz                      = page.items.head.translations.head.wordId
-          _                       <- WordService.selectPair(word.id, shared.id, haz, 1L)
-          copy                    <- copyTag(shared.id, 2L)
-          seenBy2                 <- WordService.listTags(Some(2L))
-          snapshot                <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
-          write                   <- WordService.tagWord(word.id, copy.id, 2L).either
-          // Independence, both directions: a later change to either tag must not reach the other.
-          _                       <- WordService.deselectPair(word.id, shared.id, haz, 1L)
-          copyAfterSourceMutation <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
-          _                       <- WordService.untagWord(word.id, copy.id, 2L)
-          sourceAfterCopyMutation <- list(search = Some("haus"), reader = Some(1L), tagId = Some(shared.id))
-        } yield assertTrue(
-          copy.id != shared.id,
-          copy.name == "shared",
-          copy.ownedByMe,
-          // The snapshot carried both words the mark filed under the source tag over, not an empty tag — marking a
-          // pair puts the translation under the tag as well as the word, which `wordCount` counts.
-          copy.wordCount == 2L,
-          snapshot.items.head.pairs == List(TaggedPair(copy.id, haz)),
-          seenBy2.find(_.id == copy.id).exists(_.ownedByMe),
-          // The copy is the copier's own to write through, unlike the original.
-          write.isRight,
-          // Unmarking the source's pair afterward leaves the copy's mark exactly as it was at copy time.
-          copyAfterSourceMutation.items.head.pairs == List(TaggedPair(copy.id, haz)),
-          // And untagging the word from the copy afterward leaves the source's own membership untouched.
-          sourceAfterCopyMutation.items.map(_.word.id) == List(word.id),
-        )
-      },
-      test("copying answers TagNotFound for a missing source, and DuplicateTag for a name the copier already has") {
-        for {
-          original  <- createTag("theirs", 1L)
-          _         <- createTag("theirs", 2L) // the copier already has this name
-          absent    <- copyTag(9999L, 2L).either
-          collision <- copyTag(original.id, 2L).either
-        } yield assertTrue(
-          absent == Left(WordFailure.TagNotFound),
-          collision == Left(WordFailure.DuplicateTag),
-        )
-      },
-      test("'only mine' with no session is an empty answer rather than the whole dictionary") {
-        for {
-          _         <- seed
-          anonymous <- list(mine = true)
-          reader    <- list(mine = true, reader = Some(1L))
-        } yield assertTrue(anonymous.total == 0L, anonymous.items.isEmpty, reader.total == 0L)
-      },
-      test("only what the reader tagged is theirs, whoever else tagged it") {
-        for {
-          _     <- seed
-          mine  <- createTag("mine", 1L)
-          yours <- createTag("yours", 2L)
-          words <- list().map(_.items.map(_.word.id))
-          _     <- WordService.tagWord(words.head, mine.id, 1L)
-          _     <- WordService.tagWord(words(1), yours.id, 2L)
-          first <- list(mine = true, reader = Some(1L))
-          other <- list(mine = true, reader = Some(2L))
-        } yield assertTrue(
-          first.items.map(_.word.id) == List(words.head),
-          other.items.map(_.word.id) == List(words(1)),
-        )
-      },
-      test("a word that is not there is a NotFound rather than an empty detail") {
-        for {
-          missing <- WordService.detail(4242L, None).either
-        } yield assertTrue(missing == Left(WordFailure.NotFound))
-      },
+      }.provide(layer),
+      // SHARED — each of these is scoped to its own tag or word id (TagNotFound refusals, a single getTag/version
+      // check, a narrowly-filtered listing), so none of them cares what else exists in the schema. Order among them
+      // is still declaration order (`TestAspect.sequential`), which is load-bearing for the "only mine" pair at the
+      // end: the empty-answer case has to run before the one that tags a word, or it would see that tag too.
+      suite("shared")(
+        test("a German noun keeps its article, and two words differing only by it are two words") {
+          for {
+            lake <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Masculine)))
+            sea  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Feminine)))
+            page <- list(search = Some("see"))
+          } yield assertTrue(
+            lake.id != sea.id,
+            page.total == 2L,
+            page.items.flatMap(_.word.gender).toSet == Set(Gender.Masculine, Gender.Feminine),
+          )
+        },
+        test("the same translation twice from the same reader is a conflict; from another reader it is not") {
+          for {
+            _       <- seed
+            word    <- list(search = Some("haus")).map(_.items.head.word)
+            _       <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L)
+            again   <-
+              WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L).either
+            another <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 2L)
+          } yield assertTrue(
+            again == Left(WordFailure.DuplicateTranslation),
+            another.translations.count(_.word.text == "otthon") == 2,
+          )
+        },
+        test("somebody else's tag answers the same as one that does not exist") {
+          for {
+            _      <- seed
+            tag    <- createTag("theirs8", 1L)
+            word   <- list(search = Some("haus")).map(_.items.head.word)
+            denied <- WordService.tagWord(word.id, tag.id, 2L).either
+            absent <- WordService.tagWord(word.id, 9999L, 2L).either
+          } yield assertTrue(denied == Left(WordFailure.TagNotFound), absent == Left(WordFailure.TagNotFound))
+        },
+        test("listTags marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
+          for {
+            _        <- seed
+            tag      <- createTag("shared4", 1L)
+            _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+            byOwner  <- WordService.listTags(Some(1L))
+            byMember <- WordService.listTags(Some(2L))
+            byOther  <- WordService.listTags(Some(3L))
+          } yield assertTrue(
+            byOwner.find(_.id == tag.id).exists(t => t.ownedByMe && t.editableByMe),
+            byMember.find(_.id == tag.id).exists(t => !t.ownedByMe && t.editableByMe),
+            // `listTags` still answers every tag globally, marked `ownedByMe` — a stranger sees the row, just not as
+            // editable, same as they see anyone else's ordinary tag.
+            byOther.find(_.id == tag.id).exists(t => !t.ownedByMe && !t.editableByMe),
+          )
+        },
+        test("getTag answers the one tag asked for, marked for its owner") {
+          for {
+            _       <- seed
+            tag     <- createTag("mineGetTag", 1L)
+            byOwner <- WordService.getTag(tag.id, Some(1L))
+          } yield assertTrue(byOwner == tag.copy(ownedByMe = true, editableByMe = true))
+        },
+        test("getTag marks somebody else's tag unowned, and a visitor with no session the same way") {
+          for {
+            _         <- seed
+            tag       <- createTag("theirGetTag", 1L)
+            byOther   <- WordService.getTag(tag.id, Some(2L))
+            byVisitor <- WordService.getTag(tag.id, None)
+          } yield assertTrue(
+            byOther == tag.copy(ownedByMe = false, editableByMe = false),
+            byVisitor == tag.copy(ownedByMe = false, editableByMe = false),
+          )
+        },
+        test("getTag marks a group's tag editableByMe for a member who does not own it, but not for a stranger") {
+          for {
+            _        <- seed
+            tag      <- createTag("sharedGetTag", 1L)
+            _        <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+            byOwner  <- WordService.getTag(tag.id, Some(1L))
+            byMember <- WordService.getTag(tag.id, Some(2L))
+            byOther  <- WordService.getTag(tag.id, Some(3L))
+          } yield assertTrue(
+            byOwner.ownedByMe && byOwner.editableByMe,
+            !byMember.ownedByMe && byMember.editableByMe,
+            !byOther.ownedByMe && !byOther.editableByMe,
+          )
+        },
+        test("getTag answers TagNotFound for an id that names nothing") {
+          for {
+            missing <- WordService.getTag(9999L, Some(1L)).either
+          } yield assertTrue(missing == Left(WordFailure.TagNotFound))
+        },
+        test("renaming or deleting a group's tag stays refused for a non-owner member — only content editing widened") {
+          for {
+            _       <- seed
+            tag     <- createTag("shared3", 1L)
+            _       <- putInGroupWith(tag.id, ownerId = 1L, memberId = 2L)
+            renamed <- WordService.renameTag(tag.id, "nope", 2L).either
+            deleted <- WordService.deleteTag(tag.id, 2L).either
+          } yield assertTrue(renamed == Left(WordFailure.TagNotFound), deleted == Left(WordFailure.TagNotFound))
+        },
+        test("a tag name is unique per account, case-insensitively, and may not be one the practice screen reserves") {
+          for {
+            _         <- createTag("Lesson1Case", 1L)
+            duplicate <- createTag("lesson1case", 1L).either
+            otherUser <- createTag("lesson1case", 2L).either
+            reserved  <- createTag("all_unknown", 1L).either
+            blank     <- createTag("   ", 1L).either
+          } yield assertTrue(
+            duplicate == Left(WordFailure.DuplicateTag),
+            otherUser.isRight,
+            reserved.isLeft,
+            blank.isLeft,
+          )
+        },
+        test("a version-guarded tag write refuses a stale version and advances the counter") {
+          for {
+            lesson <- createTag("lesson1v23", 1L)
+            v0     <- WordRepository.findTagById(lesson.id).map(_.get.version)
+            hit    <- WordRepository.updateTag(lesson.id, 1L, "renamedv23", "renamedv23", v0)
+            v1     <- WordRepository.findTagById(lesson.id).map(_.get.version)
+            stale  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v0)
+            name   <- WordRepository.findTagById(lesson.id).map(_.get.name)
+            fresh  <- WordRepository.updateTag(lesson.id, 1L, "again", "again", v1)
+          } yield assertTrue(v0 == 0L, hit == 1L, v1 == 1L, stale == 0L, name == "renamedv23", fresh == 1L)
+        },
+        test("renameTag and deleteTag pass the version they read, so a plain edit advances the counter") {
+          for {
+            lesson <- createTag("lesson1v24", 1L)
+            _      <- WordService.renameTag(lesson.id, "renamedv24", 1L)
+            bumped <- WordRepository.findTagById(lesson.id).map(_.get.version)
+            _      <- WordService.deleteTag(lesson.id, 1L)
+            gone   <- WordRepository.findTagById(lesson.id)
+          } yield assertTrue(bumped == 1L, gone.isEmpty)
+        },
+        // These two run before "copying a tag..." below on purpose: that test marks a pair for user 1L on the
+        // shared "Haus" word, which would otherwise show up under "mine" here.
+        test("'only mine' with no session is an empty answer rather than the whole dictionary") {
+          for {
+            _         <- seed
+            anonymous <- list(mine = true)
+            reader    <- list(mine = true, reader = Some(1L))
+          } yield assertTrue(anonymous.total == 0L, anonymous.items.isEmpty, reader.total == 0L)
+        },
+        test("only what the reader tagged is theirs, whoever else tagged it") {
+          for {
+            _     <- seed
+            mine  <- createTag("mineTagged29", 1L)
+            yours <- createTag("yoursTagged29", 2L)
+            words <- list().map(_.items.map(_.word.id))
+            _     <- WordService.tagWord(words.head, mine.id, 1L)
+            _     <- WordService.tagWord(words(1), yours.id, 2L)
+            first <- list(mine = true, reader = Some(1L))
+            other <- list(mine = true, reader = Some(2L))
+          } yield assertTrue(
+            first.items.map(_.word.id) == List(words.head),
+            other.items.map(_.word.id) == List(words(1)),
+          )
+        },
+        test("copying a tag copies its word memberships and marked pairs as an independent snapshot") {
+          for {
+            _                       <- seed
+            shared                  <- createTag("shared", 1L)
+            page                    <- list(search = Some("haus"), reader = Some(1L))
+            word                     = page.items.head.word
+            haz                      = page.items.head.translations.head.wordId
+            _                       <- WordService.selectPair(word.id, shared.id, haz, 1L)
+            copy                    <- copyTag(shared.id, 2L)
+            seenBy2                 <- WordService.listTags(Some(2L))
+            snapshot                <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
+            write                   <- WordService.tagWord(word.id, copy.id, 2L).either
+            // Independence, both directions: a later change to either tag must not reach the other.
+            _                       <- WordService.deselectPair(word.id, shared.id, haz, 1L)
+            copyAfterSourceMutation <- list(search = Some("haus"), reader = Some(2L), tagId = Some(copy.id))
+            _                       <- WordService.untagWord(word.id, copy.id, 2L)
+            sourceAfterCopyMutation <- list(search = Some("haus"), reader = Some(1L), tagId = Some(shared.id))
+          } yield assertTrue(
+            copy.id != shared.id,
+            copy.name == "shared",
+            copy.ownedByMe,
+            // The snapshot carried both words the mark filed under the source tag over, not an empty tag — marking a
+            // pair puts the translation under the tag as well as the word, which `wordCount` counts.
+            copy.wordCount == 2L,
+            snapshot.items.head.pairs == List(TaggedPair(copy.id, haz)),
+            seenBy2.find(_.id == copy.id).exists(_.ownedByMe),
+            // The copy is the copier's own to write through, unlike the original.
+            write.isRight,
+            // Unmarking the source's pair afterward leaves the copy's mark exactly as it was at copy time.
+            copyAfterSourceMutation.items.head.pairs == List(TaggedPair(copy.id, haz)),
+            // And untagging the word from the copy afterward leaves the source's own membership untouched.
+            sourceAfterCopyMutation.items.map(_.word.id) == List(word.id),
+          )
+        },
+        test("copying answers TagNotFound for a missing source, and DuplicateTag for a name the copier already has") {
+          for {
+            original  <- createTag("theirsCopy", 1L)
+            _         <- createTag("theirsCopy", 2L) // the copier already has this name
+            absent    <- copyTag(9999L, 2L).either
+            collision <- copyTag(original.id, 2L).either
+          } yield assertTrue(
+            absent == Left(WordFailure.TagNotFound),
+            collision == Left(WordFailure.DuplicateTag),
+          )
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+      // SHARED — none of these three touches the shared "Haus" word's tagIds/pairs/translation list, so nothing
+      // else in this suite can pollute them.
+      suite("shared tail")(
+        test("a word that is not there is a NotFound rather than an empty detail") {
+          for {
+            missing <- WordService.detail(4242L, None).either
+          } yield assertTrue(missing == Left(WordFailure.NotFound))
+        },
+        test("a translation the word does not have is a NotFound, and so is somebody else's tag") {
+          for {
+            _        <- seed
+            tag      <- createTag("lesson1tail", 1L)
+            page     <- list(search = Some("hau"), reader = Some(1L))
+            word      = page.items.head.word
+            haz       = page.items.head.translations.head.wordId
+            unrelated = page.items.map(_.word.id).filterNot(_ == word.id).head
+            notEdge  <- WordService.selectPair(word.id, tag.id, unrelated, 1L).either
+            noWord   <- WordService.selectPair(4242L, tag.id, haz, 1L).either
+            theirs   <- WordService.selectPair(word.id, tag.id, haz, 2L).either
+            noTag    <- WordService.deselectPair(word.id, 9999L, haz, 1L).either
+          } yield assertTrue(
+            notEdge == Left(WordFailure.NotFound),
+            noWord == Left(WordFailure.NotFound),
+            theirs == Left(WordFailure.TagNotFound),
+            noTag == Left(WordFailure.TagNotFound),
+          )
+        },
+        test("a word added with a translation is marked for practice under the tag it is filed in") {
+          for {
+            _      <- seed
+            tag    <- createTag("lesson1brot", 1L)
+            detail <- WordService.create(
+                        CreateWordRequest(
+                          WordLanguage.De,
+                          "Brot",
+                          PartOfSpeech.Noun,
+                          Some(Gender.Neuter),
+                          List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
+                          List(tag.id),
+                        ),
+                        userId = 1L,
+                      )
+            page   <- list(search = Some("brot"), reader = Some(1L))
+            kenyer  = detail.translations.find(_.word.text == "kenyér").map(_.word.id).getOrElse(0L)
+          } yield assertTrue(
+            // A translation somebody bothered to type is the clearest statement of "this is the answer I want", so the
+            // form produces the same state a chip click does.
+            page.items.head.pairs == List(TaggedPair(tag.id, kenyer)),
+            page.items.head.tagIds == List(tag.id),
+          )
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+      // ISOLATED — the rest of this tail reads or writes the shared "Haus" word's tagIds/pairs/translations
+      // exactly, or the whole unfiltered German listing, so each needs a schema nothing else has touched.
       test("a reader may remove their own translation and nobody else's") {
         for {
           _       <- seed
@@ -709,7 +770,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           dict == Left(WordFailure.NotFound),
           after.translations.map(_.word.text) == List("ház"),
         )
-      },
+      }.provide(layer),
       test("marking a translation files both words under the tag and records the pair both ways") {
         for {
           _      <- seed
@@ -736,7 +797,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           mirror.items.head.tagIds == List(tag.id),
           mirror.items.head.pairs == List(TaggedPair(tag.id, word.id)),
         )
-      },
+      }.provide(layer),
       test("marking twice is nothing to do, and unmarking leaves both words tagged") {
         for {
           _      <- seed
@@ -759,26 +820,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           after.items.head.tagIds == List(tag.id),
           mirror.items.head.tagIds == List(tag.id),
         )
-      },
-      test("a translation the word does not have is a NotFound, and so is somebody else's tag") {
-        for {
-          _        <- seed
-          tag      <- createTag("lesson1", 1L)
-          page     <- list(search = Some("hau"), reader = Some(1L))
-          word      = page.items.head.word
-          haz       = page.items.head.translations.head.wordId
-          unrelated = page.items.map(_.word.id).filterNot(_ == word.id).head
-          notEdge  <- WordService.selectPair(word.id, tag.id, unrelated, 1L).either
-          noWord   <- WordService.selectPair(4242L, tag.id, haz, 1L).either
-          theirs   <- WordService.selectPair(word.id, tag.id, haz, 2L).either
-          noTag    <- WordService.deselectPair(word.id, 9999L, haz, 1L).either
-        } yield assertTrue(
-          notEdge == Left(WordFailure.NotFound),
-          noWord == Left(WordFailure.NotFound),
-          theirs == Left(WordFailure.TagNotFound),
-          noTag == Left(WordFailure.TagNotFound),
-        )
-      },
+      }.provide(layer),
       test("a marked translation is carried even when it falls outside the three a row shows") {
         for {
           _        <- seed
@@ -798,7 +840,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           reader.items.head.translations.map(_.wordId).contains(last),
           reader.items.head.pairs == List(TaggedPair(tag.id, last)),
         )
-      },
+      }.provide(layer),
       test("untagging a word clears its practice pairs in that tag, both ways round") {
         for {
           _      <- seed
@@ -817,7 +859,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           mirror.items.head.tagIds == List(tag.id),
           mirror.items.head.pairs.isEmpty,
         )
-      },
+      }.provide(layer),
       test("a reader sees only their own marks") {
         for {
           _     <- seed
@@ -834,31 +876,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           first.items.head.pairs == List(TaggedPair(mine.id, haz)),
           other.items.head.pairs == List(TaggedPair(yours.id, haz)),
         )
-      },
-      test("a word added with a translation is marked for practice under the tag it is filed in") {
-        for {
-          _      <- seed
-          tag    <- createTag("lesson1", 1L)
-          detail <- WordService.create(
-                      CreateWordRequest(
-                        WordLanguage.De,
-                        "Brot",
-                        PartOfSpeech.Noun,
-                        Some(Gender.Neuter),
-                        List(NewTranslation(WordLanguage.Hu, "kenyér", None, None)),
-                        List(tag.id),
-                      ),
-                      userId = 1L,
-                    )
-          page   <- list(search = Some("brot"), reader = Some(1L))
-          kenyer  = detail.translations.find(_.word.text == "kenyér").map(_.word.id).getOrElse(0L)
-        } yield assertTrue(
-          // A translation somebody bothered to type is the clearest statement of "this is the answer I want", so the
-          // form produces the same state a chip click does.
-          page.items.head.pairs == List(TaggedPair(tag.id, kenyer)),
-          page.items.head.tagIds == List(tag.id),
-        )
-      },
+      }.provide(layer),
       test(
         "a main word and variant type link the new word into word_forms, idempotently, and a foreign language is refused"
       ) {
@@ -917,7 +935,7 @@ object WordServiceSpec extends ZIOSpecDefault {
             WordFailure.ValidationError(Map("mainWordId" -> MessageRef(MessageKeys.wordMainWordLanguageMismatch)))
           ),
         )
-      },
+      }.provide(layer),
       test("an unknown sort column falls back to the listing's own order rather than failing") {
         for {
           _       <- seed
@@ -955,7 +973,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           unknown.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
           byText.items.map(_.word.text).headOption.contains("Haus"),
         )
-      },
+      }.provide(layer),
       test("newest in tag orders by the tick, not by the word, and only while a tag narrows the listing") {
         for {
           _      <- seed
@@ -978,7 +996,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           // Nothing to order by without a tag, so the listing keeps commonest-first rather than failing.
           noTag.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
         )
-      },
+      }.provide(layer),
       test("mainOnly drops a word that is itself a form of another word") {
         for {
           _        <- seed
@@ -1003,7 +1021,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           !mainOnly.items.map(_.word.text).contains("Häuser"),
           mainOnly.total == 0L,
         )
-      },
+      }.provide(layer),
       test("mainOnly takes a word back once its last form relation is deleted") {
         for {
           _       <- seed
@@ -1033,8 +1051,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           freed.items.map(_.word.text) == List("Häuser"),
           freed.total == 1L,
         )
-      },
-    ).provide(layer)
+      }.provide(layer),
+    )
   }
 
   /** The two standing quotas (`AppConfig.quotas`), each run against thresholds small enough to reach in a handful of
@@ -1225,104 +1243,15 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def bulkUploadSpec = {
     suite("bulk upload")(
-      test("a matched word carries whether it has a translation in any language, not only the counterpart") {
-        for {
-          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          hit     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
-          // Into English, not the requested (Hungarian) counterpart.
-          _       <- WordRepository.insertTranslationPair(haus.id, hit.id, WordService.dictionaryOrigin, None, 0L)
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
-          matched  = preview.matched.find(_.word.text == "Haus")
-        } yield assertTrue(
-          matched.exists(_.translations.isEmpty),
-          matched.exists(_.hasAnyTranslation),
-        )
-      },
-      test(
-        "preview matches the source language first, drops a translation that was itself imported, and writes nothing"
-      ) {
-        for {
-          _           <- seed
-          tag         <- createTag("upload", 1L)
-          wordsBefore <- ZIO.serviceWithZIO[WordRepository](_.countWords)
-          tagsBefore  <- WordRepository.countTagsOwnedBy(1L)
-          preview     <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
-          wordsAfter  <- ZIO.serviceWithZIO[WordRepository](_.countWords)
-          tagsAfter   <- WordRepository.countTagsOwnedBy(1L)
-          haus         = preview.matched.find(_.word.text == "Haus")
-        } yield assertTrue(
-          // "Haus" and "ház" are a linked pair and both were imported: "Haus" is kept and badged, "ház" is not shown
-          // again on its own. "brandneu" is in neither language.
-          preview.matched.map(_.word.text) == List("Haus"),
-          haus.exists(_.translationInImport),
-          preview.unmatched == List("brandneu"),
-          // The translation the dictionary already links to "Haus", rendered with its article since "Haus" is a
-          // German neuter noun.
-          haus.exists(_.translations.map(_.text) == List("ház")),
-          // A preview is a read: nothing new was written beyond the tag the test itself created.
-          wordsAfter == wordsBefore,
-          tagsAfter == tagsBefore,
-        )
-      },
-      test("the matched list follows the order the words were written, interleaving the two languages") {
-        for {
-          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hello", pos = PartOfSpeech.Other))
-          _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "world"))
-          tag     <- createTag("upload", 1L)
-          // "Haus" is the target language and sits between two source-language words; the review list keeps that order
-          // rather than grouping every source match ahead of every target match.
-          preview <- WordService.bulkUploadPreview(tag.id, "hello Haus world", WordLanguage.En, WordLanguage.De, 1L)
-        } yield assertTrue(preview.matched.map(_.word.text) == List("hello", "Haus", "world"))
-      },
-      test(
-        "a word whose dictionary translation was also imported shows once, badged, with the translation row dropped"
-      ) {
-        for {
-          dog     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
-          perro   <-
-            WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "perro", gender = Some(Gender.Masculine)))
-          _       <- WordRepository.insertTranslationPair(dog.id, perro.id, WordService.dictionaryOrigin, None, 0L)
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "perro dog", WordLanguage.En, WordLanguage.Es, 1L)
-          dogMatch = preview.matched.find(_.word.text == "dog")
-        } yield assertTrue(
-          // "perro" is not shown on its own — it is the dictionary translation of "dog", which was also imported.
-          preview.matched.map(_.word.text) == List("dog"),
-          dogMatch.exists(_.translationInImport),
-          dogMatch.exists(_.exactTranslationWordId.contains(perro.id)),
-          dogMatch.exists(_.translations.map(_.text) == List("el perro")),
-        )
-      },
-      test(
-        "matched dictionary rows sharing one bare text collapse to at most one noun and one non-noun, the way a reader thinks of it as one word"
-      ) {
-        for {
-          _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", rank = 1))
-          gendered <-
-            WordRepository.ensureWord(
-              dictionaryWord(WordLanguage.De, "Bitte", gender = Some(Gender.Feminine), rank = 2)
-            )
-          _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Other, rank = 3))
-          adverb   <-
-            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Adverb, rank = 4))
-          hu       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kérem", rank = 1))
-          _        <- WordRepository.insertTranslationPair(adverb.id, hu.id, WordService.dictionaryOrigin, None, 0L)
-          tag      <- createTag("upload", 1L)
-          preview  <- WordService.bulkUploadPreview(tag.id, "bitte", WordLanguage.De, WordLanguage.Hu, 1L)
-        } yield assertTrue(
-          // Of the two noun rows, the gendered one wins over the genderless duplicate; of the two non-noun rows, the
-          // translated adverb wins over the untranslated one with no other signal to prefer it.
-          preview.matched.map(_.word.id).toSet == Set(gendered.id, adverb.id)
-        )
-      },
+      // ISOLATED — one depends on the dictionary having no other short near-miss word for its fuzzy suggestion check
+      // to stay silent; the other calls `seed`/`seedTranslations` a second time, which duplicates `Haus`'s existing
+      // translation edges rather than no-op'ing like `ensureWord` does for the words themselves.
       test("a leading der/die/das merges into the noun that follows it as one token, only when German is asked for") {
         for {
-          tag         <- createTag("upload", 1L)
-          germanSide  <- WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag         <- createTag("upload", 6L)
+          germanSide  <- WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.De, WordLanguage.Hu, 6L)
           neitherSide <-
-            WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.En, WordLanguage.Hu, 1L)
+            WordService.bulkUploadPreview(tag.id, "der Tisch neuwort", WordLanguage.En, WordLanguage.Hu, 6L)
         } yield assertTrue(
           // German is one of the two declared languages: "der" merges into "der tisch" rather than showing up as its
           // own spurious token; the merge also marks it a noun, so it displays articled and capitalized. "neuwort"
@@ -1331,102 +1260,13 @@ object WordServiceSpec extends ZIOSpecDefault {
           // Neither declared language is German: no merging happens, so "der" and "tisch" are two separate tokens.
           neitherSide.unmatched.toSet == Set("der", "tisch", "neuwort"),
         )
-      },
-      test(
-        "a bare German word and its der/die/das-prefixed variant collapse into one unmatched entry, capitalized as a noun"
-      ) {
-        for {
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "Hund der Hund", WordLanguage.De, WordLanguage.Hu, 1L)
-        } yield assertTrue(
-          // Neither "hund" nor "der hund" is in the dictionary; since one of the two typed variants carried an
-          // article, the pair collapses to one entry rather than two, capitalized and articled as a noun.
-          preview.unmatched == List("der Hund")
-        )
-      },
-      test("preview answers TagNotFound for somebody else's tag and one that does not exist") {
-        for {
-          tag    <- createTag("theirs", 1L)
-          denied <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 2L).either
-          absent <- WordService.bulkUploadPreview(9999L, "hello", WordLanguage.En, WordLanguage.De, 1L).either
-        } yield assertTrue(
-          denied == Left(BulkUploadFailure.TagNotFound),
-          absent == Left(BulkUploadFailure.TagNotFound),
-        )
-      },
-      test("an empty file, or one over the byte limit, is refused before anything is written") {
-        val invalidFile =
-          BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
-        for {
-          tag       <- createTag("upload", 1L)
-          blank     <- WordService.bulkUploadPreview(tag.id, "   ", WordLanguage.En, WordLanguage.De, 1L).either
-          huge      <-
-            WordService
-              .bulkUploadPreview(
-                tag.id,
-                "a" * (WordService.maxBulkUploadBytes + 1),
-                WordLanguage.En,
-                WordLanguage.De,
-                1L,
-              )
-              .either
-          tagsAfter <- WordRepository.countTagsOwnedBy(1L)
-        } yield assertTrue(
-          blank == Left(invalidFile),
-          huge == Left(invalidFile),
-          // Neither refusal wrote anything beyond the tag the test itself already owned.
-          tagsAfter == 1L,
-        )
-      },
-      test("confirm answers TagNotFound for somebody else's tag and one that does not exist") {
-        for {
-          tag    <- createTag("theirs", 1L)
-          denied <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 2L).either
-          absent <-
-            WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 1L).either
-        } yield assertTrue(
-          denied == Left(BulkUploadFailure.TagNotFound),
-          absent == Left(BulkUploadFailure.TagNotFound),
-        )
-      },
-      test(
-        "confirm tags an accepted matched word and marks its selected translation, leaving a declined one untouched"
-      ) {
-        for {
-          _        <- seed
-          tag      <- createTag("upload", 1L)
-          preview  <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
-          haus      = preview.matched.find(_.word.text == "Haus").get
-          selection = BulkUploadSelectedTranslation(haus.word.id, haus.translations.head.wordId)
-          added    <-
-            WordService.bulkUploadConfirm(
-              tag.id,
-              WordLanguage.De,
-              WordLanguage.Hu,
-              List(haus.word.id),
-              List(selection),
-              Nil,
-              Nil,
-              1L,
-            )
-          dePage   <- list(reader = Some(1L), tagId = Some(tag.id))
-          huPage   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
-        } yield assertTrue(
-          // Accepting "Haus" with its one selected translation still tags two words: marking a pair's translation
-          // files both words under the tag, even though only "Haus" was named. "brandneu" was never previewed as a
-          // match, so accepting nothing for it leaves it out entirely.
-          added == 2,
-          dePage.items.map(_.word.text) == List("Haus"),
-          huPage.items.map(_.word.text) == List("ház"),
-        )
-      },
+      }.provide(layer),
       test("confirm marks only the selected translation, not every one the dictionary has for the word") {
         for {
           _        <- seed
           hunIds   <- seedTranslations
-          tag      <- createTag("upload", 1L)
-          preview  <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag      <- createTag("upload", 12L)
+          preview  <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 12L)
           haus      = preview.matched.find(_.word.text == "Haus").get
           picked    = hunIds(1) // "lakás" — deliberately not the first (rank-commonest) translation
           selection = BulkUploadSelectedTranslation(haus.word.id, picked)
@@ -1439,99 +1279,287 @@ object WordServiceSpec extends ZIOSpecDefault {
               List(selection),
               Nil,
               Nil,
-              1L,
+              12L,
             )
-          huPage   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+          huPage   <- list(reader = Some(12L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
         } yield assertTrue(
           // The preview offered four Hungarian translations; only "lakás", the one the reader picked, gets tagged.
           haus.translations.size == 4,
           huPage.items.map(_.word.text) == List("lakás"),
         )
-      },
-      test("a manual pair creates both new words, links them as a translation, and tags and marks both") {
-        for {
-          tag    <- createTag("upload", 1L)
-          pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          added  <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
-          dePage <- list(reader = Some(1L), tagId = Some(tag.id))
-          huPage <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
-        } yield assertTrue(
-          added == 2,
-          dePage.items.map(_.word.text.toLowerCase) == List("zzzsource"),
-          huPage.items.map(_.word.text.toLowerCase) == List("zzztarget"),
-          dePage.items.head.pairs.nonEmpty,
-          huPage.items.head.pairs.nonEmpty,
-        )
-      },
-      test("confirming the same manual pair twice inserts its translation edge only once") {
-        for {
-          tag    <- createTag("upload", 1L)
-          pair    = BulkUploadManualPair("zzzsource", "zzztarget")
-          first  <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
-          after1 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          second <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
-          after2 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-        } yield assertTrue(first == 2, second == 2, after1 == after2)
-      },
-      test("a manual pair's German side keeps the gender its article named, is created as a noun, and is capitalized") {
-        for {
-          tag    <- createTag("upload", 1L)
-          pair    = BulkUploadManualPair("der zzztisch", "zzzasztal")
-          _      <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 1L)
-          dePage <- list(reader = Some(1L), tagId = Some(tag.id))
-        } yield assertTrue(
-          // German nouns are always capitalized; the target side (no article, not a noun) is left as typed.
-          dePage.items.map(_.word.text) == List("Zzztisch"),
-          dePage.items.head.word.gender.contains(Gender.Masculine),
-        )
-      },
-      test("a standalone German word with an article is created capitalized") {
-        for {
-          tag   <- createTag("upload", 1L)
-          word   = BulkUploadManualWord("die zzzblume", WordLanguage.De)
-          added <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
-          page  <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.De, target = WordLanguage.En)
-        } yield assertTrue(
-          added == 1,
-          page.items.map(_.word.text) == List("Zzzblume"),
-          page.items.head.word.gender.contains(Gender.Feminine),
-        )
-      },
-      test("a standalone word is created and tagged with no translation link") {
-        for {
-          tag    <- createTag("upload", 1L)
-          word    = BulkUploadManualWord("zzzlonewolf", WordLanguage.En)
-          before <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          added  <-
-            WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 1L)
-          after  <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
-          page   <- list(reader = Some(1L), tagId = Some(tag.id), language = WordLanguage.En, target = WordLanguage.De)
-        } yield assertTrue(
-          added == 1,
-          page.items.map(_.word.text.toLowerCase) == List("zzzlonewolf"),
-          page.items.head.pairs.isEmpty,
-          after == before,
-        )
-      },
-      test("the rate-limit budget is shared between preview and confirm") {
-        for {
-          tag     <- createTag("upload", 1L)
-          warmup  <- ZIO.foreach(1 to RateLimiter.maxAttempts)(n => {
-                       if (n % 2 == 0) {
-                         WordService
-                           .bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 1L)
-                           .either
-                       } else
-                         WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
-                     })
-          blocked <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 1L).either
-        } yield assertTrue(warmup.forall(_.isRight), blocked == Left(BulkUploadFailure.RateLimited))
-      },
-    ).provide(layer)
+      }.provide(layer),
+      suite("shared")(
+        test("a matched word carries whether it has a translation in any language, not only the counterpart") {
+          for {
+            haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+            hit     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hit"))
+            // Into English, not the requested (Hungarian) counterpart.
+            _       <- WordRepository.insertTranslationPair(haus.id, hit.id, WordService.dictionaryOrigin, None, 0L)
+            tag     <- createTag("upload", 1L)
+            preview <- WordService.bulkUploadPreview(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
+            matched  = preview.matched.find(_.word.text == "Haus")
+          } yield assertTrue(
+            matched.exists(_.translations.isEmpty),
+            matched.exists(_.hasAnyTranslation),
+          )
+        },
+        test(
+          "preview matches the source language first, drops a translation that was itself imported, and writes nothing"
+        ) {
+          for {
+            _           <- seed
+            tag         <- createTag("upload", 102L)
+            wordsBefore <- ZIO.serviceWithZIO[WordRepository](_.countWords)
+            tagsBefore  <- WordRepository.countTagsOwnedBy(102L)
+            preview     <-
+              WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 102L)
+            wordsAfter  <- ZIO.serviceWithZIO[WordRepository](_.countWords)
+            tagsAfter   <- WordRepository.countTagsOwnedBy(102L)
+            haus         = preview.matched.find(_.word.text == "Haus")
+          } yield assertTrue(
+            // "Haus" and "ház" are a linked pair and both were imported: "Haus" is kept and badged, "ház" is not shown
+            // again on its own. "brandneu" is in neither language.
+            preview.matched.map(_.word.text) == List("Haus"),
+            haus.exists(_.translationInImport),
+            preview.unmatched == List("brandneu"),
+            // The translation the dictionary already links to "Haus", rendered with its article since "Haus" is a
+            // German neuter noun.
+            haus.exists(_.translations.map(_.text) == List("ház")),
+            // A preview is a read: nothing new was written beyond the tag the test itself created.
+            wordsAfter == wordsBefore,
+            tagsAfter == tagsBefore,
+          )
+        },
+        test("the matched list follows the order the words were written, interleaving the two languages") {
+          for {
+            _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+            _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hello", pos = PartOfSpeech.Other))
+            _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "world"))
+            tag     <- createTag("upload", 3L)
+            // "Haus" is the target language and sits between two source-language words; the review list keeps that order
+            // rather than grouping every source match ahead of every target match.
+            preview <- WordService.bulkUploadPreview(tag.id, "hello Haus world", WordLanguage.En, WordLanguage.De, 3L)
+          } yield assertTrue(preview.matched.map(_.word.text) == List("hello", "Haus", "world"))
+        },
+        test(
+          "a word whose dictionary translation was also imported shows once, badged, with the translation row dropped"
+        ) {
+          for {
+            dog     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
+            perro   <-
+              WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "perro", gender = Some(Gender.Masculine)))
+            _       <- WordRepository.insertTranslationPair(dog.id, perro.id, WordService.dictionaryOrigin, None, 0L)
+            tag     <- createTag("upload", 4L)
+            preview <- WordService.bulkUploadPreview(tag.id, "perro dog", WordLanguage.En, WordLanguage.Es, 4L)
+            dogMatch = preview.matched.find(_.word.text == "dog")
+          } yield assertTrue(
+            // "perro" is not shown on its own — it is the dictionary translation of "dog", which was also imported.
+            preview.matched.map(_.word.text) == List("dog"),
+            dogMatch.exists(_.translationInImport),
+            dogMatch.exists(_.exactTranslationWordId.contains(perro.id)),
+            dogMatch.exists(_.translations.map(_.text) == List("el perro")),
+          )
+        },
+        test(
+          "matched dictionary rows sharing one bare text collapse to at most one noun and one non-noun, the way a reader thinks of it as one word"
+        ) {
+          for {
+            _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bitte", rank = 1))
+            gendered <-
+              WordRepository.ensureWord(
+                dictionaryWord(WordLanguage.De, "Bitte", gender = Some(Gender.Feminine), rank = 2)
+              )
+            _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Other, rank = 3))
+            adverb   <-
+              WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bitte", pos = PartOfSpeech.Adverb, rank = 4))
+            hu       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kérem", rank = 1))
+            _        <- WordRepository.insertTranslationPair(adverb.id, hu.id, WordService.dictionaryOrigin, None, 0L)
+            tag      <- createTag("upload", 5L)
+            preview  <- WordService.bulkUploadPreview(tag.id, "bitte", WordLanguage.De, WordLanguage.Hu, 5L)
+          } yield assertTrue(
+            // Of the two noun rows, the gendered one wins over the genderless duplicate; of the two non-noun rows, the
+            // translated adverb wins over the untranslated one with no other signal to prefer it.
+            preview.matched.map(_.word.id).toSet == Set(gendered.id, adverb.id)
+          )
+        },
+        test(
+          "a bare German word and its der/die/das-prefixed variant collapse into one unmatched entry, capitalized as a noun"
+        ) {
+          for {
+            tag     <- createTag("upload", 7L)
+            preview <- WordService.bulkUploadPreview(tag.id, "Hund der Hund", WordLanguage.De, WordLanguage.Hu, 7L)
+          } yield assertTrue(
+            // Neither "hund" nor "der hund" is in the dictionary; since one of the two typed variants carried an
+            // article, the pair collapses to one entry rather than two, capitalized and articled as a noun.
+            preview.unmatched == List("der Hund")
+          )
+        },
+        test("preview answers TagNotFound for somebody else's tag and one that does not exist") {
+          for {
+            tag    <- createTag("theirs", 8L)
+            denied <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 108L).either
+            absent <- WordService.bulkUploadPreview(9999L, "hello", WordLanguage.En, WordLanguage.De, 8L).either
+          } yield assertTrue(
+            denied == Left(BulkUploadFailure.TagNotFound),
+            absent == Left(BulkUploadFailure.TagNotFound),
+          )
+        },
+        test("an empty file, or one over the byte limit, is refused before anything is written") {
+          val invalidFile =
+            BulkUploadFailure.ValidationError(Map("content" -> MessageRef(MessageKeys.wordBulkUploadInvalidFile)))
+          for {
+            tag       <- createTag("upload", 9L)
+            blank     <- WordService.bulkUploadPreview(tag.id, "   ", WordLanguage.En, WordLanguage.De, 9L).either
+            huge      <-
+              WordService
+                .bulkUploadPreview(
+                  tag.id,
+                  "a" * (WordService.maxBulkUploadBytes + 1),
+                  WordLanguage.En,
+                  WordLanguage.De,
+                  9L,
+                )
+                .either
+            tagsAfter <- WordRepository.countTagsOwnedBy(9L)
+          } yield assertTrue(
+            blank == Left(invalidFile),
+            huge == Left(invalidFile),
+            // Neither refusal wrote anything beyond the tag the test itself already owned.
+            tagsAfter == 1L,
+          )
+        },
+        test("confirm answers TagNotFound for somebody else's tag and one that does not exist") {
+          for {
+            tag    <- createTag("theirs", 10L)
+            denied <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 110L).either
+            absent <-
+              WordService.bulkUploadConfirm(9999L, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 10L).either
+          } yield assertTrue(
+            denied == Left(BulkUploadFailure.TagNotFound),
+            absent == Left(BulkUploadFailure.TagNotFound),
+          )
+        },
+        test(
+          "confirm tags an accepted matched word and marks its selected translation, leaving a declined one untouched"
+        ) {
+          for {
+            _        <- seed
+            tag      <- createTag("upload", 11L)
+            preview  <- WordService.bulkUploadPreview(tag.id, "Haus ház brandneu", WordLanguage.De, WordLanguage.Hu, 11L)
+            haus      = preview.matched.find(_.word.text == "Haus").get
+            selection = BulkUploadSelectedTranslation(haus.word.id, haus.translations.head.wordId)
+            added    <-
+              WordService.bulkUploadConfirm(
+                tag.id,
+                WordLanguage.De,
+                WordLanguage.Hu,
+                List(haus.word.id),
+                List(selection),
+                Nil,
+                Nil,
+                11L,
+              )
+            dePage   <- list(reader = Some(11L), tagId = Some(tag.id))
+            huPage   <-
+              list(reader = Some(11L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+          } yield assertTrue(
+            // Accepting "Haus" with its one selected translation still tags two words: marking a pair's translation
+            // files both words under the tag, even though only "Haus" was named. "brandneu" was never previewed as a
+            // match, so accepting nothing for it leaves it out entirely.
+            added == 2,
+            dePage.items.map(_.word.text) == List("Haus"),
+            huPage.items.map(_.word.text) == List("ház"),
+          )
+        },
+        test("a manual pair creates both new words, links them as a translation, and tags and marks both") {
+          for {
+            tag    <- createTag("upload", 13L)
+            pair    = BulkUploadManualPair("zzzsource", "zzztarget")
+            added  <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 13L)
+            dePage <- list(reader = Some(13L), tagId = Some(tag.id))
+            huPage <-
+              list(reader = Some(13L), tagId = Some(tag.id), language = WordLanguage.Hu, target = WordLanguage.De)
+          } yield assertTrue(
+            added == 2,
+            dePage.items.map(_.word.text.toLowerCase) == List("zzzsource"),
+            huPage.items.map(_.word.text.toLowerCase) == List("zzztarget"),
+            dePage.items.head.pairs.nonEmpty,
+            huPage.items.head.pairs.nonEmpty,
+          )
+        },
+        test("confirming the same manual pair twice inserts its translation edge only once") {
+          for {
+            tag    <- createTag("upload", 14L)
+            pair    = BulkUploadManualPair("zzzsource", "zzztarget")
+            first  <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 14L)
+            after1 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+            second <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 14L)
+            after2 <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+          } yield assertTrue(first == 2, second == 2, after1 == after2)
+        },
+        test(
+          "a manual pair's German side keeps the gender its article named, is created as a noun, and is capitalized"
+        ) {
+          for {
+            tag    <- createTag("upload", 15L)
+            pair    = BulkUploadManualPair("der zzztisch", "zzzasztal")
+            _      <- WordService.bulkUploadConfirm(tag.id, WordLanguage.De, WordLanguage.Hu, Nil, Nil, List(pair), Nil, 15L)
+            dePage <- list(reader = Some(15L), tagId = Some(tag.id))
+          } yield assertTrue(
+            // German nouns are always capitalized; the target side (no article, not a noun) is left as typed.
+            dePage.items.map(_.word.text) == List("Zzztisch"),
+            dePage.items.head.word.gender.contains(Gender.Masculine),
+          )
+        },
+        test("a standalone German word with an article is created capitalized") {
+          for {
+            tag   <- createTag("upload", 16L)
+            word   = BulkUploadManualWord("die zzzblume", WordLanguage.De)
+            added <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 16L)
+            page  <- list(reader = Some(16L), tagId = Some(tag.id), language = WordLanguage.De, target = WordLanguage.En)
+          } yield assertTrue(
+            added == 1,
+            page.items.map(_.word.text) == List("Zzzblume"),
+            page.items.head.word.gender.contains(Gender.Feminine),
+          )
+        },
+        test("a standalone word is created and tagged with no translation link") {
+          for {
+            tag    <- createTag("upload", 17L)
+            word    = BulkUploadManualWord("zzzlonewolf", WordLanguage.En)
+            before <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+            added  <-
+              WordService.bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, List(word), 17L)
+            after  <- ZIO.serviceWithZIO[WordRepository](_.countTranslations)
+            page   <- list(reader = Some(17L), tagId = Some(tag.id), language = WordLanguage.En, target = WordLanguage.De)
+          } yield assertTrue(
+            added == 1,
+            page.items.map(_.word.text.toLowerCase) == List("zzzlonewolf"),
+            page.items.head.pairs.isEmpty,
+            after == before,
+          )
+        },
+        test("the rate-limit budget is shared between preview and confirm") {
+          for {
+            tag     <- createTag("upload", 18L)
+            warmup  <- ZIO.foreach(1 to RateLimiter.maxAttempts)(n => {
+                         if (n % 2 == 0) {
+                           WordService
+                             .bulkUploadConfirm(tag.id, WordLanguage.En, WordLanguage.De, Nil, Nil, Nil, Nil, 18L)
+                             .either
+                         } else
+                           WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 18L).either
+                       })
+            blocked <- WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, 18L).either
+          } yield assertTrue(warmup.forall(_.isRight), blocked == Left(BulkUploadFailure.RateLimited))
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+    )
   }
 
   private def suggestionsSpec = {
@@ -1539,7 +1567,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a near-miss token gets a suggestion and is not left unmatched") {
         for {
           _       <- seed
-          tag     <- createTag("upload", 1L)
+          tag     <- createTag("uploadS1", 1L)
           preview <- WordService.bulkUploadPreview(tag.id, "haos", WordLanguage.De, WordLanguage.Hu, 1L)
           haosOnly = preview.suggestions.filter(_.token == "haos")
         } yield assertTrue(
@@ -1554,8 +1582,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a token too far from any dictionary word of the same length stays unmatched") {
         for {
           _       <- seed
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "zzzzz", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag     <- createTag("uploadS2", 2L)
+          preview <- WordService.bulkUploadPreview(tag.id, "zzzzz", WordLanguage.De, WordLanguage.Hu, 2L)
         } yield assertTrue(
           // "zzzzz" is the same length as the seeded "hauen" but every character differs — distance 5, past the
           // distance-2 bound, so it is offered as a candidate by length but rejected by EditDistance.within.
@@ -1566,8 +1594,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a token shorter than the minimum suggestion length is never offered a suggestion") {
         for {
           _       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "ab", rank = 1))
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "ac", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag     <- createTag("uploadS3", 3L)
+          preview <- WordService.bulkUploadPreview(tag.id, "ac", WordLanguage.De, WordLanguage.Hu, 3L)
         } yield assertTrue(
           // "ac" is one substitution from "ab", but at length 2 it is below minSuggestionTokenLength and so never
           // reaches the edit-distance check at all.
@@ -1578,8 +1606,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("accepting a suggestion tags it through the ordinary bulkUploadConfirm path, unchanged") {
         for {
           _         <- seed
-          tag       <- createTag("upload", 1L)
-          preview   <- WordService.bulkUploadPreview(tag.id, "haos", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag       <- createTag("uploadS4", 4L)
+          preview   <- WordService.bulkUploadPreview(tag.id, "haos", WordLanguage.De, WordLanguage.Hu, 4L)
           suggestion = preview.suggestions.find(_.token == "haos").get
           selection  =
             BulkUploadSelectedTranslation(suggestion.candidate.word.id, suggestion.candidate.translations.head.wordId)
@@ -1592,9 +1620,9 @@ object WordServiceSpec extends ZIOSpecDefault {
               List(selection),
               Nil,
               Nil,
-              1L,
+              4L,
             )
-          dePage    <- list(reader = Some(1L), tagId = Some(tag.id))
+          dePage    <- list(reader = Some(4L), tagId = Some(tag.id))
         } yield assertTrue(added == 2, dePage.items.map(_.word.text) == List("Haus"))
       },
       test(
@@ -1602,8 +1630,8 @@ object WordServiceSpec extends ZIOSpecDefault {
       ) {
         for {
           _       <- seed
-          tag     <- createTag("upload", 1L)
-          preview <- WordService.bulkUploadPreview(tag.id, "Haus haos", WordLanguage.De, WordLanguage.Hu, 1L)
+          tag     <- createTag("uploadS5", 5L)
+          preview <- WordService.bulkUploadPreview(tag.id, "Haus haos", WordLanguage.De, WordLanguage.Hu, 5L)
         } yield assertTrue(
           // "Haus" exact-matches; "haos" would otherwise suggest that same "Haus", so instead it falls to unmatched.
           preview.matched.map(_.word.text).contains("Haus"),
@@ -1611,7 +1639,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           preview.unmatched.contains("haos"),
         )
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   /** Word forms (plural/tense/declension) as `WordService.list`/`.detail` expose them — the lemma/variant columns and
@@ -1712,73 +1740,7 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def tagCreationSpec = {
     suite("tag creation with pairs")(
-      test("creates a tag and records both-direction pairs for existing words") {
-        for {
-          _     <- seed
-          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
-          tag   <- createTagWithPairs(
-                     "lesson1",
-                     List(TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id))),
-                     1L,
-                   )
-          pairs <- WordRepository.countPairsOwnedBy(1L)
-          words <- WordRepository.countWordsInTag(tag.id)
-        } yield assertTrue(
-          tag.name == "lesson1",
-          tag.ownedByMe,
-          pairs == 2L,
-          words == 2L,
-        )
-      },
-      test("a missing Existing word id is NotFound and writes nothing") {
-        for {
-          before <- WordRepository.countTagsOwnedBy(1L)
-          result <- WordService
-                      .createTagWithPairs(
-                        "lesson1",
-                        WordLanguage.De,
-                        WordLanguage.Hu,
-                        List(TagPairInput(TagPairWord.Existing(9999L), TagPairWord.Existing(9999L))),
-                        1L,
-                      )
-                      .either
-          after  <- WordRepository.countTagsOwnedBy(1L)
-        } yield assertTrue(
-          result == Left(WordFailure.NotFound),
-          before == after,
-        )
-      },
-      test("a duplicate name is a DuplicateTag") {
-        for {
-          _     <- createTagWithPairs("lesson1", Nil, 1L)
-          clash <- WordService.createTagWithPairs("Lesson1", WordLanguage.De, WordLanguage.Hu, Nil, 1L).either
-        } yield assertTrue(clash == Left(WordFailure.DuplicateTag))
-      },
-      test("ensures a brand-new word on the fly and pairs it both ways") {
-        for {
-          tag   <- createTagWithPairs(
-                     "lesson1",
-                     List(
-                       TagPairInput(
-                         TagPairWord.New(WordLanguage.De, "Hund", PartOfSpeech.Noun, Some(Gender.Masculine)),
-                         TagPairWord.New(WordLanguage.Hu, "kutya", PartOfSpeech.Noun, None),
-                       )
-                     ),
-                     1L,
-                   )
-          found <- WordRepository.findWord(
-                     WordLanguage.code(WordLanguage.De),
-                     "hund",
-                     PartOfSpeech.code(PartOfSpeech.Noun),
-                     Gender.toColumn(Some(Gender.Masculine)),
-                   )
-        } yield assertTrue(
-          tag.name == "lesson1",
-          found.isDefined,
-          found.exists(_.text == "Hund"),
-        )
-      },
+      // ISOLATED — the only test here that asserts an absolute tag count for user 1L (must own zero at that point).
       test("a New word earlier in the list is not created when a later pair is NotFound") {
         for {
           result <- WordService
@@ -1815,8 +1777,79 @@ object WordServiceSpec extends ZIOSpecDefault {
           macska.isEmpty,
           tags == 0L,
         )
-      },
-    ).provide(layer)
+      }.provide(layer),
+      // SHARED — each creates its own distinctly-named tag; the one relative before/after count doesn't care what
+      // else exists.
+      suite("shared")(
+        test("creates a tag and records both-direction pairs for existing words") {
+          for {
+            _     <- seed
+            haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+            haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "haz"))
+            tag   <- createTagWithPairs(
+                       "lesson1a",
+                       List(TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id))),
+                       1L,
+                     )
+            pairs <- WordRepository.countPairsOwnedBy(1L)
+            words <- WordRepository.countWordsInTag(tag.id)
+          } yield assertTrue(
+            tag.name == "lesson1a",
+            tag.ownedByMe,
+            pairs == 2L,
+            words == 2L,
+          )
+        },
+        test("a missing Existing word id is NotFound and writes nothing") {
+          for {
+            before <- WordRepository.countTagsOwnedBy(1L)
+            result <- WordService
+                        .createTagWithPairs(
+                          "lesson1b",
+                          WordLanguage.De,
+                          WordLanguage.Hu,
+                          List(TagPairInput(TagPairWord.Existing(9999L), TagPairWord.Existing(9999L))),
+                          1L,
+                        )
+                        .either
+            after  <- WordRepository.countTagsOwnedBy(1L)
+          } yield assertTrue(
+            result == Left(WordFailure.NotFound),
+            before == after,
+          )
+        },
+        test("a duplicate name is a DuplicateTag") {
+          for {
+            _     <- createTagWithPairs("lesson1c", Nil, 1L)
+            clash <- WordService.createTagWithPairs("Lesson1c", WordLanguage.De, WordLanguage.Hu, Nil, 1L).either
+          } yield assertTrue(clash == Left(WordFailure.DuplicateTag))
+        },
+        test("ensures a brand-new word on the fly and pairs it both ways") {
+          for {
+            tag   <- createTagWithPairs(
+                       "lesson1d",
+                       List(
+                         TagPairInput(
+                           TagPairWord.New(WordLanguage.De, "Hund", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                           TagPairWord.New(WordLanguage.Hu, "kutya", PartOfSpeech.Noun, None),
+                         )
+                       ),
+                       1L,
+                     )
+            found <- WordRepository.findWord(
+                       WordLanguage.code(WordLanguage.De),
+                       "hund",
+                       PartOfSpeech.code(PartOfSpeech.Noun),
+                       Gender.toColumn(Some(Gender.Masculine)),
+                     )
+          } yield assertTrue(
+            tag.name == "lesson1d",
+            found.isDefined,
+            found.exists(_.text == "Hund"),
+          )
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+    )
   }
 
   /** Filling in the article an imported noun was written without — the one edit an existing word accepts.
@@ -1892,120 +1925,122 @@ object WordServiceSpec extends ZIOSpecDefault {
           right.word.gender.contains(Gender.Feminine),
         )
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   private def tagTransferSpec = {
     suite("tag export / import")(
-      test("export then import rebuilds the tag under another account, words, marks and all") {
-        for {
-          _        <- seed
-          tag      <- createTag("lesson1", 1L)
-          page     <- list(search = Some("haus"), reader = Some(1L))
-          word      = page.items.head.word
-          haz       = page.items.head.translations.head.wordId
-          _        <- WordService.selectPair(word.id, tag.id, haz, 1L)
-          file     <- WordService.exportTag(tag.id)
-          response <- WordService.importTags(file, Map.empty, 2L)
-          tags     <- WordService.listTags(Some(2L))
-          copied    = tags.find(_.name == "lesson1")
-          pairRows <- WordRepository.countPairsOwnedBy(2L)
-        } yield assertTrue(
-          file.version == TagExportFile.currentVersion,
-          file.tags.head.entries.exists(_.marked.nonEmpty),
-          response.results.map(_.tagName) == List("lesson1"),
-          response.results.head.created,
-          copied.exists(_.ownedByMe),
-          copied.exists(_.wordCount == 2L),
-          pairRows == 2L,
-        )
-      },
-      test("a word the target dictionary lacks is created on import") {
-        val file = TagExportFile(
-          TagExportFile.currentVersion,
-          0L,
-          List(
-            TagExportTag(
-              "birds",
-              List(
-                TagExportEntry(
-                  TagExportWord(WordLanguage.De, "Vogel", PartOfSpeech.Noun, Some(Gender.Masculine)),
-                  List(TagExportWord(WordLanguage.En, "bird", PartOfSpeech.Noun, None)),
-                )
-              ),
-            )
-          ),
-        )
-        for {
-          response <- WordService.importTags(file, Map.empty, 3L)
-          vogel    <- WordRepository.findWord(
-                        WordLanguage.code(WordLanguage.De),
-                        "vogel",
-                        PartOfSpeech.code(PartOfSpeech.Noun),
-                        Gender.toColumn(Some(Gender.Masculine)),
-                      )
-        } yield assertTrue(
-          vogel.isDefined,
-          response.results.head.newDictionaryWords == 2,
-          response.results.head.pairsAdded == 1,
-        )
-      },
-      test("a name the importer already owns, with no resolution, is a conflict naming it") {
-        val file = TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("dup", Nil)))
-        for {
-          _        <- createTag("dup", 4L)
-          conflict <- WordService.importTags(file, Map.empty, 4L).either
-        } yield assertTrue(conflict == Left(TagImportFailure.NameConflict(List("dup"))))
-      },
-      test("Merge folds the file's words into the existing tag; Rename makes a new one") {
-        for {
-          _           <- seed
-          haus        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          existing    <- createTag("m1", 5L)
-          _           <- WordService.tagWord(haus.id, existing.id, 5L)
-          fileMerge    = TagExportFile(
-                           TagExportFile.currentVersion,
-                           0L,
-                           List(
-                             TagExportTag(
-                               "m1",
-                               List(
-                                 TagExportEntry(
-                                   TagExportWord(WordLanguage.De, "Haufen", PartOfSpeech.Noun, Some(Gender.Masculine)),
-                                   Nil,
-                                 )
-                               ),
-                             )
-                           ),
-                         )
-          merged      <- WordService.importTags(fileMerge, Map("m1" -> TagImportChoice.Merge), 5L)
-          afterMerge  <- WordService.listTags(Some(5L))
-          renamed     <- WordService.importTags(
-                           TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("m1", Nil))),
-                           Map("m1" -> TagImportChoice.Rename("m1 copy")),
-                           5L,
-                         )
-          afterRename <- WordService.listTags(Some(5L))
-        } yield assertTrue(
-          !merged.results.head.created,
-          afterMerge.find(_.name == "m1").exists(_.wordCount == 2L),
-          renamed.results.head.created,
-          renamed.results.head.tagName == "m1 copy",
-          afterRename.exists(_.name == "m1 copy"),
-          afterRename.count(t => t.name == "m1" || t.name == "m1 copy") == 2,
-        )
-      },
-      test("a file that is not the current version is refused, and writes nothing") {
-        val file = TagExportFile(TagExportFile.currentVersion + 1, 0L, List(TagExportTag("v", Nil)))
-        for {
-          result <- WordService.importTags(file, Map.empty, 6L).either
-          tags   <- WordService.listTags(Some(6L))
-        } yield assertTrue(
-          result.isLeft,
-          result.left.forall(_.isInstanceOf[TagImportFailure.ValidationError]),
-          !tags.exists(_.name == "v"),
-        )
-      },
+      suite("shared")(
+        test("export then import rebuilds the tag under another account, words, marks and all") {
+          for {
+            _        <- seed
+            tag      <- createTag("lesson1", 1L)
+            page     <- list(search = Some("haus"), reader = Some(1L))
+            word      = page.items.head.word
+            haz       = page.items.head.translations.head.wordId
+            _        <- WordService.selectPair(word.id, tag.id, haz, 1L)
+            file     <- WordService.exportTag(tag.id)
+            response <- WordService.importTags(file, Map.empty, 2L)
+            tags     <- WordService.listTags(Some(2L))
+            copied    = tags.find(_.name == "lesson1")
+            pairRows <- WordRepository.countPairsOwnedBy(2L)
+          } yield assertTrue(
+            file.version == TagExportFile.currentVersion,
+            file.tags.head.entries.exists(_.marked.nonEmpty),
+            response.results.map(_.tagName) == List("lesson1"),
+            response.results.head.created,
+            copied.exists(_.ownedByMe),
+            copied.exists(_.wordCount == 2L),
+            pairRows == 2L,
+          )
+        },
+        test("a word the target dictionary lacks is created on import") {
+          val file = TagExportFile(
+            TagExportFile.currentVersion,
+            0L,
+            List(
+              TagExportTag(
+                "birds",
+                List(
+                  TagExportEntry(
+                    TagExportWord(WordLanguage.De, "Vogel", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                    List(TagExportWord(WordLanguage.En, "bird", PartOfSpeech.Noun, None)),
+                  )
+                ),
+              )
+            ),
+          )
+          for {
+            response <- WordService.importTags(file, Map.empty, 3L)
+            vogel    <- WordRepository.findWord(
+                          WordLanguage.code(WordLanguage.De),
+                          "vogel",
+                          PartOfSpeech.code(PartOfSpeech.Noun),
+                          Gender.toColumn(Some(Gender.Masculine)),
+                        )
+          } yield assertTrue(
+            vogel.isDefined,
+            response.results.head.newDictionaryWords == 2,
+            response.results.head.pairsAdded == 1,
+          )
+        },
+        test("a name the importer already owns, with no resolution, is a conflict naming it") {
+          val file = TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("dup", Nil)))
+          for {
+            _        <- createTag("dup", 4L)
+            conflict <- WordService.importTags(file, Map.empty, 4L).either
+          } yield assertTrue(conflict == Left(TagImportFailure.NameConflict(List("dup"))))
+        },
+        test("Merge folds the file's words into the existing tag; Rename makes a new one") {
+          for {
+            _           <- seed
+            haus        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+            existing    <- createTag("m1", 5L)
+            _           <- WordService.tagWord(haus.id, existing.id, 5L)
+            fileMerge    = TagExportFile(
+                             TagExportFile.currentVersion,
+                             0L,
+                             List(
+                               TagExportTag(
+                                 "m1",
+                                 List(
+                                   TagExportEntry(
+                                     TagExportWord(WordLanguage.De, "Haufen", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                                     Nil,
+                                   )
+                                 ),
+                               )
+                             ),
+                           )
+            merged      <- WordService.importTags(fileMerge, Map("m1" -> TagImportChoice.Merge), 5L)
+            afterMerge  <- WordService.listTags(Some(5L))
+            renamed     <- WordService.importTags(
+                             TagExportFile(TagExportFile.currentVersion, 0L, List(TagExportTag("m1", Nil))),
+                             Map("m1" -> TagImportChoice.Rename("m1 copy")),
+                             5L,
+                           )
+            afterRename <- WordService.listTags(Some(5L))
+          } yield assertTrue(
+            !merged.results.head.created,
+            afterMerge.find(_.name == "m1").exists(_.wordCount == 2L),
+            renamed.results.head.created,
+            renamed.results.head.tagName == "m1 copy",
+            afterRename.exists(_.name == "m1 copy"),
+            afterRename.count(t => t.name == "m1" || t.name == "m1 copy") == 2,
+          )
+        },
+        test("a file that is not the current version is refused, and writes nothing") {
+          val file = TagExportFile(TagExportFile.currentVersion + 1, 0L, List(TagExportTag("v", Nil)))
+          for {
+            result <- WordService.importTags(file, Map.empty, 6L).either
+            tags   <- WordService.listTags(Some(6L))
+          } yield assertTrue(
+            result.isLeft,
+            result.left.forall(_.isInstanceOf[TagImportFailure.ValidationError]),
+            !tags.exists(_.name == "v"),
+          )
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
       test("an import that would cross the hard tag quota is refused with nothing written") {
         val file = TagExportFile(
           TagExportFile.currentVersion,
@@ -2021,7 +2056,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           tags.count(_.ownedByMe) == 1,
         )
       }.provide(layerWithQuotas(tagsSoft = 1, tagsHard = 2, pairsSoft = 1000, pairsHard = 1000)),
-    ).provide(layer)
+    )
   }
 
   private def tagEditorSpec = {
@@ -2030,7 +2065,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag  <- createTag("editor", 1L)
+          tag  <- createTag("editorb1", 1L)
           _    <-
             WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
@@ -2042,7 +2077,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("attachWord adds a lone word as a loose row, with no answer and no practice pair") {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag  <- createTag("loose", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag  <- createTag("looseb2", 1L, WordLanguage.De, WordLanguage.Hu)
           out  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(
@@ -2053,7 +2088,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("attachWord mints a word the dictionary does not have yet") {
         for {
-          tag  <- createTag("mint", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag  <- createTag("mintb3", 1L, WordLanguage.De, WordLanguage.Hu)
           _    <- WordService.attachWord(
                     tag.id,
                     TagWordInput(TagPairWord.New(WordLanguage.De, "Fenster", PartOfSpeech.Noun, Some(Gender.Neuter))),
@@ -2067,7 +2102,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           en   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "house"))
-          tag  <- createTag("langs", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag  <- createTag("langsb4", 1L, WordLanguage.De, WordLanguage.Hu)
           src  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L).either
           tgt  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haz.id)), 1L).either
           out  <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(en.id)), 1L).either
@@ -2076,7 +2111,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("attachWord is idempotent, and somebody else's tag is TagNotFound") {
         for {
           haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag   <- createTag("once", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag   <- createTag("onceb5", 1L, WordLanguage.De, WordLanguage.Hu)
           _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
           _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
           rows  <- WordService.tagEntries(tag.id, Some(1L))
@@ -2088,7 +2123,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haus     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag      <- createTag("directed", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag      <- createTag("directedb6", 1L, WordLanguage.De, WordLanguage.Hu)
           fresh    <- WordService.listTags(Some(1L))
           // Still open: swap the pair before any row exists.
           reversed <- WordService.setTagLanguages(tag.id, WordLanguage.En, WordLanguage.De, 1L)
@@ -2113,7 +2148,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haus     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag      <- createTag("reversible", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag      <- createTag("reversibleb7", 1L, WordLanguage.De, WordLanguage.Hu)
           _        <-
             WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
           before   <- WordService.tagEntries(tag.id, Some(1L))
@@ -2129,7 +2164,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag  <- createTag("enlesson", 1L, WordLanguage.En, WordLanguage.Hu)
+          tag  <- createTag("enlessonb8", 1L, WordLanguage.En, WordLanguage.Hu)
           bad  <- WordService
                     .addPair(tag.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
                     .either
@@ -2139,7 +2174,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag  <- createTag("swap", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag  <- createTag("swapb9", 1L, WordLanguage.De, WordLanguage.Hu)
           // Hungarian on the source side, German on the target — the tag's pair reversed.
           ok   <- WordService
                     .addPair(tag.id, TagPairInput(TagPairWord.Existing(haz.id), TagPairWord.Existing(haus.id)), 1L)
@@ -2152,7 +2187,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           en   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "house"))
-          tag  <- createTag("either", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag  <- createTag("eitherb10", 1L, WordLanguage.De, WordLanguage.Hu)
           src  <- WordService.tagWord(haus.id, tag.id, 1L).either
           tgt  <- WordService.tagWord(haz.id, tag.id, 1L).either
           out  <- WordService.tagWord(en.id, tag.id, 1L).either
@@ -2160,7 +2195,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("addPair creates a brand-new word on the fly") {
         for {
-          tag  <- createTag("editor", 1L)
+          tag  <- createTag("editorb11", 1L)
           _    <- WordService.addPair(
                     tag.id,
                     TagPairInput(
@@ -2174,7 +2209,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("tagEntries keeps the order rows were added in") {
         for {
-          tag  <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag  <- createTag("editorb12", 1L, WordLanguage.En, WordLanguage.De)
           pair  = (a: String, b: String) => {
                     WordService.addPair(
                       tag.id,
@@ -2196,7 +2231,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
           b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
           c    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Köter", gender = Some(Gender.Masculine)))
-          tag  <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag  <- createTag("editorb13", 1L, WordLanguage.En, WordLanguage.De)
           _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
           _    <- WordService.replacePair(
                     tag.id,
@@ -2214,7 +2249,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
           b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
-          tag  <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag  <- createTag("editorb14", 1L, WordLanguage.En, WordLanguage.De)
           _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
           _    <- WordService.removeEntry(tag.id, a.id, None, 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
@@ -2225,7 +2260,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           dog    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
           hund   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
           koeter <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Köter", gender = Some(Gender.Masculine)))
-          tag    <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag    <- createTag("editorb15", 1L, WordLanguage.En, WordLanguage.De)
           _      <-
             WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(dog.id), TagPairWord.Existing(hund.id)), 1L)
           _      <-
@@ -2240,7 +2275,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           a    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "dog"))
           b    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
-          tag  <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag  <- createTag("editorb16", 1L, WordLanguage.En, WordLanguage.De)
           _    <- WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(a.id), TagPairWord.Existing(b.id)), 1L)
           _    <- WordService.removeEntry(tag.id, a.id, Some(b.id), 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
@@ -2256,11 +2291,11 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag  <- createTag("editor", 1L)
+          tag  <- createTag("editorb18", 1L)
           _    <- WordService.addPair(
                     tag.id,
                     TagPairInput(
-                      TagPairWord.New(WordLanguage.De, "Kobold", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                      TagPairWord.New(WordLanguage.De, "Kobold18", PartOfSpeech.Noun, Some(Gender.Masculine)),
                       TagPairWord.Existing(haz.id),
                     ),
                     1L,
@@ -2270,7 +2305,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           mine <- WordService.tagEntries(tag.id, Some(1L))
           them <- WordService.tagEntries(tag.id, Some(2L))
         } yield assertTrue(
-          mine.map(r => (r.source.text, r.createdByMe)).toSet == Set(("Kobold", true), ("Haus", false)),
+          mine.map(r => (r.source.text, r.createdByMe)).toSet == Set(("Kobold18", true), ("Haus", false)),
           them.forall(!_.createdByMe),
         )
       },
@@ -2279,9 +2314,9 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           hund  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
           haz   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          t1    <- createTag("t1", 1L)
-          t2    <- createTag("t2", 1L)
-          other <- createTag("theirs", 2L)
+          t1    <- createTag("t1b19", 1L)
+          t2    <- createTag("t2b19", 1L)
+          other <- createTag("theirsb19", 2L)
           _     <- WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
           _     <- WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(hund.id), TagPairWord.Existing(haz.id)), 1L)
           // Haus is also in t2, another tag user 1 owns; Hund is also in a tag user 2 owns.
@@ -2299,7 +2334,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           hund <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
-          tag  <- createTag("editor", 1L)
+          tag  <- createTag("editorb20", 1L)
           _    <- WordService.addPair(
                     tag.id,
                     TagPairInput(
@@ -2323,8 +2358,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           hund <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hund", gender = Some(Gender.Masculine)))
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          t1   <- createTag("t1", 1L)
-          t2   <- createTag("t2", 1L)
+          t1   <- createTag("t1b21", 1L)
+          t2   <- createTag("t2b21", 1L)
           _    <- WordService.addPair(t1.id, TagPairInput(TagPairWord.Existing(haus.id), TagPairWord.Existing(haz.id)), 1L)
           _    <- WordService.addPair(
                     t1.id,
@@ -2344,7 +2379,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("removeEntries removes exactly the listed rows and is idempotent") {
         for {
-          tag   <- createTag("editor", 1L, WordLanguage.En, WordLanguage.De)
+          tag   <- createTag("editorb22", 1L, WordLanguage.En, WordLanguage.De)
           add    = (a: String, b: String) => {
                      WordService.addPair(
                        tag.id,
@@ -2369,7 +2404,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("removeEntries answers TagNotFound for a caller who cannot edit the tag") {
         for {
-          tag    <- createTag("editor", 1L)
+          tag    <- createTag("editorb23", 1L)
           result <- WordService.removeEntries(tag.id, List(PairRef(1L, None)), 2L).either
         } yield assertTrue(result == Left(WordFailure.TagNotFound))
       },
@@ -2377,8 +2412,8 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           haz     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           dictDe  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          t1      <- createTag("t1", 1L)
-          t2      <- createTag("t2", 1L)
+          t1      <- createTag("t1b24", 1L)
+          t2      <- createTag("t2b24", 1L)
           // "Kobold" — minted by user 1, only in t1. "Zwerg" — minted by user 1 but also in t2. "Haus" — dictionary.
           _       <- WordService.addPair(
                        t1.id,
@@ -2421,7 +2456,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           theirs <- WordRepository.ensureWord(
                       WordRow(0L, "de", "Fremd", "fremd", "noun", "neuter", 1, "user", Some(2L), 0L, "fremd")
                     )
-          tag    <- createTag("t1", 1L)
+          tag    <- createTag("t1b25", 1L)
           _      <-
             WordService.addPair(tag.id, TagPairInput(TagPairWord.Existing(theirs.id), TagPairWord.Existing(haz.id)), 1L)
           _      <- WordService.deleteWords(tag.id, List(theirs.id), 1L)
@@ -2430,13 +2465,13 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("deleteWords answers TagNotFound for a caller who cannot edit the tag") {
         for {
-          tag    <- createTag("editor", 1L)
+          tag    <- createTag("editorb26", 1L)
           result <- WordService.deleteWords(tag.id, List(1L), 2L).either
         } yield assertTrue(result == Left(WordFailure.TagNotFound))
       },
       test("removeEntries clears an imported tag's rows without leaving the memberships behind") {
         for {
-          tag   <- createTag("import", 1L, WordLanguage.De, WordLanguage.Hu)
+          tag   <- createTag("importb27", 1L, WordLanguage.De, WordLanguage.Hu)
           _     <- WordService.tabularImport(
                      tag.id,
                      List(row("Hund", "kutya"), row("Katze", "macska"), row("Haus", "ház")),
@@ -2452,23 +2487,23 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("deleteWords does not leave the answer word behind as a stray row") {
         for {
           haz       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
-          tag       <- createTag("t1", 1L)
+          tag       <- createTag("t1b28", 1L)
           _         <- WordService.addPair(
                          tag.id,
                          TagPairInput(
-                           TagPairWord.New(WordLanguage.De, "Kobold", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                           TagPairWord.New(WordLanguage.De, "Kobold28", PartOfSpeech.Noun, Some(Gender.Masculine)),
                            TagPairWord.Existing(haz.id),
                          ),
                          1L,
                        )
           rows0     <- WordService.tagEntries(tag.id, Some(1L))
-          koboldId   = rows0.find(_.source.text == "Kobold").map(_.source.id).get
+          koboldId   = rows0.find(_.source.text == "Kobold28").map(_.source.id).get
           _         <- WordService.deleteWords(tag.id, List(koboldId), 1L)
           rows      <- WordService.tagEntries(tag.id, Some(1L))
           stillWord <- WordRepository.findWordById(haz.id)
         } yield assertTrue(rows.isEmpty, stillWord.isDefined)
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   private def bulkImportSpec = {
@@ -2478,7 +2513,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           haz    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
           _      <- WordRepository.insertTranslationPair(haus.id, haz.id, WordService.dictionaryOrigin, None, 0L)
-          tag    <- createTag("import", 1L)
+          tag    <- createTag("import1", 1L)
           result <- WordService.bulkImport(tag.id, "Haus ház", WordLanguage.De, WordLanguage.Hu, 1L)
           rows   <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(
@@ -2492,7 +2527,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("a dictionary word with no pair in the text becomes an imported answer-less row") {
         for {
           _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag  <- createTag("import", 1L)
+          tag  <- createTag("import2", 1L)
           _    <- WordService.bulkImport(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(
@@ -2502,7 +2537,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       },
       test("a token in neither dictionary is created in the source language, imported, with no answer") {
         for {
-          tag    <- createTag("import", 1L)
+          tag    <- createTag("import3", 1L)
           result <- WordService.bulkImport(tag.id, "brandneu", WordLanguage.De, WordLanguage.Hu, 1L)
           rows   <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(
@@ -2518,7 +2553,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "hello", pos = PartOfSpeech.Other))
           _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "world"))
           _    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag  <- createTag("import", 1L, WordLanguage.En, WordLanguage.De)
+          tag  <- createTag("import4", 1L, WordLanguage.En, WordLanguage.De)
           _    <- WordService.bulkImport(tag.id, "hello Haus world", WordLanguage.En, WordLanguage.De, 1L)
           rows <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(rows.map(_.source.text) == List("hello", "Haus", "world"))
@@ -2529,7 +2564,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           result <- WordService.bulkImport(tag.id, "Haus", WordLanguage.De, WordLanguage.Hu, 1L).either
         } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   /** A tabular row with no extra columns — the common two-column shape. */
@@ -2563,46 +2598,8 @@ object WordServiceSpec extends ZIOSpecDefault {
     }
 
     suite("tag editor paging")(
-      test("a page holds its own words, in the order they were added, and the total counts them all") {
-        for {
-          tag    <- createTag("paged", 1L, de, hu)
-          _      <- ZIO.foreachDiscard(1 to 7)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
-          first  <- page(tag.id, 1, 3)
-          second <- page(tag.id, 2, 3)
-          last   <- page(tag.id, 3, 3)
-          past   <- page(tag.id, 9, 3)
-        } yield assertTrue(
-          first.items.map(_.source.text) == List("wort1", "wort2", "wort3"),
-          second.items.map(_.source.text) == List("wort4", "wort5", "wort6"),
-          last.items.map(_.source.text) == List("wort7"),
-          // Past the end is an empty page with an honest total, which is what lets the browser correct itself.
-          past.items.isEmpty,
-          List(first, second, last, past).forall(_.total == 7L),
-        )
-      },
-      test("a word with two marked answers keeps both rows on one page, and still counts once") {
-        for {
-          tag   <- createTag("two-answers", 1L, de, hu)
-          _     <- pairOf(tag.id, "Schloss", "kastely")
-          _     <- pairOf(tag.id, "Schloss", "zar")
-          _     <- pairOf(tag.id, "Haus", "haz")
-          first <- page(tag.id, 1, 1)
-        } yield assertTrue(
-          // One word asked for, both of its rows drawn: splitting them across a page boundary would orphan one.
-          first.items.map(_.source.text) == List("Schloss", "Schloss"),
-          first.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
-          first.total == 2L,
-        )
-      },
-      // The answer word carries the tag too, and is a `word_tags` row like any other. It heads no row of its own,
-      // which is the whole reason the page is cut over "words that head a row" rather than over memberships.
-      test("an answer word is not a page of its own") {
-        for {
-          tag  <- createTag("answers", 1L, de, hu)
-          _    <- pairOf(tag.id, "Haus", "haz")
-          rows <- page(tag.id, 1, 50)
-        } yield assertTrue(rows.total == 1L, rows.items.map(_.source.text) == List("Haus"))
-      },
+      // ISOLATED — both empirically collide with something else in the suite once shared (exact counts thrown off);
+      // not worth chasing the exact cause when isolation is free and correct.
       test("the provenance chips narrow the page and the count together") {
         for {
           haus     <- WordRepository.ensureWord(dictionaryWord(de, "Haus", gender = Some(Gender.Neuter)))
@@ -2632,29 +2629,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           loose.total == 1L,
           both.total == 2L,
         )
-      },
-      // The filter has to narrow twice: the database admits the *word*, and `TagEntryFilter.matches` then keeps only
-      // the rows that were asked for. Without the second half this page would draw the hand-marked row too.
-      test("a word whose two answers came from different writers shows only the rows the chips asked for") {
-        for {
-          tag    <- createTag("mixed", 1L, de, hu)
-          _      <- WordService.tabularImport(tag.id, List(row("Schloss", "kastely")), de, hu, 1L)
-          _      <- WordService.addPair(
-                      tag.id,
-                      TagPairInput(
-                        TagPairWord.New(de, "Schloss", PartOfSpeech.Other, None),
-                        TagPairWord.New(hu, "zar", PartOfSpeech.Other, None),
-                      ),
-                      1L,
-                    )
-          all    <- page(tag.id, 1, 50)
-          paired <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Paired)))
-        } yield assertTrue(
-          all.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
-          paired.items.map(_.target.map(_.text)) == List(Some("kastely")),
-          paired.total == 1L,
-        )
-      },
+      }.provide(layer),
       test("\"only in this wordlist\" drops a word another tag of mine holds") {
         for {
           first  <- createTag("first", 1L, de, hu)
@@ -2668,368 +2643,438 @@ object WordServiceSpec extends ZIOSpecDefault {
           unique.items.map(_.source.text) == List("Dach"),
           unique.total == 1L,
         )
-      },
-      test("\"imported by me\" keeps only words this reader minted through an import") {
-        for {
-          tag      <- createTag("mine", 1L, de, hu)
-          // Minted by the import, so `created_by` is this reader and the membership is `imported`.
-          _        <- WordService.bulkImport(tag.id, "brandneu", de, hu, 1L)
-          // Hand-added: minted by the reader, but no import wrote it.
-          _        <- pairOf(tag.id, "Fenster", "ablak")
-          imported <- page(tag.id, 1, 50, TagEntryFilter(importedByMe = true))
-          // Somebody else asking sees none of it as theirs.
-          theirs   <- WordService.tagEntriesPaged(tag.id, Some(2L), 1, 50, TagEntryFilter(importedByMe = true))
-          visitor  <- WordService.tagEntriesPaged(tag.id, None, 1, 50, TagEntryFilter(uniqueToTag = true))
-        } yield assertTrue(
-          imported.items.map(_.source.text) == List("brandneu"),
-          imported.total == 1L,
-          theirs.items.isEmpty,
-          theirs.total == 0L,
-          // "Only in this wordlist" is true of every row for somebody who owns no other tag — a visitor included.
-          visitor.total == 2L,
-        )
-      },
-      test("hasPairs answers for the whole wordlist, not for the page in front of the reader") {
-        for {
-          tag    <- createTag("locked", 1L, de, hu)
-          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Haus", PartOfSpeech.Other, None)), 1L)
-          before <- page(tag.id, 1, 50)
-          _      <- pairOf(tag.id, "Dach", "teto")
-          // The pair is on the second page; the first page must still say the wordlist has one.
-          after  <- page(tag.id, 1, 1)
-        } yield assertTrue(
-          !before.hasPairs,
-          after.items.map(_.source.text) == List("Haus"),
-          after.hasPairs,
-        )
-      },
-      test("an unpaged read and paging through it yield the same rows") {
-        for {
-          tag   <- createTag("same", 1L, de, hu)
-          _     <- ZIO.foreachDiscard(1 to 5)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
-          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "allein", PartOfSpeech.Other, None)), 1L)
-          whole <- WordService.tagEntries(tag.id, Some(1L))
-          pages <- ZIO.foreach(List(1, 2, 3))(number => page(tag.id, number, 2).map(_.items))
-        } yield assertTrue(
-          pages.flatten.map(r => (r.source.text, r.target.map(_.text))) ==
-            whole.map(r => (r.source.text, r.target.map(_.text)))
-        )
-      },
-      test("a write says whether the wordlist already held the row") {
-        for {
-          tag   <- createTag("again", 1L, de, hu)
-          first <- pairOf(tag.id, "Haus", "haz")
-          again <- WordService.addPair(
-                     tag.id,
-                     TagPairInput(
-                       TagPairWord.New(de, "Haus", PartOfSpeech.Other, None),
-                       TagPairWord.New(hu, "haz", PartOfSpeech.Other, None),
-                     ),
-                     1L,
-                   )
-          word  <-
-            WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
-          twice <-
-            WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
-        } yield assertTrue(
-          !first.alreadyPresent,
-          again.alreadyPresent,
-          !word.alreadyPresent,
-          twice.alreadyPresent,
-        )
-      },
-    ).provide(layer)
+      }.provide(layer),
+      suite("shared")(
+        test("a page holds its own words, in the order they were added, and the total counts them all") {
+          for {
+            tag    <- createTag("paged", 1L, de, hu)
+            _      <- ZIO.foreachDiscard(1 to 7)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
+            first  <- page(tag.id, 1, 3)
+            second <- page(tag.id, 2, 3)
+            last   <- page(tag.id, 3, 3)
+            past   <- page(tag.id, 9, 3)
+          } yield assertTrue(
+            first.items.map(_.source.text) == List("wort1", "wort2", "wort3"),
+            second.items.map(_.source.text) == List("wort4", "wort5", "wort6"),
+            last.items.map(_.source.text) == List("wort7"),
+            // Past the end is an empty page with an honest total, which is what lets the browser correct itself.
+            past.items.isEmpty,
+            List(first, second, last, past).forall(_.total == 7L),
+          )
+        },
+        test("a word with two marked answers keeps both rows on one page, and still counts once") {
+          for {
+            tag   <- createTag("two-answers", 1L, de, hu)
+            _     <- pairOf(tag.id, "Schloss", "kastely")
+            _     <- pairOf(tag.id, "Schloss", "zar")
+            _     <- pairOf(tag.id, "Haus", "haz")
+            first <- page(tag.id, 1, 1)
+          } yield assertTrue(
+            // One word asked for, both of its rows drawn: splitting them across a page boundary would orphan one.
+            first.items.map(_.source.text) == List("Schloss", "Schloss"),
+            first.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
+            first.total == 2L,
+          )
+        },
+        // The answer word carries the tag too, and is a `word_tags` row like any other. It heads no row of its own,
+        // which is the whole reason the page is cut over "words that head a row" rather than over memberships.
+        test("an answer word is not a page of its own") {
+          for {
+            tag  <- createTag("answers", 1L, de, hu)
+            _    <- pairOf(tag.id, "Haus", "haz")
+            rows <- page(tag.id, 1, 50)
+          } yield assertTrue(rows.total == 1L, rows.items.map(_.source.text) == List("Haus"))
+        },
+        // The filter has to narrow twice: the database admits the *word*, and `TagEntryFilter.matches` then keeps only
+        // the rows that were asked for. Without the second half this page would draw the hand-marked row too.
+        test("a word whose two answers came from different writers shows only the rows the chips asked for") {
+          for {
+            tag    <- createTag("mixed", 1L, de, hu)
+            _      <- WordService.tabularImport(tag.id, List(row("Schloss", "kastely")), de, hu, 1L)
+            _      <- WordService.addPair(
+                        tag.id,
+                        TagPairInput(
+                          TagPairWord.New(de, "Schloss", PartOfSpeech.Other, None),
+                          TagPairWord.New(hu, "zar", PartOfSpeech.Other, None),
+                        ),
+                        1L,
+                      )
+            all    <- page(tag.id, 1, 50)
+            paired <- page(tag.id, 1, 50, TagEntryFilter(buckets = Set(EntryBucket.Paired)))
+          } yield assertTrue(
+            all.items.flatMap(_.target.map(_.text)).sorted == List("kastely", "zar"),
+            paired.items.map(_.target.map(_.text)) == List(Some("kastely")),
+            paired.total == 1L,
+          )
+        },
+        test("\"imported by me\" keeps only words this reader minted through an import") {
+          for {
+            tag      <- createTag("mine", 1L, de, hu)
+            // Minted by the import, so `created_by` is this reader and the membership is `imported`.
+            _        <- WordService.bulkImport(tag.id, "brandneu", de, hu, 1L)
+            // Hand-added: minted by the reader, but no import wrote it.
+            _        <- pairOf(tag.id, "Fenster", "ablak")
+            imported <- page(tag.id, 1, 50, TagEntryFilter(importedByMe = true))
+            // Somebody else asking sees none of it as theirs.
+            theirs   <- WordService.tagEntriesPaged(tag.id, Some(2L), 1, 50, TagEntryFilter(importedByMe = true))
+            visitor  <- WordService.tagEntriesPaged(tag.id, None, 1, 50, TagEntryFilter(uniqueToTag = true))
+          } yield assertTrue(
+            imported.items.map(_.source.text) == List("brandneu"),
+            imported.total == 1L,
+            theirs.items.isEmpty,
+            theirs.total == 0L,
+            // "Only in this wordlist" is true of every row for somebody who owns no other tag — a visitor included.
+            visitor.total == 2L,
+          )
+        },
+        test("hasPairs answers for the whole wordlist, not for the page in front of the reader") {
+          for {
+            tag    <- createTag("locked", 1L, de, hu)
+            _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Haus", PartOfSpeech.Other, None)), 1L)
+            before <- page(tag.id, 1, 50)
+            _      <- pairOf(tag.id, "Dach", "teto")
+            // The pair is on the second page; the first page must still say the wordlist has one.
+            after  <- page(tag.id, 1, 1)
+          } yield assertTrue(
+            !before.hasPairs,
+            after.items.map(_.source.text) == List("Haus"),
+            after.hasPairs,
+          )
+        },
+        test("an unpaged read and paging through it yield the same rows") {
+          for {
+            tag   <- createTag("same", 1L, de, hu)
+            _     <- ZIO.foreachDiscard(1 to 5)(n => pairOf(tag.id, s"wort$n", s"szo$n"))
+            _     <-
+              WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "allein", PartOfSpeech.Other, None)), 1L)
+            whole <- WordService.tagEntries(tag.id, Some(1L))
+            pages <- ZIO.foreach(List(1, 2, 3))(number => page(tag.id, number, 2).map(_.items))
+          } yield assertTrue(
+            pages.flatten.map(r => (r.source.text, r.target.map(_.text))) ==
+              whole.map(r => (r.source.text, r.target.map(_.text)))
+          )
+        },
+        test("a write says whether the wordlist already held the row") {
+          for {
+            tag   <- createTag("again", 1L, de, hu)
+            first <- pairOf(tag.id, "Haus", "haz")
+            again <- WordService.addPair(
+                       tag.id,
+                       TagPairInput(
+                         TagPairWord.New(de, "Haus", PartOfSpeech.Other, None),
+                         TagPairWord.New(hu, "haz", PartOfSpeech.Other, None),
+                       ),
+                       1L,
+                     )
+            word  <-
+              WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
+            twice <-
+              WordService.attachWord(tag.id, TagWordInput(TagPairWord.New(de, "Dach", PartOfSpeech.Other, None)), 1L)
+          } yield assertTrue(
+            !first.alreadyPresent,
+            again.alreadyPresent,
+            !word.alreadyPresent,
+            twice.alreadyPresent,
+          )
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+    )
   }
 
   private def tabularImportSpec = {
     suite("tabular import")(
-      test("a row's pairing is taken as given, even for words the dictionary has never seen") {
-        // The whole point of the tabular path: `bulkImport` could only mark this pair if `word_translations` already
-        // linked the two, and here nothing in the dictionary knows either word.
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(
-                      tag.id,
-                      List(row("brandneu", "vadonatúj")),
-                      WordLanguage.De,
-                      WordLanguage.Hu,
-                      1L,
-                    )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          // Marked `Paired`, never `Verified`: the file asserted this pair, the dictionary never saw it.
-          rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.matchKind)) == List(
-            ("brandneu", Some("vadonatúj"), true, PairMatch.Paired)
-          ),
-          result.rows == 1,
-          result.pairs == 1,
-          result.newWords == 2,
-        )
-      },
-      test("a cell naming two translations becomes two rows, each paired") {
-        // `tető/padlás` is two Hungarian words on one line, not a word whose text is `tető/padlás`. The reader wrote
-        // both against `Dach`, so both are paired with it.
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(
-                      tag.id,
-                      List(row("Dach", "tető/padlás")),
-                      WordLanguage.De,
-                      WordLanguage.Hu,
-                      1L,
-                    )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.map(r => (r.source.text, r.target.map(_.text))) == List(
-            ("Dach", Some("tető")),
-            ("Dach", Some("padlás")),
-          ),
-          // One line read, two pairs written, three words minted.
-          result.rows == 1,
-          result.pairs == 1,
-          result.newWords == 3,
-        )
-      },
-      test("an ending written against a word becomes a second word, paired the same way") {
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(TabularRow("Jurist(in)", "jogász", Some("r/e"), None)),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          // `r/e` names both genders in the order written, so the counterpart takes the second one.
-          rows.map(r => (r.source.text, r.source.gender, r.target.map(_.text))) == List(
-            ("Jurist", Some(Gender.Masculine), Some("jogász")),
-            ("Juristin", Some(Gender.Feminine), Some("jogász")),
-          )
-        )
-      },
-      test("a note beside a word is kept as the reader's own, off the shared word") {
-        // `levél (növény)` names `levél` and says which sense of it. The note is per (word, tag), so a different
-        // reader's `levél` is untouched by it.
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(row("Blatt", "levél (növény)")),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.map(r => (r.source.text, r.target.map(_.text), r.comment, r.targetComment)) == List(
-            ("Blatt", Some("levél"), None, Some("növény"))
-          )
-        )
-      },
-      test("rows keep the reader's own order") {
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(row("eins", "egy"), row("zwei", "kettő"), row("drei", "három")),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(rows.map(_.source.text) == List("eins", "zwei", "drei"))
-      },
-      test("an article yields the gender and is not stored as part of the word") {
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(tag.id, List(row("der Hund", "kutya")), WordLanguage.De, WordLanguage.Hu, 1L)
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.head.source.text == "Hund",
-          rows.head.source.gender.contains(Gender.Masculine),
-          rows.head.source.partOfSpeech == PartOfSpeech.Noun,
-        )
-      },
-      test("a marker is stripped off the word rather than stored with it") {
-        // A marker left in `text_norm` would make `helfen` and `helfen +D` two unrelated dictionary rows.
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(row("helfen +D", "segíteni"), row("gedenken (G)", "megemlékezni")),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(rows.map(_.source.text) == List("helfen", "gedenken"))
-      },
-      test("a multi-word cell becomes one phrase, not several words") {
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(row("guten Tag", "jó napot")),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.length == 1,
-          rows.head.source.text == "guten Tag",
-          rows.head.source.partOfSpeech == PartOfSpeech.Phrase,
-          rows.head.target.map(_.text).contains("jó napot"),
-          rows.head.target.map(_.partOfSpeech).contains(PartOfSpeech.Phrase),
-        )
-      },
-      test("an extra column supplies the gender, in whichever language it is abbreviated") {
-        // `hn` is Hungarian for masculine and `w` is German for feminine; both describe the German word beside them.
-        for {
-          tag  <- createTag("import", 1L)
-          _    <- WordService.tabularImport(
-                    tag.id,
-                    List(
-                      TabularRow("Hund", "kutya", Some("hn"), None),
-                      TabularRow("Katze", "macska", Some("w"), None),
-                    ),
-                    WordLanguage.De,
-                    WordLanguage.Hu,
-                    1L,
-                  )
-          rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.map(_.source.gender) == List(Some(Gender.Masculine), Some(Gender.Feminine)),
-          rows.map(_.source.text) == List("Hund", "Katze"),
-        )
-      },
-      test("an extra column naming a form word and its relation writes a word_forms row") {
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(
-                      tag.id,
-                      List(TabularRow("helfen", "segíteni", Some("hilft (3)"), None)),
-                      WordLanguage.De,
-                      WordLanguage.Hu,
-                      1L,
-                    )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-          forms  <- WordRepository.formsOf(rows.head.source.id)
-          form   <- WordRepository.findWordById(forms.head.formWordId)
-        } yield assertTrue(
-          result.forms == 1,
-          forms.map(_.relation) == List("third-person"),
-          form.map(_.text).contains("hilft"),
-          // `insertForms` maintains the derived flag in the same transaction, so the form drops out of the main list.
-          form.exists(_.isForm),
-        )
-      },
-      test("an extra column with a form word but no relation writes nothing") {
-        // `word_forms.relation` is NOT NULL and part of its UNIQUE key, so there is nothing to file it under.
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(
-                      tag.id,
-                      List(TabularRow("Haus", "ház", Some("Häuser"), None)),
-                      WordLanguage.De,
-                      WordLanguage.Hu,
-                      1L,
-                    )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-          forms  <- WordRepository.formsOf(rows.head.source.id)
-        } yield assertTrue(result.forms == 0, forms.isEmpty)
-      },
+      // ISOLATED — both check whether a specific dictionary word was newly minted (a form relation that must not
+      // yet exist, a word that must already exist), which only holds in a schema nothing else has touched.
       test("a bare government marker is discarded rather than stored anywhere") {
         for {
-          tag    <- createTag("import", 1L)
+          tag    <- createTag("import12", 12L)
           result <- WordService.tabularImport(
                       tag.id,
                       List(TabularRow("helfen", "segíteni", Some("+D"), None)),
                       WordLanguage.De,
                       WordLanguage.Hu,
-                      1L,
+                      12L,
                     )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
+          rows   <- WordService.tagEntries(tag.id, Some(12L))
           forms  <- WordRepository.formsOf(rows.head.source.id)
         } yield assertTrue(rows.head.source.text == "helfen", result.forms == 0, forms.isEmpty)
-      },
-      test("a blank translation cell yields an answer-less row") {
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(tag.id, List(row("Haus", "")), WordLanguage.De, WordLanguage.Hu, 1L)
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(
-          rows.map(r => (r.source.text, r.target, r.imported)) == List(("Haus", None, true)),
-          result.rows == 1,
-          result.pairs == 0,
-        )
-      },
-      test("a row with no word at all is skipped, and does not count as written") {
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(
-                      tag.id,
-                      List(row("", "kutya"), row("Haus", "ház")),
-                      WordLanguage.De,
-                      WordLanguage.Hu,
-                      1L,
-                    )
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(result.rows == 1, rows.map(_.source.text) == List("Haus"))
-      },
+      }.provide(layer),
       test("an existing dictionary word is reused rather than minted again") {
         for {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag    <- createTag("import", 1L)
+          tag    <- createTag("import15", 15L)
           result <-
-            WordService.tabularImport(tag.id, List(row("das Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L)
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
+            WordService.tabularImport(tag.id, List(row("das Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 15L)
+          rows   <- WordService.tagEntries(tag.id, Some(15L))
         } yield assertTrue(
           rows.head.source.id == haus.id,
           // Only the Hungarian side was new.
           result.newWords == 1,
         )
-      },
-      test("re-importing the same table twice adds nothing the second time") {
-        for {
-          tag    <- createTag("import", 1L)
-          table   = List(row("Haus", "ház"), row("Hund", "kutya"))
-          _      <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 1L)
-          second <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 1L)
-          rows   <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(rows.length == 2, second.newWords == 0)
-      },
-      test("the tag's own languages must match the import's, or it is refused") {
-        for {
-          tag   <- createTag("import", 1L, WordLanguage.De, WordLanguage.Hu)
-          ok    <- WordService.tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L).either
-          clash <-
-            WordService.tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.En, WordLanguage.Hu, 1L).either
-          saved <- WordRepository.findTagById(tag.id)
-        } yield assertTrue(
-          ok.isRight,
-          clash.isLeft,
-          saved.map(_.sourceLanguage).contains("de"),
-          saved.map(_.targetLanguage).contains("hu"),
-        )
-      },
-      test("an empty table is a validation error, not an empty success") {
-        for {
-          tag    <- createTag("import", 1L)
-          result <- WordService.tabularImport(tag.id, Nil, WordLanguage.De, WordLanguage.Hu, 1L).either
-        } yield assertTrue(result.isLeft)
-      },
-      test("tabular import answers TagNotFound for a tag that is not the caller's") {
-        for {
-          tag    <- createTag("import", 2L)
-          result <- WordService
-                      .tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 1L)
-                      .either
-        } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
-      },
-    ).provide(layer)
+      }.provide(layer),
+      suite("shared")(
+        test("a row's pairing is taken as given, even for words the dictionary has never seen") {
+          // The whole point of the tabular path: `bulkImport` could only mark this pair if `word_translations` already
+          // linked the two, and here nothing in the dictionary knows either word.
+          for {
+            tag    <- createTag("import1", 1L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(row("brandneu", "vadonatúj")),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        1L,
+                      )
+            rows   <- WordService.tagEntries(tag.id, Some(1L))
+          } yield assertTrue(
+            // Marked `Paired`, never `Verified`: the file asserted this pair, the dictionary never saw it.
+            rows.map(r => (r.source.text, r.target.map(_.text), r.imported, r.matchKind)) == List(
+              ("brandneu", Some("vadonatúj"), true, PairMatch.Paired)
+            ),
+            result.rows == 1,
+            result.pairs == 1,
+            result.newWords == 2,
+          )
+        },
+        test("a cell naming two translations becomes two rows, each paired") {
+          // `tető/padlás` is two Hungarian words on one line, not a word whose text is `tető/padlás`. The reader wrote
+          // both against `Dach`, so both are paired with it.
+          for {
+            tag    <- createTag("import2", 2L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(row("Dach", "tető/padlás")),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        2L,
+                      )
+            rows   <- WordService.tagEntries(tag.id, Some(2L))
+          } yield assertTrue(
+            rows.map(r => (r.source.text, r.target.map(_.text))) == List(
+              ("Dach", Some("tető")),
+              ("Dach", Some("padlás")),
+            ),
+            // One line read, two pairs written, three words minted.
+            result.rows == 1,
+            result.pairs == 1,
+            result.newWords == 3,
+          )
+        },
+        test("an ending written against a word becomes a second word, paired the same way") {
+          for {
+            tag  <- createTag("import3", 3L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(TabularRow("Jurist(in)", "jogász", Some("r/e"), None)),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      3L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(3L))
+          } yield assertTrue(
+            // `r/e` names both genders in the order written, so the counterpart takes the second one.
+            rows.map(r => (r.source.text, r.source.gender, r.target.map(_.text))) == List(
+              ("Jurist", Some(Gender.Masculine), Some("jogász")),
+              ("Juristin", Some(Gender.Feminine), Some("jogász")),
+            )
+          )
+        },
+        test("a note beside a word is kept as the reader's own, off the shared word") {
+          // `levél (növény)` names `levél` and says which sense of it. The note is per (word, tag), so a different
+          // reader's `levél` is untouched by it.
+          for {
+            tag  <- createTag("import4", 4L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(row("Blatt", "levél (növény)")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      4L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(4L))
+          } yield assertTrue(
+            rows.map(r => (r.source.text, r.target.map(_.text), r.comment, r.targetComment)) == List(
+              ("Blatt", Some("levél"), None, Some("növény"))
+            )
+          )
+        },
+        test("rows keep the reader's own order") {
+          for {
+            tag  <- createTag("import5", 5L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(row("eins", "egy"), row("zwei", "kettő"), row("drei", "három")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      5L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(5L))
+          } yield assertTrue(rows.map(_.source.text) == List("eins", "zwei", "drei"))
+        },
+        test("an article yields the gender and is not stored as part of the word") {
+          for {
+            tag  <- createTag("import6", 6L)
+            _    <- WordService.tabularImport(tag.id, List(row("der Hund", "kutya")), WordLanguage.De, WordLanguage.Hu, 6L)
+            rows <- WordService.tagEntries(tag.id, Some(6L))
+          } yield assertTrue(
+            rows.head.source.text == "Hund",
+            rows.head.source.gender.contains(Gender.Masculine),
+            rows.head.source.partOfSpeech == PartOfSpeech.Noun,
+          )
+        },
+        test("a marker is stripped off the word rather than stored with it") {
+          // A marker left in `text_norm` would make `helfen` and `helfen +D` two unrelated dictionary rows.
+          for {
+            tag  <- createTag("import7", 7L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(row("helfen +D", "segíteni"), row("gedenken (G)", "megemlékezni")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      7L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(7L))
+          } yield assertTrue(rows.map(_.source.text) == List("helfen", "gedenken"))
+        },
+        test("a multi-word cell becomes one phrase, not several words") {
+          for {
+            tag  <- createTag("import8", 8L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(row("guten Tag", "jó napot")),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      8L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(8L))
+          } yield assertTrue(
+            rows.length == 1,
+            rows.head.source.text == "guten Tag",
+            rows.head.source.partOfSpeech == PartOfSpeech.Phrase,
+            rows.head.target.map(_.text).contains("jó napot"),
+            rows.head.target.map(_.partOfSpeech).contains(PartOfSpeech.Phrase),
+          )
+        },
+        test("an extra column supplies the gender, in whichever language it is abbreviated") {
+          // `hn` is Hungarian for masculine and `w` is German for feminine; both describe the German word beside them.
+          for {
+            tag  <- createTag("import9", 9L)
+            _    <- WordService.tabularImport(
+                      tag.id,
+                      List(
+                        TabularRow("Hund", "kutya", Some("hn"), None),
+                        TabularRow("Katze", "macska", Some("w"), None),
+                      ),
+                      WordLanguage.De,
+                      WordLanguage.Hu,
+                      9L,
+                    )
+            rows <- WordService.tagEntries(tag.id, Some(9L))
+          } yield assertTrue(
+            rows.map(_.source.gender) == List(Some(Gender.Masculine), Some(Gender.Feminine)),
+            rows.map(_.source.text) == List("Hund", "Katze"),
+          )
+        },
+        test("an extra column naming a form word and its relation writes a word_forms row") {
+          for {
+            tag    <- createTag("import10", 10L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(TabularRow("helfen", "segíteni", Some("hilft (3)"), None)),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        10L,
+                      )
+            rows   <- WordService.tagEntries(tag.id, Some(10L))
+            forms  <- WordRepository.formsOf(rows.head.source.id)
+            form   <- WordRepository.findWordById(forms.head.formWordId)
+          } yield assertTrue(
+            result.forms == 1,
+            forms.map(_.relation) == List("third-person"),
+            form.map(_.text).contains("hilft"),
+            // `insertForms` maintains the derived flag in the same transaction, so the form drops out of the main list.
+            form.exists(_.isForm),
+          )
+        },
+        test("an extra column with a form word but no relation writes nothing") {
+          // `word_forms.relation` is NOT NULL and part of its UNIQUE key, so there is nothing to file it under.
+          for {
+            tag    <- createTag("import11", 11L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(TabularRow("Haus", "ház", Some("Häuser"), None)),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        11L,
+                      )
+            rows   <- WordService.tagEntries(tag.id, Some(11L))
+            forms  <- WordRepository.formsOf(rows.head.source.id)
+          } yield assertTrue(result.forms == 0, forms.isEmpty)
+        },
+        test("a blank translation cell yields an answer-less row") {
+          for {
+            tag    <- createTag("import13", 13L)
+            result <- WordService.tabularImport(tag.id, List(row("Haus", "")), WordLanguage.De, WordLanguage.Hu, 13L)
+            rows   <- WordService.tagEntries(tag.id, Some(13L))
+          } yield assertTrue(
+            rows.map(r => (r.source.text, r.target, r.imported)) == List(("Haus", None, true)),
+            result.rows == 1,
+            result.pairs == 0,
+          )
+        },
+        test("a row with no word at all is skipped, and does not count as written") {
+          for {
+            tag    <- createTag("import14", 14L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(row("", "kutya"), row("Haus", "ház")),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        14L,
+                      )
+            rows   <- WordService.tagEntries(tag.id, Some(14L))
+          } yield assertTrue(result.rows == 1, rows.map(_.source.text) == List("Haus"))
+        },
+        test("re-importing the same table twice adds nothing the second time") {
+          for {
+            tag    <- createTag("import16", 16L)
+            table   = List(row("Haus", "ház"), row("Hund", "kutya"))
+            _      <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 16L)
+            second <- WordService.tabularImport(tag.id, table, WordLanguage.De, WordLanguage.Hu, 16L)
+            rows   <- WordService.tagEntries(tag.id, Some(16L))
+          } yield assertTrue(rows.length == 2, second.newWords == 0)
+        },
+        test("the tag's own languages must match the import's, or it is refused") {
+          for {
+            tag   <- createTag("import17", 17L, WordLanguage.De, WordLanguage.Hu)
+            ok    <-
+              WordService.tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 17L).either
+            clash <-
+              WordService.tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.En, WordLanguage.Hu, 17L).either
+            saved <- WordRepository.findTagById(tag.id)
+          } yield assertTrue(
+            ok.isRight,
+            clash.isLeft,
+            saved.map(_.sourceLanguage).contains("de"),
+            saved.map(_.targetLanguage).contains("hu"),
+          )
+        },
+        test("an empty table is a validation error, not an empty success") {
+          for {
+            tag    <- createTag("import18", 18L)
+            result <- WordService.tabularImport(tag.id, Nil, WordLanguage.De, WordLanguage.Hu, 18L).either
+          } yield assertTrue(result.isLeft)
+        },
+        test("tabular import answers TagNotFound for a tag that is not the caller's") {
+          for {
+            tag    <- createTag("import19", 20L)
+            result <- WordService
+                        .tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 21L)
+                        .either
+          } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
+        },
+      ).provideShared(layer) @@ TestAspect.sequential,
+    )
   }
 
   private def columnLanguageCheckSpec = {
@@ -3069,7 +3114,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           result <- WordService.checkColumnLanguages(List(ColumnSample(0, List("", "  "))))
         } yield assertTrue(result.columns.head.sampled == 0, result.columns.head.best.isEmpty)
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   private def languageCheckSpec = {
@@ -3095,7 +3140,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           result <- WordService.checkLanguage("   ", WordLanguage.De, WordLanguage.Hu)
         } yield assertTrue(result.acceptable, result.sampled == 0, result.unrecognized == 0)
       },
-    ).provide(layerWithLanguageCheck(sampleSize = 20, threshold = 2))
+    ).provideShared(layerWithLanguageCheck(sampleSize = 20, threshold = 2)) @@ TestAspect.sequential
   }
 
   /** A global administrator passes every ownership gate here — see `gathedge.backend.service.GlobalAdmin`. The wordlist
@@ -3106,7 +3151,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("renames and deletes a wordlist owned by somebody else") {
         for {
           admin   <- adminUserId("admin-tags@example.com")
-          tag     <- createTag("theirs", 7L)
+          tag     <- createTag("theirsGA1", 7L)
           renamed <- WordService.renameTag(tag.id, "renamed by admin", admin)
           after   <- WordRepository.findTagById(tag.id).orDie
           _       <- WordService.deleteTag(tag.id, admin)
@@ -3123,7 +3168,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           admin    <- adminUserId("admin-names@example.com")
           _        <- createTag("shared name", admin)
-          theirs   <- createTag("theirs", 7L)
+          theirs   <- createTag("theirsGA2", 7L)
           _        <- createTag("taken", 7L)
           // The administrator owns "shared name" already; the owner does not, so this is no collision.
           reused   <- WordService.renameTag(theirs.id, "shared name", admin).either
@@ -3138,7 +3183,7 @@ object WordServiceSpec extends ZIOSpecDefault {
         for {
           _     <- seed
           admin <- adminUserId("admin-content@example.com")
-          tag   <- createTag("theirs", 7L)
+          tag   <- createTag("theirsGA3", 7L)
           haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           added <- WordService.tagWord(haus.id, tag.id, admin).either
           rows  <- WordRepository.tagMemberships(tag.id).orDie
@@ -3147,7 +3192,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("listTags marks every wordlist editable for an administrator, and none of them owned") {
         for {
           admin  <- adminUserId("admin-list@example.com")
-          theirs <- createTag("theirs", 7L)
+          theirs <- createTag("theirsGA4", 7L)
           own    <- createTag("mine", admin)
           seen   <- WordService.listTags(Some(admin))
           plain  <- WordService.listTags(Some(8L))
@@ -3161,7 +3206,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("getTag marks it editable too — the read the editor opens on") {
         for {
           admin  <- adminUserId("admin-get@example.com")
-          theirs <- createTag("theirs", 7L)
+          theirs <- createTag("theirsGA5", 7L)
           seen   <- WordService.getTag(theirs.id, Some(admin))
           plain  <- WordService.getTag(theirs.id, Some(8L))
         } yield assertTrue(
@@ -3173,14 +3218,14 @@ object WordServiceSpec extends ZIOSpecDefault {
       test("listTagsPaged marks them editable too") {
         for {
           admin  <- adminUserId("admin-paged@example.com")
-          theirs <- createTag("theirs", 7L)
+          theirs <- createTag("theirsGA6", 7L)
           page   <- WordService.listTagsPaged(Some(admin), 1, 50, None, descending = false, None, TagScope.All)
         } yield assertTrue(page.items.find(_.id == theirs.id).exists(t => !t.ownedByMe && t.editableByMe))
       },
       test("an ordinary account is still refused both the rename and the content edit") {
         for {
           _       <- seed
-          tag     <- createTag("theirs", 7L)
+          tag     <- createTag("theirsGA7", 7L)
           haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
           renamed <- WordService.renameTag(tag.id, "nope", 8L).either
           added   <- WordService.tagWord(haus.id, tag.id, 8L).either
@@ -3189,7 +3234,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           added == Left(WordFailure.TagNotFound),
         )
       },
-    ).provide(layer)
+    ).provideShared(layer) @@ TestAspect.sequential
   }
 
   def spec = {
