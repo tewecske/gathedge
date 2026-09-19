@@ -1075,42 +1075,49 @@ final case class GameServiceLive(
     } yield PlayStarted(row.id, wordCount, maxScore)
   }
 
-  /** Turns a sampled pair list into the `game_play_words` rows the play is fixed to, choosing the declension cell each
+  /** Turns a sampled pair list into the `game_play_words` rows the play is fixed to, recording the declension cell each
     * side is asked in.
     *
     * A word that inflects nothing gets no relation and stands in the citation cell — that is every lemma, so an
-    * ordinary wordlist is unaffected. A form gets one of its own relations, drawn at random, so the same form is asked
-    * in a different case from one play to the next; the draw is frozen here rather than repeated per request, for the
-    * reason the migration gives.
+    * ordinary wordlist is unaffected. A form gets the relation [[FormSlot.preferred]] names, the nominative wherever it
+    * has one.
     *
-    * Relations are deduplicated by the cell they name before the draw, not by their own spelling. `Sache` reaches
-    * `Sachen` through `definite,nominative,plural` and plain `plural` alike, and both are the nominative plural: left
-    * as two entries they would make that one cell twice as likely as the dative.
+    * '''Not a draw.''' A `word_tag_pairs` row records one reading, not every reading: somebody who marked `éjszakák`
+    * against `Nächte` meant the plural, and nothing in that pair would justify asking for the genitive plural `der
+    * Nächte` instead. It is still frozen onto the row rather than re-derived per request, for the reason the migration
+    * gives — importing a form edge mid-play must not change a question already asked.
     */
   private def sampledPlayWords(sampled: List[(Long, Long)]): UIO[List[GamePlayWordRow]] = {
     val ids = (sampled.map(_._1) ++ sampled.map(_._2)).distinct
-    for {
-      relations <- repo.formRelationsOf(ids).orDie
-      byWord     = relations
-                     .groupBy { case (wordId, _) => wordId }
-                     .view
-                     .mapValues(rows => rows.map { case (_, relation) => relation }.sorted.distinctBy(GrammarTag.slotOf))
-                     .toMap
-      rows      <- ZIO.foreach(sampled) { case (wordId, translationId) =>
-                     for {
-                       wordRelation        <- pickRelation(byWord.getOrElse(wordId, Nil))
-                       translationRelation <- pickRelation(byWord.getOrElse(translationId, Nil))
-                     } yield GamePlayWordRow(0L, 0L, wordId, translationId, wordRelation, translationRelation)
-                   }
-    } yield rows
+    repo.formRelationsOf(ids).orDie.map { relations =>
+      val byWord = relations
+        .groupBy { case (wordId, _) => wordId }
+        .view
+        .mapValues(rows => rows.map { case (_, relation) => relation })
+        .toMap
+      sampled.map { case (wordId, translationId) =>
+        GamePlayWordRow(
+          0L,
+          0L,
+          wordId,
+          translationId,
+          preferredRelation(byWord.getOrElse(wordId, Nil)),
+          preferredRelation(byWord.getOrElse(translationId, Nil)),
+        )
+      }
+    }
   }
 
-  /** One of `relations` at random, or `None` for a word that inflects nothing. */
-  private def pickRelation(relations: List[String]): UIO[Option[String]] = {
-    if (relations.isEmpty)
-      ZIO.succeed(None)
-    else
-      Random.nextIntBounded(relations.size).map(index => Some(relations(index)))
+  /** Whichever of `relations` names the cell [[FormSlot.preferred]] picks, or `None` for a word that inflects nothing.
+    *
+    * Answers a relation *string*, since that is what the column stores — so the one recorded has to be a relation the
+    * word really carries rather than a cell name reconstructed from it. Two relations can name one cell (`Sache`
+    * reaches `Sachen` through `definite,nominative,plural` and through a bare `plural`); sorting first makes which of
+    * them lands in the column stable instead of dependent on the order the rows came back in.
+    */
+  private def preferredRelation(relations: List[String]): Option[String] = {
+    val wanted = FormSlot.preferred(relations.map(GrammarTag.slotOf).distinct)
+    relations.sorted.find(relation => GrammarTag.slotOf(relation) == wanted)
   }
 
   /** Unlike [[eligibleWordPoolFor]]'s draw pool (deduped to one translation per source word, for unambiguous grading),
@@ -1432,6 +1439,9 @@ final case class GameServiceLive(
         givenText = a.userAnswer,
         outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
         partOfSpeech = posOfWord.get(a.wordId),
+        // The cell the answer was graded in, so a results row explains its own expectation. `des Tisches` is otherwise
+        // an article the reader has no way to account for from the table alone.
+        answerSlot = slots.get(a.translationWordId),
       )
     }
   }

@@ -2,7 +2,7 @@ package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.AnswerOutcome
+import gathedge.shared.domain.{AnswerOutcome, FormSlot}
 import gathedge.shared.dto.GameAnswerResult
 import gathedge.shared.i18n.UiKeys
 
@@ -46,7 +46,13 @@ object GameAnswersTable {
         div(answer.wordText),
         answer.partOfSpeech.map(pos => div(cls := "text-xs opacity-60", Labels.partOfSpeech(pos))),
       ),
-      td(answer.expectedTexts.mkString(", ")),
+      td(
+        div(answer.expectedTexts.mkString(", ")),
+        // Only for an inflected answer: a lemma stands in the citation cell, which needs no saying.
+        answer.answerSlot
+          .filterNot(_ == FormSlot.citation)
+          .map(slot => div(cls := "text-xs opacity-60", Labels.formSlot(slot))),
+      ),
       td(answer.givenText),
       td(outcomeBadge(answer.outcome)),
     )

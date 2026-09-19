@@ -20,6 +20,9 @@ object GrammaticalCase {
   /** The order a relation naming several cases is read in — the citation case first, then the grammar book's own order.
     * `"accusative,genitive,nominative,plural"` is one real relation string, and without a fixed order the article it
     * produces would depend on how the tags happen to be sorted.
+    *
+    * Leading with the nominative is load-bearing twice over: `GrammarTag.slotOf` reads a multi-case relation by this
+    * order, and [[FormSlot.preferred]] picks which of a form's cells a game asks by it. Reordering moves both.
     */
   val all: List[GrammaticalCase] = List(Nominative, Genitive, Dative, Accusative)
 
@@ -92,5 +95,34 @@ object FormSlot {
       number          <- GrammaticalNumber.all
       grammaticalCase <- GrammaticalCase.all
     } yield FormSlot(grammaticalCase, number)
+  }
+
+  /** How one cell is chosen when a word stands in several — the nominative first, and the singular first within a case.
+    *
+    * The case dominates the number, which is the whole point of the ordering. `Wege` is the plural of `der Weg` and
+    * reaches four cells: nominative, accusative and genitive plural, plus the archaic dative singular `dem Wege`. A
+    * number-first ordering picks that dative singular and asks a plural word in the singular; a case-first one picks
+    * the nominative plural, which is what `Wege` is.
+    *
+    * Reads [[GrammaticalCase.all]]'s order directly, which already leads with the nominative — the second consumer of
+    * that ordering, after `GrammarTag.slotOf`. Reordering it moves both.
+    */
+  private def preferenceKey(slot: FormSlot): (Int, Int) = {
+    (GrammaticalCase.all.indexOf(slot.grammaticalCase), GrammaticalNumber.all.indexOf(slot.number))
+  }
+
+  /** The one cell to ask a word in, out of every cell it stands in.
+    *
+    * '''Never a draw.''' A word is paired with its translation for one reading, not for all of them: somebody who
+    * marked `éjszakák` against `Nächte` meant the plural, and asking the same row as a genitive plural (`der Nächte`)
+    * on one play and a nominative plural (`die Nächte`) on the next tests a pairing nobody recorded. The nominative is
+    * what a dictionary cites a form under, so that is what gets asked.
+    *
+    * A form with no nominative cell at all keeps its own — `Tisches` is only ever a genitive singular, and `des
+    * Tisches` is right where the nominative `der Tisches` would be wrong. [[citation]] for a word standing in no cell,
+    * which is every lemma.
+    */
+  def preferred(slots: List[FormSlot]): FormSlot = {
+    slots.minByOption(preferenceKey).getOrElse(citation)
   }
 }

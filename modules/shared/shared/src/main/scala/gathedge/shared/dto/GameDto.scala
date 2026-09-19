@@ -163,6 +163,7 @@ final case class GameAnswerResult(
   givenText: String,
   outcome: AnswerOutcome,
   partOfSpeech: Option[PartOfSpeech] = None,
+  answerSlot: Option[FormSlot] = None,
 ) derives JsonCodec
 
 /** `GET /api/games/plays/{playId}/results`'s answer: the finished play's score, full answer history, and the variant it

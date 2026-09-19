@@ -84,6 +84,51 @@ object GrammarSlotSpec extends ZIOSpecDefault {
           Word.displayIn(lemma, FormSlot.citation) == "der Tisch",
         )
       },
+      // The reported bug, as data: `Nächte` reaches `Nacht` through four relations naming three cells, one of them the
+      // genitive plural. Drawing among them asked `der Nächte` on one play in three. A pair records one reading, so
+      // the nominative is the only defensible cell, and it is the same one on every play.
+      test("a plural form is asked in the nominative, never in another case of the same number") {
+        val nachte  = List(
+          "accusative,definite,plural",
+          "definite,genitive,plural",
+          "definite,nominative,plural",
+          "plural",
+        )
+        val profile = LanguageProfile.of(WordLanguage.De)
+        val slot    = FormSlot.preferred(nachte.map(GrammarTag.slotOf).distinct)
+        assertTrue(
+          slot == FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural),
+          profile.displayIn("Nächte", Some(Gender.Feminine), slot) == "die Nächte",
+        )
+      },
+      // `Wege` carries the archaic dative singular `dem Wege` beside its three plural cells. A number-first preference
+      // would pick that and ask a plural word in the singular; the case has to dominate the number.
+      test("a form carrying an odd singular cell is still asked as the plural it is") {
+        val wege    = List(
+          "accusative,definite,plural",
+          "dative,singular",
+          "definite,genitive,plural",
+          "definite,nominative,plural",
+          "plural",
+        )
+        val profile = LanguageProfile.of(WordLanguage.De)
+        val slot    = FormSlot.preferred(wege.map(GrammarTag.slotOf).distinct)
+        assertTrue(
+          slot == FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural),
+          profile.displayIn("Wege", Some(Gender.Masculine), slot) == "die Wege",
+        )
+      },
+      test("a form with no nominative cell keeps its own rather than being forced into one") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        val slot    = FormSlot.preferred(List("genitive,singular", "genitive,singular,weak").map(GrammarTag.slotOf))
+        assertTrue(
+          slot == FormSlot(GrammaticalCase.Genitive, GrammaticalNumber.Singular),
+          profile.displayIn("Tisches", Some(Gender.Masculine), slot) == "des Tisches",
+        )
+      },
+      test("a word standing in no cell at all is the citation cell") {
+        assertTrue(FormSlot.preferred(Nil) == FormSlot.citation)
+      },
       test("a German masculine noun declines its own way in the singular and the same way in the plural") {
         val profile = LanguageProfile.of(WordLanguage.De)
 

@@ -994,6 +994,73 @@ object GameServiceSpec extends ZIOSpecDefault {
           wrong.outcome != AnswerOutcome.Correct,
         )
       },
+      // The reported bug end to end. `Nächte` carries the same four relations the dictionary really holds for it, one
+      // of them the genitive plural. Every play must ask the nominative, and the results row must name the cell.
+      test("a plural form is asked as die, on every play, and the results row names the cell") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "plural", "plural", 0L, "hu", "de")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ejszakak"))
+          lemma   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Nacht", gender = Some(Gender.Feminine)))
+          form    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Naechte", gender = Some(Gender.Feminine)))
+          _       <- WordRepository.insertForms(
+                       List(
+                         WordFormRow(0L, lemma.id, form.id, "accusative,definite,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,genitive,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,nominative,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "plural", 0L),
+                       )
+                     )
+          _       <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          // Five separate plays: under the draw this replaced, one in three asked the genitive plural, so a run of
+          // five that all say `die` is what pins the randomness out.
+          asked   <- ZIO.foreach(1 to 5) { _ =>
+                       for {
+                         play   <- GameService.startPlay(created.slug, owner)
+                         prompt <- GameService.nextPrompt(play.playId, owner)
+                         answer <- GameService.submitAnswer(play.playId, prompt.wordId.get, "die Naechte", owner)
+                       } yield (prompt.answerSlot, answer.outcome, answer.expectedTexts, answer.answerSlot)
+                     }
+          plural   = FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural)
+        } yield assertTrue(
+          asked.forall { case (slot, _, _, _) => slot.contains(plural) },
+          asked.forall { case (_, outcome, _, _) => outcome == AnswerOutcome.Correct },
+          asked.forall { case (_, _, expected, _) => expected == List("die Naechte") },
+          asked.forall { case (_, _, _, slot) => slot.contains(plural) },
+        )
+      },
+      // `Wege` carries the archaic dative singular `dem Wege` beside its plural cells, which a number-first preference
+      // would have picked — asking a plural word in the singular.
+      test("a plural form carrying an odd singular relation is still asked as a plural") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "odd", "odd", 0L, "hu", "de")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "utak"))
+          lemma   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Weg", gender = Some(Gender.Masculine)))
+          form    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Wege", gender = Some(Gender.Masculine)))
+          _       <- WordRepository.insertForms(
+                       List(
+                         WordFormRow(0L, lemma.id, form.id, "dative,singular", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,genitive,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,nominative,plural", 0L),
+                       )
+                     )
+          _       <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          play    <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(play.playId, owner)
+          answer  <- GameService.submitAnswer(play.playId, prompt.wordId.get, "die Wege", owner)
+        } yield assertTrue(
+          prompt.answerSlot.contains(FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural)),
+          answer.outcome == AnswerOutcome.Correct,
+          answer.expectedTexts == List("die Wege"),
+        )
+      },
       // A lemma has no `word_forms` row naming it as the form side, so it stands in the citation cell and is asked
       // exactly as it always was — the path every ordinary wordlist takes.
       test("a lemma keeps its citation article and names no case") {
