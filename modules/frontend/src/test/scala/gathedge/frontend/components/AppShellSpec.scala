@@ -64,6 +64,12 @@ object AppShellSpec extends ZIOSpecDefault {
           text.contains(UiKeys.guestUpgrade),
         )
       },
+      test("a guest can reach Settings to change its name") {
+        val text = signedInAs(isGuest = true) {
+          withShell(AppShell.render(Page.About, div()))(_.textContent)
+        }
+        assertTrue(text.contains(UiKeys.settingsTitle))
+      },
       test("an ordinary account is not warned") {
         val text = signedInAs(isGuest = false) {
           withShell(AppShell.render(Page.About, div()))(_.textContent)
