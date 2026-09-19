@@ -4,6 +4,8 @@ import gathedge.backend.service.{
   AdminFailure,
   AuthFailure,
   BulkUploadFailure,
+  EmailChangeConfirmFailure,
+  EmailChangeFailure,
   GameFailure,
   GroupFailure,
   GuestAccountFailure,
@@ -69,6 +71,14 @@ object ApiFailures {
     ApiFailure.BadRequest(
       MessageRef(MessageKeys.passwordResetTokenInvalid),
       "This password reset link is invalid, expired, or already used",
+    )
+  }
+
+  // Same shape again, for the email-change confirmation link.
+  private val emailChangeTokenInvalid: ApiFailure.BadRequest = {
+    ApiFailure.BadRequest(
+      MessageRef(MessageKeys.emailChangeTokenInvalid),
+      "This confirmation link is invalid, expired, or already used",
     )
   }
 
@@ -151,6 +161,31 @@ object ApiFailures {
         ApiFailure.Conflict(MessageRef(MessageKeys.usernameTaken), "That username is taken")
       case ProfileFailure.StaleWrite                   =>
         staleWrite
+    }
+  }
+
+  /** Starting an email change: a validation failure, or some other account already answering to the requested address.
+    * Its own mapping for the same reason [[profile]] is one — this endpoint has no rate limiter and no captcha, so
+    * mapping through [[auth]] would put both onto a caller who can never see either.
+    */
+  def emailChange(failure: EmailChangeFailure): ApiFailure.BadRequest | ApiFailure.Conflict = {
+    failure match {
+      case EmailChangeFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case EmailChangeFailure.EmailAlreadyRegistered       =>
+        emailAlreadyRegistered
+    }
+  }
+
+  /** Redeeming an email-change confirmation link: an invalid/expired/spent token, or the destination address having
+    * been registered by somebody else in the meantime.
+    */
+  def confirmEmailChange(failure: EmailChangeConfirmFailure): ApiFailure.BadRequest | ApiFailure.Conflict = {
+    failure match {
+      case EmailChangeConfirmFailure.InvalidToken           =>
+        emailChangeTokenInvalid
+      case EmailChangeConfirmFailure.EmailAlreadyRegistered =>
+        emailAlreadyRegistered
     }
   }
 

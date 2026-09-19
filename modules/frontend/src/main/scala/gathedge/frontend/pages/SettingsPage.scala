@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   LinkedIdentity,
   SetPasswordRequest,
   SharedViewer,
+  UpdateEmailResponse,
   UpdateProfileRequest,
   ShareCodeResponse,
 }
@@ -58,10 +59,23 @@ private class SettingsPage {
   private val nameVar          = Var(AppState.currentUser.flatMap(_.name).getOrElse(""))
   private val profileSubmitBus = new EventBus[Unit]()
 
+  /** The email form, seeded the same way the profile form is — see its own doc comment. Anyone may edit this, guest
+    * included: an empty box is what a guest with no address yet starts from.
+    */
+  private val emailVar       = Var(AppState.currentUser.flatMap(_.email).getOrElse(""))
+  private val emailSubmitBus = new EventBus[Unit]()
+
   private val currentPasswordVar             = Var("")
   private val newPasswordVar                 = Var("")
   private val errorVar: Var[Option[String]]  = Var(OAuthMessages.queryParam("error").map(OAuthMessages.errorMessage))
-  private val noticeVar: Var[Option[String]] = Var(OAuthMessages.queryParam("linked").map(OAuthMessages.linkedMessage))
+  private val noticeVar: Var[Option[String]] = Var(
+    OAuthMessages
+      .queryParam("linked")
+      .map(OAuthMessages.linkedMessage)
+      // Where `ConfirmEmailChangePage` lands a reader after a confirmed change — a full page load, the same reason
+      // `?linked=` above is read from `location.search` rather than the router.
+      .orElse(OAuthMessages.queryParam("emailChanged").map(_ => I18n.t(UiKeys.settingsEmailUpdated)))
+  )
   private val inFlightVar                    = Var(false)
   private val inFlightSignal                 = inFlightVar.signal
 
@@ -105,6 +119,7 @@ private class SettingsPage {
 
   private val passwordStream = passwordSubmitBus.events.filterWith(inFlightSignal.not)
   private val profileStream  = profileSubmitBus.events.filterWith(inFlightSignal.not)
+  private val emailStream    = emailSubmitBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
@@ -128,6 +143,15 @@ private class SettingsPage {
           case Left(err)  =>
             errorVar.set(Some(err.message))
         },
+      // `reloadBus` fires after setting a password and after unlinking an identity — the former can be the moment a
+      // guest account graduates (`AuthService.setPassword`), and neither response carries the account back, unlike
+      // `updateProfile`'s. Without this the guest banner and menu would only catch up at the next full page load,
+      // since they read `AppState`, not the server, and nothing else here refreshes it.
+      reloadBus.events.flatMapSwitch(_ => ApiClient.me) -->
+        Observer[Either[ApiError, AuthResponse]] {
+          case Right(res) => AppState.setUser(res.user)
+          case Left(_)    => () // Session state just goes stale until the next successful read; not worth surfacing.
+        },
       unlinkBus.events.flatMapSwitch(ApiClient.unlinkIdentity) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
@@ -146,6 +170,24 @@ private class SettingsPage {
             Var.set(
               usernameVar       -> res.user.username.getOrElse(""),
               nameVar           -> res.user.name.getOrElse(""),
+            )
+            AppState.setUser(res.user)
+          case Left(err)  =>
+            Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+        },
+      emailStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
+      emailStream.flatMapSwitch(_ => ApiClient.updateEmail(emailVar.now())) -->
+        Observer[Either[ApiError, UpdateEmailResponse]] {
+          case Right(res) =>
+            Var.set(
+              inFlightVar -> false,
+              emailVar    -> res.user.email.getOrElse(""),
+              noticeVar   -> Some(
+                if (res.pendingConfirmation)
+                  I18n.t(UiKeys.settingsEmailPending)
+                else
+                  I18n.t(UiKeys.settingsEmailUpdated)
+              ),
             )
             AppState.setUser(res.user)
           case Left(err)  =>
@@ -212,6 +254,10 @@ private class SettingsPage {
 
   /** The unverified half is shown whether or not the deployment enforces verification: an unproven address is worth
     * fixing either way, and this page cannot see the server's `app.require-email-verification`.
+    *
+    * The edit form below it is offered to every account, guest included — a guest's box starts empty, and saving one
+    * for the first time is exactly how a guest gives itself an address without going through the dedicated upgrade flow
+    * (`AuthService.requestEmailChange`, unlike `upgradeGuest`, asks for nothing else).
     */
   private def renderEmail(): HtmlElement = {
     div(
@@ -231,6 +277,34 @@ private class SettingsPage {
               renderResend()
             }
           ),
+        renderEmailForm(),
+      ),
+    )
+  }
+
+  private def renderEmailForm(): HtmlElement = {
+    form(
+      cls := "mt-4",
+      onSubmit.preventDefault.mapToUnit --> emailSubmitBus.writer,
+      fieldSet(
+        cls := "fieldset",
+        label(cls     := "fieldset-legend", I18n.t(MessageKeys.fieldEmail)),
+        input(
+          cls         := "input w-full",
+          typ         := "email",
+          placeholder := I18n.t(UiKeys.settingsEmailPlaceholder),
+          controlled(value <-- emailVar.signal, onInput.mapToValue --> emailVar.writer),
+        ),
+        p(cls         := "label", I18n.t(UiKeys.settingsEmailHint)),
+      ),
+      div(
+        cls := "card-actions justify-end mt-2",
+        button(
+          cls := "btn btn-primary btn-sm",
+          typ := "submit",
+          disabled <-- inFlightSignal,
+          I18n.t(UiKeys.settingsEmailSave),
+        ),
       ),
     )
   }

@@ -30,6 +30,21 @@ final case class UpdateThemeRequest(theme: Theme) derives JsonCodec
   */
 final case class UpdateProfileRequest(username: Option[String], name: Option[String]) derives JsonCodec
 
+/** The account's own address, from the settings page. */
+final case class UpdateEmailRequest(email: String) derives JsonCodec
+
+/** `pendingConfirmation` is true when a confirmation link went to the *old* address instead of applying at once — only
+  * when that address was verified and this deployment can actually deliver mail, so there is something worth protecting
+  * and a way to reach it. `user` still carries the *previous* address in that case; the change lands only once the link
+  * is followed. See [[gathedge.shared.api.AuthEndpoints.updateEmail]].
+  */
+final case class UpdateEmailResponse(user: User, pendingConfirmation: Boolean) derives JsonCodec
+
+/** The token out of an email-change confirmation link, posted back by the SPA page the link lands on — the same shape
+  * as [[VerifyEmailRequest]].
+  */
+final case class ConfirmEmailChangeRequest(token: String) derives JsonCodec
+
 /** Records the language the account has chosen. Note this does *not* change what the caller sees: the language of a
   * page is decided by the URL prefix it was loaded under, and switching languages is a navigation to the other prefix.
   * This persists the choice so it survives to a new browser, and so email can be written in it.

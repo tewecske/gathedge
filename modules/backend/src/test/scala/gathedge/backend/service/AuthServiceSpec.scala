@@ -3,6 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.{RecordingEmailSender, SentEmails, TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
@@ -27,7 +28,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live
     )
   }
@@ -39,6 +40,18 @@ object AuthServiceSpec extends ZIOSpecDefault {
     val support = {
       PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
         TestCaptchaService.live ++ TestAuthLayers.configWith(requireEmailVerification)
+    }
+    val built   = repoLayers ++ support
+    built >>> (AuthService.live ++ ZLayer.service[SentEmails])
+  }
+
+  /** Like [[authServiceLayer]], but with an SMTP host configured — the one condition, besides a verified current
+    * address, that turns `requestEmailChange` into the confirm-first path rather than an immediate one.
+    */
+  private val mailConfiguredAuthServiceLayer: ZLayer[Any, Throwable, AuthService & SentEmails] = {
+    val support = {
+      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
+        TestCaptchaService.live ++ TestAuthLayers.configWithMailConfigured
     }
     val built   = repoLayers ++ support
     built >>> (AuthService.live ++ ZLayer.service[SentEmails])
@@ -56,7 +69,16 @@ object AuthServiceSpec extends ZIOSpecDefault {
     built >>> (AuthService.live ++ ZLayer.service[SentEmails])
   }
 
-  def spec = suite("AuthService")(coreSuite, verificationSuite, passwordResetSuite, captchaSuite)
+  def spec = {
+    suite("AuthService")(
+      coreSuite,
+      verificationSuite,
+      passwordResetSuite,
+      captchaSuite,
+      emailChangeSuite,
+      emailChangePendingSuite,
+    )
+  }
 
   private val coreSuite = suite("core")(
     test("signup, currentUser via session, login, logout invalidates the session") {
@@ -651,4 +673,128 @@ object AuthServiceSpec extends ZIOSpecDefault {
   private def identity(provider: OAuthProvider, subject: String, email: String): OAuthIdentity = {
     OAuthIdentity(provider, subject, email, emailVerified = true)
   }
+
+  /** With mail unconfigured (the shipped config `authServiceLayer` runs on), every change lands at once — there is no
+    * way to deliver a confirmation link, so requiring one would just lock the account out of its own settings page.
+    * [[emailChangePendingSuite]] below is the one place that turns mail on, to prove the other branch too.
+    */
+  private val emailChangeSuite = suite("email change")(
+    test("a guest with no address to protect gets the change at once") {
+      for {
+        minted            <- AuthService.createGuest(Some("10.0.9.1"))
+        (guest, _)         = minted
+        result            <- AuthService.requestEmailChange(guest.id, "guest-new@example.com")
+        (updated, pending) = result
+      } yield assertTrue(!pending, updated.email.contains("guest-new@example.com"))
+    },
+    test("an unverified address gets the change at once, with nothing yet proven to protect") {
+      for {
+        signedUp          <- AuthService.signup("unverified-changer@example.com", "password123")
+        result            <- AuthService.requestEmailChange(signedUp._1.id, "unverified-new@example.com")
+        (updated, pending) = result
+      } yield assertTrue(!pending, updated.email.contains("unverified-new@example.com"))
+    },
+    test("a verified address gets the change at once when this deployment cannot send mail") {
+      for {
+        signedUp          <- AuthService.signup("verified-nomail@example.com", "password123")
+        vToken            <- SentEmails.lastVerificationToken
+        _                 <- AuthService.verifyEmail(vToken.get)
+        result            <- AuthService.requestEmailChange(signedUp._1.id, "changed-nomail@example.com")
+        (updated, pending) = result
+      } yield assertTrue(!pending, updated.email.contains("changed-nomail@example.com"))
+    },
+    test("re-submitting the address already on the account is a no-op") {
+      for {
+        signedUp <- AuthService.signup("same-address@example.com", "password123")
+        result   <- AuthService.requestEmailChange(signedUp._1.id, "  SAME-address@example.com ")
+      } yield assertTrue(result == ((signedUp._1, false)))
+    },
+    test("an address another account already holds is refused") {
+      for {
+        _        <- AuthService.signup("holder2@example.com", "password123")
+        signedUp <- AuthService.signup("wants-holder2@example.com", "password123")
+        result   <- AuthService.requestEmailChange(signedUp._1.id, "holder2@example.com").either
+      } yield assertTrue(result == Left(EmailChangeFailure.EmailAlreadyRegistered))
+    },
+    test("a malformed address fails validation as a field error") {
+      for {
+        signedUp <- AuthService.signup("malformed-changer@example.com", "password123")
+        result   <- AuthService.requestEmailChange(signedUp._1.id, "not-an-email").either
+      } yield assertTrue(
+        result == Left(EmailChangeFailure.ValidationError(Map("email" -> MessageRef(MessageKeys.emailInvalid))))
+      )
+    },
+  ).provideShared(authServiceLayer(requireEmailVerification = false)) @@ TestAspect.sequential
+
+  /** The confirm-first branch: reachable only when the current address is verified *and* this deployment can actually
+    * deliver mail, which is why this suite runs on its own layer rather than [[authServiceLayer]].
+    */
+  private val emailChangePendingSuite = suite("email change with mail configured")(
+    test("a verified address asks for confirmation instead of changing at once") {
+      for {
+        signedUp          <- AuthService.signup("verified-mail@example.com", "password123")
+        vToken            <- SentEmails.lastVerificationToken
+        _                 <- AuthService.verifyEmail(vToken.get)
+        result            <- AuthService.requestEmailChange(signedUp._1.id, "changed-mail@example.com")
+        (updated, pending) = result
+        cToken            <- SentEmails.lastEmailChangeToken
+      } yield assertTrue(
+        pending,
+        // Still the old address: the confirmation link, not this call, is what applies the change.
+        updated.email.contains("verified-mail@example.com"),
+        cToken.isDefined,
+      )
+    },
+    test("confirming the link applies the new address, which then needs its own verification") {
+      for {
+        signedUp       <- AuthService.signup("confirmflow@example.com", "password123")
+        vToken         <- SentEmails.lastVerificationToken
+        _              <- AuthService.verifyEmail(vToken.get)
+        _              <- AuthService.requestEmailChange(signedUp._1.id, "confirmed@example.com")
+        cToken         <- SentEmails.lastEmailChangeToken
+        _              <- AuthService.confirmEmailChange(cToken.get)
+        loggedIn       <- AuthService.login("confirmed@example.com", "password123")
+        newVerifyToken <- SentEmails.lastVerificationToken
+      } yield assertTrue(
+        loggedIn._1.id == signedUp._1.id,
+        loggedIn._1.email.contains("confirmed@example.com"),
+        !loggedIn._1.emailVerified,
+        // A different token than the one the original signup sent: the new address gets its own.
+        newVerifyToken != vToken,
+      )
+    },
+    test("an unknown or already-redeemed confirmation token is refused") {
+      for {
+        unknown  <- AuthService.confirmEmailChange("not-a-real-token").either
+        signedUp <- AuthService.signup("reuseconfirm@example.com", "password123")
+        vToken   <- SentEmails.lastVerificationToken
+        _        <- AuthService.verifyEmail(vToken.get)
+        _        <- AuthService.requestEmailChange(signedUp._1.id, "reused@example.com")
+        cToken   <- SentEmails.lastEmailChangeToken
+        _        <- AuthService.confirmEmailChange(cToken.get)
+        reused   <- AuthService.confirmEmailChange(cToken.get).either
+      } yield assertTrue(
+        unknown == Left(EmailChangeConfirmFailure.InvalidToken),
+        reused == Left(EmailChangeConfirmFailure.InvalidToken),
+      )
+    },
+    test("a second request replaces the first outstanding confirmation") {
+      for {
+        signedUp    <- AuthService.signup("replaced-confirm@example.com", "password123")
+        vToken      <- SentEmails.lastVerificationToken
+        _           <- AuthService.verifyEmail(vToken.get)
+        _           <- AuthService.requestEmailChange(signedUp._1.id, "first-target@example.com")
+        firstToken  <- SentEmails.lastEmailChangeToken
+        _           <- AuthService.requestEmailChange(signedUp._1.id, "second-target@example.com")
+        secondToken <- SentEmails.lastEmailChangeToken
+        stale       <- AuthService.confirmEmailChange(firstToken.get).either
+        _           <- AuthService.confirmEmailChange(secondToken.get)
+        loggedIn    <- AuthService.login("second-target@example.com", "password123")
+      } yield assertTrue(
+        firstToken != secondToken,
+        stale == Left(EmailChangeConfirmFailure.InvalidToken),
+        loggedIn._1.email.contains("second-target@example.com"),
+      )
+    },
+  ).provideShared(mailConfiguredAuthServiceLayer) @@ TestAspect.sequential
 }

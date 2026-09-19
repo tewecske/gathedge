@@ -75,6 +75,7 @@ object MessageKeys {
   val passwordResetSendFailed: String   = key("auth.passwordResetSendFailed")
   val captchaRequired: String           = key("auth.captchaRequired")
   val captchaFailed: String             = key("auth.captchaFailed")
+  val emailChangeTokenInvalid: String   = key("auth.emailChangeTokenInvalid")
 
   // -- Social sign-in --------------------------------------------------------------------------
   // `oauthFailed` takes the provider's reason as {0}; `oauthAccountExists` takes its display name.
@@ -239,4 +240,10 @@ object MessageKeys {
 
   val emailResetSubject: String = key("email.reset.subject")
   val emailResetBody: String    = key("email.reset.body")
+
+  /** `{0}` is the address the change moves to, `{1}` the confirmation link, `{2}` the hours it stays redeemable. Sent
+    * to the account's *current* address, not the new one — see `AuthService.requestEmailChange`.
+    */
+  val emailChangeSubject: String = key("email.change.subject")
+  val emailChangeBody: String    = key("email.change.body")
 }

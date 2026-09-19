@@ -3,6 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.{RecordingEmailSender, TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   GameRepository,
   GroupRepository,
@@ -18,7 +19,7 @@ import gathedge.backend.i18n.Messages
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.dto.{CreateWordRequest, Paging}
 import gathedge.shared.validation.Validation
-import gathedge.shared.domain.{PartOfSpeech, Theme, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{OAuthProvider, PartOfSpeech, Theme, TranslationFilter, WordLanguage}
 import zio._
 import zio.test._
 
@@ -33,7 +34,8 @@ object GuestAccountSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++
+        PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ WordRepository.live ++ GroupRepository.live ++
         GameRepository.live
     )
@@ -166,6 +168,34 @@ object GuestAccountSpec extends ZIOSpecDefault {
           after.items.map(_.word.id) == List(word),
           signedIn._1.id == guest.id,
         )
+      },
+      // Two more ways out of being a guest, besides the dedicated upgrade flow above: setting a password or linking a
+      // social identity from the settings page. Neither names an address, so neither goes through `upgradeGuest` —
+      // but both stop the account being "no address, no password to sign in with", so both graduate it in place.
+      test("setting a password on a guest account turns it into a registered one") {
+        for {
+          minted    <- AuthService.createGuest(Some("10.0.1.3"))
+          (guest, _) = minted
+          word      <- tagAWord(guest.id, "Gabel")
+          _         <- AuthService.setPassword(guest.id, None, "password123")
+          after     <- AuthService.currentUser(minted._2)
+          words     <- myWords(guest.id)
+        } yield assertTrue(
+          after.exists(user => !user.isGuest && user.id == guest.id),
+          words.items.map(_.word.id) == List(word),
+        )
+      },
+      test("linking a social identity on a guest account turns it into a registered one") {
+        for {
+          minted    <- AuthService.createGuest(Some("10.0.1.4"))
+          (guest, _) = minted
+          _         <-
+            AuthService.linkOAuth(
+              guest.id,
+              OAuthIdentity(OAuthProvider.Google, "pg-guest-link-subject", "linked@example.com", emailVerified = false),
+            )
+          after     <- AuthService.currentUser(minted._2)
+        } yield assertTrue(after.exists(user => !user.isGuest && user.id == guest.id))
       },
       test("a taken address is refused, and a real account has nothing to upgrade") {
         for {

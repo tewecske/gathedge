@@ -78,6 +78,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/auth/password/forgot",
               "/api/auth/password/reset",
               "/api/auth/upgrade",
+              "/api/auth/email-change/confirm",
               "/api/guest",
               "/api/guest/code",
               "/api/guest/claim",
@@ -128,6 +129,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/me/theme",
               "/api/me/locale",
               "/api/me/profile",
+              "/api/me/email",
               "/api/me/identities",
               "/api/me/identities/{provider}",
               "/api/me/password",
@@ -240,6 +242,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // not a guest, which is an answer to a well-formed request rather than an aspect's rejection.
               ("POST", "/api/guest/code")                                                 -> Set(Ok, Unauthorized, Forbidden),
               ("POST", "/api/auth/upgrade")                                               -> Set(Ok, BadRequest, Unauthorized, Forbidden, Conflict),
+              // Redeems an email-change confirmation link: one 400 for a token that is unknown, spent or expired
+              // alike, the same shape as `/api/auth/verify`; 409 is the rare case where the destination address was
+              // registered by somebody else between the request and this confirmation.
+              ("POST", "/api/auth/email-change/confirm")                                  -> Set(NoContent, BadRequest, Conflict),
               // The vocabulary's four reads are guarded by `optionalUser` — the two dictionary reads here and the two
               // wordlist reads (`GET /api/tags`, `GET /api/tags/{tagId}/entries`) below — as are three game reads
               // (`GET /api/games/{slug}`, its `/plays/setup`, and `/api/games/all`): they answer for a visitor with no
@@ -414,6 +420,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("PUT", "/api/me/theme")                                                    -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/locale")                                                   -> Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/me/profile")                                                  -> Set(Ok, BadRequest, Unauthorized, Conflict),
+              // Starting an email change: 409 is some other account already answering to the requested address, the
+              // same status `PUT /api/me/profile` uses for a taken username.
+              ("PUT", "/api/me/email")                                                    -> Set(Ok, BadRequest, Unauthorized, Conflict),
               ("GET", "/api/me/identities")                                               -> Set(Ok, Unauthorized),
               // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
@@ -534,7 +543,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 327,
+          declared == 332,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -628,6 +637,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // redeeming it are the whole of the recovery path for an account that cannot sign in.
               ("POST", "/api/auth/password/forgot"),
               ("POST", "/api/auth/password/reset"),
+              // Reached from a link in an inbox, the same reasoning as `/api/auth/verify` above — the account it
+              // changes may hold no session at all in the browser reading it.
+              ("POST", "/api/auth/email-change/confirm"),
               // A visitor with no session mints one here, or brings a transfer code to it.
               ("POST", "/api/guest"),
               ("POST", "/api/guest/claim"),
@@ -662,7 +674,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 24,
+          guarded.size == operations.size - 25,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

@@ -54,6 +54,9 @@ object DocsRoutes {
       AuthEndpoints.resendVerification,
       AuthEndpoints.forgotPassword,
       AuthEndpoints.resetPassword,
+      // Confirms an email change by proving control of the *old* address — the same reasoning as verifyEmail:
+      // reached from a link in an inbox, possibly on a browser with no session at all.
+      AuthEndpoints.confirmEmailChange,
     ) ++
       // Minting a guest and redeeming a transfer code both hand out a session to somebody who has none.
       AuthEndpoints.publicGuest ++

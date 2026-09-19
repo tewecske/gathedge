@@ -12,6 +12,7 @@ import gathedge.shared.dto.{
   CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ConfirmEmailChangeRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -21,6 +22,8 @@ import gathedge.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateEmailRequest,
+  UpdateEmailResponse,
   UpdateLocaleRequest,
   UpdateProfileRequest,
   UpdateThemeRequest,
@@ -268,6 +271,35 @@ object AuthRoutes {
               .mapError(ApiFailures.profile)
               .map(AuthResponse(_))
           }
+        }
+      )
+  }
+
+  /** Starts changing the account's own address — see `AuthService.requestEmailChange` for when that lands at once and
+    * when it waits on a confirmation link instead.
+    */
+  private val updateEmailRoute = {
+    AuthEndpoints.updateEmail
+      .implementHandler(
+        handler { (body: UpdateEmailRequest) =>
+          withContext { (user: User) =>
+            AuthService
+              .requestEmailChange(user.id, body.email)
+              .mapError(ApiFailures.emailChange)
+              .map { case (updated, pending) => UpdateEmailResponse(updated, pending) }
+          }
+        }
+      )
+  }
+
+  /** Redeems an email-change confirmation link. Public, like `verifyEmailRoute`: it proves control of the *old*
+    * address, which may be read from a browser holding no session at all.
+    */
+  private val confirmEmailChangeRoute = {
+    AuthEndpoints.confirmEmailChange
+      .implementHandler(
+        handler { (body: ConfirmEmailChangeRequest) =>
+          AuthService.confirmEmailChange(body.token).mapError(ApiFailures.confirmEmailChange)
         }
       )
   }
@@ -599,6 +631,7 @@ object AuthRoutes {
       resendVerificationRoute,
       forgotPasswordRoute,
       resetPasswordRoute,
+      confirmEmailChangeRoute,
       captchaStatusRoute,
       // Both mint a session for somebody who has none: one for a brand-new guest, one for a guest arriving on a
       // second machine with a transfer code. Both are rate-limited on the client address, which is what they need
@@ -621,6 +654,7 @@ object AuthRoutes {
       updateThemeRoute,
       updateLocaleRoute,
       updateProfileRoute,
+      updateEmailRoute,
       identitiesRoute,
       unlinkIdentityRoute,
       setPasswordRoute,

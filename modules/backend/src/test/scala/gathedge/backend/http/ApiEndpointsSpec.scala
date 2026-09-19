@@ -4,6 +4,7 @@ import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   GameRepository,
   GroupRepository,
@@ -96,7 +97,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
   private val repos = {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ UsageEventRepository.live ++
         MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live
     )

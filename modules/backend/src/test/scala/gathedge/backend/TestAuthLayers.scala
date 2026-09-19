@@ -27,6 +27,15 @@ trait SentEmails {
       _.reverseIterator.flatMap(email => SentEmails.tokenIn(email.body, SentEmails.resetLinkPattern)).nextOption()
     )
   }
+
+  /** The token out of the most recent `…/confirm-email-change/<token>` link, if there is one. */
+  def lastEmailChangeToken: UIO[Option[String]] = {
+    all.map(
+      _.reverseIterator
+        .flatMap(email => SentEmails.tokenIn(email.body, SentEmails.emailChangeLinkPattern))
+        .nextOption()
+    )
+  }
 }
 
 object SentEmails {
@@ -39,8 +48,12 @@ object SentEmails {
   def lastPasswordResetToken: URIO[SentEmails, Option[String]] =
     ZIO.serviceWithZIO[SentEmails](_.lastPasswordResetToken)
 
-  private val verifyLinkPattern = """/verify-email/([A-Za-z0-9_-]+)""".r
-  private val resetLinkPattern  = """/reset-password/([A-Za-z0-9_-]+)""".r
+  def lastEmailChangeToken: URIO[SentEmails, Option[String]] =
+    ZIO.serviceWithZIO[SentEmails](_.lastEmailChangeToken)
+
+  private val verifyLinkPattern      = """/verify-email/([A-Za-z0-9_-]+)""".r
+  private val resetLinkPattern       = """/reset-password/([A-Za-z0-9_-]+)""".r
+  private val emailChangeLinkPattern = """/confirm-email-change/([A-Za-z0-9_-]+)""".r
 
   private def tokenIn(body: String, pattern: scala.util.matching.Regex): Option[String] = {
     pattern.findFirstMatchIn(body).flatMap(m => Option(m.group(1)))
@@ -88,6 +101,16 @@ object TestAuthLayers {
   def configWith(requireEmailVerification: Boolean): ZLayer[Any, Config.Error, AppConfig] = {
     AppConfig.live
       .project(config => config.copy(app = config.app.copy(requireEmailVerification = requireEmailVerification)))
+  }
+
+  /** `AppConfig` with an SMTP host set, for the one spec that exercises `AuthService.requestEmailChange`'s confirmation
+    * branch. The host is a placeholder — [[RecordingEmailSender]] stands in for `EmailSender` regardless, so nothing
+    * ever dials it — but non-empty, which is what flips `AppConfig.isMailConfigured`.
+    */
+  val configWithMailConfigured: ZLayer[Any, Config.Error, AppConfig] = {
+    AppConfig.live.project(config =>
+      config.copy(mail = config.mail.copy(smtp = config.mail.smtp.copy(host = "smtp.test.local")))
+    )
   }
 
   /** `AppConfig` with captcha turned on, for the specs that exercise the captcha gate. The keys are placeholders — the

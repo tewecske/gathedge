@@ -2,6 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   LoginAttemptRepository,
   PasswordResetTokenRepository,
@@ -49,6 +50,7 @@ object SessionReaper {
     sessions: Long,
     verificationTokens: Long,
     passwordResetTokens: Long,
+    emailChangeTokens: Long,
     loginAttempts: Long,
     usageEvents: Long,
     guests: Long,
@@ -61,29 +63,30 @@ object SessionReaper {
     * down. What this clears is the account a visitor minted and then walked away from before tagging anything.
     */
   def sweep: RIO[
-    SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
-      UsageEventRepository & UserRepository & AppConfig,
+    SessionRepository & EmailVerificationTokenRepository & EmailChangeTokenRepository & PasswordResetTokenRepository &
+      LoginAttemptRepository & UsageEventRepository & UserRepository & AppConfig,
     Swept,
   ] = {
     for {
-      config      <- ZIO.service[AppConfig]
-      now         <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      sessions    <- SessionRepository.deleteExpired(now)
-      tokens      <- EmailVerificationTokenRepository.deleteExpired(now)
-      resetTokens <- PasswordResetTokenRepository.deleteExpired(now)
-      cutoff       = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      attempts    <- LoginAttemptRepository.deleteOlderThan(cutoff)
-      usageCutoff  = now - config.app.usageEventRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      usageEvents <- UsageEventRepository.deleteOlderThan(usageCutoff)
-      guestCutoff  = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
-      abandoned   <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
-      guests      <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
-    } yield Swept(sessions, tokens, resetTokens, attempts, usageEvents, guests)
+      config       <- ZIO.service[AppConfig]
+      now          <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      sessions     <- SessionRepository.deleteExpired(now)
+      tokens       <- EmailVerificationTokenRepository.deleteExpired(now)
+      resetTokens  <- PasswordResetTokenRepository.deleteExpired(now)
+      changeTokens <- EmailChangeTokenRepository.deleteExpired(now)
+      cutoff        = now - config.app.loginAttemptRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      attempts     <- LoginAttemptRepository.deleteOlderThan(cutoff)
+      usageCutoff   = now - config.app.usageEventRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      usageEvents  <- UsageEventRepository.deleteOlderThan(usageCutoff)
+      guestCutoff   = now - config.app.guestRetentionDays.toLong * 24L * 60L * 60L * 1000L
+      abandoned    <- UserRepository.findAbandonedGuests(guestCutoff, guestSweepLimit)
+      guests       <- ZIO.foreach(abandoned)(UserRepository.deleteById).map(_.sum)
+    } yield Swept(sessions, tokens, resetTokens, changeTokens, attempts, usageEvents, guests)
   }
 
   def run: URIO[
-    SessionRepository & EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository &
-      UsageEventRepository & UserRepository & AppConfig & BackgroundJobs,
+    SessionRepository & EmailVerificationTokenRepository & EmailChangeTokenRepository & PasswordResetTokenRepository &
+      LoginAttemptRepository & UsageEventRepository & UserRepository & AppConfig & BackgroundJobs,
     Nothing,
   ] = {
     val once = {
@@ -96,6 +99,9 @@ object SessionReaper {
         _     <- ZIO.when(swept.passwordResetTokens > 0)(
                    ZIO.logInfo(s"Purged ${swept.passwordResetTokens} expired password reset token(s)")
                  )
+        _     <- ZIO.when(swept.emailChangeTokens > 0)(
+                   ZIO.logInfo(s"Purged ${swept.emailChangeTokens} expired email change token(s)")
+                 )
         _     <- ZIO.when(swept.loginAttempts > 0)(
                    ZIO.logInfo(s"Purged ${swept.loginAttempts} expired sign-in attempt record(s)")
                  )
@@ -105,6 +111,7 @@ object SessionReaper {
                    jobName,
                    s"removed ${swept.sessions} session(s), ${swept.verificationTokens} verification token(s), " +
                      s"${swept.passwordResetTokens} password reset token(s), " +
+                     s"${swept.emailChangeTokens} email change token(s), " +
                      s"${swept.loginAttempts} sign-in attempt record(s), ${swept.usageEvents} usage event(s) and " +
                      s"${swept.guests} abandoned guest(s)",
                  )

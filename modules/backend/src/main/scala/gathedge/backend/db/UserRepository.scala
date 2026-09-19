@@ -86,6 +86,19 @@ trait UserRepository {
   def updateProfile(id: Long, email: String, isAdmin: Boolean): Task[Long]
   def updatePasswordHash(id: Long, passwordHash: String): Task[Unit]
 
+  /** The account's own address, changed from the settings page. Always clears `emailVerifiedAt`: the new address is
+    * unproven regardless of whether the old one was, and the caller issues a fresh verification token right after this
+    * — see `AuthService.requestEmailChange`.
+    */
+  def updateEmail(id: Long, email: String): Task[Long]
+
+  /** Turns a guest account into an ordinary one without touching its email or password — for a guest that set a
+    * password or linked a social identity from the settings page, neither of which names an address the way
+    * [[upgradeGuest]]'s dedicated flow does. Filtered on `isGuest` the same way [[upgradeGuest]] is, so calling it on
+    * an already-ordinary account is a harmless no-op. Returns rows affected.
+    */
+  def clearGuestFlag(id: Long): Task[Long]
+
   /** Both updates as one unit of work — `passwordHash` of `None` leaves the password alone. Returns rows affected by
     * the profile update.
     */
@@ -179,6 +192,12 @@ object UserRepository {
 
   def updatePasswordHash(id: Long, passwordHash: String): RIO[UserRepository, Unit] =
     ZIO.serviceWithZIO[UserRepository](_.updatePasswordHash(id, passwordHash))
+
+  def updateEmail(id: Long, email: String): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.updateEmail(id, email))
+
+  def clearGuestFlag(id: Long): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.clearGuestFlag(id))
 
   def updateProfileAndPassword(
     id: Long,
@@ -428,6 +447,28 @@ final class UserRepositoryLive(dataSource: DataSource)
         .update(_.passwordHash -> lift(Option(passwordHash)), row => row.version -> (row.version + 1))
     )
     logged(run(ctx.run(q)).unit)(_ => s"users.updatePasswordHash id=$id")
+  }
+
+  def updateEmail(id: Long, email: String): Task[Long] = {
+    val q = quote(
+      users
+        .filter(_.id == lift(id))
+        .update(
+          _.email            -> lift(Option(email)),
+          _.emailVerifiedAt  -> lift(Option.empty[Long]),
+          row => row.version -> (row.version + 1),
+        )
+    )
+    logged(run(ctx.run(q)))(rows => s"users.updateEmail id=$id rows=$rows")
+  }
+
+  def clearGuestFlag(id: Long): Task[Long] = {
+    val q = quote(
+      users
+        .filter(row => row.id == lift(id) && row.isGuest)
+        .update(_.isGuest -> lift(false), row => row.version -> (row.version + 1))
+    )
+    logged(run(ctx.run(q)))(rows => s"users.clearGuestFlag id=$id rows=$rows")
   }
 
   def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long] = {

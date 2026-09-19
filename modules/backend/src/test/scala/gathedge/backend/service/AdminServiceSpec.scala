@@ -5,6 +5,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.i18n.Messages
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   GameRepository,
   GroupRepository,
@@ -32,7 +33,7 @@ object AdminServiceSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ GameRepository.live ++ WordRepository.live ++
         GroupRepository.live
     )

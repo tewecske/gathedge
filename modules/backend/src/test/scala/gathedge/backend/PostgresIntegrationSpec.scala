@@ -7,6 +7,8 @@ import gathedge.backend.TestAuthLayers
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
+  EmailChangeTokenRow,
   EmailVerificationTokenRepository,
   FlywayMigrator,
   GamePlayAnswerRow,
@@ -134,10 +136,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     * the environment cannot be inferred from a single spec-wide `provide`.
     */
   private type Env = DataSource & UserRepository & SessionRepository & OAuthIdentityRepository &
-    EmailVerificationTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository & AuditLogRepository &
-    UsageEventRepository & GuestClaimCodeRepository & WordRepository & GameRepository & ProgressShareRepository &
-    GroupRepository & AppConfig & EmailSender & PasswordHasher & RateLimiter & GameWordList & AuthService & AuditTrail &
-    GameService & AdminService & WordService
+    EmailVerificationTokenRepository & EmailChangeTokenRepository & PasswordResetTokenRepository &
+    LoginAttemptRepository & AuditLogRepository & UsageEventRepository & GuestClaimCodeRepository & WordRepository &
+    GameRepository & ProgressShareRepository & GroupRepository & AppConfig & EmailSender & PasswordHasher &
+    RateLimiter & GameWordList & AuthService & AuditTrail & GameService & AdminService & WordService
 
   // `>+>` rather than `>>>` so `DataSource` stays in the environment alongside the repositories: the word-forms
   // cascade test below deletes a `words` row directly, which no repository method exposes -- there is no
@@ -146,7 +148,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   private def stack(schema: String): ZLayer[Any, Throwable, Env] = {
     val repositories = schemaDataSource(schema) >+> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++
+        PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
         WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live ++ GroupRepository.live
     )
@@ -238,66 +241,79 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         "deleting a user cascades to its sessions, identities, tokens, tags, practice pairs, transfer codes and games"
       ) {
         for {
-          admin      <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
-          signup     <- AuthService.signup("pgdeltarget@example.com", "password123")
-          (target, _) = signup
-          _          <- AuthService.login("pgdeltarget@example.com", "password123")
-          _          <- OAuthIdentityRepository.insert(
-                          OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", target.email, 0L)
-                        )
+          admin       <- AdminService.createUser(AdminActor.system, "pgdeladmin@example.com", "password123", isAdmin = true)
+          signup      <- AuthService.signup("pgdeltarget@example.com", "password123")
+          (target, _)  = signup
+          _           <- AuthService.login("pgdeltarget@example.com", "password123")
+          _           <- OAuthIdentityRepository.insert(
+                           OAuthIdentityRow(0L, target.id, "google", "pg-subject-1", target.email, 0L)
+                         )
+          _           <- EmailChangeTokenRepository.insert(
+                           EmailChangeTokenRow(
+                             0L,
+                             target.id,
+                             "pgdel-new@example.com",
+                             "pgdel-email-change-token",
+                             0L,
+                             Long.MaxValue,
+                             None,
+                           )
+                         )
           // The vocabulary's three per-account tables, and the one table it shares with everybody.
-          tag        <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L, "de", "hu")
-          word       <- WordRepository.ensureWord(
-                          WordRow(
-                            0L,
-                            "de",
-                            "Löffel",
-                            "löffel",
-                            "noun",
-                            "masculine",
-                            1,
-                            "user",
-                            Some(target.id),
-                            0L,
-                            TextSearch.fold("löffel"),
-                          )
-                        )
-          spoon      <- WordRepository.ensureWord(
-                          WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L, TextSearch.fold("kanál"))
-                        )
-          _          <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
-          _          <- WordRepository.tagWord(word.id, tag.id, 0L)
+          tag         <- WordRepository.insertTag(target.id, "lesson1", "lesson1", 0L, "de", "hu")
+          word        <- WordRepository.ensureWord(
+                           WordRow(
+                             0L,
+                             "de",
+                             "Löffel",
+                             "löffel",
+                             "noun",
+                             "masculine",
+                             1,
+                             "user",
+                             Some(target.id),
+                             0L,
+                             TextSearch.fold("löffel"),
+                           )
+                         )
+          spoon       <- WordRepository.ensureWord(
+                           WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L, TextSearch.fold("kanál"))
+                         )
+          _           <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
+          _           <- WordRepository.tagWord(word.id, tag.id, 0L)
           // `word_tag_pairs` reaches `users` only through `tags`, but that is the path that breaks: declared without an
           // ON DELETE action, the cascade *into* `tags` would raise a violation and `deleteUser` would answer 500.
-          _          <- WordRepository.pairTranslation(word.id, tag.id, spoon.id, 0L)
-          _          <- GuestClaimCodeRepository.insert(target.id, "PGDE-LETE-CODE-0001", 0L)
+          _           <- WordRepository.pairTranslation(word.id, tag.id, spoon.id, 0L)
+          _           <- GuestClaimCodeRepository.insert(target.id, "PGDE-LETE-CODE-0001", 0L)
           // `games.owner_user_id` cascades directly; `game_tags.tag_id` reaches `users` only through `tags`, the
           // same indirect path `word_tag_pairs` exercises above.
-          game       <- GameRepository.insertGame(
-                          gathedge.backend.db.GameRow(0L, target.id, "pg-delete-slug", "PG Delete", "de", "hu", 0L, 0L),
-                          List(tag.id),
-                        )
+          game        <- GameRepository.insertGame(
+                           gathedge.backend.db.GameRow(0L, target.id, "pg-delete-slug", "PG Delete", "de", "hu", 0L, 0L),
+                           List(tag.id),
+                         )
           // `game_favorites` references both `users` and `games`; `user_id` cascades directly, so deleting the
           // account that favorited a game must not raise a violation.
-          _          <- GameRepository.addFavorite(target.id, game.id, 0L)
-          _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          gone       <- AdminService.getUser(target.id).either
-          sessions   <- SessionRepository.listForUser(target.id)
-          identities <- OAuthIdentityRepository.listForUser(target.id)
-          tokens     <- EmailVerificationTokenRepository.findForUser(target.id)
-          tags       <- WordRepository.listTags(target.id)
-          pairs      <- WordRepository.pairsFor(target.id, List(word.id, spoon.id))
-          codes      <- GuestClaimCodeRepository.countFor(target.id)
-          gameGone   <- GameRepository.findBySlug(game.slug)
-          favGone    <- GameRepository.favoriteCounts(List(game.id))
+          _           <- GameRepository.addFavorite(target.id, game.id, 0L)
+          _           <- AdminService.deleteUser(AdminActor(admin.id), target.id)
+          gone        <- AdminService.getUser(target.id).either
+          sessions    <- SessionRepository.listForUser(target.id)
+          identities  <- OAuthIdentityRepository.listForUser(target.id)
+          tokens      <- EmailVerificationTokenRepository.findForUser(target.id)
+          changeToken <- EmailChangeTokenRepository.findByToken("pgdel-email-change-token")
+          tags        <- WordRepository.listTags(target.id)
+          pairs       <- WordRepository.pairsFor(target.id, List(word.id, spoon.id))
+          codes       <- GuestClaimCodeRepository.countFor(target.id)
+          gameGone    <- GameRepository.findBySlug(game.slug)
+          favGone     <- GameRepository.favoriteCounts(List(game.id))
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
-          stillThere <- WordRepository.findWordById(word.id)
-          links      <- WordRepository.allTranslationsOf(word.id)
+          stillThere  <- WordRepository.findWordById(word.id)
+          links       <- WordRepository.allTranslationsOf(word.id)
         } yield assertTrue(
           gone == Left(gathedge.backend.service.AdminFailure.NotFound),
           sessions.isEmpty,
           identities.isEmpty,
           tokens.isEmpty,
+          changeToken.isEmpty,
           tags.isEmpty,
           pairs.isEmpty,
           codes == 0L,

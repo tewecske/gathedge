@@ -24,6 +24,12 @@ object Page {
   /** Where a verification link lands. Public: the account it verifies usually cannot sign in yet. */
   final case class VerifyEmail(token: String) extends Page
 
+  /** Where an email-change confirmation link lands. Public for the same reason [[VerifyEmail]] is: the link proves
+    * control of the account's *old* address, which may be read from a browser holding no session at all — see
+    * `AuthService.requestEmailChange`.
+    */
+  final case class ConfirmEmailChange(token: String) extends Page
+
   /** Shown after a signup that did not sign the user in, and wherever a fresh link needs asking for. */
   case object CheckInbox extends Page
   case object Settings   extends Page
@@ -223,29 +229,29 @@ object Page {
 
   def guardFor(page: Page): AuthGuard = {
     page match {
-      case SignIn | SignUp | ForgotPassword                                           =>
+      case SignIn | SignUp | ForgotPassword                                                              =>
         AuthGuard.RequireAnon
-      case VerifyEmail(_) | CheckInbox | ResetPassword(_) | Forbidden | NotFound      =>
+      case VerifyEmail(_) | ConfirmEmailChange(_) | CheckInbox | ResetPassword(_) | Forbidden | NotFound =>
         AuthGuard.Public
       // The whole point of the vocabulary is that it is usable before signing up for anything.
-      case Words(_) | WordDetail(_)                                                   =>
+      case Words(_) | WordDetail(_)                                                                      =>
         AuthGuard.Public
       // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in. A shared link has to show the catalog, not sign-in. `AllGames` is the browsable catalog of every
       // account's games: a signed-out visitor reads it to find a game to play, the same reason `Games` is public.
-      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About =>
+      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                    =>
         AuthGuard.Public
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
-      case Tags(_) | TagDetail(_, _) | TagCreate                                      =>
+      case Tags(_) | TagDetail(_, _) | TagCreate                                                         =>
         AuthGuard.Public
       // The group catalog and a group's own detail read without a session, the same reasoning as the wordlist catalog:
       // a visitor browses every group and opens one before deciding to sign in and join. `GroupJoin` stays auth-only
       // (see its own doc comment) since redeeming a code needs a session.
-      case Groups(_) | GroupDetail(_)                                                 =>
+      case Groups(_) | GroupDetail(_)                                                                    =>
         AuthGuard.Public
-      case _                                                                          =>
+      case _                                                                                             =>
         AuthGuard.RequireAuth
     }
   }
@@ -305,27 +311,33 @@ object AppRouter {
     * route to prefer instead — acceptable here, since this is an owner-only diagnostic page, not one meant to be
     * hand-typed or shared.
     */
-  private val gameResultsRoute     = Route.withQuery[GameResults, String, GamePlayQuery](
+  private val gameResultsRoute        = Route.withQuery[GameResults, String, GamePlayQuery](
     encode = (p: GameResults) => PatternArgs(p.slug, p.query),
     decode = (args: PatternArgs[String, GamePlayQuery]) => GameResults(args.path, args.params),
     pattern = (root / "games" / segment[String] / "results") ? GamePlayQuery.params,
     basePath = basePath,
   )
-  private val verifyEmailRoute     = Route(
+  private val verifyEmailRoute        = Route(
     encode = (p: VerifyEmail) => p.token,
     decode = (token: String) => VerifyEmail(token),
     pattern = root / "verify-email" / segment[String],
     basePath = basePath,
   )
-  private val checkInboxRoute      = Route.static(CheckInbox, root / "check-inbox", basePath)
-  private val forgotPasswordRoute  = Route.static(ForgotPassword, root / "forgot-password", basePath)
-  private val resetPasswordRoute   = Route(
+  private val confirmEmailChangeRoute = Route(
+    encode = (p: ConfirmEmailChange) => p.token,
+    decode = (token: String) => ConfirmEmailChange(token),
+    pattern = root / "confirm-email-change" / segment[String],
+    basePath = basePath,
+  )
+  private val checkInboxRoute         = Route.static(CheckInbox, root / "check-inbox", basePath)
+  private val forgotPasswordRoute     = Route.static(ForgotPassword, root / "forgot-password", basePath)
+  private val resetPasswordRoute      = Route(
     encode = (p: ResetPassword) => p.token,
     decode = (token: String) => ResetPassword(token),
     pattern = root / "reset-password" / segment[String],
     basePath = basePath,
   )
-  private val adminUserDetailRoute = Route(
+  private val adminUserDetailRoute    = Route(
     encode = (p: AdminUserDetail) => p.id,
     decode = (id: Long) => AdminUserDetail(id),
     pattern = root / "admin" / "users" / segment[Long],
@@ -510,6 +522,8 @@ object AppRouter {
         s"GameResults:$slug:" + GamePlayQuery.params.createParamsString(query)
       case VerifyEmail(token)             =>
         s"VerifyEmail:$token"
+      case ConfirmEmailChange(token)      =>
+        s"ConfirmEmailChange:$token"
       case CheckInbox                     =>
         "CheckInbox"
       case ForgotPassword                 =>
@@ -564,6 +578,8 @@ object AppRouter {
   private[frontend] def deserialize(tag: String): Page = {
     if (tag.startsWith("VerifyEmail:")) {
       VerifyEmail(tag.stripPrefix("VerifyEmail:"))
+    } else if (tag.startsWith("ConfirmEmailChange:")) {
+      ConfirmEmailChange(tag.stripPrefix("ConfirmEmailChange:"))
     } else if (tag.startsWith("GameInstance:")) {
       GameInstance(tag.stripPrefix("GameInstance:"))
     } else if (tag.startsWith("GamePlay:")) {
@@ -758,6 +774,7 @@ object AppRouter {
         gamePlayRoute,
         gameResultsRoute,
         verifyEmailRoute,
+        confirmEmailChangeRoute,
         checkInboxRoute,
         forgotPasswordRoute,
         resetPasswordRoute,

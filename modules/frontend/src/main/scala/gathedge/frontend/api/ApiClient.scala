@@ -10,6 +10,7 @@ import gathedge.shared.dto.{
   CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ConfirmEmailChangeRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -19,6 +20,8 @@ import gathedge.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateEmailRequest,
+  UpdateEmailResponse,
   UpdateLocaleRequest,
   UpdateProfileRequest,
   UpdateThemeRequest,
@@ -100,6 +103,20 @@ object ApiClient {
     */
   def updateProfile(request: UpdateProfileRequest): EventStream[Either[ApiError, AuthResponse]] = {
     HttpClient.put[AuthResponse]("/api/me/profile", Some(request.toJson))
+  }
+
+  /** Starts changing the account's own address. `pendingConfirmation` on the answer says which of the two things just
+    * happened — see `dto.UpdateEmailResponse`.
+    */
+  def updateEmail(email: String): EventStream[Either[ApiError, UpdateEmailResponse]] = {
+    HttpClient.put[UpdateEmailResponse]("/api/me/email", Some(UpdateEmailRequest(email).toJson))
+  }
+
+  /** Redeems the token out of an email-change confirmation link. Public — the account it changes may be read from a
+    * browser with no session at all, the same reasoning as [[verifyEmail]].
+    */
+  def confirmEmailChange(token: String): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.unit(_.POST, "/api/auth/email-change/confirm", Some(ConfirmEmailChangeRequest(token).toJson))
   }
 
   // --- Guest accounts -----------------------------------------------------------------------------------------

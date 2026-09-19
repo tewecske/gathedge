@@ -4,6 +4,7 @@ import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
   DataSourceFactory,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   FlywayMigrator,
   GameRepository,
@@ -111,6 +112,7 @@ object Main extends ZIOAppDefault {
     SessionRepository.live,
     OAuthIdentityRepository.live,
     EmailVerificationTokenRepository.live,
+    EmailChangeTokenRepository.live,
     PasswordResetTokenRepository.live,
     LoginAttemptRepository.live,
     AuditLogRepository.live,

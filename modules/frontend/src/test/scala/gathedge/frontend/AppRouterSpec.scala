@@ -69,7 +69,11 @@ object AppRouterSpec extends ZIOSpecDefault {
       // same pattern. If the two ever disagree, a link that arrives in someone's inbox lands on NotFoundPage — and no
       // test on either side alone sees it. Any further link the server mails belongs here too.
       test("the email links the server builds match the routes that receive them") {
-        assertTrue(AppRouter.router.relativeUrlForPage(Page.VerifyEmail("abc")) == s"$prefix/verify-email/abc")
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.VerifyEmail("abc")) == s"$prefix/verify-email/abc",
+          AppRouter.router.relativeUrlForPage(Page.ConfirmEmailChange("abc")) ==
+            s"$prefix/confirm-email-change/abc",
+        )
       },
       // The whole point of the listing routes: the state that decides which rows are on screen is in the address, so
       // the address can be bookmarked and sent on. A round trip is the statement worth making — an assertion on the

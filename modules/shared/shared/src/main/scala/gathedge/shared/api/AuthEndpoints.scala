@@ -5,6 +5,7 @@ import gathedge.shared.dto.{
   CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
+  ConfirmEmailChangeRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -14,6 +15,8 @@ import gathedge.shared.dto.{
   SetPasswordRequest,
   SignupRequest,
   SignupResponse,
+  UpdateEmailRequest,
+  UpdateEmailResponse,
   UpdateLocaleRequest,
   UpdateProfileRequest,
   UpdateThemeRequest,
@@ -177,6 +180,33 @@ object AuthEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
   }
 
+  /** Starts changing the account's own address. Answers `UpdateEmailResponse` rather than `AuthResponse` because
+    * succeeding does not always mean the address on the record just changed — see that DTO's own doc comment, and
+    * [[gathedge.backend.service.AuthService.requestEmailChange]] for when it does and when it does not. 409 is some
+    * other account already answering to the requested address; 400 covers both validation and the body's codec.
+    */
+  val updateEmail = {
+    Endpoint(Method.PUT / "api" / "me" / "email")
+      .in[UpdateEmailRequest]
+      .withCodecError
+      .out[UpdateEmailResponse]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
+  }
+
+  /** Redeems an email-change confirmation link. Public, the same reasoning as [[verifyEmail]]: the confirmation proves
+    * control of the *old* address, which the caller may be reading from a browser with no session at all. 400 covers a
+    * token that is unknown, already used, or expired — one answer for all three, so the token space cannot be probed,
+    * exactly like [[verifyEmail]]. 409 is the rare case where somebody registered the destination address in the time
+    * between the request and this confirmation.
+    */
+  val confirmEmailChange = {
+    Endpoint(Method.POST / "api" / "auth" / "email-change" / "confirm")
+      .in[ConfirmEmailChangeRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outErrors(failure.badRequest, failure.conflict)
+  }
+
   /** Which social providers this deployment has credentials for, so the sign-in form only offers buttons whose flow can
     * actually complete.
     *
@@ -312,6 +342,8 @@ object AuthEndpoints {
       updateTheme,
       updateLocale,
       updateProfile,
+      updateEmail,
+      confirmEmailChange,
       providers,
       captchaStatus,
       identities,

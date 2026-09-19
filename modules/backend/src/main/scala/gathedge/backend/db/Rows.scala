@@ -69,6 +69,20 @@ final case class PasswordResetTokenRow(
   consumedAt: Option[Long],
 )
 
+/** A single-use email-change confirmation link, the same shape as [[EmailVerificationTokenRow]] plus the address the
+  * change moves to. `consumedAt` set means the link has already been redeemed; rows are pruned by
+  * [[gathedge.backend.service.SessionReaper]] once past `expiresAt`.
+  */
+final case class EmailChangeTokenRow(
+  id: Long,
+  userId: Long,
+  newEmail: String,
+  token: String,
+  createdAt: Long,
+  expiresAt: Long,
+  consumedAt: Option[Long],
+)
+
 /** One sign-in attempt, successful or not. The history behind the in-memory rate limiter, which knows only the current
   * 15-minute window and forgets it on restart.
   *

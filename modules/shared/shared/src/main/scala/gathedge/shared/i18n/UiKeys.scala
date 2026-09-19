@@ -170,6 +170,12 @@ object UiKeys {
   val verifyResend: String       = key("ui.verify.resend")
   val verifyBackToSignIn: String = key("ui.verify.backToSignIn")
 
+  /** Where an email-change confirmation link lands. Unlike [[verifyTitle]]'s page, a dead link has nothing to resend —
+    * the pending change lives with the account, not with this page — so the failure copy only points back to Settings.
+    */
+  val confirmEmailChangeTitle: String          = key("ui.confirmEmailChange.title")
+  val confirmEmailChangeBackToSettings: String = key("ui.confirmEmailChange.backToSettings")
+
   // -- Forgot / reset password -------------------------------------------------------------------
 
   val forgotPasswordTitle: String  = key("ui.forgotPassword.title")
@@ -248,6 +254,11 @@ object UiKeys {
   val settingsVerified: String         = key("ui.settings.verified")
   val settingsNotVerified: String      = key("ui.settings.notVerified")
   val settingsResendHint: String       = key("ui.settings.resendHint")
+  val settingsEmailHint: String        = key("ui.settings.emailHint")
+  val settingsEmailPlaceholder: String = key("ui.settings.emailPlaceholder")
+  val settingsEmailSave: String        = key("ui.settings.emailSave")
+  val settingsEmailUpdated: String     = key("ui.settings.emailUpdated")
+  val settingsEmailPending: String     = key("ui.settings.emailPending")
   val settingsLinkedCard: String       = key("ui.settings.linkedCard")
   val settingsLinkedHint: String       = key("ui.settings.linkedHint")
   val settingsNothingLinked: String    = key("ui.settings.nothingLinked")

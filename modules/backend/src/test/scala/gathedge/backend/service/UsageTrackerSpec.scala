@@ -4,6 +4,7 @@ import gathedge.backend.{RecordingEmailSender, TestCaptchaService, TestDataSourc
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   GameRepository,
   GroupRepository,
@@ -52,7 +53,7 @@ object UsageTrackerSpec extends ZIOSpecDefault {
   private val repoLayers = {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
-        EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
+        EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ GameRepository.live ++ WordRepository.live ++
         GroupRepository.live ++ MetricsRepository.live ++
         (UsageEventRepository.live >>> ZLayer.fromFunction((d: UsageEventRepository) =>

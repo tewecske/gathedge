@@ -3,6 +3,7 @@ package gathedge.backend.service
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   AuditLogRepository,
+  EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
   LoginAttemptRepository,
   MetricsRepository,
@@ -72,31 +73,33 @@ object SystemService {
 
   /** Captures the process start instant as the layer is built, which for this layer is startup. */
   val live: URLayer[
-    AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository &
+    AppConfig & MetricsRepository & SessionRepository & EmailVerificationTokenRepository & EmailChangeTokenRepository &
       PasswordResetTokenRepository & LoginAttemptRepository & UsageEventRepository & UserRepository &
       AuditLogRepository & AuditTrail & RateLimiter & BackgroundJobs,
     SystemService,
   ] = ZLayer {
     for {
-      config         <- ZIO.service[AppConfig]
-      metrics        <- ZIO.service[MetricsRepository]
-      sessionRepo    <- ZIO.service[SessionRepository]
-      tokenRepo      <- ZIO.service[EmailVerificationTokenRepository]
-      resetTokenRepo <- ZIO.service[PasswordResetTokenRepository]
-      attemptRepo    <- ZIO.service[LoginAttemptRepository]
-      usageRepo      <- ZIO.service[UsageEventRepository]
-      userRepo       <- ZIO.service[UserRepository]
-      auditRepo      <- ZIO.service[AuditLogRepository]
-      auditTrail     <- ZIO.service[AuditTrail]
-      rateLimiter    <- ZIO.service[RateLimiter]
-      jobs           <- ZIO.service[BackgroundJobs]
-      startedAt      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      statsCache     <- Ref.make(Option.empty[(Long, DbStats)])
+      config          <- ZIO.service[AppConfig]
+      metrics         <- ZIO.service[MetricsRepository]
+      sessionRepo     <- ZIO.service[SessionRepository]
+      tokenRepo       <- ZIO.service[EmailVerificationTokenRepository]
+      emailChangeRepo <- ZIO.service[EmailChangeTokenRepository]
+      resetTokenRepo  <- ZIO.service[PasswordResetTokenRepository]
+      attemptRepo     <- ZIO.service[LoginAttemptRepository]
+      usageRepo       <- ZIO.service[UsageEventRepository]
+      userRepo        <- ZIO.service[UserRepository]
+      auditRepo       <- ZIO.service[AuditLogRepository]
+      auditTrail      <- ZIO.service[AuditTrail]
+      rateLimiter     <- ZIO.service[RateLimiter]
+      jobs            <- ZIO.service[BackgroundJobs]
+      startedAt       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      statsCache      <- Ref.make(Option.empty[(Long, DbStats)])
     } yield SystemServiceLive(
       config,
       metrics,
       sessionRepo,
       tokenRepo,
+      emailChangeRepo,
       resetTokenRepo,
       attemptRepo,
       usageRepo,
@@ -125,6 +128,7 @@ final case class SystemServiceLive(
   metrics: MetricsRepository,
   sessionRepo: SessionRepository,
   tokenRepo: EmailVerificationTokenRepository,
+  emailChangeRepo: EmailChangeTokenRepository,
   resetTokenRepo: PasswordResetTokenRepository,
   attemptRepo: LoginAttemptRepository,
   usageRepo: UsageEventRepository,
@@ -292,6 +296,7 @@ final case class SystemServiceLive(
                  .provideEnvironment(
                    ZEnvironment(sessionRepo, tokenRepo, attemptRepo, userRepo, config)
                      .add(resetTokenRepo)
+                     .add(emailChangeRepo)
                      .add(usageRepo)
                  )
                  .orDie
@@ -301,12 +306,13 @@ final case class SystemServiceLive(
       // This is the one operation that changes the counts from inside this service, so it is also the one that has to
       // drop the memo — an administrator who prunes and sees the same numbers would reasonably conclude it did not work.
       _     <- statsCache.set(None)
-      // `PruneResult` still has one token count on the wire; folding the reset tokens into it here rather than adding
-      // a fifth field keeps the admin screen's "removed …" sentence at four items instead of rippling a wire change
-      // through `ConfigSummary`'s UI and both locale catalogs for a count nobody has asked to see split out.
+      // `PruneResult` still has one token count on the wire; folding the reset and email-change tokens into it here
+      // rather than adding a fifth field keeps the admin screen's "removed …" sentence at four items instead of
+      // rippling a wire change through `ConfigSummary`'s UI and both locale catalogs for a count nobody has asked to
+      // see split out.
       result = PruneResult(
                  swept.sessions,
-                 swept.verificationTokens + swept.passwordResetTokens,
+                 swept.verificationTokens + swept.passwordResetTokens + swept.emailChangeTokens,
                  swept.loginAttempts,
                  swept.guests,
                  keys,

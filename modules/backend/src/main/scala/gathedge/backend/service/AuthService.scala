@@ -2,6 +2,8 @@ package gathedge.backend.service
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
+  EmailChangeTokenRepository,
+  EmailChangeTokenRow,
   EmailVerificationTokenRepository,
   EmailVerificationTokenRow,
   GuestClaimCodeRepository,
@@ -88,6 +90,34 @@ enum ProfileFailure {
     * The caller should reload and retry.
     */
   case StaleWrite
+}
+
+/** Starting a change of the account's own address, from the settings page. Its own enum for the same reason
+  * [[ProfileFailure]] is one: this endpoint has no rate limiter and no captcha, so mapping it through [[AuthFailure]]
+  * would force a 429 and a 400-for-captcha onto a caller who can never see either.
+  */
+enum EmailChangeFailure {
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+
+  /** Some other account already answers to that address. */
+  case EmailAlreadyRegistered
+}
+
+/** Redeeming an email-change confirmation link. Its own enum rather than folding into [[EmailChangeFailure]]: this path
+  * is public (no session, no caller to validate a field against) and answers a different union — an invalid token
+  * instead of a validation error.
+  */
+enum EmailChangeConfirmFailure {
+
+  /** No such token, or one already redeemed or past its expiry — one case for all three, so the token space cannot be
+    * probed, the same reasoning as [[AuthFailure.InvalidVerificationToken]].
+    */
+  case InvalidToken
+
+  /** Somebody registered the destination address in the time between the request and this confirmation. Rare, but the
+    * unique index would refuse the write anyway, so it is reported as itself instead of coming back as a 500.
+    */
+  case EmailAlreadyRegistered
 }
 
 /** The guest paths' failures, in three enums rather than one.
@@ -256,6 +286,25 @@ trait AuthService {
     name: Option[String],
   ): IO[ProfileFailure, User]
 
+  /** Starts changing the account's own address.
+    *
+    * When the *current* address is proven and this deployment can actually deliver mail, applying the change at once
+    * would let a hijacked session silently redirect account recovery to an attacker's inbox — so a confirmation link
+    * goes to the address being replaced instead, and the new one lands only once [[confirmEmailChange]] redeems it.
+    * Otherwise — an unverified address, a guest with none at all, or no SMTP host to reach anybody with — there is
+    * nothing proven to protect and no way to deliver the safeguard, so the change lands at once and the new address
+    * goes through the ordinary post-signup verification.
+    *
+    * Answers the caller's own `User` either way, paired with whether the change is still pending: `false` means it
+    * already landed on the record just returned, `true` means that record is still the old one.
+    */
+  def requestEmailChange(userId: Long, email: String): IO[EmailChangeFailure, (User, Boolean)]
+
+  /** Redeems an email-change confirmation link: applies the address it names and starts that address's own
+    * verification, the same as a fresh signup would.
+    */
+  def confirmEmailChange(token: String): IO[EmailChangeConfirmFailure, Unit]
+
   /** Mints an account with no address and no password, and a session to go with it.
     *
     * Called on a visitor's first *write*, never on a page view: a session per visit would be a row per crawler. The
@@ -381,6 +430,12 @@ object AuthService {
   ): ZIO[AuthService, ProfileFailure, User] =
     ZIO.serviceWithZIO[AuthService](_.updateProfile(userId, username, name))
 
+  def requestEmailChange(userId: Long, email: String): ZIO[AuthService, EmailChangeFailure, (User, Boolean)] =
+    ZIO.serviceWithZIO[AuthService](_.requestEmailChange(userId, email))
+
+  def confirmEmailChange(token: String): ZIO[AuthService, EmailChangeConfirmFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.confirmEmailChange(token))
+
   def createGuest(
     clientIp: Option[String],
     locale: Locale = Locale.default,
@@ -416,30 +471,32 @@ object AuthService {
 
   val live: URLayer[
     UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      PasswordResetTokenRepository & LoginAttemptRepository & GuestClaimCodeRepository & PasswordHasher & RateLimiter &
-      EmailSender & Messages & AppConfig & CaptchaService,
+      EmailChangeTokenRepository & PasswordResetTokenRepository & LoginAttemptRepository & GuestClaimCodeRepository &
+      PasswordHasher & RateLimiter & EmailSender & Messages & AppConfig & CaptchaService,
     AuthService,
   ] = ZLayer {
     for {
-      userRepo            <- ZIO.service[UserRepository]
-      sessionRepo         <- ZIO.service[SessionRepository]
-      identityRepo        <- ZIO.service[OAuthIdentityRepository]
-      tokenRepo           <- ZIO.service[EmailVerificationTokenRepository]
-      resetTokenRepo      <- ZIO.service[PasswordResetTokenRepository]
-      attemptRepo         <- ZIO.service[LoginAttemptRepository]
-      claimCodeRepo       <- ZIO.service[GuestClaimCodeRepository]
-      hasher              <- ZIO.service[PasswordHasher]
-      rateLimiter         <- ZIO.service[RateLimiter]
-      emailSender         <- ZIO.service[EmailSender]
-      messages            <- ZIO.service[Messages]
-      config              <- ZIO.service[AppConfig]
-      captcha             <- ZIO.service[CaptchaService]
-      timingEqualizerHash <- hasher.hash(timingEqualizerSource).orDie
+      userRepo             <- ZIO.service[UserRepository]
+      sessionRepo          <- ZIO.service[SessionRepository]
+      identityRepo         <- ZIO.service[OAuthIdentityRepository]
+      tokenRepo            <- ZIO.service[EmailVerificationTokenRepository]
+      emailChangeTokenRepo <- ZIO.service[EmailChangeTokenRepository]
+      resetTokenRepo       <- ZIO.service[PasswordResetTokenRepository]
+      attemptRepo          <- ZIO.service[LoginAttemptRepository]
+      claimCodeRepo        <- ZIO.service[GuestClaimCodeRepository]
+      hasher               <- ZIO.service[PasswordHasher]
+      rateLimiter          <- ZIO.service[RateLimiter]
+      emailSender          <- ZIO.service[EmailSender]
+      messages             <- ZIO.service[Messages]
+      config               <- ZIO.service[AppConfig]
+      captcha              <- ZIO.service[CaptchaService]
+      timingEqualizerHash  <- hasher.hash(timingEqualizerSource).orDie
     } yield AuthServiceLive(
       userRepo,
       sessionRepo,
       identityRepo,
       tokenRepo,
+      emailChangeTokenRepo,
       resetTokenRepo,
       attemptRepo,
       claimCodeRepo,
@@ -459,6 +516,7 @@ final case class AuthServiceLive(
   sessionRepo: SessionRepository,
   identityRepo: OAuthIdentityRepository,
   tokenRepo: EmailVerificationTokenRepository,
+  emailChangeTokenRepo: EmailChangeTokenRepository,
   resetTokenRepo: PasswordResetTokenRepository,
   attemptRepo: LoginAttemptRepository,
   claimCodeRepo: GuestClaimCodeRepository,
@@ -996,20 +1054,26 @@ final case class AuthServiceLive(
       // settings page's unlink-by-provider ambiguous.
       _            <- ZIO.when(mine.exists(_.provider == identity.provider.wire))(ZIO.fail(AuthFailure.OAuthAlreadyLinked))
       _            <- insertIdentity(userId, identity)
+      row          <- userRepo.findById(userId).orDie
       // Linking already proved account ownership (it needs a session) and the provider proved the
       // address — but only for the address it reported, so this verifies nothing when the two differ.
       _            <-
         ZIO.when(identity.emailVerified) {
-          userRepo
-            .findById(userId)
-            .orDie
-            .flatMap {
-              case Some(row) if row.emailVerifiedAt.isEmpty && row.email.contains(identity.email.trim.toLowerCase) =>
-                Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => userRepo.markEmailVerified(userId, now).orDie)
-              case _                                                                                               =>
-                ZIO.unit
-            }
+          row match {
+            case Some(r) if r.emailVerifiedAt.isEmpty && r.email.contains(identity.email.trim.toLowerCase) =>
+              Clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now => userRepo.markEmailVerified(userId, now).orDie)
+            case _                                                                                         =>
+              ZIO.unit
+          }
         }
+      // A guest that has just linked a social identity has stopped being "no address, no password" the same
+      // way setting a password does — see `setPassword` — so it graduates here too, in place.
+      _            <- ZIO.when(row.exists(_.isGuest)) {
+                        userRepo.clearGuestFlag(userId).orDie *>
+                          SecurityLog.info(
+                            s"Guest account $userId became a registered account (linked ${identity.provider.wire})"
+                          )
+                      }
       _            <- SecurityLog.info(s"Linked ${identity.provider.wire} identity to user $userId")
     } yield ()
   }
@@ -1088,6 +1152,14 @@ final case class AuthServiceLive(
                       "set"
                   } for user $userId"
               )
+      // A guest that has just set its first password has stopped being "no address, no password to sign in
+      // with" — the definition the guest banner and the menu's upgrade offer exist for — so it graduates in
+      // place, keeping its id and everything it holds. `row.passwordHash` was `None` above precisely because a
+      // guest never has one already, so this is reachable only on that first set, never on an ordinary change.
+      _    <- ZIO.when(row.isGuest) {
+                userRepo.clearGuestFlag(userId).orDie *>
+                  SecurityLog.info(s"Guest account $userId became a registered account (password set)")
+              }
     } yield ()
   }
 
@@ -1163,6 +1235,118 @@ final case class AuthServiceLive(
                      .orDie
                      .someOrElseZIO(ZIO.die(new RuntimeException(s"user $userId not found")))
     } yield toDomain(row)
+  }
+
+  /** Writes the new address and starts its own verification, the same as a fresh signup would. Shared by both of
+    * [[requestEmailChange]]'s branches: the immediate one calls it directly, the confirmation one calls it once the
+    * link is redeemed.
+    */
+  private def applyEmailChange(userId: Long, email: String, locale: Locale): UIO[Unit] = {
+    userRepo.updateEmail(userId, email).orDie *> issueVerification(userId, email, locale)
+  }
+
+  /** Issues a fresh email-change token and mails the confirmation link to `row`'s *current* address, replacing any
+    * token still outstanding for the account.
+    *
+    * `row.email` is read with `.get` rather than threaded as its own parameter: the only caller checks
+    * `row.emailVerifiedAt.isDefined` before reaching here, and a verified address is never `None` — see `UserRow`'s own
+    * doc comment.
+    */
+  private def issueEmailChangeConfirmation(row: UserRow, newEmail: String): UIO[Unit] = {
+    val oldEmail = row.email.get
+    val locale   = localeOf(row)
+    val catalog  = messages.catalog(locale)
+    for {
+      token <- Tokens.urlSafe()
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _     <- emailChangeTokenRepo.deleteForUser(row.id).orDie
+      _     <-
+        emailChangeTokenRepo
+          .insert(
+            EmailChangeTokenRow(0L, row.id, newEmail, token, now, now + AuthService.verificationValidity.toMillis, None)
+          )
+          .orDie
+      // Same reasoning as `issueVerification`'s link: the locale prefix carries the language into the page the
+      // link lands on, since a full page load has no other way to learn it.
+      link   = s"${config.app.publicBaseUrl}${locale.urlPrefix}/confirm-email-change/$token"
+      _     <- emailSender
+                 .send(
+                   oldEmail,
+                   catalog(MessageKeys.emailChangeSubject),
+                   catalog(
+                     MessageKeys.emailChangeBody,
+                     newEmail,
+                     link,
+                     AuthService.verificationValidity.toHours.toString,
+                   ),
+                 )
+                 .catchAllCause(cause =>
+                   ZIO.logErrorCause(s"Could not send email-change confirmation to '$oldEmail'", cause)
+                 )
+      _     <- SecurityLog.info(s"Email-change confirmation requested for user ${row.id}")
+    } yield ()
+  }
+
+  def requestEmailChange(userId: Long, email: String): IO[EmailChangeFailure, (User, Boolean)] = {
+    for {
+      // Lowercased before validation, the same rule every other address-accepting path in this file follows
+      // (`signup`, `login`, `upgradeGuest`) — it is what lets the unique index over `users.email` be the whole of
+      // the case-insensitive uniqueness, with no `lower()` anywhere in the SQL.
+      normalized <- ZIO
+                      .fromEither(Validation.validateEmail(email.trim.toLowerCase))
+                      .mapError(message => EmailChangeFailure.ValidationError(Map("email" -> message)))
+      row        <- userRepo
+                      .findById(userId)
+                      .orDie
+                      .someOrElseZIO(ZIO.die(new RuntimeException(s"user $userId not found")))
+      result     <-
+        if (row.email.contains(normalized)) {
+          // Nothing to do: re-submitting the address already on the account is a no-op, not a fresh request.
+          ZIO.succeed((toDomain(row), false))
+        } else {
+          for {
+            existing <- userRepo.findByEmail(normalized).orDie
+            _        <- ZIO.when(existing.exists(_.id != userId))(ZIO.fail(EmailChangeFailure.EmailAlreadyRegistered))
+            // A confirmation is worth sending only when there is an address to protect (the current one is
+            // proven) and a way to deliver it (this deployment can actually send mail) — otherwise it would be a
+            // link nobody could read, guarding an address nobody had proven owning in the first place.
+            pending   = row.emailVerifiedAt.isDefined && config.isMailConfigured
+            updated  <-
+              if (pending)
+                issueEmailChangeConfirmation(row, normalized).as(row)
+              else {
+                applyEmailChange(userId, normalized, localeOf(row)) *>
+                  userRepo
+                    .findById(userId)
+                    .orDie
+                    .someOrElseZIO(ZIO.die(new RuntimeException(s"user $userId not found")))
+              }
+          } yield (toDomain(updated), pending)
+        }
+    } yield result
+  }
+
+  def confirmEmailChange(token: String): IO[EmailChangeConfirmFailure, Unit] = {
+    for {
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      pending  <- emailChangeTokenRepo.findByToken(token).orDie.someOrFail(EmailChangeConfirmFailure.InvalidToken)
+      _        <- ZIO.when(pending.consumedAt.isDefined || pending.expiresAt <= now)(
+                    ZIO.fail(EmailChangeConfirmFailure.InvalidToken)
+                  )
+      // Somebody may have registered the destination address in the time between the request and this
+      // confirmation; the unique index would refuse the write anyway, so this reports it as itself.
+      existing <- userRepo.findByEmail(pending.newEmail).orDie
+      _        <- ZIO.when(existing.exists(_.id != pending.userId))(
+                    ZIO.fail(EmailChangeConfirmFailure.EmailAlreadyRegistered)
+                  )
+      _        <- emailChangeTokenRepo.markConsumed(token, now).orDie
+      row      <- userRepo
+                    .findById(pending.userId)
+                    .orDie
+                    .someOrElseZIO(ZIO.die(new RuntimeException(s"user ${pending.userId} not found")))
+      _        <- applyEmailChange(pending.userId, pending.newEmail, localeOf(row))
+      _        <- SecurityLog.info(s"Email change confirmed for user ${pending.userId}")
+    } yield ()
   }
 
   // -- Guest accounts ---------------------------------------------------------------------------

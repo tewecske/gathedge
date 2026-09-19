@@ -95,6 +95,7 @@ import gathedge.shared.dto.{
   MigrationInfo,
   MyPlayPage,
   MyPlaySummary,
+  ConfirmEmailChangeRequest,
   NewTranslation,
   PairSelectionResponse,
   PlayStarted,
@@ -142,6 +143,8 @@ import gathedge.shared.dto.{
   TaggedPair,
   TranslationEntry,
   TranslationOption,
+  UpdateEmailRequest,
+  UpdateEmailResponse,
   UpdateLocaleRequest,
   UpdateProfileRequest,
   UpdateThemeRequest,
@@ -205,6 +208,9 @@ object ApiSchemas {
   given Schema[UpdateThemeRequest]        = DeriveSchema.gen[UpdateThemeRequest]
   given Schema[UpdateLocaleRequest]       = DeriveSchema.gen[UpdateLocaleRequest]
   given Schema[UpdateProfileRequest]      = DeriveSchema.gen[UpdateProfileRequest]
+  given Schema[UpdateEmailRequest]        = DeriveSchema.gen[UpdateEmailRequest]
+  given Schema[UpdateEmailResponse]       = DeriveSchema.gen[UpdateEmailResponse]
+  given Schema[ConfirmEmailChangeRequest] = DeriveSchema.gen[ConfirmEmailChangeRequest]
   given Schema[LinkedIdentity]            = DeriveSchema.gen[LinkedIdentity]
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]
