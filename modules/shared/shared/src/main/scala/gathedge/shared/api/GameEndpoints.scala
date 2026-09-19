@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   GameAnswerResult,
   GameCreated,
   GameDetail,
+  GameRef,
   GamePlayDetail,
   GamePlayPage,
   GamePrompt,
@@ -17,6 +18,7 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   StartPlayRequest,
   SubmitAnswerRequest,
+  TagSoloGame,
 }
 import zio.http.{Method, Status}
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -132,6 +134,36 @@ object GameEndpoints {
     Endpoint(Method.DELETE / "api" / "games" / gameSlug / "favorite").withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** For each of `tagIds`, the game built from that wordlist and nothing else — see `GameService.soloGames`. What the
+    * wordlist catalog and one wordlist's own page read to offer "Play game" in place of "Create game": a wordlist
+    * already quizzed by a game of its own does not need a second one.
+    *
+    * Anonymous-capable, the same reasoning [[get]] applies: both pages are readable signed out, so the button they draw
+    * must be too. An empty or missing `tagIds` answers an empty list rather than a 400, the same leniency
+    * [[setupWords]] shows.
+    */
+  val soloGames = {
+    Endpoint(Method.GET / "api" / "games" / "solo")
+      .query(tagIdsQuery)
+      .withCodecError
+      .out[List[TagSoloGame]]
+      .outFailure(failure.badRequest)
+  }
+
+  /** The games whose wordlist set is '''exactly''' `tagIds` — not the games that merely carry one of them, which is
+    * what [[allGames]]'s `tag` filter answers. The setup screen reads it to warn that the quiz about to be created
+    * already exists; "one game per wordlist set" is a recommendation this states rather than enforces.
+    *
+    * Anonymous-capable and lenient about `tagIds` for the same reasons [[soloGames]] is.
+    */
+  val sameTagGames = {
+    Endpoint(Method.GET / "api" / "games" / "same-tags")
+      .query(tagIdsQuery)
+      .withCodecError
+      .out[List[GameRef]]
+      .outFailure(failure.badRequest)
   }
 
   val create = {
@@ -268,6 +300,8 @@ object GameEndpoints {
     setup,
     setupWords,
     allGames,
+    soloGames,
+    sameTagGames,
     favorite,
     unfavorite,
     myPlays,
@@ -284,9 +318,10 @@ object GameEndpoints {
     playDetail,
   )
 
-  /** [[get]], [[playSetup]] and [[allGames]] — a shared game link, the play-variant picker's preview it leads to, and
-    * the catalog of every account's games — must all be viewable before any guest is minted, the same reasoning
+  /** [[get]], [[playSetup]], [[allGames]], [[soloGames]] and [[sameTagGames]] — a shared game link, the play-variant
+    * picker's preview it leads to, the catalog of every account's games, and the two reads that say which games a
+    * wordlist set already has — must all be viewable before any guest is minted, the same reasoning
     * [[WordEndpoints.public]] applies to the dictionary reads.
     */
-  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get, playSetup, allGames)
+  val public: List[Endpoint[?, ?, ?, ?, ?]] = List(get, playSetup, allGames, soloGames, sameTagGames)
 }

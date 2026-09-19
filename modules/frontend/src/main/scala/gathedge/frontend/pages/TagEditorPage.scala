@@ -25,6 +25,7 @@ import gathedge.shared.dto.{
   TagPairInput,
   TagPairWord,
   TagResponse,
+  TagSoloGame,
   TagWordInput,
 }
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
@@ -343,6 +344,12 @@ private final class TagEditorPage(
     */
   private val createGameBus   = new EventBus[Tag]()
   private val creatingGameVar = Var(false)
+
+  /** The game this wordlist already has of its own, if any — what decides whether the row above draws "Play game" or
+    * "Create game", the same rule `TagsPage.renderGameCell` follows. Read once on mount; a wordlist gains a game only
+    * through the button beside it, which navigates away to the new game.
+    */
+  private val soloGameVar = Var(Option.empty[TagSoloGame])
 
   /** Mirrors who the reader is at the moment "Create game" is pressed — signals cannot be read outside a subscription,
     * and the guest detour needs `.now()`. Copied from `TagsPage.readerVar`.
@@ -859,6 +866,15 @@ private final class TagEditorPage(
           case Left(err)      =>
             Var.set(creatingGameVar -> false, errorVar -> Some(err.message))
         },
+      // Whether this wordlist already has a game of its own. A failure costs the page only the "Play game" shortcut,
+      // so it is answered by clearing the mark rather than by the page's error alert.
+      reloadBus.events.flatMapSwitch(_ => GameApiClient.soloGames(Set(tagId))) -->
+        Observer[Either[ApiError, List[TagSoloGame]]] {
+          case Right(games) =>
+            soloGameVar.set(games.find(_.tagId == tagId))
+          case Left(_)      =>
+            soloGameVar.set(None)
+        },
       reloadBus.events.flatMapSwitch(_ => WordApiClient.getTag(tagId)) --> Observer[Either[ApiError, Tag]] {
         case Right(tag) =>
           tagVar.set(Some(tag))
@@ -1089,11 +1105,11 @@ private final class TagEditorPage(
     )
   }
 
-  /** The row of buttons under the title: "Export" (saves the whole tag as a JSON file through [[exportBus]]), "Create
-    * game" (a game over this wordlist alone, in its own declared language pair, straight to the game's own page — the
-    * same shortcut `TagsPage.renderCreateGameCell` offers per row) and "View games" (the [[Page.AllGames]] catalog
-    * pre-filtered to this wordlist, `TagsPage.renderViewGamesCell`'s counterpart). All three are shown to every reader,
-    * since none of them is gated by ownership.
+  /** The row of buttons under the title: "Export" (saves the whole tag as a JSON file through [[exportBus]]), the game
+    * control — "Play game" where this wordlist already has a game of its own, "Create game" where it does not, the same
+    * pair `TagsPage.renderGameCell` draws per row — and "View games" (the [[Page.AllGames]] catalog pre-filtered to
+    * this wordlist, `TagsPage.renderViewGamesCell`'s counterpart). All are shown to every reader, since none of them is
+    * gated by ownership.
     */
   private def renderActionButtons(tag: Tag): HtmlElement = {
     div(
@@ -1104,16 +1120,26 @@ private final class TagEditorPage(
         I18n.t(UiKeys.tagsExportButton),
         onClick.mapToUnit --> exportBus.writer,
       ),
-      button(
-        typ := "button",
-        cls := "btn btn-sm btn-soft",
-        disabled <-- creatingGameVar.signal,
-        child.maybe <-- creatingGameVar.signal.map(creating =>
-          Option.when(creating)(span(cls := "loading loading-spinner loading-xs"))
-        ),
-        I18n.t(UiKeys.tagsListCreateGame),
-        onClick.mapToUnit --> Observer[Unit](_ => createGameBus.emit(tag)),
-      ),
+      child <-- soloGameVar.signal.distinct.map {
+        case Some(game) =>
+          a(
+            cls   := "btn btn-sm btn-primary btn-soft",
+            AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
+            title := game.name,
+            I18n.t(UiKeys.tagsListPlayGame),
+          )
+        case None       =>
+          button(
+            typ := "button",
+            cls := "btn btn-sm btn-soft",
+            disabled <-- creatingGameVar.signal,
+            child.maybe <-- creatingGameVar.signal.map(creating =>
+              Option.when(creating)(span(cls := "loading loading-spinner loading-xs"))
+            ),
+            I18n.t(UiKeys.tagsListCreateGame),
+            onClick.mapToUnit --> Observer[Unit](_ => createGameBus.emit(tag)),
+          )
+      },
       a(
         cls := "btn btn-sm btn-soft",
         AppRouter.router.navigateTo(Page.AllGames(AllGameQuery.default.copy(tagId = Some(tag.id)))),

@@ -53,7 +53,7 @@ object AdminSystemPageSpec extends ZIOSpecDefault {
           buttons.exists(_.contains(UiKeys.adminSystemMaintenanceClear)),
         )
       },
-      test("the system page offers the six admin tabs") {
+      test("the system page offers the seven admin tabs") {
         val tabs = withPage(AdminSystemPage.render()) { container =>
           container.querySelectorAll(".tab").toList.map(_.textContent)
         }
@@ -66,6 +66,7 @@ object AdminSystemPageSpec extends ZIOSpecDefault {
             UiKeys.navAdminSystem,
             UiKeys.navAdminWordForms,
             UiKeys.navAdminRateLimits,
+            UiKeys.navAdminDuplicateGames,
           )
         )
       },

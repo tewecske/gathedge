@@ -11,6 +11,7 @@ import gathedge.shared.dto.{
   GamePlayDetail,
   GamePlayPage,
   GamePrompt,
+  GameRef,
   GameResults,
   GameSetupWord,
   MyPlayPage,
@@ -18,6 +19,7 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   StartPlayRequest,
   SubmitAnswerRequest,
+  TagSoloGame,
 }
 import zio.json._
 
@@ -82,6 +84,23 @@ object GameApiClient {
           "lang2"     -> language2.map(WordLanguage.code),
         )}"
     )
+  }
+
+  /** For each of `tagIds`, the game built from that wordlist and nothing else — at most one row per tag. What the
+    * wordlist catalog and one wordlist's own page read to offer "Play game" in place of "Create game". Needs no
+    * session, like [[get]].
+    */
+  def soloGames(tagIds: Set[Long]): EventStream[Either[ApiError, List[TagSoloGame]]] = {
+    val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
+    HttpClient.get[List[TagSoloGame]](s"/api/games/solo${query("tagIds" -> joined)}")
+  }
+
+  /** The games whose wordlist set is exactly `tagIds` — the setup screen's "this quiz already exists" warning, not the
+    * "carries this wordlist" filter [[allGames]]'s `tagId` applies. Needs no session either.
+    */
+  def gamesWithTags(tagIds: Set[Long]): EventStream[Either[ApiError, List[GameRef]]] = {
+    val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
+    HttpClient.get[List[GameRef]](s"/api/games/same-tags${query("tagIds" -> joined)}")
   }
 
   /** Marks `slug` as the caller's favorite — idempotent, answers 204. */

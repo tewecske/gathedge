@@ -40,6 +40,19 @@ trait GameRepository {
     */
   def tagsOfGames(gameIds: List[Long]): Task[Map[Long, List[TagRow]]]
 
+  /** Every game carrying at least one of `tagIds`, whatever else it carries. The candidate set both "which wordlists
+    * already have a game of their own" questions start from: [[tagsOfGames]] then says which of these games carry
+    * nothing else — see `GameService.soloGames` and `.gamesWithTags`. Empty `tagIds` answers an empty list.
+    */
+  def gamesWithAnyTag(tagIds: List[Long]): Task[List[GameRow]]
+
+  /** Every `game_tags` row there is, for the one question that cannot be asked about a known set of games: which
+    * wordlist sets more than one game was built from. Read whole and reduced in Scala rather than grouped in SQL —
+    * comparing two games' tag *sets* needs an aggregate no Quill query expresses, and this feeds one administrator
+    * report, not a page a reader opens. See `GameService.duplicateTagGames`.
+    */
+  def allGameTagLinks: Task[List[GameTagRow]]
+
   /** Rows affected — `0` means `id` does not exist, or its `version` no longer matches `expectedVersion`. Ownership is
     * the service's job: this only writes. Bumps `version`.
     */
@@ -241,6 +254,12 @@ object GameRepository {
 
   def tagsOfGames(gameIds: List[Long]): RIO[GameRepository, Map[Long, List[TagRow]]] =
     ZIO.serviceWithZIO[GameRepository](_.tagsOfGames(gameIds))
+
+  def gamesWithAnyTag(tagIds: List[Long]): RIO[GameRepository, List[GameRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.gamesWithAnyTag(tagIds))
+
+  def allGameTagLinks: RIO[GameRepository, List[GameTagRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.allGameTagLinks)
 
   def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): RIO[GameRepository, Long] =
     ZIO.serviceWithZIO[GameRepository](_.rename(id, name, updatedAt, expectedVersion))
@@ -483,6 +502,28 @@ final class GameRepositoryLive(dataSource: DataSource)
       }
       logged(grouped)(byGame => s"games.tagsOfGames games=${gameIds.size} rows=${byGame.values.map(_.size).sum}")
     }
+  }
+
+  def gamesWithAnyTag(tagIds: List[Long]): Task[List[GameRow]] = {
+    if (tagIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        gameTags
+          .filter(link => liftQuery(tagIds).contains(link.tagId))
+          .join(games)
+          .on { case (link, game) =>
+            link.gameId == game.id
+          }
+          .map { case (_, game) => game }
+          .distinct
+      }
+      logged(run(ctx.run(q)))(rows => s"games.gamesWithAnyTag tags=${tagIds.size} rows=${rows.size}")
+    }
+  }
+
+  def allGameTagLinks: Task[List[GameTagRow]] = {
+    logged(run(ctx.run(quote(gameTags))))(rows => s"games.allGameTagLinks rows=${rows.size}")
   }
 
   def rename(id: Long, name: String, updatedAt: Long, expectedVersion: Long): Task[Long] = {

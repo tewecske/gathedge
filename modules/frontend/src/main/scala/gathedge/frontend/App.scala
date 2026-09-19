@@ -5,6 +5,7 @@ import com.raquo.waypoint.SplitRender
 import gathedge.frontend.api.ApiClient
 import gathedge.frontend.pages.{
   AdminAuditPage,
+  AdminDuplicateGamesPage,
   AdminRateLimitsPage,
   AdminSystemPage,
   AdminUsagePage,
@@ -556,6 +557,10 @@ object App {
       case Page.AdminRateLimits if gate.isAdmin           =>
         AdminRateLimitsPage.render()
       case Page.AdminRateLimits                           =>
+        ForbiddenPage.render()
+      case Page.AdminDuplicateGames if gate.isAdmin       =>
+        AdminDuplicateGamesPage.render()
+      case Page.AdminDuplicateGames                       =>
         ForbiddenPage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise.
       case Page.Groups(query)                             =>

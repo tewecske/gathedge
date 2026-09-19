@@ -8,6 +8,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   DeleteWordFormRequest,
+  DuplicateGameGroup,
   GameResults,
   LoginAttemptEntry,
   MyPlayPage,
@@ -173,6 +174,11 @@ object AdminApiClient {
       "/api/admin/word-forms/anomalies/delete",
       Some(DeleteWordFormRequest(formWordId, relation).toJson),
     )
+  }
+
+  /** Every set of wordlists more than one game was built from — the duplicate report. */
+  def duplicateGames: EventStream[Either[ApiError, List[DuplicateGameGroup]]] = {
+    HttpClient.get[List[DuplicateGameGroup]]("/api/admin/games/same-tags")
   }
 
   def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {

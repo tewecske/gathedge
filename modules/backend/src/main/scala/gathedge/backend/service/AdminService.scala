@@ -28,6 +28,7 @@ import gathedge.shared.dto.{
   AuditEntry,
   AuditPage,
   DeleteWordFormRequest,
+  DuplicateGameGroup,
   GameResults,
   LockoutStatus,
   LoginAttemptEntry,
@@ -165,6 +166,11 @@ trait AdminService {
 
   /** Deletes every `word_forms` row for one anomaly's `(form word, relation)` pair. */
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit]
+
+  /** Every set of wordlists more than one game was built from — the duplicate report, delegated to `GameService` the
+    * same way this service's own play listings are. Reads games, so it cannot fail beyond a defect.
+    */
+  def duplicateGames: UIO[List[DuplicateGameGroup]]
 }
 
 object AdminService {
@@ -257,6 +263,9 @@ object AdminService {
 
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): URIO[AdminService, Unit] =
     ZIO.serviceWithZIO[AdminService](_.deleteWordFormAnomaly(actor, request))
+
+  def duplicateGames: URIO[AdminService, List[DuplicateGameGroup]] =
+    ZIO.serviceWithZIO[AdminService](_.duplicateGames)
 
   /** More than this many distinct lemmas claiming the same `(form word, relation)` is not a real inflection table --
     * see `WordRepository.formFanOutAnomalies`.
@@ -710,6 +719,8 @@ final case class AdminServiceLive(
         WordFormAnomaly(word.id, word.text, word.language, relation, count)
       })
   }
+
+  def duplicateGames: UIO[List[DuplicateGameGroup]] = gameService.duplicateTagGames
 
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit] = {
     wordRepo.deleteWordForms(request.formWordId, request.relation).orDie.flatMap { rows =>

@@ -7,7 +7,7 @@ import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, TagWords
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.shared.domain.{Tag, User, WordLanguage}
-import gathedge.shared.dto.{GameCreated, GameSetupWord}
+import gathedge.shared.dto.{GameCreated, GameRef, GameSetupWord}
 import gathedge.shared.i18n.UiKeys
 
 /** Choosing a language pair and tags, and turning them into a fresh quiz.
@@ -107,6 +107,13 @@ private class GameSetupPage {
 
   private val createdVar = Var(Option.empty[GameCreated])
 
+  /** The games already built from exactly the picked wordlists, refetched whenever that selection changes. Empty while
+    * nothing is picked, and cleared by a failed lookup: the warning is advice, so it is never worth the page's error
+    * alert. The language pair is not part of the question — a second game over the same wordlists is the duplicate
+    * worth warning about, whichever direction it was created in.
+    */
+  private val duplicatesVar = Var(List.empty[GameRef])
+
   private val userSignal = AppState.currentUserSignal
 
   /** Mirrors who the reader is at the moment a request is made — signals cannot be read outside a subscription, and the
@@ -166,6 +173,7 @@ private class GameSetupPage {
             renderTagsColumn(),
             renderWordsColumn(),
           ),
+          renderDuplicateWarning(),
           renderPlayButton(),
         ),
       ),
@@ -215,6 +223,20 @@ private class GameSetupPage {
           case Left(err)                 =>
             Var.set(wordsLoadingVar -> false, errorVar -> Some(err.message))
         },
+      // Which games are already built from exactly the picked wordlists. Asked on every change of the selection, and
+      // never on a language change alone: the duplicate is about the wordlist set, not the direction.
+      selectedTagIdsVar.signal.distinct.updates.flatMapSwitch(tagIds => {
+        if (tagIds.isEmpty)
+          EventStream.fromValue(Right(List.empty[GameRef]))
+        else
+          GameApiClient.gamesWithTags(tagIds)
+      }) -->
+        Observer[Either[ApiError, List[GameRef]]] {
+          case Right(games) =>
+            duplicatesVar.set(games)
+          case Left(_)      =>
+            duplicatesVar.set(Nil)
+        },
       playBus.events --> Observer[Unit](_ => Var.set(creatingVar -> true, errorVar -> None, createdVar -> None)),
       playBus.events.withCurrentValueOf(formAndTagsSignal).flatMapSwitch { case (source, target, tagIds) =>
         asReader(() => GameApiClient.create(source, target, tagIds.toList))
@@ -234,6 +256,37 @@ private class GameSetupPage {
       // own reload is emitted to nobody and silently lost, leaving the tag list empty until something else (a
       // language change) asks again.
       onMountCallback(_ => reloadBus.emit(())),
+    )
+  }
+
+  /** "A game over exactly these wordlists already exists" — a warning, never a refusal: the play button stays live, and
+    * each named game is offered as a link to open instead of creating a second one. One game per wordlist set is the
+    * recommendation the wordlist pages make by offering "Play game"; this is the same recommendation where the reader
+    * assembles the set by hand.
+    */
+  private def renderDuplicateWarning(): HtmlElement = {
+    div(
+      child.maybe <-- duplicatesVar.signal.map { games =>
+        Option.when(games.nonEmpty)(
+          div(
+            role := "alert",
+            cls  := "alert alert-warning mb-4",
+            div(
+              span(I18n.t(UiKeys.gameSetupDuplicateWarning)),
+              div(
+                cls := "flex flex-wrap gap-2 mt-2",
+                games.map(game => {
+                  a(
+                    cls := "btn btn-xs",
+                    AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
+                    I18n.t(UiKeys.gameSetupDuplicatePlay, game.name),
+                  )
+                }),
+              ),
+            ),
+          )
+        )
+      }
     )
   }
 
