@@ -5,6 +5,7 @@ import gathedge.backend.db.{GroupRepository, UserRepository}
 import gathedge.shared.domain.{
   AnswerOutcome,
   GameMode,
+  GameRef,
   GameScoring,
   Gender,
   GroupRef,
@@ -22,7 +23,6 @@ import gathedge.shared.dto.{
   DuplicateGameGroup,
   GameAnswerResult,
   GameDetail,
-  GameRef,
   GamePlayDetail,
   GamePlayPage,
   GamePlaySummary,
@@ -30,7 +30,6 @@ import gathedge.shared.dto.{
   GameResults,
   GameSetupWord,
   GameTagRef,
-  TagSoloGame,
   GameVariantDto,
   MyPlayPage,
   MyPlaySummary,
@@ -126,13 +125,9 @@ trait GameService {
     tagIds: List[Long],
   ): UIO[List[GameSetupWord]]
 
-  /** For each of `tagIds`, the game built from that wordlist and nothing else, oldest first — at most one row per tag.
-    * What the wordlist pages read to offer "Play game" in place of "Create game".
-    */
-  def soloGames(tagIds: List[Long]): UIO[List[TagSoloGame]]
-
   /** The games whose wordlist set is exactly `tagIds` — the setup screen's "this quiz already exists" warning. An empty
-    * `tagIds` answers an empty list: no game is built from no wordlist.
+    * `tagIds` answers an empty list: no game is built from no wordlist. The wordlist pages ask no such question of
+    * their own: `Tag.soloGame` already tells them, filled by the read they open on.
     */
   def gamesWithTags(tagIds: List[Long]): UIO[List[GameRef]]
 
@@ -304,9 +299,6 @@ object GameService {
     tagIds: List[Long],
   ): URIO[GameService, List[GameSetupWord]] =
     ZIO.serviceWithZIO[GameService](_.eligibleWords(sourceLanguage, targetLanguage, tagIds))
-
-  def soloGames(tagIds: List[Long]): URIO[GameService, List[TagSoloGame]] =
-    ZIO.serviceWithZIO[GameService](_.soloGames(tagIds))
 
   def gamesWithTags(tagIds: List[Long]): URIO[GameService, List[GameRef]] =
     ZIO.serviceWithZIO[GameService](_.gamesWithTags(tagIds))
@@ -708,50 +700,7 @@ final case class GameServiceLive(
     )
   }
 
-  /** The candidates both "does this wordlist set already have a game" questions start from: every game carrying at
-    * least one of `tagIds`, paired with its own whole tag set. Two queries, whatever the number of tags asked about.
-    */
-  private def gamesCarryingAnyOf(tagIds: List[Long]): UIO[List[(GameRow, Set[Long])]] = {
-    for {
-      candidates <- repo.gamesWithAnyTag(tagIds).orDie
-      tagsByGame <- repo.tagsOfGames(candidates.map(_.id)).orDie
-    } yield candidates.map(game => (game, tagsByGame.getOrElse(game.id, Nil).map(_.id).toSet))
-  }
-
-  /** The oldest game first, so a wordlist quizzed by several games still sends every reader to the same one. `id`
-    * breaks a tie between two games created in the same millisecond.
-    */
-  private def oldestFirst(games: List[GameRow]): List[GameRow] = games.sortBy(game => (game.createdAt, game.id))
-
-  def soloGames(tagIds: List[Long]): UIO[List[TagSoloGame]] = {
-    val wanted = tagIds.toSet
-    gamesCarryingAnyOf(tagIds).map { rows =>
-      val solo = rows.collect {
-        case (game, tags) if tags.size == 1 && wanted.contains(tags.head) =>
-          (tags.head, game)
-      }
-      solo
-        .groupBy { case (tagId, _) => tagId }
-        .toList
-        .flatMap { case (tagId, pairs) =>
-          oldestFirst(pairs.map { case (_, game) => game }).headOption
-            .map(game => TagSoloGame(tagId, game.slug, game.name))
-        }
-        .sortBy(_.tagId)
-    }
-  }
-
-  def gamesWithTags(tagIds: List[Long]): UIO[List[GameRef]] = {
-    val wanted = tagIds.toSet
-    if (wanted.isEmpty)
-      ZIO.succeed(Nil)
-    else {
-      gamesCarryingAnyOf(tagIds).map { rows =>
-        val exact = rows.collect { case (game, tags) if tags == wanted => game }
-        oldestFirst(exact).map(game => GameRef(game.slug, game.name))
-      }
-    }
-  }
+  def gamesWithTags(tagIds: List[Long]): UIO[List[GameRef]] = TagGames.withExactTags(repo, tagIds)
 
   def duplicateTagGames: UIO[List[DuplicateGameGroup]] = {
     for {
@@ -767,7 +716,7 @@ final case class GameServiceLive(
       gameOf      = games.map(game => game.id -> game).toMap
     } yield shared
       .flatMap { entries =>
-        val rows = oldestFirst(entries.flatMap { case (gameId, _) => gameOf.get(gameId) })
+        val rows = TagGames.oldestFirst(entries.flatMap { case (gameId, _) => gameOf.get(gameId) })
         // A game deleted between the two reads can drop a group back to one member, which is no longer a duplicate.
         Option.when(rows.sizeIs > 1) {
           DuplicateGameGroup(

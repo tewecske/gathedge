@@ -4,6 +4,7 @@ import gathedge.backend.{RecordingEmailSender, TestAuthLayers, TestCaptchaServic
 import gathedge.backend.db.{
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  GameRepository,
   GroupRepository,
   GuestClaimCodeRepository,
   LoginAttemptRepository,
@@ -33,7 +34,8 @@ object GuestAccountSpec extends ZIOSpecDefault {
     TestDataSource.postgres >>> (
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
-        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ WordRepository.live ++ GroupRepository.live
+        GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ WordRepository.live ++ GroupRepository.live ++
+        GameRepository.live
     )
   }
 

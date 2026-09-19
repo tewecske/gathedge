@@ -25,7 +25,6 @@ import gathedge.shared.dto.{
   TagPairInput,
   TagPairWord,
   TagResponse,
-  TagSoloGame,
   TagWordInput,
 }
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
@@ -344,12 +343,6 @@ private final class TagEditorPage(
     */
   private val createGameBus   = new EventBus[Tag]()
   private val creatingGameVar = Var(false)
-
-  /** The game this wordlist already has of its own, if any — what decides whether the row above draws "Play game" or
-    * "Create game", the same rule `TagsPage.renderGameCell` follows. Read once on mount; a wordlist gains a game only
-    * through the button beside it, which navigates away to the new game.
-    */
-  private val soloGameVar = Var(Option.empty[TagSoloGame])
 
   /** Mirrors who the reader is at the moment "Create game" is pressed — signals cannot be read outside a subscription,
     * and the guest detour needs `.now()`. Copied from `TagsPage.readerVar`.
@@ -866,15 +859,6 @@ private final class TagEditorPage(
           case Left(err)      =>
             Var.set(creatingGameVar -> false, errorVar -> Some(err.message))
         },
-      // Whether this wordlist already has a game of its own. A failure costs the page only the "Play game" shortcut,
-      // so it is answered by clearing the mark rather than by the page's error alert.
-      reloadBus.events.flatMapSwitch(_ => GameApiClient.soloGames(Set(tagId))) -->
-        Observer[Either[ApiError, List[TagSoloGame]]] {
-          case Right(games) =>
-            soloGameVar.set(games.find(_.tagId == tagId))
-          case Left(_)      =>
-            soloGameVar.set(None)
-        },
       reloadBus.events.flatMapSwitch(_ => WordApiClient.getTag(tagId)) --> Observer[Either[ApiError, Tag]] {
         case Right(tag) =>
           tagVar.set(Some(tag))
@@ -1120,7 +1104,7 @@ private final class TagEditorPage(
         I18n.t(UiKeys.tagsExportButton),
         onClick.mapToUnit --> exportBus.writer,
       ),
-      child <-- soloGameVar.signal.distinct.map {
+      tag.soloGame match {
         case Some(game) =>
           a(
             cls   := "btn btn-sm btn-primary btn-soft",

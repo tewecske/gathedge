@@ -8,8 +8,8 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagQuery}
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{Tag, TagScope, User}
-import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSoloGame, TagSort}
+import gathedge.shared.domain.{GameRef, Tag, TagScope, User}
+import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
 import gathedge.shared.i18n.UiKeys
 import zio.json._
 
@@ -81,11 +81,6 @@ private class TagsPage(
     * pair, so the click needs the [[Tag]] and not only its id.
     */
   private val createGameBus = new EventBus[Tag]()
-
-  /** The game each listed wordlist already has of its own, by tag id — what decides whether a row draws "Play game" or
-    * "Create game". Refetched for every page of rows; a wordlist absent from it simply has no game of its own yet.
-    */
-  private val soloGamesVar = Var(Map.empty[Long, TagSoloGame])
 
   /** Which row's game is being created, or `None`. Drives that row's spinner and disables every row's button, so a
     * second click cannot mint a second game while the first is still in flight.
@@ -167,24 +162,6 @@ private class TagsPage(
             Var.set(tagsVar -> result.items, totalVar -> result.total, loadingVar -> false, errorVar -> None)
           case Left(err)     =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message))
-        },
-      // Which listed wordlists already have a game of their own, asked once per page of rows. A failure costs a row
-      // only its "Play game" shortcut, so it is answered by clearing the map rather than by the page's error alert.
-      tagsSignal
-        .map(_.map(_.id).toSet)
-        .distinct
-        .updates
-        .flatMapSwitch(ids => {
-          if (ids.isEmpty)
-            EventStream.fromValue(Right(List.empty[TagSoloGame]))
-          else
-            GameApiClient.soloGames(ids)
-        }) -->
-        Observer[Either[ApiError, List[TagSoloGame]]] {
-          case Right(games) =>
-            soloGamesVar.set(games.map(game => game.tagId -> game).toMap)
-          case Left(_)      =>
-            soloGamesVar.set(Map.empty)
         },
       exportAllBus.events.flatMapSwitch(_ => WordApiClient.exportOwnedTags) -->
         Observer[Either[ApiError, TagExportFile]] {
@@ -365,7 +342,8 @@ private class TagsPage(
   }
 
   /** One row's game control: "Play game" when the wordlist already has a game of its own, "Create game" when it does
-    * not.
+    * not. Which one is on the row itself (`Tag.soloGame`), answered by the listing request — this page asks nothing
+    * extra for it.
     *
     * The recommendation is one game per wordlist, not a rule — a game may span several wordlists, and nothing refuses a
     * second one — so this only changes which button is the obvious one. A reader who wants another game over the same
@@ -384,7 +362,7 @@ private class TagsPage(
     */
   private def renderGameCell(id: Long, row: Signal[Tag]): HtmlElement = {
     td(
-      child <-- soloGamesVar.signal.map(_.get(id)).distinct.map {
+      child <-- row.map(_.soloGame).distinct.map {
         case Some(game) =>
           renderPlayGame(game)
         case None       =>
@@ -393,7 +371,7 @@ private class TagsPage(
     )
   }
 
-  private def renderPlayGame(game: TagSoloGame): HtmlElement = {
+  private def renderPlayGame(game: GameRef): HtmlElement = {
     a(
       cls   := "btn btn-xs btn-primary btn-soft whitespace-nowrap",
       AppRouter.router.navigateTo(Page.GameInstance(game.slug)),

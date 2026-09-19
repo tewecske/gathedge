@@ -1386,29 +1386,6 @@ object GameServiceSpec extends ZIOSpecDefault {
           resT.variant.mode == GameMode.Typing,
         )
       },
-      test("a wordlist's own game is the one built from that wordlist alone") {
-        for {
-          owner <- newUser()
-          solo  <- eligibleTag(owner, "solo-only", WordLanguage.De, WordLanguage.Hu)
-          other <- eligibleTag(owner, "solo-other", WordLanguage.De, WordLanguage.Hu)
-          alone <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(solo))
-          // A game spanning both wordlists is nobody's own game: neither row may offer it as "Play game".
-          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(solo, other))
-          found <- GameService.soloGames(List(solo, other))
-        } yield assertTrue(
-          found.map(_.tagId) == List(solo),
-          found.map(_.slug) == List(alone.slug),
-        )
-      },
-      test("where a wordlist has several games of its own, the oldest one is offered") {
-        for {
-          owner <- newUser()
-          tagId <- eligibleTag(owner, "solo-twice", WordLanguage.De, WordLanguage.Hu)
-          first <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
-          found <- GameService.soloGames(List(tagId))
-        } yield assertTrue(found.map(_.slug) == List(first.slug))
-      },
       test("only a game built from exactly the requested wordlists counts as the same game") {
         for {
           owner <- newUser()

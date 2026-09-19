@@ -2,9 +2,19 @@ package gathedge.backend.service
 
 import gathedge.backend.TestDataSource
 import gathedge.backend.config.AppConfig
-import gathedge.backend.db.{GroupRepository, TextSearch, UserRepository, WordFormRow, WordRepository, WordRow}
+import gathedge.backend.db.{
+  GameRepository,
+  GameRow,
+  GroupRepository,
+  TextSearch,
+  UserRepository,
+  WordFormRow,
+  WordRepository,
+  WordRow,
+}
 import gathedge.shared.domain.{
   EntryBucket,
+  GameRef,
   Gender,
   PairMatch,
   PartOfSpeech,
@@ -61,8 +71,9 @@ object WordServiceSpec extends ZIOSpecDefault {
     ZIO.foreachDiscard(1 to 150)(_ => UserRepository.insertGuest("light", "en", 0L, None)).unit.provideEnvironment(env)
   }
 
-  private def repos: ZLayer[Any, Throwable, WordRepository & GroupRepository & UserRepository] = {
-    (TestDataSource.postgres >>> (WordRepository.live ++ GroupRepository.live ++ UserRepository.live))
+  private def repos: ZLayer[Any, Throwable, WordRepository & GroupRepository & UserRepository & GameRepository] = {
+    (TestDataSource.postgres >>> (WordRepository.live ++ GroupRepository.live ++ UserRepository.live ++
+      GameRepository.live))
       .tap(seedFixtureUsers)
   }
 
@@ -144,6 +155,19 @@ object WordServiceSpec extends ZIOSpecDefault {
 
   private def copyTag(tagId: Long, userId: Long): ZIO[WordService, WordFailure, Tag] = {
     WordService.copyTag(tagId, userId).map(_.tag)
+  }
+
+  /** A game over `tagIds`, inserted straight through the repository. This file tests what `Tag.soloGame` carries, not
+    * how a game is made, and `GameService` is deliberately not in its environment.
+    */
+  private def insertGame(
+    slug: String,
+    name: String,
+    tagIds: List[Long],
+    ownerUserId: Long = 1L,
+    createdAt: Long = 0L,
+  ): RIO[GameRepository, GameRow] = {
+    GameRepository.insertGame(GameRow(0L, ownerUserId, slug, name, "de", "hu", createdAt, createdAt), tagIds)
   }
 
   private def createTagWithPairs(
@@ -501,6 +525,37 @@ object WordServiceSpec extends ZIOSpecDefault {
       // is still declaration order (`TestAspect.sequential`), which is load-bearing for the "only mine" pair at the
       // end: the empty-answer case has to run before the one that tags a word, or it would see that tag too.
       suite("shared")(
+        test("a wordlist carries the game built from it alone, in the listing and in its own read") {
+          for {
+            alone  <- createTag("solotag-alone", 1L)
+            paired <- createTag("solotag-paired", 1L)
+            game   <- insertGame("brave-otter", "Brave otter", List(alone.id))
+            // A game spanning two wordlists is neither wordlist's own game.
+            _      <- insertGame("calm-fox", "Calm fox", List(alone.id, paired.id))
+            listed <- WordService.listTagsPaged(Some(1L), 1, 50, None, false, Some("solotag-"), TagScope.Mine)
+            one    <- WordService.getTag(alone.id, Some(1L))
+            two    <- WordService.getTag(paired.id, Some(1L))
+          } yield assertTrue(
+            listed.items.find(_.id == alone.id).flatMap(_.soloGame).contains(GameRef(game.slug, game.name)),
+            listed.items.find(_.id == paired.id).exists(_.soloGame.isEmpty),
+            one.soloGame.contains(GameRef(game.slug, game.name)),
+            two.soloGame.isEmpty,
+          )
+        },
+        test("where a wordlist has several games of its own, the oldest is the one it carries") {
+          for {
+            tag    <- createTag("solotwice", 1L)
+            first  <- insertGame("brave-fox", "Brave fox", List(tag.id), createdAt = 10L)
+            _      <- insertGame("calm-otter", "Calm otter", List(tag.id), createdAt = 20L)
+            loaded <- WordService.getTag(tag.id, Some(1L))
+          } yield assertTrue(loaded.soloGame.map(_.slug).contains(first.slug))
+        },
+        test("a wordlist with no game of its own carries none") {
+          for {
+            tag    <- createTag("solonone", 1L)
+            loaded <- WordService.getTag(tag.id, Some(1L))
+          } yield assertTrue(loaded.soloGame.isEmpty)
+        },
         test("a German noun keeps its article, and two words differing only by it are two words") {
           for {
             lake <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "See", gender = Some(Gender.Masculine)))

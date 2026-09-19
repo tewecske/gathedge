@@ -6,8 +6,8 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership}
-import gathedge.shared.domain.{Tag, User, WordLanguage}
-import gathedge.shared.dto.{GameCreated, GameRef, GameSetupWord}
+import gathedge.shared.domain.{GameRef, Tag, User, WordLanguage}
+import gathedge.shared.dto.{GameCreated, GameSetupWord}
 import gathedge.shared.i18n.UiKeys
 
 /** Choosing a language pair and tags, and turning them into a fresh quiz.

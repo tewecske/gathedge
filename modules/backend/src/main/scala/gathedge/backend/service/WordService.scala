@@ -2,6 +2,7 @@ package gathedge.backend.service
 
 import gathedge.backend.config.{AppConfig, LanguageCheckSection, QuotaSection}
 import gathedge.backend.db.{
+  GameRepository,
   GroupRepository,
   TagEntryRow,
   TagRow,
@@ -17,6 +18,7 @@ import gathedge.backend.db.{
 }
 import gathedge.backend.security.SecurityLog
 import gathedge.shared.domain.{
+  GameRef,
   Gender,
   GrammarTag,
   GroupRef,
@@ -803,15 +805,19 @@ object WordService {
   ): ZIO[WordService, TagImportFailure, TagImportResponse] =
     ZIO.serviceWithZIO[WordService](_.importTags(file, resolutions, userId))
 
-  val live: URLayer[WordRepository & GroupRepository & UserRepository & AppConfig & RateLimiter, WordService] = {
+  val live: URLayer[
+    WordRepository & GroupRepository & UserRepository & GameRepository & AppConfig & RateLimiter,
+    WordService,
+  ] = {
     ZLayer.fromFunction(
       (
         repo: WordRepository,
         groupRepo: GroupRepository,
         userRepo: UserRepository,
+        gameRepo: GameRepository,
         config: AppConfig,
         limiter: RateLimiter,
-      ) => WordServiceLive(repo, groupRepo, userRepo, config.quotas, config.languageCheck, limiter)
+      ) => WordServiceLive(repo, groupRepo, userRepo, gameRepo, config.quotas, config.languageCheck, limiter)
     )
   }
 
@@ -907,6 +913,9 @@ final case class WordServiceLive(
   repo: WordRepository,
   groupRepo: GroupRepository,
   userRepo: UserRepository,
+  // Read-only, for the one question only the games tables can answer: which game is built from this wordlist alone.
+  // The two reads the wordlist pages open on carry it (`Tag.soloGame`) so those pages need no second request for it.
+  gameRepo: GameRepository,
   quotas: QuotaSection,
   languageCheck: LanguageCheckSection,
   limiter: RateLimiter,
@@ -930,9 +939,10 @@ final case class WordServiceLive(
     ownedByMe: Boolean,
     group: Option[GroupRef] = None,
     editableByMe: Boolean = false,
+    soloGame: Option[GameRef] = None,
   ): Tag = {
     val (source, target) = tagLanguages(row)
-    Tag(row.id, row.name, wordCount, ownedByMe, group, editableByMe, source, target)
+    Tag(row.id, row.name, wordCount, ownedByMe, group, editableByMe, source, target, soloGame)
   }
 
   /** The tag's language pair as an enum pair. The column is `NOT NULL` and only ever holds a `WordLanguage.code`, but
@@ -1471,7 +1481,10 @@ final case class WordServiceLive(
       // administrator arriving at somebody else's wordlist must not find it locked.
       globalAdmin   <- GlobalAdmin.isReader(userRepo, reader)
       editableByMe   = ownedByMe || globalAdmin || row.groupId.exists(memberGroupIds.contains)
-    } yield toTag(row, wordCount, ownedByMe, group, editableByMe)
+      // The editor draws "Play game" or "Create game" from this, so the read it opens on answers it — see
+      // `Tag.soloGame`.
+      solo          <- TagGames.soloGameByTag(gameRepo, List(tagId))
+    } yield toTag(row, wordCount, ownedByMe, group, editableByMe, solo.get(tagId))
   }
 
   def listTagsPaged(
@@ -1508,10 +1521,13 @@ final case class WordServiceLive(
       // the same rule `requireEditableTag` enforces, restated here so the catalog offers the control.
       globalAdmin   <- GlobalAdmin.isReader(userRepo, reader)
       memberGroups   = memberGroupIds.toSet
+      // The catalog draws a "Play game" or "Create game" button per row, so this page of rows answers that here
+      // rather than leaving the browser to ask a second time — one lookup for the whole page. See `Tag.soloGame`.
+      solo          <- TagGames.soloGameByTag(gameRepo, rows.map { case (row, _, _) => row.id })
     } yield {
       val items = rows.map { case (row, count, ownedByMe) =>
         val editableByMe = ownedByMe || globalAdmin || row.groupId.exists(memberGroups.contains)
-        toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe)
+        toTag(row, count, ownedByMe, row.groupId.flatMap(groupRefs.get), editableByMe, solo.get(row.id))
       }
       TagPage(items, total)
     }

@@ -1,7 +1,7 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
-import gathedge.shared.domain.{GameMode, Tag, WordLanguage, WordPreference}
+import gathedge.shared.domain.{GameMode, GameRef, Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
@@ -11,7 +11,6 @@ import gathedge.shared.dto.{
   GamePlayDetail,
   GamePlayPage,
   GamePrompt,
-  GameRef,
   GameResults,
   GameSetupWord,
   MyPlayPage,
@@ -19,7 +18,6 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   StartPlayRequest,
   SubmitAnswerRequest,
-  TagSoloGame,
 }
 import zio.json._
 
@@ -84,15 +82,6 @@ object GameApiClient {
           "lang2"     -> language2.map(WordLanguage.code),
         )}"
     )
-  }
-
-  /** For each of `tagIds`, the game built from that wordlist and nothing else — at most one row per tag. What the
-    * wordlist catalog and one wordlist's own page read to offer "Play game" in place of "Create game". Needs no
-    * session, like [[get]].
-    */
-  def soloGames(tagIds: Set[Long]): EventStream[Either[ApiError, List[TagSoloGame]]] = {
-    val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
-    HttpClient.get[List[TagSoloGame]](s"/api/games/solo${query("tagIds" -> joined)}")
   }
 
   /** The games whose wordlist set is exactly `tagIds` — the setup screen's "this quiz already exists" warning, not the
