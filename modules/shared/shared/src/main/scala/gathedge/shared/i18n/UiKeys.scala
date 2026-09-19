@@ -120,21 +120,22 @@ object UiKeys {
     */
   val navLanguage: String = key("ui.nav.language")
 
-  val navWords: String           = key("ui.nav.words")
-  val navTags: String            = key("ui.nav.tags")
-  val navAbout: String           = key("ui.nav.about")
-  val navGames: String           = key("ui.nav.games")
-  val navGroups: String          = key("ui.nav.groups")
-  val navAdmin: String           = key("ui.nav.admin")
-  val navAccountMenu: String     = key("ui.nav.accountMenu")
-  val navLogOut: String          = key("ui.nav.logOut")
-  val navThemeDark: String       = key("ui.nav.themeDark")
-  val navThemeLight: String      = key("ui.nav.themeLight")
-  val navAdminUsers: String      = key("ui.nav.adminUsers")
-  val navAdminSystem: String     = key("ui.nav.adminSystem")
-  val navAdminUsage: String      = key("ui.nav.adminUsage")
-  val navAdminWordForms: String  = key("ui.nav.adminWordForms")
-  val navAdminRateLimits: String = key("ui.nav.adminRateLimits")
+  val navWords: String               = key("ui.nav.words")
+  val navTags: String                = key("ui.nav.tags")
+  val navAbout: String               = key("ui.nav.about")
+  val navGames: String               = key("ui.nav.games")
+  val navGroups: String              = key("ui.nav.groups")
+  val navAdmin: String               = key("ui.nav.admin")
+  val navAccountMenu: String         = key("ui.nav.accountMenu")
+  val navLogOut: String              = key("ui.nav.logOut")
+  val navThemeDark: String           = key("ui.nav.themeDark")
+  val navThemeLight: String          = key("ui.nav.themeLight")
+  val navAdminUsers: String          = key("ui.nav.adminUsers")
+  val navAdminSystem: String         = key("ui.nav.adminSystem")
+  val navAdminUsage: String          = key("ui.nav.adminUsage")
+  val navAdminWordForms: String      = key("ui.nav.adminWordForms")
+  val navAdminRateLimits: String     = key("ui.nav.adminRateLimits")
+  val navAdminDuplicateGames: String = key("ui.nav.adminDuplicateGames")
 
   // -- Sign in / sign up -----------------------------------------------------------------------
 
@@ -542,6 +543,21 @@ object UiKeys {
   val adminWordFormsDelete: String        = key("ui.admin.wordForms.delete")
   val adminWordFormsDeleteConfirm: String = key("ui.admin.wordForms.deleteConfirm")
   val adminWordFormsDeleted: String       = key("ui.admin.wordForms.deleted")
+
+  // -- Administration: games built from the same wordlists ---------------------------------------
+  // One game per wordlist set is a recommendation, not a rule — a multi-wordlist game is allowed. This screen is where
+  // the sets that grew a second game are reviewed. See `gathedge.shared.dto.DuplicateGameGroup`.
+
+  val adminDuplicateGamesTitle: String      = key("ui.admin.duplicateGames.title")
+  val adminDuplicateGamesHint: String       = key("ui.admin.duplicateGames.hint")
+  val adminDuplicateGamesEmpty: String      = key("ui.admin.duplicateGames.empty")
+  val adminDuplicateGamesWordlists: String  = key("ui.admin.duplicateGames.wordlists")
+  val adminDuplicateGamesColGame: String    = key("ui.admin.duplicateGames.colGame")
+  val adminDuplicateGamesColOwner: String   = key("ui.admin.duplicateGames.colOwner")
+  val adminDuplicateGamesColPlays: String   = key("ui.admin.duplicateGames.colPlays")
+  val adminDuplicateGamesColCreated: String = key("ui.admin.duplicateGames.colCreated")
+  val adminDuplicateGamesOwnerGuest: String = key("ui.admin.duplicateGames.ownerGuest")
+  val adminDuplicateGamesCount: String      = pluralKey("ui.admin.duplicateGames.count")
 
   // -- Administration: rate limits --------------------------------------------------------------
   // Every `RateLimiter` key currently holding a failure — who is blocked or approaching it, and for which action. See
@@ -1203,6 +1219,14 @@ object UiKeys {
   /** The per-row button that turns one wordlist straight into a quiz — see `TagsPage.renderCreateGameCell`. */
   val tagsListCreateGame: String = key("ui.tagsList.createGame")
 
+  /** The per-row button that opens the game a wordlist already has, in place of [[tagsListCreateGame]] — see
+    * `TagsPage.renderGameCell`.
+    */
+  val tagsListPlayGame: String = key("ui.tagsList.playGame")
+
+  /** The screen-reader heading over that column, which draws either button depending on the row. */
+  val tagsListColGame: String = key("ui.tagsList.colGame")
+
   /** The per-row link to the All games catalog, filtered to that one wordlist — see `TagsPage.renderViewGamesCell`. */
   val tagsListViewGames: String = key("ui.tagsList.viewGames")
 
@@ -1246,7 +1270,15 @@ object UiKeys {
   val gameSetupNoMatchingTags: String       = key("ui.gameSetup.noMatchingTags")
   val gameSetupPlay: String                 = key("ui.gameSetup.play")
   val gameSetupCreated: String              = key("ui.gameSetup.created")
-  val gameSetupLanguagesLockedHint: String  = key("ui.gameSetup.languagesLockedHint")
+
+  /** The setup screen's "this quiz already exists" warning, and the link that opens the existing quiz instead of
+    * creating a second one — see `GameSetupPage.renderDuplicateWarning`. A warning, never a refusal: a second game over
+    * the same wordlists is allowed.
+    */
+  val gameSetupDuplicateWarning: String = key("ui.gameSetup.duplicateWarning")
+  val gameSetupDuplicatePlay: String    = key("ui.gameSetup.duplicatePlay")
+
+  val gameSetupLanguagesLockedHint: String = key("ui.gameSetup.languagesLockedHint")
 
   // -- Game instance -----------------------------------------------------------------------------
 

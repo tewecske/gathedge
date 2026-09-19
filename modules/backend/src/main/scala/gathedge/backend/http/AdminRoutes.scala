@@ -271,6 +271,10 @@ object AdminRoutes {
       )
   }
 
+  private val duplicateGamesRoute = {
+    AdminEndpoints.duplicateGames.implementHandler(handler((_: Unit) => AdminService.duplicateGames))
+  }
+
   private val usageRoutesRoute = {
     AdminEndpoints.usageRoutes
       .implementHandler(
@@ -318,6 +322,7 @@ object AdminRoutes {
       systemPruneRoute,
       wordFormAnomaliesRoute,
       deleteWordFormAnomalyRoute,
+      duplicateGamesRoute,
       usageRoutesRoute,
       usageSuspiciousRoute,
     ) @@ RouteSupport.adminOnly @@ RouteSupport.requestContext @@ RouteSupport.csrf

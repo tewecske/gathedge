@@ -7,6 +7,7 @@ import gathedge.shared.dto.{
   ClearRateLimitRequest,
   CreateUserRequest,
   DeleteWordFormRequest,
+  DuplicateGameGroup,
   GameResults,
   LoginAttemptEntry,
   MyPlayPage,
@@ -255,6 +256,16 @@ object AdminEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** Every set of wordlists more than one game was built from — see `gathedge.shared.dto.DuplicateGameGroup`. Reported,
+    * never refused: a multi-wordlist game is allowed, so "one game per wordlist set" is a recommendation the wordlist
+    * pages make and this screen reviews. `GameService.duplicateTagGames` is a `UIO`.
+    */
+  val duplicateGames = {
+    Endpoint(Method.GET / "api" / "admin" / "games" / "same-tags")
+      .out[List[DuplicateGameGroup]]
+      .outFailure(failure.unauthorized)
+  }
+
   /** Every (method, route) pair `usage_events` holds a row for, most-used first is the caller's job — the same list
     * sorted the other way is the least-used report, so there is only one endpoint for both.
     */
@@ -328,6 +339,7 @@ object AdminEndpoints {
       systemPrune,
       wordFormAnomalies,
       deleteWordFormAnomaly,
+      duplicateGames,
       usageRoutes,
       usageSuspicious,
     )

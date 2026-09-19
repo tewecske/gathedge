@@ -23,6 +23,36 @@ final case class GameTagRef(id: Long, name: String) derives JsonCodec
 
 final case class RenameGameRequest(name: String) derives JsonCodec
 
+/** A game named by the two things a link to it needs: the `slug` a reader addresses it by, and the name to show.
+  * `GET /api/games/same-tags`'s answer row — the games already built from exactly one set of wordlists.
+  */
+final case class GameRef(slug: String, name: String) derives JsonCodec
+
+/** One row of `GET /api/games/solo`: the game whose only wordlist is `tagId`.
+  *
+  * At most one row per requested tag. Where a wordlist has several such games — nothing forbids it, see
+  * `GameService.soloGames` — the row names the oldest one, so every reader is sent to the same game.
+  */
+final case class TagSoloGame(tagId: Long, slug: String, name: String) derives JsonCodec
+
+/** One game inside a [[DuplicateGameGroup]]. `ownerEmail` is `None` for a guest's game, the same blank
+  * [[GamePlaySummary.playerEmail]] leaves for a player who never gave one.
+  */
+final case class DuplicateGame(
+  slug: String,
+  name: String,
+  ownerEmail: Option[String],
+  playCount: Long,
+  createdAt: Long,
+) derives JsonCodec
+
+/** Every game built from one and the same set of wordlists, where more than one exists — what
+  * `GET /api/admin/games/same-tags` reports. One game per wordlist set is the recommendation the wordlist pages make by
+  * offering "Play game" instead of "Create game"; this is where an administrator sees the sets that grew a second game
+  * anyway. `games` is oldest first, `tags` is sorted by name like every other [[GameTagRef]] list.
+  */
+final case class DuplicateGameGroup(tags: List[GameTagRef], games: List[DuplicateGame]) derives JsonCodec
+
 /** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
   * the requested tags and language pair would draw from — `text` already carries a gendered source word's article, the
   * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row

@@ -114,6 +114,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/games/setup",
               "/api/games/setup/words",
               "/api/games/all",
+              "/api/games/solo",
+              "/api/games/same-tags",
               "/api/games/plays/mine",
               "/api/games/{slug}",
               "/api/games/{slug}/favorite",
@@ -147,6 +149,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/system",
               "/api/admin/system/prune",
               "/api/admin/word-forms/anomalies",
+              "/api/admin/games/same-tags",
               "/api/admin/word-forms/anomalies/delete",
               "/api/admin/usage/routes",
               "/api/admin/usage/suspicious",
@@ -360,6 +363,11 @@ object OpenApiSpec extends ZIOSpecDefault {
               // Every account's games, paged/sorted/filtered like the play history — guarded by `optionalUser` like
               // `GET /api/games/{slug}`, so its only failure is the query codec's 400.
               ("GET", "/api/games/all")                                                   -> Set(Ok, BadRequest),
+              // Which games a wordlist set already has — the "Play game" button's read and the setup screen's
+              // duplicate warning. Both are `optionalUser` reads like `/api/games/all`, and neither can fail
+              // beyond the query codec's 400: an unknown tag id simply matches no game.
+              ("GET", "/api/games/solo")                                                  -> Set(Ok, BadRequest),
+              ("GET", "/api/games/same-tags")                                             -> Set(Ok, BadRequest),
               // The caller's own play history: always the caller's own data, so its only failures are the query
               // codec's 400 and the aspect's 401.
               ("GET", "/api/games/plays/mine")                                            -> Set(Ok, BadRequest, Unauthorized),
@@ -454,6 +462,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/admin/system/prune")                                         -> Set(Ok, Unauthorized),
               ("GET", "/api/admin/word-forms/anomalies")                                  -> Set(Ok, Unauthorized),
               ("POST", "/api/admin/word-forms/anomalies/delete")                          -> Set(NoContent, BadRequest, Unauthorized),
+              // The duplicate-game report reads games and answers; it takes no input and refuses nothing.
+              ("GET", "/api/admin/games/same-tags")                                       -> Set(Ok, Unauthorized),
               ("GET", "/api/admin/usage/routes")                                          -> Set(Ok, BadRequest, Unauthorized),
               ("GET", "/api/admin/usage/suspicious")                                      -> Set(Ok, BadRequest, Unauthorized),
               // Progress sharing: minting a code takes no input, so its only failure is the aspect's 401.
@@ -526,7 +536,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 325,
+          declared == 328,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -632,6 +642,11 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("GET", "/api/games/{slug}/plays/setup"),
               // The browsable catalog of every account's games — a signed-out visitor reads it to find one to play.
               ("GET", "/api/games/all"),
+              // Which games a wordlist set already has: the wordlist catalog and one wordlist's own page draw a
+              // "Play game" button from the first, and the setup screen warns from the second — all readable
+              // signed out, so neither read may be behind the session.
+              ("GET", "/api/games/solo"),
+              ("GET", "/api/games/same-tags"),
               // The wordlist catalog and one wordlist's rows — tag contents are world-visible, so a signed-out visitor
               // browses them the same way it browses the dictionary.
               ("GET", "/api/tags"),
@@ -651,7 +666,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           (method, path)
         }
         assertTrue(
-          guarded.size == operations.size - 23,
+          guarded.size == operations.size - 25,
           guarded.contains(("GET", "/api/me")),
           guarded.contains(("GET", "/api/me/identities")),
           guarded.contains(("PUT", "/api/me/password")),

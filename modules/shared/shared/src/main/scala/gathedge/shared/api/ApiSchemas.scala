@@ -65,16 +65,20 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   DbStats,
   DeleteWordFormRequest,
+  DuplicateGame,
+  DuplicateGameGroup,
   ForgotPasswordRequest,
   GameAnswerResult,
   GameCreated,
   GameDetail,
+  GameRef,
   GamePlayDetail,
   GamePlayPage,
   GamePlaySummary,
   GamePrompt,
   GameResults,
   GameSetupWord,
+  TagSoloGame,
   GameTagRef,
   GameVariantDto,
   GroupDetail,
@@ -301,6 +305,10 @@ object ApiSchemas {
   given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
 
   given Schema[GameTagRef]          = DeriveSchema.gen[GameTagRef]
+  given Schema[GameRef]             = DeriveSchema.gen[GameRef]
+  given Schema[TagSoloGame]         = DeriveSchema.gen[TagSoloGame]
+  given Schema[DuplicateGame]       = DeriveSchema.gen[DuplicateGame]
+  given Schema[DuplicateGameGroup]  = DeriveSchema.gen[DuplicateGameGroup]
   given Schema[GameDetail]          = DeriveSchema.gen[GameDetail]
   given Schema[GameCreated]         = DeriveSchema.gen[GameCreated]
   given Schema[CreateGameRequest]   = DeriveSchema.gen[CreateGameRequest]

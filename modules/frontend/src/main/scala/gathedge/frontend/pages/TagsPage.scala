@@ -9,7 +9,7 @@ import gathedge.frontend.listing.{AllGameQuery, TagQuery}
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{Tag, TagScope, User}
-import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
+import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSoloGame, TagSort}
 import gathedge.shared.i18n.UiKeys
 import zio.json._
 
@@ -81,6 +81,11 @@ private class TagsPage(
     * pair, so the click needs the [[Tag]] and not only its id.
     */
   private val createGameBus = new EventBus[Tag]()
+
+  /** The game each listed wordlist already has of its own, by tag id — what decides whether a row draws "Play game" or
+    * "Create game". Refetched for every page of rows; a wordlist absent from it simply has no game of its own yet.
+    */
+  private val soloGamesVar = Var(Map.empty[Long, TagSoloGame])
 
   /** Which row's game is being created, or `None`. Drives that row's spinner and disables every row's button, so a
     * second click cannot mint a second game while the first is still in flight.
@@ -162,6 +167,24 @@ private class TagsPage(
             Var.set(tagsVar -> result.items, totalVar -> result.total, loadingVar -> false, errorVar -> None)
           case Left(err)     =>
             Var.set(loadingVar -> false, errorVar -> Some(err.message))
+        },
+      // Which listed wordlists already have a game of their own, asked once per page of rows. A failure costs a row
+      // only its "Play game" shortcut, so it is answered by clearing the map rather than by the page's error alert.
+      tagsSignal
+        .map(_.map(_.id).toSet)
+        .distinct
+        .updates
+        .flatMapSwitch(ids => {
+          if (ids.isEmpty)
+            EventStream.fromValue(Right(List.empty[TagSoloGame]))
+          else
+            GameApiClient.soloGames(ids)
+        }) -->
+        Observer[Either[ApiError, List[TagSoloGame]]] {
+          case Right(games) =>
+            soloGamesVar.set(games.map(game => game.tagId -> game).toMap)
+          case Left(_)      =>
+            soloGamesVar.set(Map.empty)
         },
       exportAllBus.events.flatMapSwitch(_ => WordApiClient.exportOwnedTags) -->
         Observer[Either[ApiError, TagExportFile]] {
@@ -315,7 +338,7 @@ private class TagsPage(
             th(I18n.t(UiKeys.tagsListColOwner)),
             SortHeader.render(I18n.t(UiKeys.tagsListColWords), TagSort.words, sortSignal, onSort),
             // The action columns carry no visible heading; the label a screen reader needs is each button's own.
-            th(span(cls := "sr-only", I18n.t(UiKeys.tagsListCreateGame))),
+            th(span(cls := "sr-only", I18n.t(UiKeys.tagsListColGame))),
             th(span(cls := "sr-only", I18n.t(UiKeys.tagsListViewGames))),
           )
         ),
@@ -336,32 +359,59 @@ private class TagsPage(
       ),
       renderOwnerCell(row),
       td(child.text <-- row.map(_.wordCount.toString)),
-      renderCreateGameCell(id, row),
+      renderGameCell(id, row),
       renderViewGamesCell(id),
     )
   }
 
-  /** Turns one row straight into a quiz: a game over that wordlist alone, in the pair the wordlist itself declares,
-    * then the game's own page. It saves the detour through `GameSetupPage`, where the reader would have to re-pick the
-    * language pair and find the wordlist again.
+  /** One row's game control: "Play game" when the wordlist already has a game of its own, "Create game" when it does
+    * not.
+    *
+    * The recommendation is one game per wordlist, not a rule — a game may span several wordlists, and nothing refuses a
+    * second one — so this only changes which button is the obvious one. A reader who wants another game over the same
+    * wordlist still has `GameSetupPage`, which warns rather than refuses.
+    *
+    * "Create game" turns the row straight into a quiz: a game over that wordlist alone, in the pair the wordlist itself
+    * declares, then the game's own page. It saves the detour through `GameSetupPage`, where the reader would have to
+    * re-pick the language pair and find the wordlist again.
     *
     * Offered on every row, the reader's own or not — a game is built from a wordlist, not owned through it, and
     * `GameSetupPage` already lists everybody's eligible wordlists. A wordlist with no marked translation in its own
     * direction is not eligible, which only the server knows; that answer arrives as the page's own error alert.
+    *
+    * Both labels carry `whitespace-nowrap`: each is two words in English and three in Hungarian, which this narrow
+    * action column would otherwise wrap.
     */
-  private def renderCreateGameCell(id: Long, row: Signal[Tag]): HtmlElement = {
+  private def renderGameCell(id: Long, row: Signal[Tag]): HtmlElement = {
     td(
-      button(
-        typ := "button",
-        // The label is two words in English and three in Hungarian; without this the narrow action column wraps it.
-        cls := "btn btn-xs btn-soft whitespace-nowrap",
-        disabled <-- creatingTagIdVar.signal.map(_.isDefined),
-        child.maybe <-- creatingTagIdVar.signal.map(creating =>
-          Option.when(creating.contains(id))(span(cls := "loading loading-spinner loading-xs"))
-        ),
-        I18n.t(UiKeys.tagsListCreateGame),
-        onClick.compose(_.sample(row)) --> createGameBus.writer,
-      )
+      child <-- soloGamesVar.signal.map(_.get(id)).distinct.map {
+        case Some(game) =>
+          renderPlayGame(game)
+        case None       =>
+          renderCreateGame(id, row)
+      }
+    )
+  }
+
+  private def renderPlayGame(game: TagSoloGame): HtmlElement = {
+    a(
+      cls   := "btn btn-xs btn-primary btn-soft whitespace-nowrap",
+      AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
+      title := game.name,
+      I18n.t(UiKeys.tagsListPlayGame),
+    )
+  }
+
+  private def renderCreateGame(id: Long, row: Signal[Tag]): HtmlElement = {
+    button(
+      typ := "button",
+      cls := "btn btn-xs btn-soft whitespace-nowrap",
+      disabled <-- creatingTagIdVar.signal.map(_.isDefined),
+      child.maybe <-- creatingTagIdVar.signal.map(creating =>
+        Option.when(creating.contains(id))(span(cls := "loading loading-spinner loading-xs"))
+      ),
+      I18n.t(UiKeys.tagsListCreateGame),
+      onClick.compose(_.sample(row)) --> createGameBus.writer,
     )
   }
 

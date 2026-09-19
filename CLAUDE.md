@@ -361,6 +361,8 @@ Four load-bearing columns:
 
 `GET /api/words` and `GET /api/words/{id}` use `RouteSupport.optionalUser` instead of `authenticated`.
 
+**One game per wordlist set is a recommendation, not a rule.** `GET /api/games/solo` answers, per wordlist, the game built from that wordlist *alone* — the oldest one where there are several, so every reader is sent to the same game. It is what makes the wordlist catalog and the wordlist editor draw "Play game" instead of "Create game". `GET /api/games/same-tags` answers the games whose wordlist set is *exactly* the given one, which is the setup screen's warning; it is not `allGames`'s `tag` filter, which answers "carries this wordlist". Neither read refuses anything — a multi-wordlist game is ordinary — and `GET /api/admin/games/same-tags` is where an administrator reviews the sets that grew a second game anyway. All three are public reads, and the duplicate report is the one place `game_tags` is read whole.
+
 **The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the committed sample; `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
 
 ### Bulk import: two paths, one panel

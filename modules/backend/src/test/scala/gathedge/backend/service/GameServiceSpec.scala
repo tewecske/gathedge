@@ -1386,6 +1386,68 @@ object GameServiceSpec extends ZIOSpecDefault {
           resT.variant.mode == GameMode.Typing,
         )
       },
+      test("a wordlist's own game is the one built from that wordlist alone") {
+        for {
+          owner <- newUser()
+          solo  <- eligibleTag(owner, "solo-only", WordLanguage.De, WordLanguage.Hu)
+          other <- eligibleTag(owner, "solo-other", WordLanguage.De, WordLanguage.Hu)
+          alone <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(solo))
+          // A game spanning both wordlists is nobody's own game: neither row may offer it as "Play game".
+          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(solo, other))
+          found <- GameService.soloGames(List(solo, other))
+        } yield assertTrue(
+          found.map(_.tagId) == List(solo),
+          found.map(_.slug) == List(alone.slug),
+        )
+      },
+      test("where a wordlist has several games of its own, the oldest one is offered") {
+        for {
+          owner <- newUser()
+          tagId <- eligibleTag(owner, "solo-twice", WordLanguage.De, WordLanguage.Hu)
+          first <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          found <- GameService.soloGames(List(tagId))
+        } yield assertTrue(found.map(_.slug) == List(first.slug))
+      },
+      test("only a game built from exactly the requested wordlists counts as the same game") {
+        for {
+          owner <- newUser()
+          one   <- eligibleTag(owner, "same-one", WordLanguage.De, WordLanguage.Hu)
+          two   <- eligibleTag(owner, "same-two", WordLanguage.De, WordLanguage.Hu)
+          three <- eligibleTag(owner, "same-three", WordLanguage.De, WordLanguage.Hu)
+          both  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(one, two))
+          // Neither a subset nor a superset of the asked-for set is the same game.
+          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(one))
+          _     <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(one, two, three))
+          exact <- GameService.gamesWithTags(List(two, one))
+          empty <- GameService.gamesWithTags(Nil)
+        } yield assertTrue(
+          exact.map(_.slug) == List(both.slug),
+          empty.isEmpty,
+        )
+      },
+      test("the duplicate report names every wordlist set more than one game was built from") {
+        for {
+          owner  <- newUser()
+          one    <- eligibleTag(owner, "dup-one", WordLanguage.De, WordLanguage.Hu)
+          two    <- eligibleTag(owner, "dup-two", WordLanguage.De, WordLanguage.Hu)
+          lonely <- eligibleTag(owner, "dup-lonely", WordLanguage.De, WordLanguage.Hu)
+          first  <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(one, two))
+          second <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(two, one))
+          _      <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(lonely))
+          groups <- GameService.duplicateTagGames
+          // Other tests in this suite share the schema, so the report is read for this one set rather than whole.
+          mine    = groups.filter(_.tags.map(_.name) == List("dup-one", "dup-two"))
+          alone   = groups.filter(_.tags.exists(_.name == "dup-lonely"))
+        } yield assertTrue(
+          mine.size == 1,
+          mine.head.games.map(_.slug) == List(first.slug, second.slug),
+          mine.head.games.forall(_.playCount == 0L),
+          // The owner is a guest, so it has no address to show.
+          mine.head.games.forall(_.ownerEmail.isEmpty),
+          alone.isEmpty,
+        )
+      },
     ).provide(layer)
   }
 }

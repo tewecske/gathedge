@@ -161,6 +161,12 @@ object Page {
     */
   case object AdminRateLimits extends Page
 
+  /** Every set of wordlists more than one game was built from — see `gathedge.shared.dto.DuplicateGameGroup`. No
+    * listing state, same as [[AdminSystem]]/[[AdminUsage]]/[[AdminWordForms]]/[[AdminRateLimits]]: it is a report an
+    * administrator reads whole.
+    */
+  case object AdminDuplicateGames extends Page
+
   /** Browsing/creating/joining classroom-style tag groups. Public like [[Tags]]: `GroupEndpoints.list`/`.get` answer
     * without a session, so a signed-out visitor browses the catalog and opens any group's detail read-only; creating or
     * joining one is still a signed-in action. It carries its whole listing state, the same reason [[Admin]]/[[Words]]
@@ -329,17 +335,19 @@ object AppRouter {
   /** One account's play history — a path segment *and* a query, so it uses `withQuery` rather than the "two routes,
     * query first" trick, the same as [[gameResultsRoute]] and for the same reason (see its doc comment).
     */
-  private val adminUserPlaysRoute  = Route.withQuery[AdminUserPlays, Long, MyPlayQuery](
+  private val adminUserPlaysRoute      = Route.withQuery[AdminUserPlays, Long, MyPlayQuery](
     encode = (p: AdminUserPlays) => PatternArgs(p.id, p.query),
     decode = (args: PatternArgs[Long, MyPlayQuery]) => AdminUserPlays(args.path, args.params),
     pattern = (root / "admin" / "users" / segment[Long] / "plays") ? MyPlayQuery.params,
     basePath = basePath,
   )
-  private val adminSystemRoute     = Route.static(AdminSystem, root / "admin" / "system", basePath)
-  private val adminUsageRoute      = Route.static(AdminUsage, root / "admin" / "usage", basePath)
-  private val adminWordFormsRoute  = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
-  private val adminRateLimitsRoute = Route.static(AdminRateLimits, root / "admin" / "rate-limits", basePath)
-  private val forbiddenRoute       = Route.static(Forbidden, root / "forbidden", basePath)
+  private val adminSystemRoute         = Route.static(AdminSystem, root / "admin" / "system", basePath)
+  private val adminUsageRoute          = Route.static(AdminUsage, root / "admin" / "usage", basePath)
+  private val adminWordFormsRoute      = Route.static(AdminWordForms, root / "admin" / "word-forms", basePath)
+  private val adminRateLimitsRoute     = Route.static(AdminRateLimits, root / "admin" / "rate-limits", basePath)
+  private val adminDuplicateGamesRoute =
+    Route.static(AdminDuplicateGames, root / "admin" / "duplicate-games", basePath)
+  private val forbiddenRoute           = Route.static(Forbidden, root / "forbidden", basePath)
 
   /** The groups listing's "two routes, query first" pair — a fully static path, so the same trick the admin listings
     * use (see [[adminQueryRoute]]).
@@ -528,6 +536,8 @@ object AppRouter {
         "AdminWordForms"
       case AdminRateLimits                =>
         "AdminRateLimits"
+      case AdminDuplicateGames            =>
+        "AdminDuplicateGames"
       case Groups(query)                  =>
         "Groups:" + GroupQuery.params.createParamsString(query)
       case GroupDetail(id)                =>
@@ -679,52 +689,54 @@ object AppRouter {
       TagQuery.params.matchQueryString(tag.stripPrefix("Tags:")).map(query => Tags(query)).getOrElse(Tags())
     } else {
       tag match {
-        case "SignIn"          =>
+        case "SignIn"              =>
           SignIn
-        case "SignUp"          =>
+        case "SignUp"              =>
           SignUp
-        case "About"           =>
+        case "About"               =>
           About
-        case "Settings"        =>
+        case "Settings"            =>
           Settings
-        case "TagCreate"       =>
+        case "TagCreate"           =>
           TagCreate
-        case "Games"           =>
+        case "Games"               =>
           Games
-        case "GameSetup"       =>
+        case "GameSetup"           =>
           GameSetup
-        case "AllGames"        =>
+        case "AllGames"            =>
           AllGames()
-        case "MyPlays"         =>
+        case "MyPlays"             =>
           MyPlays()
-        case "SharedProgress"  =>
+        case "SharedProgress"      =>
           SharedProgress
-        case "CheckInbox"      =>
+        case "CheckInbox"          =>
           CheckInbox
-        case "ForgotPassword"  =>
+        case "ForgotPassword"      =>
           ForgotPassword
         // The colon-less forms are what a history entry written by an older build holds.
-        case "Admin"           =>
+        case "Admin"               =>
           Admin()
-        case "Words"           =>
+        case "Words"               =>
           Words()
-        case "AdminAudit"      =>
+        case "AdminAudit"          =>
           AdminAudit()
-        case "AdminSystem"     =>
+        case "AdminSystem"         =>
           AdminSystem
-        case "AdminUsage"      =>
+        case "AdminUsage"          =>
           AdminUsage
-        case "AdminWordForms"  =>
+        case "AdminWordForms"      =>
           AdminWordForms
-        case "AdminRateLimits" =>
+        case "AdminRateLimits"     =>
           AdminRateLimits
-        case "Groups"          =>
+        case "AdminDuplicateGames" =>
+          AdminDuplicateGames
+        case "Groups"              =>
           Groups()
-        case "Tags"            =>
+        case "Tags"                =>
           Tags()
-        case "Forbidden"       =>
+        case "Forbidden"           =>
           Forbidden
-        case _                 =>
+        case _                     =>
           NotFound
       }
     }
@@ -767,6 +779,7 @@ object AppRouter {
         adminUsageRoute,
         adminWordFormsRoute,
         adminRateLimitsRoute,
+        adminDuplicateGamesRoute,
         groupsQueryRoute,
         groupsRoute,
         groupJoinRoute,
