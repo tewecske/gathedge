@@ -7,7 +7,15 @@ import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{AnswerOutcome, GameMode, GameScoring, LanguageProfile, PartOfSpeech}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  ArticleMode,
+  FormSlot,
+  GameMode,
+  GameScoring,
+  LanguageProfile,
+  PartOfSpeech,
+}
 import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -233,7 +241,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       // text and compares it to the asked word verbatim, and a label inside it would be part of that text.
       p(
         cls  := "text-xs opacity-60 mb-2",
-        prompt.partOfSpeech.map(Labels.partOfSpeech).getOrElse(""),
+        List(prompt.partOfSpeech.map(Labels.partOfSpeech), askedSlotLabel(prompt)).flatten.mkString(" · "),
       ),
       answerArea,
     )
@@ -421,7 +429,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       label(
         cls := "form-control grow",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceAnswerLabel)),
-        if (showGenderPicker(playState.variant, prompt)) renderGenderPicker(playState.variant, answerInput)
+        if (showGenderPicker(playState.variant, prompt)) renderGenderPicker(playState.variant, prompt, answerInput)
         else emptyNode,
         answerInput,
       ),
@@ -434,27 +442,68 @@ private class GamePlayPage(slug: String, playId: Long) {
     )
   }
 
+  /** The declension cell the answer has to stand in, worded — shown beside the prompt only when it is not the citation
+    * cell. A lemma is asked in the cell a dictionary lists it under, which needs no saying; an inflected form does,
+    * since `den Sachen` and `der Sachen` are both `Sachen` and nothing else on screen says which is wanted.
+    *
+    * Absent whenever the play shows no article at all, because the server leaves `answerSlot` unset there.
+    */
+  private def askedSlotLabel(prompt: GamePrompt): Option[String] = {
+    prompt.answerSlot.filterNot(_ == FormSlot.citation).map(Labels.formSlot)
+  }
+
   /** `variant.targetLanguage` is already the resolved (post-swap) answer language for this play, so no separate
     * direction lookup is needed here the way `GameInstancePage.startBus`'s handler needs one at `startPlay` time.
     *
     * The picker is per word, not per play: an article belongs to a noun, so a prompt that is a verb, an adjective or a
     * phrase gets the plain input. `None` (a stored code this build no longer knows) is treated as "not a noun".
+    *
+    * An [[ArticleMode]] that narrows the buttons can leave none to show — a play with no articles at all — so the
+    * picker also stands down when [[articleChoices]] is empty.
     */
   private def showGenderPicker(variant: GameVariantDto, prompt: GamePrompt): Boolean = {
     variant.mode == GameMode.Typing &&
-    variant.includeDefiniteArticles &&
     prompt.partOfSpeech.contains(PartOfSpeech.Noun) &&
-    LanguageProfile.of(variant.targetLanguage).hasGenders
+    LanguageProfile.of(variant.targetLanguage).hasGenders &&
+    articleChoices(variant, prompt).nonEmpty
+  }
+
+  /** The buttons the picker offers.
+    *
+    * [[ArticleMode.All]] offers every article the answer's language has — `der die das den dem des` — and leaves the
+    * reader to pick the one the cell takes. [[ArticleMode.FormSpecific]] offers only that cell's own: three in the
+    * nominative singular, two in the dative singular, and exactly one in any plural, where German's article ignores
+    * gender. [[ArticleMode.Off]] offers none, which is what stands the whole picker down.
+    *
+    * Both article modes accept the same answer. This is the only thing they change.
+    */
+  private def articleChoices(variant: GameVariantDto, prompt: GamePrompt): List[String] = {
+    val profile = LanguageProfile.of(variant.targetLanguage)
+    variant.articleMode match {
+      case ArticleMode.All          =>
+        profile.allArticles
+      case ArticleMode.FormSpecific =>
+        profile.articlesFor(prompt.answerSlot.getOrElse(FormSlot.citation))
+      case ArticleMode.Off          =>
+        Nil
+    }
   }
 
   private def renderGenderPicker(
     variant: GameVariantDto,
+    prompt: GamePrompt,
     answerInput: ReactiveHtmlElement[dom.html.Input],
   ): HtmlElement = {
     val language = variant.targetLanguage
     div(
       cls := "mb-1",
-      ArticlePicker.render("answer-gender", LanguageProfile.of(language), answerTextVar, () => answerInput.ref.focus()),
+      ArticlePicker.render(
+        "answer-gender",
+        LanguageProfile.of(language),
+        articleChoices(variant, prompt),
+        answerTextVar,
+        () => answerInput.ref.focus(),
+      ),
     )
   }
 

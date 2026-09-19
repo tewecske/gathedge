@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
+import gathedge.shared.domain.{ArticleMode, GameMode, LanguageProfile, User, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import org.scalajs.dom
@@ -104,7 +104,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     }
   }
 
-  private val includeArticlesVar = Var(true)
+  private val articleModeVar = Var(ArticleMode.default)
 
   /** Whether *either* resolved direction of the current pair has gendered nouns — the swap arrow flips which language
     * is source, but gendered-either-way is symmetric, so this does not need to depend on [[swapDirectionVar]].
@@ -269,7 +269,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         .withCurrentValueOf(
           swapDirectionVar.signal,
           wordLimitSignal,
-          includeArticlesVar.signal,
+          articleModeVar.signal,
           wordPreferenceVar.signal,
           gameModeVar.signal,
         )
@@ -277,7 +277,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference, mode))
             .map(_.map(started => (started, swap, limit, articles, preference, mode)))
         } -->
-        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], Boolean, WordPreference, GameMode)]] {
+        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], ArticleMode, WordPreference, GameMode)]] {
           case Right((started, swap, limit, articles, preference, mode)) =>
             // Only reachable once `renderStart`'s button exists, which itself only renders inside `renderGameCard` —
             // `gameVar` is always loaded by the time `startBus` can fire, same assumption `renderGameCard` makes.
@@ -515,7 +515,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       renderDirectionSwap(),
       renderModeControl(),
       renderWordLimitControls(),
-      renderIncludeArticlesControl(),
+      renderArticleModeControl(),
       renderPreferenceControl(),
       renderPreviewList(),
       button(
@@ -637,24 +637,46 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  private def renderIncludeArticlesControl(): HtmlElement = {
+  /** The article picker's own setting, built like [[renderWordLimitControls]]' preset row: one radio group, its options
+    * worded by `Labels` and its values the stored [[ArticleMode]] codes.
+    *
+    * Shown only when a gendered language is on one side or the other, the same condition the boolean it replaced was
+    * gated by — there is nothing to decide in an English/Hungarian quiz.
+    *
+    * All three settings accept the same answer. `All` offers every article the language has, `Form specific` only the
+    * ones the prompt's own declension cell allows, and `None` shows no article at all. See [[ArticleMode]].
+    */
+  private def renderArticleModeControl(): HtmlElement = {
     div(
       child.maybe <-- germanInvolvedSignal.map { involved =>
         Option.when(involved)(
-          label(
-            cls := "flex items-center gap-2 cursor-pointer",
-            input(
-              typ := "checkbox",
-              cls := "checkbox checkbox-sm",
-              controlled(checked <-- includeArticlesVar.signal, onClick.mapToChecked --> includeArticlesVar.writer),
-            ),
+          div(
+            cls := "flex flex-col gap-1",
+            span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceArticleModeLabel)),
             div(
-              span(cls := "label-text text-sm", I18n.t(UiKeys.gameInstanceIncludeArticlesLabel)),
-              p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameInstanceIncludeArticlesHint)),
+              cls    := "flex flex-wrap items-center gap-4",
+              ArticleMode.all.map(renderArticleModeChoice),
             ),
+            p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameInstanceArticleModeHint)),
           )
         )
       }
+    )
+  }
+
+  private def renderArticleModeChoice(mode: ArticleMode): HtmlElement = {
+    label(
+      cls := "flex items-center gap-2 cursor-pointer",
+      input(
+        typ      := "radio",
+        cls      := "radio radio-sm",
+        nameAttr := "article-mode",
+        controlled(
+          checked <-- articleModeVar.signal.map(_ == mode),
+          onClick.mapToUnit --> Observer[Unit](_ => articleModeVar.set(mode)),
+        ),
+      ),
+      span(cls   := "label-text text-sm", Labels.articleMode(mode)),
     )
   }
 

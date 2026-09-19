@@ -236,8 +236,16 @@ object Word {
     * show or score a word.
     */
   def displayText(languageColumn: String, text: String, genderColumn: String): String = {
+    displayTextIn(languageColumn, text, genderColumn, FormSlot.citation)
+  }
+
+  /** [[displayText]] for a noun standing in a named declension cell — `den Sachen` for the dative plural of `die
+    * Sache`. A lemma stands in [[FormSlot.citation]], which is what [[displayText]] passes, so the two never disagree
+    * about how an uninflected word is written.
+    */
+  def displayTextIn(languageColumn: String, text: String, genderColumn: String, slot: FormSlot): String = {
     val language = WordLanguage.fromString(languageColumn).getOrElse(WordLanguage.En)
-    LanguageProfile.of(language).display(text, Gender.fromColumn(genderColumn))
+    LanguageProfile.of(language).displayIn(text, Gender.fromColumn(genderColumn), slot)
   }
 
   /** How a word is written on screen: a gendered noun with its article, anything else as it stands. */

@@ -112,4 +112,27 @@ object GrammarTag {
       case GrammarCategory.Other               => 90
     }
   }
+
+  /** The declension cell a `relation` names — what decides the form's definite article, together with the noun's own
+    * gender.
+    *
+    * Both halves are lenient, because `relation` is not a closed enum. A relation naming no case reads as nominative
+    * and one naming no number as singular, so a bare `"plural"` is the nominative plural and a bare `"genitive"` the
+    * genitive singular — which is what those two relations mean in every row the dictionary import writes. A relation
+    * naming several cases (`"accusative,genitive,nominative,plural"` is a real one) is read in
+    * [[GrammaticalCase.all]]'s own order, so the same string always produces the same article.
+    *
+    * Every tag that does not bear on the article — `weak`, `mixed`, `definite`, `strong` — is simply not looked at.
+    * Those describe which adjective ending the noun takes, not which article stands in front of it.
+    */
+  def slotOf(relation: String): FormSlot = {
+    val tags            = relation.split(',').map(_.trim.toLowerCase).toSet
+    val grammaticalCase = GrammaticalCase.all.find(c => tags.contains(GrammaticalCase.code(c)))
+    val number          = {
+      if (tags.contains(GrammaticalNumber.code(GrammaticalNumber.Plural))) GrammaticalNumber.Plural
+      else GrammaticalNumber.Singular
+    }
+    FormSlot(grammaticalCase.getOrElse(FormSlot.citation.grammaticalCase), number)
+  }
+
 }

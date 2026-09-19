@@ -2,6 +2,10 @@ package gathedge.shared.api
 
 import gathedge.shared.domain.{
   AnswerOutcome,
+  ArticleMode,
+  FormSlot,
+  GrammaticalCase,
+  GrammaticalNumber,
   GameMode,
   GameRef,
   Gender,
@@ -174,17 +178,23 @@ import ApiFailure.given
   */
 object ApiSchemas {
 
-  given Schema[Theme]          = DeriveSchema.gen[Theme]
-  given Schema[Locale]         = DeriveSchema.gen[Locale]
-  given Schema[OAuthProvider]  = DeriveSchema.gen[OAuthProvider]
-  given Schema[WordLanguage]   = DeriveSchema.gen[WordLanguage]
-  given Schema[PartOfSpeech]   = DeriveSchema.gen[PartOfSpeech]
-  given Schema[Gender]         = DeriveSchema.gen[Gender]
-  given Schema[AnswerOutcome]  = DeriveSchema.gen[AnswerOutcome]
-  given Schema[WordPreference] = DeriveSchema.gen[WordPreference]
-  given Schema[GameMode]       = DeriveSchema.gen[GameMode]
-  given Schema[GroupRole]      = DeriveSchema.gen[GroupRole]
-  given Schema[PairMatch]      = DeriveSchema.gen[PairMatch]
+  given Schema[Theme]             = DeriveSchema.gen[Theme]
+  given Schema[Locale]            = DeriveSchema.gen[Locale]
+  given Schema[OAuthProvider]     = DeriveSchema.gen[OAuthProvider]
+  given Schema[WordLanguage]      = DeriveSchema.gen[WordLanguage]
+  given Schema[PartOfSpeech]      = DeriveSchema.gen[PartOfSpeech]
+  given Schema[Gender]            = DeriveSchema.gen[Gender]
+  given Schema[AnswerOutcome]     = DeriveSchema.gen[AnswerOutcome]
+  given Schema[WordPreference]    = DeriveSchema.gen[WordPreference]
+  given Schema[GameMode]          = DeriveSchema.gen[GameMode]
+  given Schema[ArticleMode]       = DeriveSchema.gen[ArticleMode]
+  given Schema[GroupRole]         = DeriveSchema.gen[GroupRole]
+  given Schema[PairMatch]         = DeriveSchema.gen[PairMatch]
+  // Before the DTOs carrying one (`GamePrompt`), and each of its two halves before it: a `given val` initializes in
+  // declaration order.
+  given Schema[GrammaticalCase]   = DeriveSchema.gen[GrammaticalCase]
+  given Schema[GrammaticalNumber] = DeriveSchema.gen[GrammaticalNumber]
+  given Schema[FormSlot]          = DeriveSchema.gen[FormSlot]
 
   given Schema[User]     = DeriveSchema.gen[User]
   given Schema[Word]     = DeriveSchema.gen[Word]

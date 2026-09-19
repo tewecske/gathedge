@@ -236,10 +236,17 @@ object WiktextractParser {
     * not a word this application stores ([[wordOf]] already decided that); a form-of page such as `Häuser` has no
     * meaningful `forms[]` of its own and is excluded the same way.
     *
-    * Gender is read from each form's own tags rather than inherited from the lemma: a German plural form's tags never
-    * repeat `masculine`/`feminine`/`neuter`, so inheriting the lemma's gender would wrongly stamp `das` onto `Häuser`,
-    * which grammatically takes `die` in every case. Part of speech, on the other hand, is inherited — a plural is still
-    * a noun, and the dump does not repeat it per form.
+    * Gender comes from the form's own tags where they state one, and from the lemma otherwise. The form's own tags win
+    * because they can genuinely disagree: `Wort` [neuter] -> `Wörtlein` is tagged `diminutive,neuter` and `Verteidiger`
+    * [masculine] -> `Verteidigerin` is tagged `feminine`, and in both the tag is right.
+    *
+    * Inheriting the rest used to be wrong and is now right. A German plural's tags never repeat the gender, so the
+    * lemma's was the only source, and stamping `neuter` on `Häuser` once meant showing `das Häuser` — while the plural
+    * takes `die`. The article no longer comes from the gender alone: `LanguageProfile.declinedArticles` is read at the
+    * cell `GrammarTag.slotOf` derives from this very relation, and the nominative plural cell answers `die` for every
+    * gender. The gender is what the singular cells need, so the form now carries it.
+    *
+    * Part of speech is inherited as it always was — a plural is still a noun, and the dump does not repeat it per form.
     */
   def formsOf(entry: RawEntry): List[ParsedForm] = {
     wordOf(entry) match {
@@ -248,7 +255,7 @@ object WiktextractParser {
       case Some(lemma) =>
         entry.forms.getOrElse(Nil).filter(isUsableForm).map { raw =>
           val tags   = raw.tags.getOrElse(Nil)
-          val gender = genderOf(lemma.language, lemma.partOfSpeech, tags)
+          val gender = genderOf(lemma.language, lemma.partOfSpeech, tags).orElse(lemma.gender)
           val word   = ParsedWord(lemma.language, raw.form.trim, lemma.partOfSpeech, gender)
           ParsedForm(lemma, word, ParsedForm.relationOf(tags))
         }

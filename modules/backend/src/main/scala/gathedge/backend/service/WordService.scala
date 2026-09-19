@@ -1406,9 +1406,40 @@ final case class WordServiceLive(
     }
   }
 
+  /** The gender a new word is stored under: the caller's own where they named one, and otherwise the gender of the word
+    * it is being filed as a form of.
+    *
+    * Somebody typing `Sachen` as the plural of `die Sache` names no gender — the article buttons offer `die` for every
+    * gender in a plural cell, so there is nothing for them to choose. The gender is still what the '''singular''' cells
+    * of the declension table are read by, so a form stored without one could never be shown as `des Wortes`.
+    *
+    * Resolved before the insert rather than written over the row afterwards: `words` is UNIQUE on (language, text_norm,
+    * part_of_speech, gender), so the gender is part of the identity `ensure` looks the row up by, and a later UPDATE
+    * could collide with a row that already holds that identity.
+    *
+    * Only when a variant type comes with the main word, the same pair [[linkMainWord]] acts on — a `mainWordId` with
+    * nothing to file the word under links nothing, so there is no form to inherit for. A main word that names no row,
+    * or one in another language, is left to [[linkMainWord]] to refuse.
+    */
+  private def inheritedGender(request: CreateWordRequest): IO[WordFailure, Option[Gender]] = {
+    (request.gender, request.mainWordId, request.variantType) match {
+      case (Some(gender), _, _)              =>
+        ZIO.succeed(Some(gender))
+      case (None, Some(mainWordId), Some(_)) =>
+        repo.findWordById(mainWordId).orDie.map { main =>
+          main
+            .filter(_.language == WordLanguage.code(request.language))
+            .flatMap(row => Gender.fromColumn(row.gender))
+        }
+      case _                                 =>
+        ZIO.succeed(None)
+    }
+  }
+
   def create(request: CreateWordRequest, userId: Long): IO[WordFailure, WordDetail] = {
     for {
-      row     <- ensure(request.language, request.text, request.partOfSpeech, request.gender, userId)
+      gender  <- inheritedGender(request)
+      row     <- ensure(request.language, request.text, request.partOfSpeech, gender, userId)
       _       <- linkMainWord(row, request)
       // A translation the caller has already recorded is not a reason to refuse the whole request: they are adding a
       // word, and the duplicate simply already says what they meant.
@@ -2496,10 +2527,14 @@ final case class WordServiceLive(
       * [[linkMainWord]] applies.
       */
     def writeForms(lemma: WordRow, extra: Option[ExtraCell], language: WordLanguage, now: Long): UIO[Int] = {
-      val wanted = extra.toList.flatMap(cell => {
+      val wanted     = extra.toList.flatMap(cell => {
         val relation = cell.relations.distinct.sorted.mkString(",")
         if (relation.isEmpty) Nil else cell.formWords.map(_ -> relation)
       })
+      // The form carries its lemma's gender, which is what the declension table's singular cells are read by. The
+      // extra column states a relation, never a gender of its own: a marker written there has already been applied to
+      // the lemma by `WordCell`, and the lemma is where it belongs.
+      val formGender = Gender.fromColumn(lemma.gender)
       if (wanted.isEmpty)
         ZIO.succeed(0)
       else {
@@ -2507,7 +2542,7 @@ final case class WordServiceLive(
           known   <- repo.existingFormRelations(List(lemma.id)).orDie
           present  = known.map { case (lemmaId, formId, relation) => (lemmaId, formId, relation) }.toSet
           written <- ZIO.foreach(wanted) { case (text, relation) =>
-                       ensure(language, text, decode(lemma.partOfSpeech), None, userId)
+                       ensure(language, text, decode(lemma.partOfSpeech), formGender, userId)
                          .flatMap(form => {
                            if (form.id == lemma.id || present.contains((lemma.id, form.id, relation)))
                              ZIO.succeed(0)

@@ -3,7 +3,11 @@ package gathedge.frontend.components
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{
   AnswerOutcome,
+  ArticleMode,
+  FormSlot,
   GameMode,
+  GrammaticalCase,
+  GrammaticalNumber,
   GrammarCategory,
   PartOfSpeech,
   Tag,
@@ -191,6 +195,47 @@ object Labels {
       case GameMode.MultipleChoice =>
         I18n.t(UiKeys.gameInstanceModeMultipleChoice)
     }
+  }
+
+  /** The setup screen's own worded option text for the article mode, reused wherever a play states what it ran under.
+    * Matched exhaustively, like [[wordPreference]].
+    */
+  def articleMode(mode: ArticleMode): String = {
+    mode match {
+      case ArticleMode.All          =>
+        I18n.t(UiKeys.gameInstanceArticleModeAll)
+      case ArticleMode.FormSpecific =>
+        I18n.t(UiKeys.gameInstanceArticleModeFormSpecific)
+      case ArticleMode.Off          =>
+        I18n.t(UiKeys.gameInstanceArticleModeNone)
+    }
+  }
+
+  /** The name of one declension cell — `dative plural` — shown beside a prompt whose answer is an inflected form.
+    *
+    * One key per cell rather than a case name and a number name joined here: Hungarian words the two in the opposite
+    * order, so composing them in code would impose German's order on every language.
+    */
+  def formSlot(slot: FormSlot): String = {
+    val key = (slot.grammaticalCase, slot.number) match {
+      case (GrammaticalCase.Nominative, GrammaticalNumber.Singular) =>
+        UiKeys.grammarSlotNominativeSingular
+      case (GrammaticalCase.Genitive, GrammaticalNumber.Singular)   =>
+        UiKeys.grammarSlotGenitiveSingular
+      case (GrammaticalCase.Dative, GrammaticalNumber.Singular)     =>
+        UiKeys.grammarSlotDativeSingular
+      case (GrammaticalCase.Accusative, GrammaticalNumber.Singular) =>
+        UiKeys.grammarSlotAccusativeSingular
+      case (GrammaticalCase.Nominative, GrammaticalNumber.Plural)   =>
+        UiKeys.grammarSlotNominativePlural
+      case (GrammaticalCase.Genitive, GrammaticalNumber.Plural)     =>
+        UiKeys.grammarSlotGenitivePlural
+      case (GrammaticalCase.Dative, GrammaticalNumber.Plural)       =>
+        UiKeys.grammarSlotDativePlural
+      case (GrammaticalCase.Accusative, GrammaticalNumber.Plural)   =>
+        UiKeys.grammarSlotAccusativePlural
+    }
+    I18n.t(key)
   }
 
   /** The played variant, worded exactly as `GameResultsPage.renderRow`/`.renderModalBody` and

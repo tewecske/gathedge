@@ -3,7 +3,7 @@ package gathedge.frontend.components
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.WordApiClient
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{FormSlot, Gender, LanguageProfile, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{TagPairWord, WordDetail, WordPage}
 import org.scalajs.dom
 
@@ -194,7 +194,15 @@ final class WordPicker(
       child.maybe <-- language.map { lang =>
         Option.when(LanguageProfile.of(lang).hasGenders)(
           ArticlePicker
-            .render(s"wp-${lang}-article", LanguageProfile.of(lang), queryVar, () => focus())
+            .render(
+              s"wp-${lang}-article",
+              LanguageProfile.of(lang),
+              // A word typed here is a lemma, so the citation cell's articles are the ones to offer — `der die das`,
+              // never the declined `den dem des` a game may ask for.
+              LanguageProfile.of(lang).articlesFor(FormSlot.citation),
+              queryVar,
+              () => focus(),
+            )
             .amend(cls := "self-start")
         )
       },
