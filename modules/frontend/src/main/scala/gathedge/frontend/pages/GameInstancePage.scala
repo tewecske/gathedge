@@ -665,18 +665,22 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   }
 
   private def renderArticleModeChoice(mode: ArticleMode): HtmlElement = {
+    val worded = Labels.articleMode(mode)
     label(
       cls := "flex items-center gap-2 cursor-pointer",
       input(
-        typ      := "radio",
-        cls      := "radio radio-sm",
-        nameAttr := "article-mode",
+        typ        := "radio",
+        cls        := "radio radio-sm",
+        // Slug-scoped like [[renderWordLimitControls]]' own group, and labelled for the same reason: "All" is an
+        // option in both groups, so neither is addressable by its wording alone.
+        nameAttr   := s"article-mode-$slug",
+        aria.label := worded,
         controlled(
           checked <-- articleModeVar.signal.map(_ == mode),
           onClick.mapToUnit --> Observer[Unit](_ => articleModeVar.set(mode)),
         ),
       ),
-      span(cls   := "label-text text-sm", Labels.articleMode(mode)),
+      span(cls     := "label-text text-sm", Labels.articleMode(mode)),
     )
   }
 

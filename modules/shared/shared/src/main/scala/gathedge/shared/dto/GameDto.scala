@@ -51,9 +51,9 @@ final case class DuplicateGameGroup(tags: List[GameTagRef], games: List[Duplicat
 
 /** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
   * the requested tags and language pair would draw from — `text` already carries a gendered source word's article, the
-  * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row
-  * per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated it
-  * (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
+  * same [[gathedge.shared.domain.Word.displayTextIn]] every prompt/result elsewhere in the game uses. Deduped to one
+  * row per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated
+  * it (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
   *
   * `partOfSpeech` is what tells two rows spelled alike apart — `words` is unique on
   * `(language, text_norm, part_of_speech, gender)`, so a noun and a verb written the same way are two separate study

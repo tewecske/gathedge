@@ -928,6 +928,7 @@ final case class WordServiceLive(
       row.text,
       PartOfSpeech.fromString(row.partOfSpeech).getOrElse(PartOfSpeech.Other),
       Gender.fromColumn(row.gender),
+      row.isForm,
     )
   }
 

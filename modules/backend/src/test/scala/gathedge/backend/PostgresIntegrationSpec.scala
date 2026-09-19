@@ -11,6 +11,7 @@ import gathedge.backend.db.{
   FlywayMigrator,
   GamePlayAnswerRow,
   GamePlayRow,
+  GamePlayWordRow,
   GameRepository,
   GameRow,
   GroupRepository,
@@ -394,13 +395,13 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                             startedAt = 0L,
                             finishedAt = None,
                           ),
-                          List((source.id, dest.id)),
+                          List(GamePlayWordRow(0L, 0L, source.id, dest.id)),
                         )
-          before     <- GameRepository.wordPairsOf(play.id)
+          before     <- GameRepository.playWordsOf(play.id)
           _          <- AdminService.deleteUser(AdminActor(admin.id), target.id)
-          after      <- GameRepository.wordPairsOf(play.id)
+          after      <- GameRepository.playWordsOf(play.id)
         } yield assertTrue(
-          before == List((source.id, dest.id)),
+          before.map(row => (row.wordId, row.translationWordId)) == List((source.id, dest.id)),
           after.isEmpty,
         )
       },
@@ -436,7 +437,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                          startedAt = 0L,
                          finishedAt = None,
                        ),
-                       List((source.id, dest.id)),
+                       List(GamePlayWordRow(0L, 0L, source.id, dest.id)),
                      )
           _       <- GameRepository.recordAnswer(
                        GamePlayAnswerRow(0L, play.id, source.id, dest.id, 1, "x", "correct", 2, 0L),
@@ -447,7 +448,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           rows    <- GameRepository.deleteGame(game.id, game.version)
           gone    <- GameRepository.findBySlug("pg-game-del")
           tags    <- GameRepository.tagsOf(game.id)
-          words   <- GameRepository.wordPairsOf(play.id)
+          words   <- GameRepository.playWordsOf(play.id)
           answers <- GameRepository.answersOf(play.id)
           favs    <- GameRepository.favoriteCounts(List(game.id))
           plays   <- GameRepository.playCounts(List(game.id))
@@ -494,15 +495,15 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                            )
           playAlice     <- GameRepository.insertPlay(
                              GamePlayRow(0L, gameA.id, alice.id, 2, 2, 1, 0L, Some(1L)),
-                             List((source.id, dest.id)),
+                             List(GamePlayWordRow(0L, 0L, source.id, dest.id)),
                            )
           playBob       <- GameRepository.insertPlay(
                              GamePlayRow(0L, gameA.id, bob.id, 0, 2, 1, 0L, Some(1L)),
-                             List((source.id, dest.id)),
+                             List(GamePlayWordRow(0L, 0L, source.id, dest.id)),
                            )
           playOtherGame <- GameRepository.insertPlay(
                              GamePlayRow(0L, gameB.id, alice.id, 2, 2, 1, 0L, Some(1L)),
-                             List((source.id, dest.id)),
+                             List(GamePlayWordRow(0L, 0L, source.id, dest.id)),
                            )
           all           <- GameRepository.listPlaysPage(gameA.id, 0, 20, None, None, false)
           total         <- GameRepository.countPlaysMatching(gameA.id, None)
@@ -1455,7 +1456,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // owning `games` row had. `word_preference` is not itself backfilled from anywhere (`games` never had this
       // column) — asserted here anyway, as part of the row's full post-migration shape, to confirm it lands on its
       // column default (`'all'`) rather than null.
-      test("V14 backfills game_plays' new per-play columns from the games row that predates them") {
+      //
+      // The run to latest carries V29 with it, which replaces `include_definite_articles` with `article_mode`, so the
+      // `false` V14 backfilled arrives as `'none'` — the two backfills chained, which is what a real upgrade does.
+      test("V14 and V29 backfill game_plays' per-play columns from the games row that predates them") {
         def rawInsert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
           ZIO.attemptBlocking {
             val conn = ds.getConnection()
@@ -1494,7 +1498,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                   val target     = rs.getString("target_language")
                   val limitValue = rs.getInt("word_limit")
                   val wordLimit  = if (rs.wasNull()) None else Some(limitValue)
-                  val articles   = rs.getBoolean("include_definite_articles")
+                  val articles   = rs.getString("article_mode")
                   val preference = rs.getString("word_preference")
                   (source, target, wordLimit, articles, preference)
                 } finally rs.close()
@@ -1552,11 +1556,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             backfilled <-
               rawSelectVariant(
                 ds,
-                s"""SELECT source_language, target_language, word_limit, include_definite_articles, word_preference
+                s"""SELECT source_language, target_language, word_limit, article_mode, word_preference
                    |FROM $testSchema.game_plays WHERE id = ?""".stripMargin,
                 playId,
               )
-          } yield assertTrue(backfilled == (("de", "hu", Some(5), false, "all")))
+          } yield assertTrue(backfilled == (("de", "hu", Some(5), "none", "all")))
         }
       },
       // V24 makes `tags.source_language` / `target_language` NOT NULL, backfilling every existing row first: from a
@@ -1671,6 +1675,135 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             memberLangs._1 == "en",
             emptyLangs == (("de", "hu")),
             nullInsert.isLeft,
+          )
+        }
+      },
+      // V28 copies each form's gender from the word it inflects. Every other test here starts from a schema already
+      // at latest, so the backfill only ever sees the zero rows a fresh schema holds — and the dictionary fixture is
+      // COPYed in *after* Flyway has run, so those rows never meet it either. This builds its own container, stops at
+      // V27, hand-inserts the five shapes the backfill has to tell apart, then lets V28 run for real.
+      //
+      // The two rows it must leave alone are the point of the test: a form whose lemmas disagree about gender has no
+      // single answer, and a form whose gendered identity already belongs to another row cannot take it without
+      // violating `words`' UNIQUE (language, text_norm, part_of_speech, gender).
+      test("V28 backfills a form's gender from its lemma, and leaves the two ambiguous shapes alone") {
+        def rawInsert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt = conn.prepareStatement(sql)
+              try {
+                params.zipWithIndex.foreach { case (p, idx) =>
+                  p match {
+                    case s: String => stmt.setString(idx + 1, s)
+                    case l: Long   => stmt.setLong(idx + 1, l)
+                    case n: Int    => stmt.setInt(idx + 1, n)
+                  }
+                }
+                val rs = stmt.executeQuery()
+                try { rs.next(); rs.getLong(1) }
+                finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        def genderOf(ds: DataSource, schema: String, wordId: Long): Task[String] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try {
+              val stmt = conn.prepareStatement(s"SELECT gender FROM $schema.words WHERE id = ?")
+              try {
+                stmt.setLong(1, wordId)
+                val rs = stmt.executeQuery()
+                try { rs.next(); rs.getString(1) }
+                finally rs.close()
+              } finally stmt.close()
+            } finally conn.close()
+          }
+        }
+
+        val testSchema = "gathedge"
+
+        ZIO.scoped {
+          for {
+            container  <-
+              ZIO.acquireRelease(
+                ZIO.attempt(
+                  PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:16-alpine")).start()
+                )
+              )(c => ZIO.attempt(c.stop()).orDie)
+            ds         <- ZIO.acquireRelease(ZIO.attempt {
+                            val config = new HikariConfig()
+                            config.setJdbcUrl(container.jdbcUrl)
+                            config.setDriverClassName("org.postgresql.Driver")
+                            config.setUsername(container.username)
+                            config.setPassword(container.password)
+                            config.setSchema(testSchema)
+                            new HikariDataSource(config)
+                          })(ds => ZIO.attempt(ds.close()).orDie)
+            _          <- FlywayMigrator.migrate(ds, Some(testSchema), target = Some("27"))
+            word        = (text: String, gender: String) => {
+                            rawInsert(
+                              ds,
+                              s"""INSERT INTO $testSchema.words
+                                 |  (language, text, text_norm, part_of_speech, gender, source, created_at)
+                                 |VALUES ('de', ?, ?, 'noun', ?, 'dictionary', 0) RETURNING id""".stripMargin,
+                              List(text, text.toLowerCase, gender),
+                            )
+                   }
+            formEdge    = (lemmaId: Long, formId: Long, relation: String) => {
+                            rawInsert(
+                              ds,
+                              s"""INSERT INTO $testSchema.word_forms
+                                 |  (lemma_word_id, form_word_id, relation, created_at)
+                                 |VALUES (?, ?, ?, 0) RETURNING id""".stripMargin,
+                              List(lemmaId, formId, relation),
+                            )
+                       }
+            // The ordinary case: one lemma, one gender, a form with none of its own.
+            sache      <- word("Sache", "feminine")
+            sachen     <- word("Sachen", "")
+            _          <- formEdge(sache, sachen, "definite,nominative,plural")
+            // A form whose own gender the dump already stated, and which differs from its lemma's. Untouched.
+            wort       <- word("Wort", "neuter")
+            woertlein  <- word("Woertlein", "neuter")
+            _          <- formEdge(wort, woertlein, "diminutive,neuter")
+            verteidigr <- word("Verteidiger", "masculine")
+            verteidign <- word("Verteidigerin", "feminine")
+            _          <- formEdge(verteidigr, verteidign, "feminine")
+            // Lemmas that disagree. Always a plural in the real data, where German's article ignores gender anyway.
+            lieber     <- word("Lieber", "masculine")
+            liebe      <- word("Liebe", "feminine")
+            lieben     <- word("Lieben", "")
+            _          <- formEdge(lieber, lieben, "dative,plural,strong")
+            _          <- formEdge(liebe, lieben, "definite,nominative,plural")
+            // A form whose gendered identity is already taken: `Seen` exists as a feminine word in its own right, so
+            // the genderless form row cannot become feminine too.
+            see        <- word("See", "feminine")
+            seenTaken  <- word("Seen", "feminine")
+            seenForm   <- rawInsert(
+                            ds,
+                            s"""INSERT INTO $testSchema.words
+                               |  (language, text, text_norm, part_of_speech, gender, source, created_at)
+                               |VALUES ('de', 'Seen', 'seen', 'noun', '', 'dictionary', 0) RETURNING id""".stripMargin,
+                            Nil,
+                          )
+            _          <- formEdge(see, seenForm, "definite,nominative,plural")
+            _          <- FlywayMigrator.migrate(ds, Some(testSchema))
+            inherited  <- genderOf(ds, testSchema, sachen)
+            keptNeuter <- genderOf(ds, testSchema, woertlein)
+            keptFem    <- genderOf(ds, testSchema, verteidign)
+            ambiguous  <- genderOf(ds, testSchema, lieben)
+            collided   <- genderOf(ds, testSchema, seenForm)
+            twinKept   <- genderOf(ds, testSchema, seenTaken)
+          } yield assertTrue(
+            inherited == "feminine",
+            keptNeuter == "neuter",
+            keptFem == "feminine",
+            ambiguous == "",
+            collided == "",
+            twinKept == "feminine",
           )
         }
       },

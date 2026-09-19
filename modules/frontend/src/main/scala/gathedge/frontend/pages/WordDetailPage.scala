@@ -408,6 +408,7 @@ private class WordDetailPage(id: Long) {
             a(
               cls    := "link link-hover",
               AppRouter.router.navigateTo(Page.WordDetail(ref.word.id)),
+              // The lemma this word inflects, so it stands in its own citation cell, not in this word's.
               Word.display(ref.word),
             ),
             span(cls := "opacity-60", Labels.grammarRelation(ref.relation)),
@@ -439,14 +440,25 @@ private class WordDetailPage(id: Long) {
     )
   }
 
+  /** A form written with the article its own relation asks for — `den Sachen`, not the lemma's `die Sache`.
+    *
+    * This page is one of the two places that can: it holds each form's `relation`, so `GrammarTag.slotOf` names the
+    * declension cell and `Word.displayIn` reads the article out of it. A form shown anywhere without its relation stays
+    * bare — see `Word.display`.
+    */
+  private def formText(word: Word, relation: String): String = {
+    Word.displayIn(word, GrammarTag.slotOf(relation))
+  }
+
   private def renderFormEntry(entry: WordFormEntry): HtmlElement = {
+    val text = formText(entry.word, entry.relation)
     div(
       cls := "flex items-center gap-2",
-      collect.renderTick(entry.word.id, Val(Word.display(entry.word)), Val(entry.tagIds)),
+      collect.renderTick(entry.word.id, Val(text), Val(entry.tagIds)),
       a(
         cls    := "link link-hover",
         AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)),
-        Word.display(entry.word),
+        text,
       ),
       span(cls := "text-xs opacity-60", Labels.grammarRelation(entry.relation)),
     )

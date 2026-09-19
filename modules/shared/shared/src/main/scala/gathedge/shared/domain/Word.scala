@@ -226,31 +226,41 @@ final case class Word(
   text: String,
   partOfSpeech: PartOfSpeech,
   gender: Option[Gender],
+  isForm: Boolean = false,
 ) derives JsonCodec
 
 object Word {
 
-  /** How a word is written on screen: a gendered noun with the article its language gives that gender, anything else as
-    * it stands. Takes the raw `language`, `text` and `gender` column values directly, for callers holding a DB row
-    * (e.g. `WordRow`) rather than a full [[Word]] — the game feature is the first of these, needing no other field to
-    * show or score a word.
-    */
-  def displayText(languageColumn: String, text: String, genderColumn: String): String = {
-    displayTextIn(languageColumn, text, genderColumn, FormSlot.citation)
-  }
-
-  /** [[displayText]] for a noun standing in a named declension cell — `den Sachen` for the dative plural of `die
-    * Sache`. A lemma stands in [[FormSlot.citation]], which is what [[displayText]] passes, so the two never disagree
-    * about how an uninflected word is written.
+  /** How a word is written on screen in a named declension cell — `die Sache` in the citation cell, `den Sachen` in the
+    * dative plural. Takes the raw `language`, `text` and `gender` column values directly, for callers holding a DB row
+    * (e.g. `WordRow`) rather than a full [[Word]]; the game is the only one of these.
+    *
+    * There is deliberately no cell-less form of this. A [[Word]] can be shown without one, because it carries `isForm`
+    * and [[display]] writes a form bare rather than guessing — raw columns carry no such guard, so a caller here has to
+    * say which cell it means, and pass [[FormSlot.citation]] where the answer really is "the one a lemma stands in".
     */
   def displayTextIn(languageColumn: String, text: String, genderColumn: String, slot: FormSlot): String = {
     val language = WordLanguage.fromString(languageColumn).getOrElse(WordLanguage.En)
     LanguageProfile.of(language).displayIn(text, Gender.fromColumn(genderColumn), slot)
   }
 
-  /** How a word is written on screen: a gendered noun with its article, anything else as it stands. */
+  /** How a word is written on screen: a gendered noun with its article, anything else as it stands.
+    *
+    * '''A form is written bare here.''' Its gender is its lemma's, and the gender alone does not name an article — the
+    * declension cell does, and a `Word` on its own carries no cell. Showing the citation article anyway would print
+    * `der Tisches` for a genitive. Callers that do know the cell — the word detail page's Forms list, which holds each
+    * form's `relation`, and the game, which froze one per prompt — use [[displayIn]] and get the real article.
+    */
   def display(word: Word): String = {
-    LanguageProfile.of(word.language).display(word.text, word.gender)
+    if (word.isForm) word.text
+    else LanguageProfile.of(word.language).display(word.text, word.gender)
+  }
+
+  /** How a word is written when the caller knows which declension cell it stands in — `den Sachen` for the dative
+    * plural. Unlike [[display]], this shows a form's article, because here there is one to show.
+    */
+  def displayIn(word: Word, slot: FormSlot): String = {
+    LanguageProfile.of(word.language).displayIn(word.text, word.gender, slot)
   }
 
   extension (word: Word) {

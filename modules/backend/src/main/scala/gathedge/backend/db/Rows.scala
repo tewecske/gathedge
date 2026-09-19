@@ -402,7 +402,7 @@ final case class GamePlayAnswerRow(
 )
 
 /** One word pair sampled into one specific play, written once at `startPlay` and never touched again — the fixed set
-  * [[GameRepository.wordPairsOf]] reads back for the rest of that play, instead of [[GameRepository.eligibleWordPairs]]
+  * [[GameRepository.playWordsOf]] reads back for the rest of that play, instead of [[GameRepository.eligibleWordPairs]]
   * being recomputed live on every call. For a play with no `GamePlayRow.wordLimit`, this ends up holding the game's
   * entire eligible pool at the moment the play started; for a limited play, the sampled subset.
   *

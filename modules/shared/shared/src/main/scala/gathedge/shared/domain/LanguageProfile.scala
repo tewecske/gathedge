@@ -32,8 +32,8 @@ final case class LanguageProfile(
     * singular, `den` for any dative plural, `des` for a masculine genitive singular.
     *
     * [[FormSlot.citation]] answers exactly what [[article]] does, which is what lets a lemma and a declined form go
-    * through one rule rather than two. A language with no declension table answers `None` for every slot but the
-    * citation one, so a Spanish genitive — a cell Spanish does not have — never invents an article.
+    * through one rule rather than two. A genderless language has no table at all and answers `None` everywhere, so a
+    * Hungarian case — and Hungarian has eighteen — never produces an article that does not exist.
     */
   def declinedArticle(gender: Gender, slot: FormSlot): Option[String] = {
     declinedArticles.get(slot).flatMap(_.get(gender))

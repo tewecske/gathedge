@@ -1,7 +1,7 @@
 package gathedge.backend.tools
 
 import gathedge.backend.tools.WiktextractParser.{ParsedForm, ParsedWord}
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{Gender, GrammarTag, LanguageProfile, PartOfSpeech, Word, WordLanguage}
 import zio.test._
 
 import scala.io.Source
@@ -133,14 +133,25 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           WiktextractParser.parse("{ not json").word.isEmpty,
         )
       },
-      test("a lemma's own forms array becomes its inflected words, ungendered even when the lemma is gendered") {
+      // The gender used to be dropped here on purpose, because the article came from the gender alone and `das Häuser`
+      // would have been wrong. It is inherited now: the article comes from the declension cell `GrammarTag.slotOf`
+      // reads out of `relation`, and the nominative plural cell answers `die` for every gender.
+      test("a lemma's own forms array becomes its inflected words, carrying the lemma's gender") {
         val forms = WiktextractParser.parse(hausLine).forms
         assertTrue(
           forms.map(_.form.text) == List("Häuser"),
           forms.head.relation == "plural",
           forms.head.form.partOfSpeech == PartOfSpeech.Noun,
-          forms.head.form.gender.isEmpty,
+          forms.head.form.gender.contains(Gender.Neuter),
           forms.head.lemma.text == "Haus",
+          // The point of inheriting it: the plural is still written with the plural's own article, not the lemma's.
+          LanguageProfile
+            .of(WordLanguage.De)
+            .displayIn(forms.head.form.text, forms.head.form.gender, GrammarTag.slotOf(forms.head.relation))
+            == "die Häuser",
+          Word.display(
+            Word(0L, WordLanguage.De, "Haus", PartOfSpeech.Noun, forms.head.lemma.gender)
+          ) == "das Haus",
         )
       },
       test(

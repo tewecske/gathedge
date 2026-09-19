@@ -737,7 +737,11 @@ final case class GameServiceLive(
                        .orDie
       wordIds      = (pairs.map(_._1) ++ pairs.map(_._2)).distinct
       words       <- repo.wordsByIds(wordIds).orDie
-      textById     = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      // No play exists yet, so no cell is frozen — the same derived reading `playSetupPreview` shows one screen over.
+      slots       <- slotsFor(Map.empty, wordIds)
+      textById     = words.map { w =>
+                       w.id -> Word.displayTextIn(w.language, w.text, w.gender, slots.getOrElse(w.id, FormSlot.citation))
+                     }.toMap
       posById      = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
       translations = pairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield translations.toList
@@ -1174,7 +1178,7 @@ final case class GameServiceLive(
                                          case GameMode.Typing         =>
                                            ZIO.succeed(Nil)
                                          case GameMode.MultipleChoice =>
-                                           optionsFor(play, playWord.wordId, playWord.translationWordId)
+                                           optionsFor(play, pool, playWord.wordId, playWord.translationWordId)
                                        }
                           answerSlot = answerSlotOf(play, playWord)
                         } yield GamePrompt(
@@ -1229,7 +1233,12 @@ final case class GameServiceLive(
     * Every accepted translation of the prompt word is excluded: a distractor that would also be graded correct is not a
     * wrong answer.
     */
-  private def optionsFor(play: GamePlayRow, wordId: Long, translationId: Long): UIO[List[String]] = {
+  private def optionsFor(
+    play: GamePlayRow,
+    playWords: List[GamePlayWordRow],
+    wordId: Long,
+    translationId: Long,
+  ): UIO[List[String]] = {
     for {
       pairs        <- repo.eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage).orDie
       acceptedIds   = (translationId :: pairs.collect { case (w, t) if w == wordId => t }).distinct
@@ -1238,7 +1247,6 @@ final case class GameServiceLive(
       relatedWords <- repo.relatedWords(poolIds).orDie
       correctRow    = poolWords.find(_.id == translationId)
       siblings     <- genderSiblingsOf(play, correctRow)
-      playWords    <- repo.playWordsOf(play.id).orDie
       // Every word that may end up on a button, so each is written in its own declension cell — a distractor shown
       // under the wrong article would be wrong for a reason the game never taught.
       slots        <- slotsFor(
@@ -1340,12 +1348,16 @@ final case class GameServiceLive(
     for {
       play            <- requireOwnedPlay(playId, requesterUserId)
       pool            <- repo.playWordsOf(playId).orDie
-      translationId   <- ZIO
-                           .fromOption(pool.find(_.wordId == wordId).map(_.translationWordId))
-                           .orElseFail(GameFailure.NotFound)
+      playWord        <- ZIO.fromOption(pool.find(_.wordId == wordId)).orElseFail(GameFailure.NotFound)
+      translationId    = playWord.translationWordId
       candidateIds    <- candidateTranslationIds(play, wordId, translationId)
       candidateWords  <- repo.wordsByIds(candidateIds).orDie
-      slots           <- slotsFor(frozenSlots(pool), candidateIds)
+      // This pair's own frozen cell is added last, so it wins: the answer is graded in the case the prompt asked,
+      // even where the same word id is also some other pair's prompt under a different relation.
+      slots           <- slotsFor(
+                           frozenSlots(pool) + (translationId -> slotOf(playWord.translationRelation)),
+                           candidateIds,
+                         )
       textById         = candidateWords.map { row =>
                            row.id -> wordText(row, play, slots.getOrElse(row.id, FormSlot.citation))
                          }.toMap
