@@ -23,18 +23,6 @@ final case class GameTagRef(id: Long, name: String) derives JsonCodec
 
 final case class RenameGameRequest(name: String) derives JsonCodec
 
-/** A game named by the two things a link to it needs: the `slug` a reader addresses it by, and the name to show.
-  * `GET /api/games/same-tags`'s answer row — the games already built from exactly one set of wordlists.
-  */
-final case class GameRef(slug: String, name: String) derives JsonCodec
-
-/** One row of `GET /api/games/solo`: the game whose only wordlist is `tagId`.
-  *
-  * At most one row per requested tag. Where a wordlist has several such games — nothing forbids it, see
-  * `GameService.soloGames` — the row names the oldest one, so every reader is sent to the same game.
-  */
-final case class TagSoloGame(tagId: Long, slug: String, name: String) derives JsonCodec
-
 /** One game inside a [[DuplicateGameGroup]]. `ownerEmail` is `None` for a guest's game, the same blank
   * [[GamePlaySummary.playerEmail]] leaves for a player who never gave one.
   */

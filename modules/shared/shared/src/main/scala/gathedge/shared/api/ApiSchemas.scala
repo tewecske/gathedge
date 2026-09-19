@@ -3,6 +3,7 @@ package gathedge.shared.api
 import gathedge.shared.domain.{
   AnswerOutcome,
   GameMode,
+  GameRef,
   Gender,
   Group,
   GroupRef,
@@ -71,14 +72,12 @@ import gathedge.shared.dto.{
   GameAnswerResult,
   GameCreated,
   GameDetail,
-  GameRef,
   GamePlayDetail,
   GamePlayPage,
   GamePlaySummary,
   GamePrompt,
   GameResults,
   GameSetupWord,
-  TagSoloGame,
   GameTagRef,
   GameVariantDto,
   GroupDetail,
@@ -190,6 +189,8 @@ object ApiSchemas {
   given Schema[User]     = DeriveSchema.gen[User]
   given Schema[Word]     = DeriveSchema.gen[Word]
   given Schema[GroupRef] = DeriveSchema.gen[GroupRef]
+  // Before `Tag`, which carries one: a `given val` initializes in declaration order.
+  given Schema[GameRef]  = DeriveSchema.gen[GameRef]
   given Schema[Tag]      = DeriveSchema.gen[Tag]
   given Schema[Group]    = DeriveSchema.gen[Group]
 
@@ -305,8 +306,6 @@ object ApiSchemas {
   given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
 
   given Schema[GameTagRef]          = DeriveSchema.gen[GameTagRef]
-  given Schema[GameRef]             = DeriveSchema.gen[GameRef]
-  given Schema[TagSoloGame]         = DeriveSchema.gen[TagSoloGame]
   given Schema[DuplicateGame]       = DeriveSchema.gen[DuplicateGame]
   given Schema[DuplicateGameGroup]  = DeriveSchema.gen[DuplicateGameGroup]
   given Schema[GameDetail]          = DeriveSchema.gen[GameDetail]

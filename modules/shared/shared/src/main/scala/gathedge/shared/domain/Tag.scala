@@ -30,6 +30,13 @@ import zio.json.*
   *   has no `word_tag_pairs` row, and locked for good after. It says which side of a bidirectional `word_tag_pairs` row
   *   is the "source". A word may be attached to the tag if it is in either of the tag's two languages, and a pair if
   *   its two words are the tag's two languages, one each — whichever way round.
+  * @param soloGame
+  *   the game built from this wordlist and nothing else, where there is one — what makes the wordlist catalog and the
+  *   wordlist editor offer "Play game" in place of "Create game", instead of asking for the games a wordlist has in a
+  *   request of their own. Filled by the two reads those pages open on (`GET /api/tags/page` and
+  *   `GET /api/tags/{tagId}`) and left `None` by every other one, since no other caller draws that button: `None` means
+  *   "no such game, or a read that does not answer the question". Where a wordlist has several games of its own —
+  *   allowed, just not recommended — the oldest is named, so every reader is sent to the same game.
   * @param targetLanguage
   *   the other half — the language the tag asks its answers in by default. `WordDetailPage` opens its add-a-translation
   *   form on the side of this pair the word is not, so a reader collecting into a `de → hu` tag is offered Hungarian on
@@ -44,6 +51,7 @@ final case class Tag(
   editableByMe: Boolean = false,
   sourceLanguage: WordLanguage = WordLanguage.De,
   targetLanguage: WordLanguage = WordLanguage.Hu,
+  soloGame: Option[GameRef] = None,
 ) derives JsonCodec
 
 object Tag {

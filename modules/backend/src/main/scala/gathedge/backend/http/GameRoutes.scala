@@ -170,12 +170,6 @@ object GameRoutes {
     )
   }
 
-  private val soloGamesRoute = {
-    GameEndpoints.soloGames.implementHandler(
-      handler((tagIds: Option[String]) => GameService.soloGames(tagIdsOf(tagIds)))
-    )
-  }
-
   private val sameTagGamesRoute = {
     GameEndpoints.sameTagGames.implementHandler(
       handler((tagIds: Option[String]) => GameService.gamesWithTags(tagIdsOf(tagIds)))
@@ -312,7 +306,7 @@ object GameRoutes {
   }
 
   private val publicRoutes = {
-    Routes(getRoute, playSetupRoute, allGamesRoute, soloGamesRoute, sameTagGamesRoute) @@ RouteSupport.optionalUser
+    Routes(getRoute, playSetupRoute, allGamesRoute, sameTagGamesRoute) @@ RouteSupport.optionalUser
   }
 
   private val sessionRoutes = {
