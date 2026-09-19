@@ -418,10 +418,10 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
       idAttr              := menuId,
       styleAttr           := s"position-anchor:$menuAnchor",
       // Three shapes, not two: a visitor with no session at all gets Sign in/Sign up; a guest — no address, no
-      // password, no linked providers, so Settings has nothing to show it — gets the two ways out of being one
-      // (transfer code, real account) plus Sign in (to a *different*, already-existing account) and Log out, since a
-      // guest does hold a real session even though it never performed an explicit sign-in; a full account keeps
-      // Settings/Log out.
+      // password, no linked providers — still gets Settings, since the profile card (username/display name) works
+      // without either, plus the two ways out of being one (transfer code, real account) plus Sign in (to a
+      // *different*, already-existing account) and Log out, since a guest does hold a real session even though it
+      // never performed an explicit sign-in; a full account keeps the same Settings entry plus Log out.
       children <-- currentUserSignal.map {
         case None                       =>
           List(
@@ -442,6 +442,19 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
           )
         case Some(user) if user.isGuest =>
           List(
+            li(
+              a(
+                cls := (
+                  if (active.contains(Page.Settings))
+                    "menu-active"
+                  else
+                    ""
+                ),
+                AppRouter.router.navigateTo(Page.Settings),
+                I18n.t(UiKeys.settingsTitle),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
             li(
               button(
                 typ := "button",
