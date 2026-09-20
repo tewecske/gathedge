@@ -769,7 +769,6 @@ private class WordsPage(
           tr(
             // The toggle's column. Its heading is read out rather than shown: the control is a tick, and a word above
             // it would be wider than the column it labels.
-            th(cls := "w-12", span(cls := "sr-only", I18n.t(UiKeys.wordsColTagged))),
             SortHeader.render(I18n.t(UiKeys.wordsColWord), WordSort.text, sortSignal, onSort),
             SortHeader.render(I18n.t(UiKeys.wordsColPos), WordSort.pos, sortSignal, onSort),
             th(I18n.t(UiKeys.wordsColTranslations)),
@@ -807,7 +806,6 @@ private class WordsPage(
       // `Pagination` is showing.
       cls := "hover",
       cls("bg-base-200/60") <-- row.map(_.isContext).distinct,
-      td(collect.renderTick(id, row.map(summary => Word.display(summary.word)), tagIdsSignal)),
       td(
         div(
           cls := "flex items-center gap-1",
@@ -816,6 +814,7 @@ private class WordsPage(
             AppRouter.router.navigateTo(Page.WordDetail(id)),
             child.text <-- row.map(summary => Word.display(summary.word)),
           ),
+          collect.renderTick(id, row.map(summary => Word.display(summary.word)), tagIdsSignal),
           child.maybe <-- unpairedSignal.map(Option.when(_)(collect.renderPairWarning())),
         )
       ),

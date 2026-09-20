@@ -38,6 +38,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      host: true,
+      allowedHosts: ['.ts.net'],
       port: vitePort,
       proxy: {
         '/api': {
