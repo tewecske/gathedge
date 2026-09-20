@@ -3,6 +3,7 @@ package gathedge.backend.http
 import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
+  StreakRepository,
   AuditLogRepository,
   EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
@@ -22,6 +23,7 @@ import gathedge.backend.db.{
 }
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
 import gathedge.backend.service.{
+  StreakService,
   AdminActor,
   AdminService,
   AuditTrail,
@@ -38,7 +40,7 @@ import gathedge.backend.service.{
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, Theme, User, WordLanguage}
+import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, StreakState, Theme, User, WordLanguage}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
@@ -56,6 +58,7 @@ import gathedge.shared.dto.{
   GameResults,
   PlayStarted,
   StartPlayRequest,
+  StreakResponse,
   SubmitAnswerRequest,
   NewTranslation,
   LoginRequest,
@@ -99,7 +102,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ UsageEventRepository.live ++
-        MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live
+        MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live ++ StreakRepository.live
     )
   }
 
@@ -110,7 +113,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
           GameWordList.live ++ TestAuthLayers.emailAndConfig >+>
-          (AuthService.live ++ AuditTrail.live ++ GameService.live) >+>
+          (AuthService.live ++ AuditTrail.live ++ GameService.live ++ StreakService.live) >+>
           (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
       )
   }
@@ -740,6 +743,31 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
       ),
       suite("games")(
+        test("starting a play keeps the daily streak, which the account then reads back") {
+          for {
+            fixture        <- gameFixture("games-streak@example.com")
+            (slug, session) = fixture
+            before         <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            beforeRaw      <- body(before)
+            started        <- runRoutes(
+                                GameRoutes.routes,
+                                withCsrf(
+                                  withSession(
+                                    Request.post(s"/api/games/$slug/plays", Body.fromString(StartPlayRequest().toJson)),
+                                    session,
+                                  )
+                                ),
+                              )
+            after          <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            afterRaw       <- body(after)
+            anonymous      <- runRoutes(StreakRoutes.routes, Request.get("/api/me/streak"))
+          } yield assertTrue(
+            started.status == Status.Created,
+            beforeRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
+            afterRaw.fromJson[StreakResponse].map(r => (r.current, r.state)) == Right((1, StreakState.Active)),
+            anonymous.status == Status.Unauthorized,
+          )
+        },
         test("a play carries its mode both ways, and a clicked prompt carries its options") {
           for {
             fixture        <- gameFixture("games-wire@example.com")

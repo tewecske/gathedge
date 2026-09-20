@@ -131,6 +131,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/me/profile",
               "/api/me/email",
               "/api/me/identities",
+              "/api/me/streak",
               "/api/me/identities/{provider}",
               "/api/me/password",
               "/api/admin/users",
@@ -424,6 +425,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // same status `PUT /api/me/profile` uses for a taken username.
               ("PUT", "/api/me/email")                                                    -> Set(Ok, BadRequest, Unauthorized, Conflict),
               ("GET", "/api/me/identities")                                               -> Set(Ok, Unauthorized),
+              ("GET", "/api/me/streak")                                                   -> Set(Ok, Unauthorized),
               // 409 is the lockout guard (unlinking the last credential); 400 covers both an unparseable
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
               ("DELETE", "/api/me/identities/{provider}")                                 -> Set(NoContent, BadRequest, Unauthorized, Conflict),
@@ -543,7 +545,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 332,
+          declared == 333,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

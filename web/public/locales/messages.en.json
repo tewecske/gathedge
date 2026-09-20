@@ -1016,5 +1016,18 @@
   "ui.help.groups": "A study group shares wordlists among its members. Create one below, or enter the invite code someone gave you to join theirs.",
   "ui.help.words": "Search the shared dictionary. Tick a word to collect it into a wordlist, and mark one of its translations as the answer you want to practice.",
   "ui.help.wordsCollect": "Choose a wordlist here, then tick any word below to add it. Click one of its translations to mark that as the answer.",
-  "ui.help.wordsAddMissing": "Not in the dictionary yet? Add it here with its translation. It goes straight into the shared dictionary for everyone."
+  "ui.help.wordsAddMissing": "Not in the dictionary yet? Add it here with its translation. It goes straight into the shared dictionary for everyone.",
+  "ui.streak.days.one": "{0} day streak",
+  "ui.streak.days.other": "{0} days streak",
+  "ui.streak.save": "Save your streak",
+  "ui.streak.start": "Start learning",
+  "ui.nav.profile": "Profile",
+  "ui.profile.title": "Profile",
+  "ui.profile.streakCard": "Daily streak",
+  "ui.profile.current": "Current streak",
+  "ui.profile.longest": "Longest streak",
+  "ui.profile.totalDays": "Days played",
+  "ui.profile.saveHint": "You missed a day or two. Play any game today to keep your streak going.",
+  "ui.profile.startHint": "Play any game to start a new streak.",
+  "ui.profile.activeHint": "Play any game each day to extend your streak."
 }

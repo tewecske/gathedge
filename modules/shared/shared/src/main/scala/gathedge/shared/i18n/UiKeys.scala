@@ -247,6 +247,21 @@ object UiKeys {
   val aboutUiBody: String                = key("ui.about.uiBody")
   val aboutUiLicenseLabel: String        = key("ui.about.uiLicenseLabel")
 
+  // -- Daily streak and profile ----------------------------------------------------------------
+
+  val streakDays: String        = pluralKey("ui.streak.days")
+  val streakSave: String        = key("ui.streak.save")
+  val streakStart: String       = key("ui.streak.start")
+  val navProfile: String        = key("ui.nav.profile")
+  val profileTitle: String      = key("ui.profile.title")
+  val profileStreakCard: String = key("ui.profile.streakCard")
+  val profileCurrent: String    = key("ui.profile.current")
+  val profileLongest: String    = key("ui.profile.longest")
+  val profileTotalDays: String  = key("ui.profile.totalDays")
+  val profileSaveHint: String   = key("ui.profile.saveHint")
+  val profileStartHint: String  = key("ui.profile.startHint")
+  val profileActiveHint: String = key("ui.profile.activeHint")
+
   // -- Account settings ------------------------------------------------------------------------
 
   val settingsTitle: String            = key("ui.settings.title")
