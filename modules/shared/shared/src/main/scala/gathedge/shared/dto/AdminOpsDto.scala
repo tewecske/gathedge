@@ -185,6 +185,8 @@ object AuditAction {
 final case class RateLimitEntry(
   key: String,
   attempts: Int,
+  /** The budget this key blocks at, which differs by action (a guest-mint key has its own). */
+  maxAttempts: Int,
   blocked: Boolean,
   oldestAttemptAt: Option[Long],
   retryAfterMillis: Long,

@@ -538,8 +538,8 @@ final case class AdminServiceLive(
     } yield LockoutStatus(
       blocked = blocked.nonEmpty,
       attempts = emailKey.map(_.attempts).getOrElse(0),
-      maxAttempts = RateLimiter.maxAttempts,
-      windowMinutes = RateLimiter.window.toMinutes.toInt,
+      maxAttempts = rateLimiter.maxAttempts,
+      windowMinutes = rateLimiter.window.toMinutes.toInt,
       retryAfterMillis = blocked.map(_.retryAfterMillis).maxOption.getOrElse(0L),
       blockedKeys = blocked.map(_.key),
     )

@@ -1,5 +1,6 @@
 package gathedge.backend.service
 
+import gathedge.backend.config.AppConfig
 import gathedge.shared.dto.RateLimitEntry
 import zio.*
 
@@ -11,6 +12,17 @@ import java.util.concurrent.TimeUnit
   */
 trait RateLimiter {
   def isBlocked(key: String): UIO[Boolean]
+
+  /** The failures one key may hold inside [[window]] before it blocks. Most keys share [[RateLimiter.maxAttempts]]; a
+    * guest-mint key has its own budget (`app.guest-mint-max-attempts`).
+    */
+  def limitFor(key: String): Int
+
+  /** The default budget, for keys with none of their own. */
+  def maxAttempts: Int
+
+  /** The sliding window every key is counted over (`app.rate-limit-window-minutes`). */
+  def window: Duration
   def recordFailure(key: String): UIO[Unit]
 
   /** Forgets the failures recorded for a key. Called after a successful authentication so earlier typos don't keep
@@ -46,8 +58,26 @@ trait RateLimiter {
 
 object RateLimiter {
   val live: ULayer[RateLimiter] = ZLayer.fromZIO(
-    Ref.make(Map.empty[String, Vector[Long]]).map(InMemoryRateLimiter(_))
+    Ref
+      .make(Map.empty[String, Vector[Long]])
+      .map(InMemoryRateLimiter(_, InMemoryRateLimiter.window, InMemoryRateLimiter.maxAttempts))
   )
+
+  /** The limiter with the budgets, window and prune interval the deployment configured. Tests use [[live]], whose
+    * numbers are the config defaults.
+    */
+  val configured: URLayer[AppConfig, RateLimiter] = ZLayer.fromZIO {
+    for {
+      cfg   <- ZIO.service[AppConfig]
+      state <- Ref.make(Map.empty[String, Vector[Long]])
+    } yield InMemoryRateLimiter(
+      state,
+      cfg.app.rateLimitWindowMinutes.minutes,
+      cfg.app.rateLimitMaxAttempts,
+      cfg.app.guestMintMaxAttempts,
+      cfg.app.rateLimitPruneIntervalMinutes.minutes,
+    )
+  }
 
   def isBlocked(key: String): URIO[RateLimiter, Boolean] =
     ZIO.serviceWithZIO[RateLimiter](_.isBlocked(key))
@@ -64,8 +94,8 @@ object RateLimiter {
   def clearAll: URIO[RateLimiter, Long] =
     ZIO.serviceWithZIO[RateLimiter](_.clearAll)
 
-  /** The policy the limiter enforces, so a screen can say "3 of 5 in the last 15 minutes" instead of hard-coding the
-    * numbers next to a copy of them.
+  /** The default policy: what a key holds unless [[RateLimiter.limitFor]] says otherwise, and the window a limiter
+    * built by [[live]] uses. A running limiter reports its own through `limitFor` and `window`.
     */
   val maxAttempts: Int = InMemoryRateLimiter.maxAttempts
   val window: Duration = InMemoryRateLimiter.window
@@ -170,8 +200,20 @@ object RateLimitKey {
 /** Per-key sliding-window limiter (5 failures / 15 min, per summary.md). In-process only — acceptable for a single
   * backend instance; would need a shared store (e.g. the DB) to hold across multiple instances.
   */
-final case class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) extends RateLimiter {
-  import InMemoryRateLimiter._
+final case class InMemoryRateLimiter(
+  state: Ref[Map[String, Vector[Long]]],
+  window: Duration,
+  maxAttempts: Int,
+  guestMaxAttempts: Int = InMemoryRateLimiter.maxAttempts,
+  pruneInterval: Duration = InMemoryRateLimiter.pruneInterval,
+) extends RateLimiter {
+  import InMemoryRateLimiter.normalize
+
+  private val windowMillis: Long = window.toMillis
+
+  def limitFor(key: String): Int = {
+    if (normalize(key).startsWith("guest:")) guestMaxAttempts else maxAttempts
+  }
 
   private def prune(attempts: Vector[Long], now: Long): Vector[Long] = {
     attempts.filter(t => now - t <= windowMillis)
@@ -179,9 +221,11 @@ final case class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) exte
 
   private def entry(key: String, attempts: Vector[Long], now: Long): RateLimitEntry = {
     val live    = prune(attempts, now)
-    val blocked = live.size >= maxAttempts
+    val limit   = limitFor(key)
+    val blocked = live.size >= limit
     RateLimitEntry(
       key = key,
+      maxAttempts = limit,
       attempts = live.size,
       blocked = blocked,
       oldestAttemptAt = live.minOption,
@@ -194,7 +238,7 @@ final case class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) exte
     for {
       now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
       attempts <- state.get.map(_.getOrElse(normalize(key), Vector.empty))
-    } yield prune(attempts, now).size >= maxAttempts
+    } yield prune(attempts, now).size >= limitFor(key)
   }
 
   def recordFailure(key: String): UIO[Unit] = {
@@ -260,9 +304,10 @@ final case class InMemoryRateLimiter(state: Ref[Map[String, Vector[Long]]]) exte
 }
 
 object InMemoryRateLimiter {
+  // The defaults of `app.rate-limit-*` in application.conf, which is where the deployed values live. They exist so
+  // `RateLimiter.live` (tests) needs no `AppConfig`; `AppConfigSpec` pins them to the file.
   val maxAttempts             = 5
   val window: Duration        = 15.minutes
-  val windowMillis: Long      = window.toMillis
   val pruneInterval: Duration = 15.minutes
 
   private def normalize(key: String): String = key.trim.toLowerCase

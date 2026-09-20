@@ -1,5 +1,6 @@
 package gathedge.backend.config
 
+import gathedge.backend.service.InMemoryRateLimiter
 import zio.*
 import zio.test.*
 
@@ -30,7 +31,21 @@ object AppConfigSpec extends ZIOSpecDefault {
             off.messengerAppId.isEmpty,
           )
         }
-      }
+      },
+      // `RateLimiter.live` (tests) has no AppConfig, so it carries copies of the file's defaults; this keeps them honest.
+      // Read as text so an env override on the machine running the suite cannot change the answer.
+      test("InMemoryRateLimiter's built-in defaults match application.conf") {
+        val conf = scala.io.Source.fromResource("application.conf").mkString
+
+        def default(key: String): Int = s"(?m)^\\s*$key = (\\d+)\\s*$$".r.findFirstMatchIn(conf).get.group(1).nn.toInt
+
+        assertTrue(
+          default("rate-limit-max-attempts") == InMemoryRateLimiter.maxAttempts,
+          default("guest-mint-max-attempts") == InMemoryRateLimiter.maxAttempts,
+          default("rate-limit-window-minutes").minutes == InMemoryRateLimiter.window,
+          default("rate-limit-prune-interval-minutes").minutes == InMemoryRateLimiter.pruneInterval,
+        )
+      },
     ).provide(AppConfig.live)
   }
 }

@@ -154,7 +154,7 @@ private class AdminRateLimitsPage {
       cls := "hover",
       td(scope),
       td(cls := "font-mono text-xs break-all", who),
-      td(cls := "text-right", entry.attempts.toString),
+      td(cls := "text-right", s"${entry.attempts} / ${entry.maxAttempts}"),
       td(
         if (entry.blocked)
           span(cls := "badge badge-error badge-sm", I18n.t(UiKeys.adminRateLimitsStatusBlocked))

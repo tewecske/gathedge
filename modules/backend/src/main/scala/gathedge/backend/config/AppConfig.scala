@@ -50,6 +50,16 @@ final case class AppSection(
     */
   usageEventQueueCapacity: Int,
   guestRetentionDays: Int,
+  /** How many guest accounts one client address may mint per rate-limit window. The default matches every other budget
+    * (5); the e2e suite mints more than that from one address, so its dev `.env` raises it.
+    */
+  guestMintMaxAttempts: Int,
+  /** The sliding window, in minutes, every rate-limit budget is counted over. */
+  rateLimitWindowMinutes: Int,
+  /** The budget most rate-limit keys block at (sign-in, signup, resend, ...). Guest minting has its own. */
+  rateLimitMaxAttempts: Int,
+  /** How often the pruner drops keys whose failures have all aged out. Housekeeping only: it unblocks nobody. */
+  rateLimitPruneIntervalMinutes: Int,
   /** How long a "forgot password" link stays redeemable. Config rather than a literal — unlike
     * `AuthService.verificationValidity` — because a password reset link is a stronger credential than a verification
     * one (it grants a new password outright rather than merely proving an address), so a deployment may reasonably want

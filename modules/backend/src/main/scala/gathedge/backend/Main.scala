@@ -125,7 +125,7 @@ object Main extends ZIOAppDefault {
     GroupRepository.live,
     GameWordList.live,
     PasswordHasher.live,
-    RateLimiter.live,
+    RateLimiter.configured,
     BackgroundJobs.live,
     AuditTrail.live,
     EmailSender.live,
