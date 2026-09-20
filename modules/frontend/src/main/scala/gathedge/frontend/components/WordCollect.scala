@@ -2,6 +2,7 @@ package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, WordApiClient}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
@@ -547,12 +548,9 @@ final class WordCollect(
   def renderTick(wordId: Long, label: Signal[String], tagIds: Signal[List[Long]]): HtmlElement = {
     val tagged = taggedSignal(tagIds)
 
-    button(
-      // A fixed box, because the two glyphs below are not the same width and the column would twitch on a tick.
-      cls := "btn btn-ghost btn-xs w-8 px-0",
-      cls("text-success") <-- tagged,
-      typ := "button",
-      aria.label <-- label.combineWithFn(tagged) { (word, isTagged) =>
+    toggleButton(
+      tagged,
+      label.combineWithFn(tagged) { (word, isTagged) =>
         val key = {
           if (isTagged)
             UiKeys.wordsTagRemove
@@ -561,47 +559,81 @@ final class WordCollect(
         }
         I18n.t(key, word)
       },
-      child <-- tagged.map(isTagged => {
-        if (isTagged)
-          tickMark()
-        else
-          plusMark()
-      }),
-      onClick.compose(_.sample(tagged)) --> Observer[Boolean](isTagged => toggleBus.emit((wordId, isTagged))),
+    ).amend(
+      onClick.compose(_.sample(tagged)) --> Observer[Boolean](isTagged => toggleBus.emit((wordId, isTagged)))
     )
   }
 
-  private def tickMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-4 w-4",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "1.5",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "m4.5 12.75 6 6 9-13.5"),
-    )
-  }
-
-  private def plusMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-4 w-4",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "1.5",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "M12 4.5v15m7.5-7.5h-15"),
-    )
-  }
-
-  /** One translation, as a control rather than as text.
+  /** The one "put in / take out" control both the word's own tick and a translation's toggle are drawn with.
     *
-    * Clicking it says "this is the answer I want to be asked for", which also files both words under the collect tag —
-    * the tick files one word, this files a pair. Marked state is shown with a tick as well as with colour, since colour
-    * alone is not a difference every reader can see, and stated for a screen reader as `aria-pressed`.
+    * Out of the vocabulary it is an outline that turns green on hover; in it, a green filled icon that turns into the
+    * red outline of the way out on hover. The fill is a tint rather than solid, so the arrow stays readable inside it.
+    * The state is stated for a screen reader as `aria-pressed`, since a colour is not a difference every reader can
+    * see.
+    */
+  private def toggleButton(active: Signal[Boolean], label: Signal[String]): HtmlElement = {
+    button(
+      // A fixed box, so the column does not twitch when the icon swaps.
+      cls := "btn btn-ghost btn-xs group w-8 px-0",
+      typ := "button",
+      aria.pressed <-- active.map(_.toString),
+      aria.label <-- label,
+      child <-- active.map(isActive => {
+        if (isActive) {
+          span(
+            cls    := "flex text-success",
+            span(cls := "flex group-hover:hidden", enterIcon(filled = true)),
+            span(cls := "hidden text-error group-hover:flex", leaveIcon()),
+          )
+        } else
+          span(cls := "flex opacity-60 group-hover:text-success group-hover:opacity-100", enterIcon(filled = false))
+      }),
+    )
+  }
+
+  /** Heroicons `arrow-right-end-on-rectangle`, outline. */
+  private def enterIcon(filled: Boolean): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "1.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(
+        svg.d           := "M8.25 9V5.25A2.25 2.25 0 0 1 10.5 3h6a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 16.5 21h-6a2.25 2.25 0 0 1-2.25-2.25V15",
+        svg.fill        := "currentColor",
+        svg.fillOpacity := {
+          if (filled) "0.35"
+          else "0"
+        },
+      ),
+      svg.path(svg.d    := "M12 9l3 3m0 0-3 3m3-3H2.25"),
+    )
+  }
+
+  /** Heroicons `arrow-left-start-on-rectangle`, outline. */
+  private def leaveIcon(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "1.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(
+        svg.d := "M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"
+      ),
+    )
+  }
+
+  /** One translation: a link to its own page, and beside it the control that marks it.
+    *
+    * The toggle says "this is the answer I want to be asked for", which also files both words under the collect tag —
+    * the tick files one word, this files a pair. The word itself is only a link, so reading a translation and choosing
+    * it are two separate clicks.
     */
   def renderChip(
     wordId: Long,
@@ -612,30 +644,28 @@ final class WordCollect(
     // The marks, not a ready-made "is this one selected", for the reason [[renderTick]] takes the tags.
     val markedSignal = selectedSignal(pairs).map(_.contains(translationWordId)).distinct
 
-    button(
-      typ := "button",
-      cls := "badge badge-sm cursor-pointer gap-0.5 px-1",
-      cls("badge-primary") <-- markedSignal,
-      cls("badge-ghost") <-- markedSignal.map(!_),
-      aria.pressed <-- markedSignal.map(_.toString),
-      aria.label <-- text.combineWithFn(markedSignal) { (translation, marked) =>
-        val key = {
-          if (marked)
-            UiKeys.wordsPairRemove
-          else
-            UiKeys.wordsPairAdd
-        }
-        I18n.t(key, translation)
-      },
-      // The tick keeps its box whether or not it is showing — `visibility:hidden` keeps the mark's width — so marking
-      // a chip recolours it without resizing it or nudging the chips after it along the row. It is smaller than the
-      // word and sits under a tighter gap, and the mirror after the word is what keeps the word itself centred: a mark
-      // only on the left reads as a chip padded wrong rather than as a chip with a mark.
-      span(cls := "flex", cls("invisible") <-- markedSignal.map(!_), chipMark()),
-      span(child.text <-- text),
-      span(cls := "flex invisible", aria.hidden := true, chipMark()),
-      onClick.compose(_.sample(markedSignal)) -->
-        Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked))),
+    span(
+      cls := "inline-flex items-center",
+      toggleButton(
+        markedSignal,
+        text.combineWithFn(markedSignal) { (translation, marked) =>
+          val key = {
+            if (marked)
+              UiKeys.wordsPairRemove
+            else
+              UiKeys.wordsPairAdd
+          }
+          I18n.t(key, translation)
+        },
+      ).amend(
+        onClick.compose(_.sample(markedSignal)) -->
+          Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked)))
+      ),
+      a(
+        cls := "link link-hover text-sm",
+        AppRouter.router.navigateTo(Page.WordDetail(translationWordId)),
+        child.text <-- text,
+      ),
     )
   }
 
@@ -656,8 +686,8 @@ final class WordCollect(
     )
   }
 
-  /** The exclamation mark, drawn for the reason [[chipMark]] is: an SVG's box is its ink, so it sits on the word's
-    * centre line beside a link of any size rather than wherever the font puts a `!` inside its own line box.
+  /** The exclamation mark, drawn, not typed: an SVG's box is its ink, so it sits on the word's centre line beside a
+    * link of any size rather than wherever the font puts a `!` inside its own line box.
     */
   private def warningMark(): SvgElement = {
     svg.svg(
@@ -669,26 +699,6 @@ final class WordCollect(
       svg.strokeLineCap  := "round",
       svg.strokeLineJoin := "round",
       svg.path(svg.d := "M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"),
-    )
-  }
-
-  /** The tick on a chip, drawn rather than typed.
-    *
-    * A `✓` character sits wherever its font puts it inside a line box, and that box is proportional to the font size —
-    * so a mark this much smaller than the word beside it lands visibly above the middle however the line height is set,
-    * and moves again whenever the size is changed. An SVG's box *is* its ink, which the badge's `align-items:center`
-    * then centres exactly, at any size.
-    */
-  private def chipMark(): SvgElement = {
-    svg.svg(
-      svg.cls            := "h-[0.47rem] w-[0.47rem] shrink-0",
-      svg.viewBox        := "0 0 24 24",
-      svg.fill           := "none",
-      svg.stroke         := "currentColor",
-      svg.strokeWidth    := "3",
-      svg.strokeLineCap  := "round",
-      svg.strokeLineJoin := "round",
-      svg.path(svg.d := "m4.5 12.75 6 6 9-13.5"),
     )
   }
 }

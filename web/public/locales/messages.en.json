@@ -564,7 +564,7 @@
   "ui.words.collectLabel": "Collect into",
   "ui.words.collectHint": "Words you tick go into this wordlist.",
   "ui.words.collectNone": "No wordlist",
-  "ui.words.pairHint": "Click a translation to mark the word with it.",
+  "ui.words.pairHint": "Click the arrow beside a translation to mark the word with it.",
   "ui.words.languagesLockedHint": "Fixed once the wordlist has a pair.",
   "ui.words.languagesCollectHint": "Set by the collect wordlist. Pick \"No wordlist\" to change them, or swap to read the pair the other way.",
   "ui.words.resetFilters": "Reset filters",

@@ -564,7 +564,7 @@
   "ui.words.collectLabel": "Gyűjtés ebbe:",
   "ui.words.collectHint": "A bejelölt szavak ebbe a szógyűjteménybe kerülnek.",
   "ui.words.collectNone": "Nincs szógyűjtemény",
-  "ui.words.pairHint": "Kattints egy fordításra, hogy megjelöld vele a szót.",
+  "ui.words.pairHint": "Kattints a fordítás melletti nyílra, hogy megjelöld vele a szót.",
   "ui.words.languagesLockedHint": "Rögzítve, amint a szógyűjteménynek van szópárja.",
   "ui.words.languagesCollectHint": "A gyűjtésre kijelölt szógyűjtemény állítja be. Válaszd a „Nincs szógyűjtemény” lehetőséget a módosításhoz, vagy fordítsd meg a párt a cserével.",
   "ui.words.resetFilters": "Szűrők törlése",
