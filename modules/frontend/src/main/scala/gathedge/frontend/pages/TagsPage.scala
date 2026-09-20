@@ -6,9 +6,9 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, Pagination, SortHeader, TagImportDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagQuery}
-import gathedge.frontend.state.{AppState, GameOwnership}
+import gathedge.frontend.state.{AppState, GameOwnership, GameSetupSeed}
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{GameRef, Tag, TagScope, User}
+import gathedge.shared.domain.{GameRef, Tag, TagScope, User, WordLanguage}
 import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
 import gathedge.shared.i18n.UiKeys
 import zio.json._
@@ -92,6 +92,14 @@ private class TagsPage(
     */
   private val readerVar = Var(Option.empty[User])
 
+  /** The ticked wordlists, by id. Kept as whole rows, and outside the listing, so a tick survives a page turn, a sort
+    * or a search. All of them share one language pair: a game has one pair, so [[renderSelectCell]] turns off the tick
+    * box of any row whose pair differs from the ticked ones.
+    */
+  private val selectedVar = Var(Map.empty[Long, Tag])
+
+  private def pairOf(tag: Tag): (WordLanguage, WordLanguage) = (tag.sourceLanguage, tag.targetLanguage)
+
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
   private val searchDebounceMs = 300
@@ -133,6 +141,7 @@ private class TagsPage(
             ),
           ),
           renderFilters(),
+          renderSelectionBar(),
           renderTable(),
           Pagination.render(
             page = pageSignal,
@@ -311,6 +320,7 @@ private class TagsPage(
         cls := "table",
         thead(
           tr(
+            th(),
             SortHeader.render(I18n.t(UiKeys.tagsListColName), TagSort.name, sortSignal, onSort),
             th(I18n.t(UiKeys.tagsListColOwner)),
             SortHeader.render(I18n.t(UiKeys.tagsListColWords), TagSort.words, sortSignal, onSort),
@@ -326,6 +336,7 @@ private class TagsPage(
 
   private def renderRow(id: Long, row: Signal[Tag]): HtmlElement = {
     tr(
+      renderSelectCell(row),
       td(
         span(cls := "font-mono text-xs opacity-70 mr-2", child.text <-- row.map(Labels.tagCodes)),
         a(
@@ -338,6 +349,61 @@ private class TagsPage(
       td(child.text <-- row.map(_.wordCount.toString)),
       renderGameCell(id, row),
       renderViewGamesCell(id),
+    )
+  }
+
+  /** The tick box that adds a wordlist to the selection. Off for a row whose language pair differs from the ticked
+    * ones, with a tooltip that says why.
+    */
+  private def renderSelectCell(row: Signal[Tag]): HtmlElement = {
+    val mismatch: Signal[Boolean] = row.combineWith(selectedVar.signal).map { case (tag, selected) =>
+      selected.nonEmpty && !selected.contains(tag.id) && !selected.values.exists(pairOf(_) == pairOf(tag))
+    }
+    td(
+      input(
+        typ := "checkbox",
+        cls := "checkbox checkbox-sm",
+        aria.label <-- row.map(tag => I18n.t(UiKeys.tagsListSelectRow, tag.name)),
+        title <-- mismatch.map(off => if (off) I18n.t(UiKeys.tagsListSelectPairMismatch) else ""),
+        disabled <-- mismatch,
+        checked <-- row.combineWith(selectedVar.signal).map { case (tag, selected) => selected.contains(tag.id) },
+        onClick.mapToChecked.compose(_.withCurrentValueOf(row)) --> Observer[(Boolean, Tag)] { case (on, tag) =>
+          selectedVar.update(selected => if (on) selected.updated(tag.id, tag) else selected - tag.id)
+        },
+      )
+    )
+  }
+
+  /** Shown once at least one wordlist is ticked: the button that opens the game setup screen with them chosen, and one
+    * to untick them all. The setup screen picks the language pair from the first ticked wordlist.
+    */
+  private def renderSelectionBar(): HtmlElement = {
+    div(
+      child.maybe <-- selectedVar.signal.map(_.size).distinct.map { count =>
+        Option.when(count > 0)(
+          div(
+            cls := "flex flex-wrap items-center gap-2 mb-4",
+            button(
+              typ := "button",
+              cls := "btn btn-sm btn-primary",
+              I18n.plural(UiKeys.tagsListCreateSelectedGame, count.toLong),
+              onClick.mapToUnit --> Observer[Unit] { _ =>
+                selectedVar.now().values.headOption.foreach { first =>
+                  val (source, target) = pairOf(first)
+                  GameSetupSeed.set(GameSetupSeed(source, target, selectedVar.now().keySet))
+                  AppRouter.router.pushState(Page.GameSetup)
+                }
+              },
+            ),
+            button(
+              typ := "button",
+              cls := "btn btn-sm btn-soft",
+              I18n.t(UiKeys.tagsListClearSelection),
+              onClick.mapToUnit --> Observer[Unit](_ => selectedVar.set(Map.empty)),
+            ),
+          )
+        )
+      }
     )
   }
 

@@ -1240,6 +1240,20 @@ object UiKeys {
   /** The per-row link to the All games catalog, filtered to that one wordlist — see `TagsPage.renderViewGamesCell`. */
   val tagsListViewGames: String = key("ui.tagsList.viewGames")
 
+  /** The top button that opens the game setup screen with the ticked wordlists preselected — see
+    * `TagsPage.renderSelectionBar`. Plural: it counts the ticked wordlists.
+    */
+  val tagsListCreateSelectedGame: String = pluralKey("ui.tagsList.createSelectedGame")
+
+  /** The button that unticks every wordlist. */
+  val tagsListClearSelection: String = key("ui.tagsList.clearSelection")
+
+  /** The screen-reader label of a row's tick box; `{0}` is the wordlist's name. */
+  val tagsListSelectRow: String = key("ui.tagsList.selectRow")
+
+  /** The tooltip on a tick box that is off because the wordlist's language pair differs from the ticked ones. */
+  val tagsListSelectPairMismatch: String = key("ui.tagsList.selectPairMismatch")
+
   // -- Tag export / import -----------------------------------------------------------------------
   // Export writes a tag (or every owned tag) to a JSON file; import rebuilds it here. `TagImportDialog`, plus a button
   // on `TagEditorPage` and two on `TagsPage`.
