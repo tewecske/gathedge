@@ -226,10 +226,6 @@ object GameRoutes {
               body.mode,
             )
             .mapError(ApiFailures.gameStartPlay)
-            // Starting a play is what keeps the streak. A failure here must never fail the play.
-            .tap(_ =>
-              StreakService.recordPlay(id).catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause))
-            )
         })
       }
     )
@@ -258,9 +254,20 @@ object GameRoutes {
   private val submitAnswerRoute = {
     GameEndpoints.submitAnswer.implementHandler(
       handler { (playId: Long, body: SubmitAnswerRequest) =>
-        userId.flatMap(id =>
-          GameService.submitAnswer(playId, body.wordId, body.answerText, id).mapError(ApiFailures.gamePlay)
-        )
+        userId.flatMap(id => {
+          GameService
+            .submitAnswer(playId, body.wordId, body.answerText, id)
+            .mapError(ApiFailures.gamePlay)
+            // Only a finished play keeps the streak, and the last answer is what finishes it. A failure in either
+            // step must never fail the answer.
+            .tap(_ => {
+              (GameService
+                .isPlayFinished(playId, id)
+                .orElseSucceed(false)
+                .flatMap(finished => ZIO.when(finished)(StreakService.recordPlay(id))))
+                .catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause))
+            })
+        })
       }
     )
   }

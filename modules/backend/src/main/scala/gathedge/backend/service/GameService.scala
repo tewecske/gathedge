@@ -174,6 +174,11 @@ trait GameService {
     wordPreference: WordPreference,
   ): IO[GameFailure, List[GameSetupWord]]
 
+  /** Whether `playId` has had its last word answered. The route reads it after each answer to decide whether the play
+    * counts toward the daily streak.
+    */
+  def isPlayFinished(playId: Long, requesterUserId: Long): IO[GameFailure, Boolean]
+
   /** The next unanswered word in `playId`, or `{finished: true}` once every eligible word has been answered. A
     * [[GameMode.MultipleChoice]] play also gets that word's clickable options. [[GameFailure.NotOwner]] if `playId`
     * does not belong to `requesterUserId`.
@@ -337,6 +342,9 @@ object GameService {
   ): ZIO[GameService, GameFailure, List[GameSetupWord]] = {
     ZIO.serviceWithZIO[GameService](_.playSetupPreview(slug, playerUserId, swapDirection, wordPreference))
   }
+
+  def isPlayFinished(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, Boolean] =
+    ZIO.serviceWithZIO[GameService](_.isPlayFinished(playId, requesterUserId))
 
   def nextPrompt(playId: Long, requesterUserId: Long): ZIO[GameService, GameFailure, GamePrompt] =
     ZIO.serviceWithZIO[GameService](_.nextPrompt(playId, requesterUserId))
@@ -1032,6 +1040,10 @@ final case class GameServiceLive(
         .get(wordId)
         .map(text => GameSetupWord(wordId, text, translationsById.getOrElse(wordId, Nil), posById.get(wordId)))
     }
+  }
+
+  def isPlayFinished(playId: Long, requesterUserId: Long): IO[GameFailure, Boolean] = {
+    requireOwnedPlay(playId, requesterUserId).map(_.finishedAt.isDefined)
   }
 
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {

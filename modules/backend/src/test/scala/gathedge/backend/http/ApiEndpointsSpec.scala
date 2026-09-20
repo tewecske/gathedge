@@ -743,7 +743,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         },
       ),
       suite("games")(
-        test("starting a play keeps the daily streak, which the account then reads back") {
+        test("finishing a play keeps the daily streak; merely starting one does not") {
           for {
             fixture        <- gameFixture("games-streak@example.com")
             (slug, session) = fixture
@@ -758,12 +758,29 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
                                   )
                                 ),
                               )
+            midPlay        <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            midPlayRaw     <- body(midPlay)
+            startedRaw     <- body(started)
+            playId          = startedRaw.fromJson[PlayStarted].map(_.playId).getOrElse(0L)
+            prompt         <- runRoutes(
+                                GameRoutes.routes,
+                                withSession(Request.get(s"/api/games/plays/$playId/prompt"), session),
+                              )
+            promptRaw      <- body(prompt)
+            wordId          = promptRaw.fromJson[GamePrompt].toOption.flatMap(_.wordId).getOrElse(0L)
+            answerRequest   = Request.post(
+                                s"/api/games/plays/$playId/answers",
+                                Body.fromString(SubmitAnswerRequest(wordId, "kutya").toJson),
+                              )
+            _              <- runRoutes(GameRoutes.routes, withCsrf(withSession(answerRequest, session)))
             after          <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
             afterRaw       <- body(after)
             anonymous      <- runRoutes(StreakRoutes.routes, Request.get("/api/me/streak"))
           } yield assertTrue(
             started.status == Status.Created,
             beforeRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
+            // Started is not finished: the streak has not moved yet.
+            midPlayRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
             afterRaw.fromJson[StreakResponse].map(r => (r.current, r.state)) == Right((1, StreakState.Active)),
             anonymous.status == Status.Unauthorized,
           )
