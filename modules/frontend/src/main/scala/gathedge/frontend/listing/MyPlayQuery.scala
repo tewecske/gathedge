@@ -30,7 +30,7 @@ final case class MyPlayQuery(
 
 object MyPlayQuery {
 
-  /** The unfiltered listing — the one addressed by `/games/history` with no query string at all. */
+  /** The unfiltered listing — the one addressed by `/profile/history` with no query string at all. */
   val default: MyPlayQuery = MyPlayQuery()
 
   private type Args = (Option[Int], Option[Int], Option[String], Option[String], Option[String])
@@ -53,7 +53,7 @@ object MyPlayQuery {
     )
   }
 
-  /** The query half of `/games/history`. `q` is the game-name filter: a substring of the address, matched
+  /** The query half of `/profile/history`. `q` is the game-name filter: a substring of the address, matched
     * case-insensitively by the server.
     */
   val params = (ListingParams.common & param[String]("q").?).as[MyPlayQuery](using codec)

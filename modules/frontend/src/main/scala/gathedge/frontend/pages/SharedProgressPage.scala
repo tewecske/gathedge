@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, ProgressShareApiClient}
-import gathedge.frontend.components.{Alert, AppShell}
+import gathedge.frontend.components.{Alert, AppShell, ProfileSubmenu}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.dto.SharedWithMe
 import gathedge.shared.i18n.UiKeys
@@ -14,7 +14,13 @@ import gathedge.shared.i18n.UiKeys
 object SharedProgressPage {
 
   def render(): HtmlElement = {
-    AppShell.render(Page.SharedProgress, new SharedProgressPage().render())
+    AppShell.render(
+      Page.SharedProgress,
+      div(
+        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.SharedProgress)),
+        new SharedProgressPage().render(),
+      ),
+    )
   }
 }
 

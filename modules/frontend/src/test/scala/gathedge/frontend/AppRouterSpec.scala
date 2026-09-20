@@ -233,15 +233,15 @@ object AppRouterSpec extends ZIOSpecDefault {
         val url      = AppRouter.router.relativeUrlForPage(filtered)
 
         assertTrue(
-          AppRouter.router.relativeUrlForPage(Page.MyPlays()) == s"$prefix/games/history",
-          AppRouter.router.pageForRelativeUrl(s"$prefix/games/history").contains(Page.MyPlays()),
-          url.startsWith(s"$prefix/games/history?"),
+          AppRouter.router.relativeUrlForPage(Page.MyPlays()) == s"$prefix/profile/history",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/profile/history").contains(Page.MyPlays()),
+          url.startsWith(s"$prefix/profile/history?"),
           url.contains("page=2"),
           url.contains(s"sort=${GamePlaySort.score}"),
           url.contains("q=otter"),
           AppRouter.router.pageForRelativeUrl(url).contains(filtered),
           // A hand-edited unknown column is dropped rather than refused.
-          AppRouter.router.pageForRelativeUrl(s"$prefix/games/history?sort=nonsense").contains(Page.MyPlays()),
+          AppRouter.router.pageForRelativeUrl(s"$prefix/profile/history?sort=nonsense").contains(Page.MyPlays()),
         )
       },
       // Unlike the other listings, this one needs a path segment (the game's slug) *and* a query — see
@@ -340,7 +340,7 @@ object AppRouterSpec extends ZIOSpecDefault {
         val url      = AppRouter.router.relativeUrlForPage(filtered)
 
         assertTrue(
-          url.startsWith(s"$prefix/games/shared/7?"),
+          url.startsWith(s"$prefix/profile/shared/7?"),
           url.contains("page=3"),
           url.contains(s"sort=${GamePlaySort.wordCount}"),
           url.contains("dir=asc"),

@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError}
-import gathedge.frontend.components.{Alert, AppShell, StreakIcons}
+import gathedge.frontend.components.{Alert, AppShell, ProfileSubmenu, StreakIcons}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.StreakState
 import gathedge.shared.dto.StreakResponse
@@ -22,6 +22,7 @@ private class ProfilePage {
     div(
       cls := "max-w-2xl mx-auto flex flex-col gap-6",
       h1(cls := "text-2xl font-bold", I18n.t(UiKeys.profileTitle)),
+      ProfileSubmenu.render(Page.Profile),
       child.maybe <-- errorVar.signal.map(_.map(message => Alert.error(message))),
       child.maybe <-- streakVar.signal.map(_.map(renderStreak)),
       ApiClient.streak --> Observer[Either[ApiError, StreakResponse]] {

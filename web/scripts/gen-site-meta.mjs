@@ -36,7 +36,7 @@ const locales = ['en', 'hu']
 
 // Path after the `/en` | `/hu` locale prefix. '' is the home route (`/en/`, kept with its slash, the
 // form Waypoint builds).
-const routes = ['', '/about', '/words', '/games/vocabulary-quiz', '/sign-up']
+const routes = ['', '/about', '/words', '/games/all', '/sign-up']
 
 const url = (loc, path) => `${origin}/${loc}${path === '' ? '/' : path}`
 

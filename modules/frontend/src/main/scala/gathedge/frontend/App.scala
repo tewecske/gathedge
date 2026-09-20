@@ -22,8 +22,6 @@ import gathedge.frontend.pages.{
   GameInstancePage,
   GamePlayPage,
   GameResultsPage,
-  GameSetupPage,
-  GamesPage,
   GroupDetailPage,
   GroupJoinPage,
   GroupsPage,
@@ -161,16 +159,10 @@ object App {
       .collectSignalPF[WordQuery] { case (gate, page: Page.Words) if gate.loaded => page.query }(query =>
         WordsPage.render(query, onWordQuery)
       )
-      // Both game pages mint a guest account on their first write (GameSetupPage.asReader/GameInstancePage.asReader) —
-      // the same reasoning `WordsPage` above is pulled out for. `AppState.setUser` on that mint flips `Gate.signedIn`
-      // and `Gate.isGuest`, and a catch-all `collectStaticPF` rebuilds its element on *any* `Gate` change: the create
-      // (or startPlay) request that guest mint was made for is still in flight when that happens, and the fresh element
-      // it lands on has forgotten it was ever sent — the setup screen's chosen tags, or the just-started play's id, gone
-      // with the element that requested them. A signal renderer is what keeps the same element (and its in-flight
-      // request) alive across that one Gate change. The slug is read once — `GameInstance` reaching this renderer
-      // again with a *different* slug (only possible via a hand-edited URL; nothing in the UI links one game instance
-      // straight to another) would keep showing the first game rather than resetting, which a plain page reload avoids.
-      .collectSignalPF[Unit] { case (gate, Page.GameSetup) if gate.loaded => () }(_ => GameSetupPage.render())
+      // `GameInstancePage` mints a guest account on its first write (`GameInstancePage.asReader`) — the same reasoning
+      // `WordsPage` above is pulled out for. `AppState.setUser` on that mint flips `Gate.signedIn` and `Gate.isGuest`,
+      // and a catch-all `collectStaticPF` rebuilds its element on *any* `Gate` change, forgetting the in-flight
+      // `startPlay`. A signal renderer keeps the same element alive across that one Gate change.
       // `GameInstancePage.render` needs the slug itself (not a signal of it) to build its element, and `Signal#now`
       // is not public outside Airstream. The partial function below is plain code, not just a pattern match, so it can
       // stash the slug as a side effect the moment it is extracted — which is always strictly before the `render` call
@@ -179,7 +171,7 @@ object App {
         GameInstancePage.render(latestGameSlug, generateQr)
       )
       // `/tags/new` mints a guest on arrival (`TagCreatePage.asReader`), and `AppState.setUser` on that mint flips the
-      // `Gate` — exactly the `GameSetup` case above. Without a signal renderer the catch-all rebuilds the element on
+      // `Gate` — exactly the `GameInstance` case above. Without a signal renderer the catch-all rebuilds the element on
       // that change, tearing down the in-flight `createTag` so the page never lands on the new wordlist's editor.
       .collectSignalPF[Unit] { case (gate, Page.TagCreate) if gate.loaded => () }(_ => TagCreatePage.render())
       // Owner-only, but the ownership check is server-side (a 403 the page itself shows, the same as
@@ -460,7 +452,9 @@ object App {
         // A guest has no address and no password, i.e. no identity of its own yet — `RequireAnon` exempts it so
         // Page.SignUp can offer the in-place upgrade instead of bouncing it back to Games unseen.
         case Page.AuthGuard.RequireAnon if gate.signedIn && !gate.isGuest =>
-          Some(Page.Games)
+          Some(Page.AllGames())
+        case _ if page == Page.Games                                      =>
+          Some(Page.AllGames())
         case _                                                            =>
           None
       }
@@ -491,10 +485,9 @@ object App {
         ProfilePage.render()
       case Page.TagCreate                                 =>
         TagCreatePage.render()
+      // Never drawn: `redirectTarget` has already sent the root to the games listing.
       case Page.Games                                     =>
-        GamesPage.render()
-      case Page.GameSetup                                 =>
-        GameSetupPage.render()
+        loadingView()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words`/`Page.GameResults`.
       case Page.AllGames(query)                           =>

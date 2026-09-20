@@ -261,6 +261,8 @@ object UiKeys {
   val profileSaveHint: String   = key("ui.profile.saveHint")
   val profileStartHint: String  = key("ui.profile.startHint")
   val profileActiveHint: String = key("ui.profile.activeHint")
+  val profileTabHistory: String = key("ui.profile.tabHistory")
+  val profileTabShared: String  = key("ui.profile.tabShared")
 
   // -- Account settings ------------------------------------------------------------------------
 
@@ -1151,28 +1153,6 @@ object UiKeys {
     */
   val guestSignInWarning: String = key("ui.guest.signInWarning")
 
-  // -- Games -------------------------------------------------------------------------------------
-
-  val gamesTitle: String          = key("ui.games.title")
-  val gamesVocabQuizTitle: String = key("ui.games.vocabQuiz.title")
-  val gamesVocabQuizBody: String  = key("ui.games.vocabQuiz.body")
-  val gamesVocabQuizPlay: String  = key("ui.games.vocabQuiz.play")
-
-  /** The "games" card on the catalog page — a link to [[allGamesTitle]]'s table, shown only when signed in. */
-  val gamesAllGamesTitle: String = key("ui.games.allGames.title")
-  val gamesAllGamesBody: String  = key("ui.games.allGames.body")
-  val gamesAllGamesOpen: String  = key("ui.games.allGames.open")
-
-  /** The "my play history" card — a link to [[myPlaysTitle]]'s table, shown only when signed in. */
-  val gamesMyPlaysTitle: String = key("ui.games.myPlays.title")
-  val gamesMyPlaysBody: String  = key("ui.games.myPlays.body")
-  val gamesMyPlaysOpen: String  = key("ui.games.myPlays.open")
-
-  /** The "shared with me" card — a link to [[sharedProgressTitle]], shown only when signed in. */
-  val gamesSharedProgressTitle: String = key("ui.games.sharedProgress.title")
-  val gamesSharedProgressBody: String  = key("ui.games.sharedProgress.body")
-  val gamesSharedProgressOpen: String  = key("ui.games.sharedProgress.open")
-
   // -- Games ------------------------------------------------------------------------------------
 
   /** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
@@ -1287,28 +1267,6 @@ object UiKeys {
   /** One line of the result panel: `{0}` words added to a tag that was `{1}` (its name). Two keys, one per outcome. */
   val tagsImportResultCreated: String = pluralKey("ui.tags.import.resultCreated")
   val tagsImportResultMerged: String  = pluralKey("ui.tags.import.resultMerged")
-
-  // -- Game setup ----------------------------------------------------------------------------------
-
-  val gameSetupTitle: String                = key("ui.gameSetup.title")
-  val gameSetupSourceLabel: String          = key("ui.gameSetup.sourceLabel")
-  val gameSetupTargetLabel: String          = key("ui.gameSetup.targetLabel")
-  val gameSetupTagsLabel: String            = key("ui.gameSetup.tagsLabel")
-  val gameSetupTagFilterLabel: String       = key("ui.gameSetup.tagFilterLabel")
-  val gameSetupTagFilterPlaceholder: String = key("ui.gameSetup.tagFilterPlaceholder")
-  val gameSetupNoEligibleTags: String       = key("ui.gameSetup.noEligibleTags")
-  val gameSetupNoMatchingTags: String       = key("ui.gameSetup.noMatchingTags")
-  val gameSetupPlay: String                 = key("ui.gameSetup.play")
-  val gameSetupCreated: String              = key("ui.gameSetup.created")
-
-  /** The setup screen's "this quiz already exists" warning, and the link that opens the existing quiz instead of
-    * creating a second one — see `GameSetupPage.renderDuplicateWarning`. A warning, never a refusal: a second game over
-    * the same wordlists is allowed.
-    */
-  val gameSetupDuplicateWarning: String = key("ui.gameSetup.duplicateWarning")
-  val gameSetupDuplicatePlay: String    = key("ui.gameSetup.duplicatePlay")
-
-  val gameSetupLanguagesLockedHint: String = key("ui.gameSetup.languagesLockedHint")
 
   // -- Game instance -----------------------------------------------------------------------------
 
@@ -1532,7 +1490,6 @@ object UiKeys {
 
   val helpTags: String            = key("ui.help.tags")
   val helpBulkImport: String      = key("ui.help.bulkImport")
-  val helpGameSetup: String       = key("ui.help.gameSetup")
   val helpGameShare: String       = key("ui.help.gameShare")
   val helpGameMode: String        = key("ui.help.gameMode")
   val helpShareHistory: String    = key("ui.help.shareHistory")

@@ -165,8 +165,25 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     }
   }
 
+  /** Whether `page` is the nav entry to mark. The games listing carries its filters in its page value, so it is matched
+    * by type: a sorted or filtered listing is still the Games entry.
+    */
+  private def isCurrent(page: Page): Boolean = {
+    page match {
+      case Page.AllGames(_) =>
+        active.exists {
+          case Page.AllGames(_) =>
+            true
+          case _                =>
+            false
+        }
+      case _                =>
+        active.contains(page)
+    }
+  }
+
   private def navLink(page: Page, label: String): HtmlElement = {
-    val isActive = active.contains(page)
+    val isActive = isCurrent(page)
     a(
       cls := "btn btn-sm " + (
         if (isActive)
@@ -189,7 +206,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     li(
       a(
         cls := (
-          if (active.contains(page))
+          if (isCurrent(page))
             "menu-active"
           else
             ""
@@ -210,7 +227,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     List(
       navLink(Page.Words(), I18n.t(UiKeys.navWords)),
       navLink(Page.Tags(), I18n.t(UiKeys.navTags)),
-      navLink(Page.Games, I18n.t(UiKeys.navGames)),
+      navLink(Page.AllGames(), I18n.t(UiKeys.navGames)),
       navLink(Page.Groups(), I18n.t(UiKeys.navGroups)),
       navLink(Page.About, I18n.t(UiKeys.navAbout)),
     )
@@ -224,7 +241,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     List(
       navMenuItem(Page.Words(), I18n.t(UiKeys.navWords)),
       navMenuItem(Page.Tags(), I18n.t(UiKeys.navTags)),
-      navMenuItem(Page.Games, I18n.t(UiKeys.navGames)),
+      navMenuItem(Page.AllGames(), I18n.t(UiKeys.navGames)),
       navMenuItem(Page.Groups(), I18n.t(UiKeys.navGroups)),
       navMenuItem(Page.About, I18n.t(UiKeys.navAbout)),
     )

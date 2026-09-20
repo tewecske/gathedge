@@ -32,10 +32,10 @@ test.afterAll(async () => {
 
 test('an unauthenticated visitor lands on the public games page', async () => {
   // Deliberately bare: this is the one place the boot script's prefix redirect is exercised.
-  // Games is public on purpose — see GamesPage's doc comment: it's the navbar's own link, always shown, so a
-  // signed-out click on it must not bounce back to sign-in.
+  // Games is public on purpose — the root redirects to the games listing, which anybody may read, so a
+  // signed-out visit must not bounce back to sign-in.
   await page.goto('/');
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
   await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
@@ -44,13 +44,13 @@ test('sign up creates an account and lands on the games page', async () => {
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
   await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
 test('the session survives a page refresh', async () => {
   await page.reload();
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
   await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
@@ -75,7 +75,7 @@ test('log back in with the same credentials', async () => {
   await page.locator('input[name=identifier]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
   await expect(page.getByRole('heading', { name: 'Games', exact: true })).toBeVisible();
 });
 
