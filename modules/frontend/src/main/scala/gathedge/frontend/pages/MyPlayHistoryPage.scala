@@ -11,6 +11,7 @@ import gathedge.frontend.components.{
   GameHeader,
   Labels,
   Pagination,
+  ProfileSubmenu,
   SortHeader,
 }
 import gathedge.frontend.i18n.I18n
@@ -33,7 +34,13 @@ import gathedge.shared.i18n.UiKeys
 object MyPlayHistoryPage {
 
   def render(query: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]): HtmlElement = {
-    AppShell.render(Page.MyPlays(), new MyPlayHistoryPage(query, onQuery).render())
+    AppShell.render(
+      Page.MyPlays(),
+      div(
+        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.MyPlays())),
+        new MyPlayHistoryPage(query, onQuery).render(),
+      ),
+    )
   }
 }
 

@@ -44,6 +44,7 @@ test.describe.configure({ mode: 'serial' });
 let page: Page;
 let gameUrl: string;
 let gameSlug: string;
+let tagId: string;
 
 // Tag creation moved off the Words page collect bar to the Tags editor. Mint a tag there, name it, and hand
 // back its id so the caller can pick it in the "Collect into" select (the option value is the tag id).
@@ -90,7 +91,7 @@ test('a tag collects four words, each with its Hungarian translation marked', as
 
   // Make the tag on the Tags editor, then pick it as the collect tag: every word added below files under it
   // with no further control to set.
-  const tagId = await createTag(page, tagName);
+  tagId = await createTag(page, tagName);
   await page.goto('/en/words?lang=de&target=hu');
   await page.getByLabel('Collect into').selectOption(tagId);
   await expect(page.getByLabel('Collect into').locator('option:checked')).toHaveText(new RegExp(tagName));
@@ -113,34 +114,17 @@ test('a tag collects four words, each with its Hungarian translation marked', as
   }
 });
 
-test('the setup screen is short — only language pair and tags — and every game records its plays', async () => {
-  await page.goto('/en/games/vocabulary-quiz');
+test('a game is created from the wordlist page, and every game records its plays', async () => {
+  await page.goto(`/en/tags/${tagId}`);
 
-  // Default language pair is German -> Hungarian already (GameSetupPage's own default), matching the direction
-  // the tag above was marked in.
-  const tagRow = page.locator('label', { hasText: tagName });
-  await expect(tagRow).toBeVisible();
-  await expect(tagRow).toContainText(`${tagName} (${words.length})`);
-
-  // The word-count/randomize/articles controls this screen used to have all moved to the play-time picker on
-  // GameInstancePage — confirm none of them survive here. Neither does the old "Track results" opt-in: every
-  // game records its plays now.
-  await expect(page.getByText('Include definite articles')).toHaveCount(0);
-  await expect(page.getByText(/Randomize/i)).toHaveCount(0);
-  await expect(page.getByText('Track results')).toHaveCount(0);
-  await expect(page.locator('input[type=number]')).toHaveCount(0);
-
-  await tagRow.locator('input[type=checkbox]').check();
-
-  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.getByRole('button', { name: 'Create game', exact: true }).click();
   await expect(page).toHaveURL(/\/en\/g\/[a-z0-9-]+$/);
   gameUrl = page.url();
   gameSlug = gameUrl.split('/').pop() ?? '';
   expect(gameSlug).not.toBe('');
 
-  // The owner lands straight on the instance page it just created (GameSetupPage's own pushState) and is
-  // recognized as the owner in this same browser — the "View results" link shows for the game's owner
-  // (GameInstancePage.renderNameHeader).
+  // The owner lands straight on the instance page it just created and is recognized as the owner in this same
+  // browser — the "View results" link shows for the game's owner (GameInstancePage.renderNameHeader).
   await expect(page.getByRole('link', { name: 'View results' })).toBeVisible();
 });
 

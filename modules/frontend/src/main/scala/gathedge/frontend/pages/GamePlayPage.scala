@@ -484,7 +484,7 @@ private class GamePlayPage(slug: String, playId: Long) {
         ),
         a(
           cls := "link link-hover text-sm",
-          AppRouter.router.navigateTo(Page.Games),
+          AppRouter.router.navigateTo(Page.AllGames()),
           I18n.t(UiKeys.gameInstanceBackToGames),
         ),
       ),

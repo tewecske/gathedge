@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, ProgressShareApiClient}
-import gathedge.frontend.components.{AppShell, PlayHistoryListing}
+import gathedge.frontend.components.{AppShell, PlayHistoryListing, ProfileSubmenu}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.MyPlayQuery
 import gathedge.shared.dto.SharedWithMe
@@ -25,7 +25,10 @@ object SharedPlayerHistoryPage {
   def render(sharerUserId: Long, query: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]): HtmlElement = {
     AppShell.render(
       Page.SharedPlayerHistory(sharerUserId),
-      new SharedPlayerHistoryPage(sharerUserId, query, onQuery).render(),
+      div(
+        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.SharedProgress)),
+        new SharedPlayerHistoryPage(sharerUserId, query, onQuery).render(),
+      ),
     )
   }
 }

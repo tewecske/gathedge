@@ -34,25 +34,21 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
-  /** The account's daily streak and play totals. Auth-only: it is personal. */
+  /** The account's daily streak and play totals: the first tab of the profile. Auth-only: it is personal. [[MyPlays]]
+    * and [[SharedProgress]] are its other two tabs.
+    */
   case object Profile extends Page
 
-  /** Mints a fresh wordlist and hands off to [[TagDetail]]. Public like [[GameSetup]], and for the same reason: it
-    * mints a guest on arrival (through `TagCreatePage.asReader`) rather than bouncing a signed-out visitor to sign-in,
-    * so the catalog's "New wordlist" button works before signing up.
+  /** Mints a fresh wordlist and hands off to [[TagDetail]]. Public, so that it mints a guest on arrival (through
+    * `TagCreatePage.asReader`) rather than bouncing a signed-out visitor to sign-in, so the catalog's "New wordlist"
+    * button works before signing up.
     */
   case object TagCreate extends Page
 
-  /** The catalog of game types. Public, like [[Words]]: a shared game link should show the catalog without bouncing a
-    * signed-out visitor to sign-in. Playing a game (not this page) is what mints a guest account.
+  /** The site root. It has no screen of its own: `App.redirectTarget` sends it to [[AllGames]]. Public, like [[Words]],
+    * so a signed-out visitor is never bounced to sign-in first.
     */
   case object Games extends Page
-
-  /** Choosing a language pair and tags for a fresh vocabulary quiz. Public like [[Games]] — a shared link must render
-    * for a signed-out visitor — but unlike [[Games]], its own tag fetch mints a guest on arrival: see `GameSetupPage`'s
-    * doc comment for why this one screen departs from "never on a page view".
-    */
-  case object GameSetup extends Page
 
   /** Every account's games: name, tags, language pair, and how many times each was played. Public, like [[Games]]: the
     * catalog is how a signed-out visitor finds a game to play, so it must render without bouncing to sign-in. A caller
@@ -63,10 +59,10 @@ object Page {
     */
   final case class AllGames(query: AllGameQuery = AllGameQuery.default) extends Page
 
-  /** One quiz, playable from its shared link: `/g/{slug}`. Public for the same reason [[GameSetup]] is public and
-    * [[WordDetail]] is — a shared link has to render for a signed-out visitor — but nothing here mints a guest on
-    * arrival, unlike `GameSetup`: reading the game's name and tags is not a write. It is starting a play, the first
-    * action the page offers, that goes through the guest detour, in `GameInstancePage`.
+  /** One quiz, playable from its shared link: `/g/{slug}`. Public for the same reason [[WordDetail]] is — a shared link
+    * has to render for a signed-out visitor — but nothing here mints a guest on arrival: reading the game's name and
+    * tags is not a write. It is starting a play, the first action the page offers, that goes through the guest detour,
+    * in `GameInstancePage`.
     */
   final case class GameInstance(slug: String) extends Page
 
@@ -242,11 +238,11 @@ object Page {
       // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
       // sign-in. A shared link has to show the catalog, not sign-in. `AllGames` is the browsable catalog of every
       // account's games: a signed-out visitor reads it to find a game to play, the same reason `Games` is public.
-      case Games | GameSetup | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                    =>
+      case Games | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                                =>
         AuthGuard.Public
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
-      // arrival, like `GameSetup`, so the catalog's "New wordlist" button works signed out.
+      // arrival, so the catalog's "New wordlist" button works signed out.
       case Tags(_) | TagDetail(_, _) | TagCreate                                                         =>
         AuthGuard.Public
       // The group catalog and a group's own detail read without a session, the same reasoning as the wordlist catalog:
@@ -282,8 +278,7 @@ object AppRouter {
   private val profileRoute        = Route.static(Profile, root / "profile", basePath)
   private val tagCreateRoute      = Route.static(TagCreate, root / "tags" / "new", basePath)
   private val gamesRoute          = Route.static(Games, root, basePath)
-  private val gameSetupRoute      = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
-  private val sharedProgressRoute = Route.static(SharedProgress, root / "games" / "shared", basePath)
+  private val sharedProgressRoute = Route.static(SharedProgress, root / "profile" / "shared", basePath)
 
   /** One sharer's play history — a path segment *and* a query, so it uses `withQuery` rather than the "two routes,
     * query first" trick, the same as [[gameResultsRoute]] and [[adminUserPlaysRoute]] and for the same reason (see
@@ -292,7 +287,7 @@ object AppRouter {
   private val sharedPlayerHistoryRoute = Route.withQuery[SharedPlayerHistory, Long, MyPlayQuery](
     encode = (p: SharedPlayerHistory) => PatternArgs(p.sharerUserId, p.query),
     decode = (args: PatternArgs[Long, MyPlayQuery]) => SharedPlayerHistory(args.path, args.params),
-    pattern = (root / "games" / "shared" / segment[Long]) ? MyPlayQuery.params,
+    pattern = (root / "profile" / "shared" / segment[Long]) ? MyPlayQuery.params,
     basePath = basePath,
   )
   private val gameInstanceRoute        = Route(
@@ -445,11 +440,11 @@ object AppRouter {
   private val myPlaysQueryRoute = Route.onlyQueryPF[MyPlays, MyPlayQuery](
     matchEncode = { case page: MyPlays if page.query != MyPlayQuery.default => page.query },
     decode = { case query if query != MyPlayQuery.default => MyPlays(query) },
-    pattern = (root / "games" / "history") ? MyPlayQuery.params,
+    pattern = (root / "profile" / "history") ? MyPlayQuery.params,
     basePath = basePath,
   )
 
-  private val myPlaysRoute = Route.staticPartial(MyPlays(), root / "games" / "history", basePath)
+  private val myPlaysRoute = Route.staticPartial(MyPlays(), root / "profile" / "history", basePath)
 
   private val adminQueryRoute = Route.onlyQueryPF[Admin, UserQuery](
     matchEncode = { case page: Admin if page.query != UserQuery.default => page.query },
@@ -510,8 +505,6 @@ object AppRouter {
         "TagCreate"
       case Games                          =>
         "Games"
-      case GameSetup                      =>
-        "GameSetup"
       case AllGames(query)                =>
         "AllGames:" + AllGameQuery.params.createParamsString(query)
       case MyPlays(query)                 =>
@@ -725,8 +718,6 @@ object AppRouter {
           TagCreate
         case "Games"               =>
           Games
-        case "GameSetup"           =>
-          GameSetup
         case "AllGames"            =>
           AllGames()
         case "MyPlays"             =>
@@ -776,7 +767,6 @@ object AppRouter {
         profileRoute,
         tagCreateRoute,
         gamesRoute,
-        gameSetupRoute,
         sharedProgressRoute,
         sharedPlayerHistoryRoute,
         gameInstanceRoute,

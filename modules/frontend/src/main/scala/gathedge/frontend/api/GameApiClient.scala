@@ -25,35 +25,12 @@ import HttpClient.{query, segment}
 
 /** The game catalog's calls, over [[HttpClient]] the same way [[WordApiClient]] is.
   *
-  * [[setup]] and [[create]] require a session — see `GameSetupPage`'s guest detour, which sits in front of each.
-  * [[get]] and [[playSetup]] do not — both are `optionalUser` reads a shared game link is opened through: the variant
-  * picker's preview must be viewable before any guest is minted, same as the link itself. [[startPlay]] is the first
-  * call in the play loop that needs a session, and the only one that mints a guest.
+  * [[create]] requires a session — the wordlist pages' guest detour sits in front of it. [[get]] and [[playSetup]] do
+  * not — both are `optionalUser` reads a shared game link is opened through: the variant picker's preview must be
+  * viewable before any guest is minted, same as the link itself. [[startPlay]] is the first call in the play loop that
+  * needs a session, and the only one that mints a guest.
   */
 object GameApiClient {
-
-  /** The tags eligible for a quiz between `source` and `target`, own tags first — see `Tag.sorted`. */
-  def setup(source: WordLanguage, target: WordLanguage): EventStream[Either[ApiError, List[Tag]]] = {
-    HttpClient.get[List[Tag]](
-      s"/api/games/setup${query("sourceLanguage" -> Some(WordLanguage.code(source)), "targetLanguage" -> Some(WordLanguage.code(target)))}"
-    )
-  }
-
-  /** The setup screen's word-list preview: exactly the eligible pool a game built from `tagIds` would draw from. */
-  def setupWords(
-    source: WordLanguage,
-    target: WordLanguage,
-    tagIds: Set[Long],
-  ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
-    val joined = Option.when(tagIds.nonEmpty)(tagIds.mkString(","))
-    HttpClient.get[List[GameSetupWord]](
-      s"/api/games/setup/words${query(
-          "sourceLanguage" -> Some(WordLanguage.code(source)),
-          "targetLanguage" -> Some(WordLanguage.code(target)),
-          "tagIds"         -> joined,
-        )}"
-    )
-  }
 
   /** Every account's games, one page at a time, for the games table. `tagId` narrows to one wordlist; `language1`/
     * `language2` narrow to games whose language pair contains whichever of the two are given.
