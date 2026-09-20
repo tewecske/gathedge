@@ -221,7 +221,7 @@ object GameRoutes {
               id,
               body.swapDirection,
               body.wordLimit,
-              body.includeDefiniteArticles,
+              body.articleMode,
               body.wordPreference,
               body.mode,
             )

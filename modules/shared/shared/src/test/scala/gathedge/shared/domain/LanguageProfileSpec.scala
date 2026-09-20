@@ -52,6 +52,75 @@ object LanguageProfileSpec extends ZIOSpecDefault {
         val profile = LanguageProfile.of(WordLanguage.De)
         assertTrue(profile.strip("der") == ("der", None))
       },
+      // The declension table from the issue's own worked examples: `Sache` [feminine], `Tisch` [masculine] and
+      // `Futter` [neuter]. Only the definite column, which is the only one a game ever shows.
+      test("German declines the definite article by case, number and gender") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+
+        def article(gender: Gender, c: GrammaticalCase, n: GrammaticalNumber): String = {
+          profile.declinedArticle(gender, FormSlot(c, n)).getOrElse("")
+        }
+
+        val feminine  = GrammaticalCase.all.map(c => article(Gender.Feminine, c, GrammaticalNumber.Singular))
+        val masculine = GrammaticalCase.all.map(c => article(Gender.Masculine, c, GrammaticalNumber.Singular))
+        val neuter    = GrammaticalCase.all.map(c => article(Gender.Neuter, c, GrammaticalNumber.Singular))
+        val plural    = GrammaticalCase.all.map(c => article(Gender.Feminine, c, GrammaticalNumber.Plural))
+
+        assertTrue(
+          feminine == List("die", "der", "der", "die"),
+          masculine == List("der", "des", "dem", "den"),
+          neuter == List("das", "des", "dem", "das"),
+          plural == List("die", "der", "den", "die"),
+        )
+      },
+      test("a German plural takes the same article whatever the noun's gender is") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        val cells   = GrammaticalCase.all.map(c => profile.articlesFor(FormSlot(c, GrammaticalNumber.Plural)))
+        assertTrue(cells == List(List("die"), List("der"), List("den"), List("die")))
+      },
+      test("the citation cell is what display and the article list already answered") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        assertTrue(
+          profile.article(Gender.Feminine).contains("die"),
+          profile.displayIn("Sache", Some(Gender.Feminine), FormSlot.citation) == "die Sache",
+          profile.displayIn("Sachen", Some(Gender.Feminine), FormSlot(GrammaticalCase.Dative, GrammaticalNumber.Plural))
+            == "den Sachen",
+          profile.articlesFor(FormSlot.citation) == List("der", "die", "das"),
+        )
+      },
+      test("All offers every German article once; a dative singular offers two") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        assertTrue(
+          profile.allArticles.toSet == Set("der", "die", "das", "des", "dem", "den"),
+          profile.allArticles.size == 6,
+          profile.articlesFor(FormSlot(GrammaticalCase.Dative, GrammaticalNumber.Singular)) == List("dem", "der"),
+        )
+      },
+      test("a word with no gender takes no article in any cell") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        assertTrue(
+          FormSlot.all.forall(slot => profile.displayIn("laufen", None, slot) == "laufen")
+        )
+      },
+      test("Spanish declines for number only, since its articles ignore case") {
+        val profile = LanguageProfile.of(WordLanguage.Es)
+        assertTrue(
+          GrammaticalCase.all.forall(c =>
+            profile.declinedArticle(Gender.Masculine, FormSlot(c, GrammaticalNumber.Singular)).contains("el")
+          ),
+          GrammaticalCase.all.forall(c =>
+            profile.declinedArticle(Gender.Feminine, FormSlot(c, GrammaticalNumber.Plural)).contains("las")
+          ),
+          profile.allArticles.toSet == Set("el", "la", "los", "las"),
+        )
+      },
+      test("a genderless language has no declension table at all") {
+        val profile = LanguageProfile.of(WordLanguage.Hu)
+        assertTrue(
+          profile.allArticles.isEmpty,
+          FormSlot.all.forall(slot => profile.articlesFor(slot).isEmpty),
+        )
+      },
     )
   }
 }

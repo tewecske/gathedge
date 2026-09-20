@@ -1,7 +1,7 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
-import gathedge.shared.domain.{GameMode, GameRef, Tag, WordLanguage, WordPreference}
+import gathedge.shared.domain.{ArticleMode, GameMode, GameRef, Tag, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
@@ -130,13 +130,13 @@ object GameApiClient {
     slug: String,
     swapDirection: Boolean = false,
     wordLimit: Option[Int] = None,
-    includeDefiniteArticles: Boolean = true,
+    articleMode: ArticleMode = ArticleMode.default,
     wordPreference: WordPreference = WordPreference.All,
     mode: GameMode = GameMode.Typing,
   ): EventStream[Either[ApiError, PlayStarted]] = {
     HttpClient.post[PlayStarted](
       s"/api/games/${segment(slug)}/plays",
-      Some(StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode).toJson),
+      Some(StartPlayRequest(swapDirection, wordLimit, articleMode, wordPreference, mode).toJson),
     )
   }
 

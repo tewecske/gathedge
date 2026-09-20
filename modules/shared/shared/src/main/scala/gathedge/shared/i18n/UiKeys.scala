@@ -1303,8 +1303,24 @@ object UiKeys {
   val gameInstanceWordLimitCustom: String = key("ui.gameInstance.wordLimit.custom")
   val gameInstanceWordLimitCount: String  = key("ui.gameInstance.wordLimit.count")
 
-  val gameInstanceIncludeArticlesLabel: String = key("ui.gameInstance.includeArticles.label")
-  val gameInstanceIncludeArticlesHint: String  = key("ui.gameInstance.includeArticles.hint")
+  val gameInstanceArticleModeLabel: String        = key("ui.gameInstance.articleMode.label")
+  val gameInstanceArticleModeHint: String         = key("ui.gameInstance.articleMode.hint")
+  val gameInstanceArticleModeAll: String          = key("ui.gameInstance.articleMode.all")
+  val gameInstanceArticleModeFormSpecific: String = key("ui.gameInstance.articleMode.formSpecific")
+  val gameInstanceArticleModeNone: String         = key("ui.gameInstance.articleMode.none")
+
+  /** The name of one declension cell, shown beside a prompt whose answer is an inflected form so the player knows which
+    * case to put the article in. One key per cell rather than a case name joined to a number name: Hungarian orders the
+    * two the other way round, and a joined string would force that order on every language.
+    */
+  val grammarSlotNominativeSingular: String = key("ui.grammar.slot.nominativeSingular")
+  val grammarSlotGenitiveSingular: String   = key("ui.grammar.slot.genitiveSingular")
+  val grammarSlotDativeSingular: String     = key("ui.grammar.slot.dativeSingular")
+  val grammarSlotAccusativeSingular: String = key("ui.grammar.slot.accusativeSingular")
+  val grammarSlotNominativePlural: String   = key("ui.grammar.slot.nominativePlural")
+  val grammarSlotGenitivePlural: String     = key("ui.grammar.slot.genitivePlural")
+  val grammarSlotDativePlural: String       = key("ui.grammar.slot.dativePlural")
+  val grammarSlotAccusativePlural: String   = key("ui.grammar.slot.accusativePlural")
 
   val gameInstancePreferenceLabel: String        = key("ui.gameInstance.preference.label")
   val gameInstancePreferenceAll: String          = key("ui.gameInstance.preference.all")

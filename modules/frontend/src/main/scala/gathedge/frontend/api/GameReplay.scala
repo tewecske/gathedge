@@ -31,7 +31,7 @@ object GameReplay {
             slug,
             swap,
             variant.wordLimit,
-            variant.includeDefiniteArticles,
+            variant.articleMode,
             variant.wordPreference,
             variant.mode,
           )

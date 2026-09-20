@@ -125,7 +125,7 @@ test('the setup screen is short — only language pair and tags — and every ga
   // The word-count/randomize/articles controls this screen used to have all moved to the play-time picker on
   // GameInstancePage — confirm none of them survive here. Neither does the old "Track results" opt-in: every
   // game records its plays now.
-  await expect(page.getByText('Include definite articles')).toHaveCount(0);
+  await expect(page.getByText('Definite articles')).toHaveCount(0);
   await expect(page.getByText(/Randomize/i)).toHaveCount(0);
   await expect(page.getByText('Track results')).toHaveCount(0);
   await expect(page.locator('input[type=number]')).toHaveCount(0);
@@ -171,16 +171,25 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(langSpans.nth(1)).toHaveText('Hungarian');
 
   await expect(guestPage.getByText('How many words')).toBeVisible();
-  const allWordsRadio = guestPage.getByRole('radio', { name: 'All' });
-  const customWordsRadio = guestPage.getByRole('radio', { name: 'Custom' });
+  // Scoped by the group's own `name`, not by wording: the articles group below offers an "All" of its own, so
+  // `getByRole('radio', { name: 'All' })` alone would match two controls.
+  const wordCountRadios = guestPage.locator('input[type=radio][name^="word-limit-"]');
+  const allWordsRadio = wordCountRadios.and(guestPage.getByRole('radio', { name: 'All' }));
+  const customWordsRadio = wordCountRadios.and(guestPage.getByRole('radio', { name: 'Custom' }));
   await expect(allWordsRadio).toBeChecked();
   // Only 4 words are eligible, so the 10 and 20 presets are out of range and disabled.
-  await expect(guestPage.getByRole('radio', { name: '10' })).toBeDisabled();
-  await expect(guestPage.getByRole('radio', { name: '20' })).toBeDisabled();
+  await expect(wordCountRadios.and(guestPage.getByRole('radio', { name: '10' }))).toBeDisabled();
+  await expect(wordCountRadios.and(guestPage.getByRole('radio', { name: '20' }))).toBeDisabled();
 
-  const articlesRow = guestPage.locator('label', { hasText: 'Include definite articles' });
-  await expect(articlesRow).toBeVisible();
-  await expect(articlesRow).toContainText('Show the definite article with a gendered noun in the quiz');
+  // The articles control is a three-way radio group, not a checkbox: "All" offers every German article form,
+  // "Form specific" only the ones the asked declension cell allows, "None" turns articles off altogether.
+  await expect(guestPage.getByText('Definite articles')).toBeVisible();
+  const articleRadios = guestPage.locator('input[type=radio][name^="article-mode-"]');
+  await expect(articleRadios).toHaveCount(3);
+  await expect(articleRadios.and(guestPage.getByRole('radio', { name: 'All' }))).toBeChecked();
+  await expect(articleRadios.and(guestPage.getByRole('radio', { name: 'Form specific' }))).toBeVisible();
+  await expect(articleRadios.and(guestPage.getByRole('radio', { name: 'None' }))).toBeVisible();
+  await expect(guestPage.getByText('Which articles the quiz offers for a gendered noun')).toBeVisible();
 
   await expect(guestPage.getByText('Which words')).toBeVisible();
   await expect(guestPage.locator('select option', { hasText: 'All words' })).toHaveCount(1);

@@ -143,18 +143,28 @@ trait GameRepository {
     targetLanguage: String,
   ): Task[List[(Long, Long)]]
 
-  /** Inserts `row` and one `game_play_words` row per pair in `wordPairs`, as one unit of work — the same "row + linked
+  /** Inserts `row` and one `game_play_words` row per entry in `playWords`, as one unit of work — the same "row + linked
     * rows" shape [[insertGame]] models for `game_tags`: a play whose `game_plays` row landed but whose word set didn't
-    * is not a state anything downstream (`nextPrompt`, `submitAnswer`, `getResults`) can make sense of.
+    * is not a state anything downstream (`nextPrompt`, `submitAnswer`, `getResults`) can make sense of. Each entry's
+    * `playId` is supplied here, from the generated id; whatever the caller put there is ignored.
     */
-  def insertPlay(row: GamePlayRow, wordPairs: List[(Long, Long)]): Task[GamePlayRow]
+  def insertPlay(row: GamePlayRow, playWords: List[GamePlayWordRow]): Task[GamePlayRow]
 
   /** `playId`'s fixed word set, written once by [[insertPlay]] — what [[GameService]] reads instead of recomputing
     * [[eligibleWordPairs]] live on every call, now that a play's word set may be a sampled subset of the game's whole
     * eligible pool rather than always being the whole thing. Order is not meaningful; the caller already draws its own
     * random prompt order from this.
+    *
+    * Whole rows rather than bare id pairs, because each carries the `word_forms.relation` its side was sampled under —
+    * the declension cell the prompt is asked in and graded against.
     */
-  def wordPairsOf(playId: Long): Task[List[(Long, Long)]]
+  def playWordsOf(playId: Long): Task[List[GamePlayWordRow]]
+
+  /** Every `word_forms` relation naming one of `wordIds` as the '''form''' side, as `(form_word_id, relation)`. A word
+    * absent from the answer inflects nothing and stands in [[gathedge.shared.domain.FormSlot.citation]]; a word present
+    * more than once is a form in several declension cells, and picking one of them is the caller's job.
+    */
+  def formRelationsOf(wordIds: List[Long]): Task[List[(Long, String)]]
 
   /** Every answer recorded for `playId` so far, in the order they were answered. */
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]]
@@ -332,11 +342,14 @@ object GameRepository {
   ): RIO[GameRepository, List[(Long, Long)]] =
     ZIO.serviceWithZIO[GameRepository](_.eligibleWordPairsForTags(tagIds, sourceLanguage, targetLanguage))
 
-  def insertPlay(row: GamePlayRow, wordPairs: List[(Long, Long)]): RIO[GameRepository, GamePlayRow] =
-    ZIO.serviceWithZIO[GameRepository](_.insertPlay(row, wordPairs))
+  def insertPlay(row: GamePlayRow, playWords: List[GamePlayWordRow]): RIO[GameRepository, GamePlayRow] =
+    ZIO.serviceWithZIO[GameRepository](_.insertPlay(row, playWords))
 
-  def wordPairsOf(playId: Long): RIO[GameRepository, List[(Long, Long)]] =
-    ZIO.serviceWithZIO[GameRepository](_.wordPairsOf(playId))
+  def playWordsOf(playId: Long): RIO[GameRepository, List[GamePlayWordRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.playWordsOf(playId))
+
+  def formRelationsOf(wordIds: List[Long]): RIO[GameRepository, List[(Long, String)]] =
+    ZIO.serviceWithZIO[GameRepository](_.formRelationsOf(wordIds))
 
   def answersOf(playId: Long): RIO[GameRepository, List[GamePlayAnswerRow]] =
     ZIO.serviceWithZIO[GameRepository](_.answersOf(playId))
@@ -618,20 +631,20 @@ final class GameRepositoryLive(dataSource: DataSource)
     }
   }
 
-  def insertPlay(row: GamePlayRow, wordPairs: List[(Long, Long)]): Task[GamePlayRow] = {
+  def insertPlay(row: GamePlayRow, playWords: List[GamePlayWordRow]): Task[GamePlayRow] = {
     val inserted = transaction(
       for {
         id <- ctx.run(quote(gamePlays.insertValue(lift(row)).returningGenerated(_.id)))
-        _  <- ZIO.unless(wordPairs.isEmpty) {
-                val links = wordPairs.map { case (wordId, translationWordId) =>
-                  GamePlayWordRow(0L, id, wordId, translationWordId)
-                }
+        _  <- ZIO.unless(playWords.isEmpty) {
+                val links = playWords.map(_.copy(playId = id))
                 ctx.run(quote {
                   liftQuery(links).foreach(row => {
                     gamePlayWords.insert(
-                      _.playId            -> row.playId,
-                      _.wordId            -> row.wordId,
-                      _.translationWordId -> row.translationWordId,
+                      _.playId              -> row.playId,
+                      _.wordId              -> row.wordId,
+                      _.translationWordId   -> row.translationWordId,
+                      _.wordRelation        -> row.wordRelation,
+                      _.translationRelation -> row.translationRelation,
                     )
                   })
                 })
@@ -643,11 +656,24 @@ final class GameRepositoryLive(dataSource: DataSource)
     }
   }
 
-  def wordPairsOf(playId: Long): Task[List[(Long, Long)]] = {
+  def playWordsOf(playId: Long): Task[List[GamePlayWordRow]] = {
     val q = quote {
-      gamePlayWords.filter(_.playId == lift(playId)).map(row => (row.wordId, row.translationWordId))
+      gamePlayWords.filter(_.playId == lift(playId))
     }
-    logged(run(ctx.run(q)))(rows => s"games.wordPairsOf play=$playId rows=${rows.size}")
+    logged(run(ctx.run(q)))(rows => s"games.playWordsOf play=$playId rows=${rows.size}")
+  }
+
+  def formRelationsOf(wordIds: List[Long]): Task[List[(Long, String)]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordForms
+          .filter(form => liftQuery(wordIds).contains(form.formWordId))
+          .map(form => (form.formWordId, form.relation))
+      }
+      logged(run(ctx.run(q)))(rows => s"games.formRelationsOf requested=${wordIds.size} rows=${rows.size}")
+    }
   }
 
   def answersOf(playId: Long): Task[List[GamePlayAnswerRow]] = {

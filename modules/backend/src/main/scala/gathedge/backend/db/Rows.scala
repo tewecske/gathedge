@@ -370,9 +370,11 @@ final case class GameFavoriteRow(id: Long, userId: Long, gameId: Long, createdAt
   * swapped direction or picked a narrower/differently-preferenced sample than another play of the same game.
   * `wordLimit` keeps its old `games.word_limit` meaning: `None` for "every eligible word", `Some(n)` for "sampled
   * exactly n (or fewer, if the pool was smaller)". `wordPreference` holds a [[gathedge.shared.domain.WordPreference]]
-  * code. `mode` holds a [[gathedge.shared.domain.GameMode]] code — whether the play was typed or clicked. These six
-  * default to English/English/no limit/articles on/"all"/"typing" only so pre-migration test fixtures that construct a
-  * `GamePlayRow` positionally keep compiling — `GameService.startPlay` always supplies real values.
+  * code. `articleMode` holds an [[gathedge.shared.domain.ArticleMode]] code — how much of the language's definite
+  * article system the play asked for. `mode` holds a [[gathedge.shared.domain.GameMode]] code — whether the play was
+  * typed or clicked. These six default to English/English/no limit/"all"/"all"/"typing" only so pre-migration test
+  * fixtures that construct a `GamePlayRow` positionally keep compiling — `GameService.startPlay` always supplies real
+  * values.
   */
 final case class GamePlayRow(
   id: Long,
@@ -386,7 +388,7 @@ final case class GamePlayRow(
   sourceLanguage: String = "en",
   targetLanguage: String = "en",
   wordLimit: Option[Int] = None,
-  includeDefiniteArticles: Boolean = true,
+  articleMode: String = "all",
   wordPreference: String = "all",
   mode: String = "typing",
 )
@@ -414,14 +416,26 @@ final case class GamePlayAnswerRow(
 )
 
 /** One word pair sampled into one specific play, written once at `startPlay` and never touched again — the fixed set
-  * [[GameRepository.wordPairsOf]] reads back for the rest of that play, instead of [[GameRepository.eligibleWordPairs]]
+  * [[GameRepository.playWordsOf]] reads back for the rest of that play, instead of [[GameRepository.eligibleWordPairs]]
   * being recomputed live on every call. For a play with no `GamePlayRow.wordLimit`, this ends up holding the game's
   * entire eligible pool at the moment the play started; for a limited play, the sampled subset.
   *
   * Like [[GamePlayAnswerRow]]'s `wordId`/`translationWordId`, these two deliberately do NOT cascade from `words` — see
   * the migration's comment: a play's word set is fixed history, not current dictionary state.
+  *
+  * `wordRelation`/`translationRelation` freeze the `word_forms.relation` each side was sampled under, which is what
+  * decides its definite article ([[gathedge.shared.domain.GrammarTag.slotOf]]). `None` is a word that inflects nothing
+  * — every lemma — and stands in [[gathedge.shared.domain.FormSlot.citation]]. Frozen for the same reason the ids are:
+  * a form carries many relations, and the case a prompt was asked in must not change under a running play.
   */
-final case class GamePlayWordRow(id: Long, playId: Long, wordId: Long, translationWordId: Long)
+final case class GamePlayWordRow(
+  id: Long,
+  playId: Long,
+  wordId: Long,
+  translationWordId: Long,
+  wordRelation: Option[String] = None,
+  translationRelation: Option[String] = None,
+)
 
 /** A progress-sharing code: the bearer credential a sharer mints and hands to whoever they want reading their game
   * history. The `code` column *is* the credential, exactly like [[GuestClaimCodeRow.code]] — never logged — and the

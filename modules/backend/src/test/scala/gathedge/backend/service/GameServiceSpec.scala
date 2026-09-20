@@ -10,7 +10,18 @@ import gathedge.backend.db.{
   WordRepository,
   WordRow,
 }
-import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, WordLanguage, WordPreference}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  ArticleMode,
+  FormSlot,
+  GameMode,
+  Gender,
+  GrammaticalCase,
+  GrammaticalNumber,
+  PartOfSpeech,
+  WordLanguage,
+  WordPreference,
+}
 import gathedge.shared.dto.AllGameSort
 import zio._
 import zio.test._
@@ -954,7 +965,152 @@ object GameServiceSpec extends ZIOSpecDefault {
           fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
-      test("includeDefiniteArticles defaults to true and, when false, strips the article everywhere") {
+      // The issue's own worked example, end to end: `die Sache` in the dative plural is `den Sachen`, and nothing
+      // else. Before this, the form carried no gender and so no article at all, and the gender alone would only ever
+      // have produced the citation `die`.
+      test("a German form is asked, shown and graded in the declension cell its relation names") {
+        for {
+          owner    <- newUser()
+          tag      <- WordRepository.insertTag(owner, "declined", "declined", 0L, "hu", "de")
+          source   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "dolgok"))
+          lemma    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Sache", gender = Some(Gender.Feminine)))
+          form     <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Sachen", gender = Some(Gender.Feminine)))
+          _        <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, form.id, "dative,definite,plural", 0L)))
+          _        <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created  <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          play     <- GameService.startPlay(created.slug, owner)
+          prompt   <- GameService.nextPrompt(play.playId, owner)
+          answer   <- GameService.submitAnswer(play.playId, prompt.wordId.get, "den Sachen", owner)
+          // A second play of the same game, answered with the citation article the lemma would take.
+          wrongRun <- GameService.startPlay(created.slug, owner)
+          wrongAsk <- GameService.nextPrompt(wrongRun.playId, owner)
+          wrong    <- GameService.submitAnswer(wrongRun.playId, wrongAsk.wordId.get, "die Sachen", owner)
+        } yield assertTrue(
+          prompt.answerSlot.contains(FormSlot(GrammaticalCase.Dative, GrammaticalNumber.Plural)),
+          answer.outcome == AnswerOutcome.Correct,
+          answer.expectedTexts == List("den Sachen"),
+          wrong.outcome != AnswerOutcome.Correct,
+        )
+      },
+      // The reported bug end to end. `Nächte` carries the same four relations the dictionary really holds for it, one
+      // of them the genitive plural. Every play must ask the nominative, and the results row must name the cell.
+      test("a plural form is asked as die, on every play, and the results row names the cell") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "plural", "plural", 0L, "hu", "de")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ejszakak"))
+          lemma   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Nacht", gender = Some(Gender.Feminine)))
+          form    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Naechte", gender = Some(Gender.Feminine)))
+          _       <- WordRepository.insertForms(
+                       List(
+                         WordFormRow(0L, lemma.id, form.id, "accusative,definite,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,genitive,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,nominative,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "plural", 0L),
+                       )
+                     )
+          _       <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          // Five separate plays: under the draw this replaced, one in three asked the genitive plural, so a run of
+          // five that all say `die` is what pins the randomness out.
+          asked   <- ZIO.foreach(1 to 5) { _ =>
+                       for {
+                         play   <- GameService.startPlay(created.slug, owner)
+                         prompt <- GameService.nextPrompt(play.playId, owner)
+                         answer <- GameService.submitAnswer(play.playId, prompt.wordId.get, "die Naechte", owner)
+                       } yield (prompt.answerSlot, answer.outcome, answer.expectedTexts, answer.answerSlot)
+                     }
+          plural   = FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural)
+        } yield assertTrue(
+          asked.forall { case (slot, _, _, _) => slot.contains(plural) },
+          asked.forall { case (_, outcome, _, _) => outcome == AnswerOutcome.Correct },
+          asked.forall { case (_, _, expected, _) => expected == List("die Naechte") },
+          asked.forall { case (_, _, _, slot) => slot.contains(plural) },
+        )
+      },
+      // `Wege` carries the archaic dative singular `dem Wege` beside its plural cells, which a number-first preference
+      // would have picked — asking a plural word in the singular.
+      test("a plural form carrying an odd singular relation is still asked as a plural") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "odd", "odd", 0L, "hu", "de")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "utak"))
+          lemma   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Weg", gender = Some(Gender.Masculine)))
+          form    <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Wege", gender = Some(Gender.Masculine)))
+          _       <- WordRepository.insertForms(
+                       List(
+                         WordFormRow(0L, lemma.id, form.id, "dative,singular", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,genitive,plural", 0L),
+                         WordFormRow(0L, lemma.id, form.id, "definite,nominative,plural", 0L),
+                       )
+                     )
+          _       <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          play    <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(play.playId, owner)
+          answer  <- GameService.submitAnswer(play.playId, prompt.wordId.get, "die Wege", owner)
+        } yield assertTrue(
+          prompt.answerSlot.contains(FormSlot(GrammaticalCase.Nominative, GrammaticalNumber.Plural)),
+          answer.outcome == AnswerOutcome.Correct,
+          answer.expectedTexts == List("die Wege"),
+        )
+      },
+      // A lemma has no `word_forms` row naming it as the form side, so it stands in the citation cell and is asked
+      // exactly as it always was — the path every ordinary wordlist takes.
+      test("a lemma keeps its citation article and names no case") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "citation", "citation", 0L, "hu", "de")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "asztal"))
+          target  <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tisch", gender = Some(Gender.Masculine)))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          play    <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(play.playId, owner)
+          answer  <- GameService.submitAnswer(play.playId, prompt.wordId.get, "der Tisch", owner)
+        } yield assertTrue(
+          prompt.answerSlot.contains(FormSlot.citation),
+          answer.outcome == AnswerOutcome.Correct,
+          answer.expectedTexts == List("der Tisch"),
+        )
+      },
+      // `FormSpecific` narrows the picker the browser draws; it must not narrow what the game accepts. Both article
+      // modes grade the same answer, which is what makes the setting safe to change between plays of one game.
+      test("FormSpecific grades exactly as All does, and Off asks for no case at all") {
+        for {
+          owner     <- newUser()
+          tag       <- WordRepository.insertTag(owner, "modes", "modes", 0L, "hu", "de")
+          source    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "dolgokkal"))
+          lemma     <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Ding", gender = Some(Gender.Neuter)))
+          form      <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Dinges", gender = Some(Gender.Neuter)))
+          _         <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, form.id, "genitive,singular", 0L)))
+          _         <- WordRepository.pairTranslation(source.id, tag.id, form.id, 0L)
+          created   <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
+          narrowed  <- GameService.startPlay(created.slug, owner, articleMode = ArticleMode.FormSpecific)
+          askNarrow <- GameService.nextPrompt(narrowed.playId, owner)
+          narrowAns <- GameService.submitAnswer(narrowed.playId, askNarrow.wordId.get, "des Dinges", owner)
+          off       <- GameService.startPlay(created.slug, owner, articleMode = ArticleMode.Off)
+          askOff    <- GameService.nextPrompt(off.playId, owner)
+          offAns    <- GameService.submitAnswer(off.playId, askOff.wordId.get, "Dinges", owner)
+        } yield assertTrue(
+          askNarrow.answerSlot.contains(FormSlot(GrammaticalCase.Genitive, GrammaticalNumber.Singular)),
+          narrowAns.outcome == AnswerOutcome.Correct,
+          narrowAns.expectedTexts == List("des Dinges"),
+          askOff.answerSlot.isEmpty,
+          offAns.outcome == AnswerOutcome.Correct,
+          offAns.expectedTexts == List("Dinges"),
+        )
+      },
+      test("articleMode defaults to All and, when Off, strips the article everywhere") {
         for {
           owner          <- newUser()
           tag            <- WordRepository.insertTag(owner, "bareArticle", "bareArticle", 0L, "de", "hu")
@@ -965,13 +1121,13 @@ object GameServiceSpec extends ZIOSpecDefault {
           created        <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.De, List(tag.id))
           default        <- GameService.startPlay(created.slug, owner)
           defaultResults <- GameService.getResults(default.playId, owner)
-          bare           <- GameService.startPlay(created.slug, owner, includeDefiniteArticles = false)
+          bare           <- GameService.startPlay(created.slug, owner, articleMode = ArticleMode.Off)
           prompt         <- GameService.nextPrompt(bare.playId, owner)
           _              <- GameService.submitAnswer(bare.playId, prompt.wordId.get, "Schrank", owner)
           results        <- GameService.getResults(bare.playId, owner)
         } yield assertTrue(
-          defaultResults.variant.includeDefiniteArticles,
-          !results.variant.includeDefiniteArticles,
+          defaultResults.variant.articleMode == ArticleMode.All,
+          results.variant.articleMode == ArticleMode.Off,
           results.answers.head.outcome == AnswerOutcome.Correct,
           results.answers.head.expectedTexts == List("Schrank"),
         )

@@ -8,15 +8,23 @@ import gathedge.shared.domain.LanguageProfile
   * input so the reader can keep typing the word straight after it. Extracted from `GamePlayPage` and `TagCreatePage`,
   * which carried the identical markup twice, one hard-coded to German's three articles.
   *
-  * Options come from `profile.genders`, so a two-gender language offers two radios, not three.
+  * `articles` is the list of buttons to offer, which the caller reads off the profile: the citation cell's articles
+  * where a lemma is being written, and the cell the game is asking for where a play narrowed them. Passed in rather
+  * than derived here, because only the caller knows which declension cell it is in.
   */
 object ArticlePicker {
 
-  def render(groupName: String, profile: LanguageProfile, textVar: Var[String], refocus: () => Unit): HtmlElement = {
+  def render(
+    groupName: String,
+    profile: LanguageProfile,
+    articles: List[String],
+    textVar: Var[String],
+    refocus: () => Unit,
+  ): HtmlElement = {
     div(
       cls := "join",
-      profile.genders.flatMap(gender => {
-        profile.article(gender).map { article =>
+      articles.map { article =>
+        {
           input(
             typ        := "radio",
             cls        := "join-item btn btn-xs",
@@ -39,7 +47,7 @@ object ArticlePicker {
             ),
           )
         }
-      }),
+      },
     )
   }
 }

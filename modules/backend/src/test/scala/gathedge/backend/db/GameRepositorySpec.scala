@@ -171,7 +171,7 @@ object GameRepositorySpec extends ZIOSpecDefault {
                      )
           play    <- GameRepository.insertPlay(
                        GamePlayRow(0L, game.id, player, 0, 2, 1, 0L, None, sourceLanguage = "de", targetLanguage = "hu"),
-                       List((source.id, target.id)),
+                       List(GamePlayWordRow(0L, 0L, source.id, target.id)),
                      )
           _       <- GameRepository.recordAnswer(
                        GamePlayAnswerRow(0L, play.id, source.id, target.id, 1, "x", "correct", 2, 0L),
@@ -184,7 +184,7 @@ object GameRepositorySpec extends ZIOSpecDefault {
           hit     <- GameRepository.deleteGame(game.id, game.version)
           gone    <- GameRepository.findBySlug("del-slug")
           tags    <- GameRepository.tagsOf(game.id)
-          words   <- GameRepository.wordPairsOf(play.id)
+          words   <- GameRepository.playWordsOf(play.id)
           answers <- GameRepository.answersOf(play.id)
           favs    <- GameRepository.favoriteCounts(List(game.id))
           plays   <- GameRepository.playCounts(List(game.id))

@@ -1,6 +1,14 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.{AnswerOutcome, GameMode, PartOfSpeech, WordLanguage, WordPreference}
+import gathedge.shared.domain.{
+  AnswerOutcome,
+  ArticleMode,
+  FormSlot,
+  GameMode,
+  PartOfSpeech,
+  WordLanguage,
+  WordPreference,
+}
 import zio.json.*
 
 /** What `POST /api/games` needs: the language pair and tags a base game is built from. Nothing here ever changes after
@@ -43,9 +51,9 @@ final case class DuplicateGameGroup(tags: List[GameTagRef], games: List[Duplicat
 
 /** One row of `GET /api/games/setup/words`'s answer: the setup screen's preview of exactly the pool a game built from
   * the requested tags and language pair would draw from — `text` already carries a gendered source word's article, the
-  * same [[gathedge.shared.domain.Word.displayText]] every prompt/result elsewhere in the game uses. Deduped to one row
-  * per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated it
-  * (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
+  * same [[gathedge.shared.domain.Word.displayTextIn]] every prompt/result elsewhere in the game uses. Deduped to one
+  * row per source word. `translations` is the word's marked accepted translation(s) — empty where nobody has populated
+  * it (`GET /api/games/{slug}/plays/setup`'s play-time preview reuses this DTO unmodified and never fills it in).
   *
   * `partOfSpeech` is what tells two rows spelled alike apart — `words` is unique on
   * `(language, text_norm, part_of_speech, gender)`, so a noun and a verb written the same way are two separate study
@@ -78,16 +86,17 @@ final case class GameDetail(
   *
   * `swapDirection`: `true` plays the game's `targetLanguage` -> `sourceLanguage` instead of its stored direction.
   * `wordLimit`: `None` = every eligible word in the resolved direction (the default); `Some(n)` = sample `n` (or the
-  * whole pool, if smaller). `includeDefiniteArticles`: `true` (the default) keeps a German noun's "der"/"die"/"das" in
-  * the prompt, the accepted answer, and the results text. `wordPreference`: `All` (the default) samples uniformly; the
-  * other two cases only change *which* words a narrowed sample favors, never the total count. `mode`: `Typing` (the
-  * default) asks the player to write the translation; `MultipleChoice` shows up to four of them to click instead — see
-  * [[gathedge.shared.domain.GameMode]].
+  * whole pool, if smaller). `articleMode`: [[gathedge.shared.domain.ArticleMode.All]] (the default) keeps a German
+  * noun's article in the prompt, the accepted answer, and the results text and offers every article form in the picker;
+  * `FormSpecific` narrows the picker to the prompt's own declension cell; `Off` drops articles entirely.
+  * `wordPreference`: `All` (the default) samples uniformly; the other two cases only change *which* words a narrowed
+  * sample favors, never the total count. `mode`: `Typing` (the default) asks the player to write the translation;
+  * `MultipleChoice` shows up to four of them to click instead — see [[gathedge.shared.domain.GameMode]].
   */
 final case class StartPlayRequest(
   swapDirection: Boolean = false,
   wordLimit: Option[Int] = None,
-  includeDefiniteArticles: Boolean = true,
+  articleMode: ArticleMode = ArticleMode.default,
   wordPreference: WordPreference = WordPreference.All,
   mode: GameMode = GameMode.Typing,
 ) derives JsonCodec
@@ -101,7 +110,7 @@ final case class GameVariantDto(
   sourceLanguage: WordLanguage,
   targetLanguage: WordLanguage,
   wordLimit: Option[Int],
-  includeDefiniteArticles: Boolean,
+  articleMode: ArticleMode,
   wordPreference: WordPreference,
   mode: GameMode,
 ) derives JsonCodec
@@ -122,6 +131,11 @@ final case class PlayStarted(playId: Long, wordCount: Int, maxScore: Int) derive
   * `partOfSpeech` is absent exactly when `finished` is true, like the three fields above it, and `None` besides only
   * for a stored code a newer build no longer recognises. It is shown beside the prompt because a noun and a verb
   * written the same way are two separate `words` rows, so the spelling alone does not say which one is being asked.
+  *
+  * `answerSlot` is the declension cell the expected answer stands in — what the article picker narrows to and what
+  * names the case beside the prompt. Absent when the play shows no articles, when the answer's language has none, and
+  * on a finished prompt. It describes the '''answer''', not the shown word: the prompt already wears its own article,
+  * while the cell the player has to produce is otherwise unguessable.
   */
 final case class GamePrompt(
   finished: Boolean,
@@ -130,6 +144,7 @@ final case class GamePrompt(
   position: Option[Int] = None,
   options: List[String] = Nil,
   partOfSpeech: Option[PartOfSpeech] = None,
+  answerSlot: Option[FormSlot] = None,
 ) derives JsonCodec
 
 final case class SubmitAnswerRequest(wordId: Long, answerText: String) derives JsonCodec
@@ -148,6 +163,7 @@ final case class GameAnswerResult(
   givenText: String,
   outcome: AnswerOutcome,
   partOfSpeech: Option[PartOfSpeech] = None,
+  answerSlot: Option[FormSlot] = None,
 ) derives JsonCodec
 
 /** `GET /api/games/plays/{playId}/results`'s answer: the finished play's score, full answer history, and the variant it

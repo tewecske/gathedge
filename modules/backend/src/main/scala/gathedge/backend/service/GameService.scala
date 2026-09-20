@@ -1,13 +1,25 @@
 package gathedge.backend.service
 
-import gathedge.backend.db.{GamePlayAnswerRow, GamePlayRow, GameRepository, GameRow, TagRow, UserRow, WordRow}
+import gathedge.backend.db.{
+  GamePlayAnswerRow,
+  GamePlayRow,
+  GamePlayWordRow,
+  GameRepository,
+  GameRow,
+  TagRow,
+  UserRow,
+  WordRow,
+}
 import gathedge.backend.db.{GroupRepository, UserRepository}
 import gathedge.shared.domain.{
   AnswerOutcome,
+  ArticleMode,
+  FormSlot,
   GameMode,
   GameRef,
   GameScoring,
   Gender,
+  GrammarTag,
   GroupRef,
   LanguageProfile,
   PartOfSpeech,
@@ -146,10 +158,10 @@ trait GameService {
   def deleteGame(slug: String, requesterUserId: Long): IO[GameFailure, Unit]
 
   /** Starts a fresh attempt at `slug` under the given variant. `swapDirection` plays the game's `targetLanguage` ->
-    * `sourceLanguage` instead of its stored direction. `wordLimit`/`includeDefiniteArticles`/`wordPreference`/`mode`
-    * are this play's own settings, snapshotted onto its `game_plays` row — see the design doc. `mode` also decides the
-    * play's `maxScore`, since a clicked answer is worth less than a typed one. Fails [[GameFailure.ValidationError]]
-    * for a `wordLimit` out of `[1, maxWordLimit]` or one `>=` the resolved direction's eligible pool,
+    * `sourceLanguage` instead of its stored direction. `wordLimit`/`articleMode`/`wordPreference`/`mode` are this
+    * play's own settings, snapshotted onto its `game_plays` row — see the design doc. `mode` also decides the play's
+    * `maxScore`, since a clicked answer is worth less than a typed one. Fails [[GameFailure.ValidationError]] for a
+    * `wordLimit` out of `[1, maxWordLimit]` or one `>=` the resolved direction's eligible pool,
     * [[GameFailure.NoEligibleWords]] if that pool is empty right now.
     */
   def startPlay(
@@ -157,7 +169,7 @@ trait GameService {
     playerUserId: Long,
     swapDirection: Boolean = false,
     wordLimit: Option[Int] = None,
-    includeDefiniteArticles: Boolean = true,
+    articleMode: ArticleMode = ArticleMode.default,
     wordPreference: WordPreference = WordPreference.All,
     mode: GameMode = GameMode.Typing,
   ): IO[GameFailure, PlayStarted]
@@ -320,12 +332,12 @@ object GameService {
     playerUserId: Long,
     swapDirection: Boolean = false,
     wordLimit: Option[Int] = None,
-    includeDefiniteArticles: Boolean = true,
+    articleMode: ArticleMode = ArticleMode.default,
     wordPreference: WordPreference = WordPreference.All,
     mode: GameMode = GameMode.Typing,
   ): ZIO[GameService, GameFailure, PlayStarted] = {
     ZIO.serviceWithZIO[GameService](
-      _.startPlay(slug, playerUserId, swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode)
+      _.startPlay(slug, playerUserId, swapDirection, wordLimit, articleMode, wordPreference, mode)
     )
   }
 
@@ -442,12 +454,69 @@ final case class GameServiceLive(
       groupRepo.findGroupsByIds(ids).orDie.map(_.map(g => g.id -> GroupRef(g.id, g.name)).toMap)
   }
 
-  /** `Word.displayText`, gated by a game's own `includeDefiniteArticles` — the choke point [[nextPrompt]],
-    * [[submitAnswer]] and [[answerResultsOf]] all go through, so a game that turned the article off never sees it in a
-    * prompt, a scored answer, or a results row.
+  /** `play`'s stored article mode, falling back to [[ArticleMode.default]] for anything unrecognised — the same lenient
+    * read [[modeOf]] gives every other stored code.
     */
-  private def wordText(row: WordRow, includeDefiniteArticles: Boolean): String = {
-    if (includeDefiniteArticles) Word.displayText(row.language, row.text, row.gender) else row.text
+  private def articleModeOf(play: GamePlayRow): ArticleMode = {
+    ArticleMode.fromString(play.articleMode).getOrElse(ArticleMode.default)
+  }
+
+  /** The declension cell a frozen `word_forms.relation` names. A word that inflects nothing — every lemma — has no
+    * relation and stands in [[FormSlot.citation]], which is the cell a dictionary lists it under.
+    */
+  private def slotOf(relation: Option[String]): FormSlot = {
+    relation.map(GrammarTag.slotOf).getOrElse(FormSlot.citation)
+  }
+
+  /** `Word.displayTextIn`, gated by the play's own [[ArticleMode]] and placed in the word's own declension cell — the
+    * choke point [[nextPrompt]], [[submitAnswer]] and [[answerResultsOf]] all go through, so a play that turned the
+    * article off never sees one in a prompt, a scored answer, or a results row, and a play that left it on sees the
+    * article the cell really takes: `die Sache` in the citation cell, `den Sachen` in the dative plural.
+    *
+    * [[ArticleMode.All]] and [[ArticleMode.FormSpecific]] produce the same text. They differ only in how many buttons
+    * the browser's article picker offers, never in what the game accepts.
+    */
+  private def wordText(row: WordRow, play: GamePlayRow, slot: FormSlot = FormSlot.citation): String = {
+    if (ArticleMode.showsArticles(articleModeOf(play)))
+      Word.displayTextIn(row.language, row.text, row.gender, slot)
+    else
+      row.text
+  }
+
+  /** One declension cell per word id: the cell the play froze for it where there is one, and otherwise the first cell
+    * the word's own `word_forms` rows name, read in [[FormSlot.all]]'s order.
+    *
+    * The fallback exists for words a play never sampled but still has to write down — the other accepted translations
+    * of an answered word, and a multiple-choice distractor. Those have no frozen cell, so one is derived; picking the
+    * first rather than a random one keeps two reads of the same results screen identical.
+    */
+  private def slotsFor(frozen: Map[Long, FormSlot], wordIds: List[Long]): UIO[Map[Long, FormSlot]] = {
+    val missing = wordIds.distinct.filterNot(frozen.contains)
+    if (missing.isEmpty)
+      ZIO.succeed(frozen)
+    else {
+      repo.formRelationsOf(missing).orDie.map { rows =>
+        val derived = rows
+          .groupBy { case (wordId, _) => wordId }
+          .view
+          .mapValues { relations =>
+            relations
+              .map { case (_, relation) => GrammarTag.slotOf(relation) }
+              .distinct
+              .minByOption(FormSlot.all.indexOf)
+              .getOrElse(FormSlot.citation)
+          }
+          .toMap
+        frozen ++ derived
+      }
+    }
+  }
+
+  /** The cells a play froze, as the map [[slotsFor]] starts from. Both sides of every sampled pair. */
+  private def frozenSlots(playWords: List[GamePlayWordRow]): Map[Long, FormSlot] = {
+    playWords.flatMap { row =>
+      List(row.wordId -> slotOf(row.wordRelation), row.translationWordId -> slotOf(row.translationRelation))
+    }.toMap
   }
 
   /** A row's stored part of speech, `None` for a code this build does not recognise — the same lenient read [[modeOf]]
@@ -668,7 +737,11 @@ final case class GameServiceLive(
                        .orDie
       wordIds      = (pairs.map(_._1) ++ pairs.map(_._2)).distinct
       words       <- repo.wordsByIds(wordIds).orDie
-      textById     = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      // No play exists yet, so no cell is frozen — the same derived reading `playSetupPreview` shows one screen over.
+      slots       <- slotsFor(Map.empty, wordIds)
+      textById     = words.map { w =>
+                       w.id -> Word.displayTextIn(w.language, w.text, w.gender, slots.getOrElse(w.id, FormSlot.citation))
+                     }.toMap
       posById      = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
       translations = pairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield translations.toList
@@ -941,7 +1014,7 @@ final case class GameServiceLive(
     playerUserId: Long,
     swapDirection: Boolean = false,
     wordLimit: Option[Int] = None,
-    includeDefiniteArticles: Boolean = true,
+    articleMode: ArticleMode = ArticleMode.default,
     wordPreference: WordPreference = WordPreference.All,
     mode: GameMode = GameMode.Typing,
   ): IO[GameFailure, PlayStarted] = {
@@ -974,6 +1047,7 @@ final case class GameServiceLive(
                                              )
                                            })
       sampled                         <- sampleWordPool(game.id, playerUserId, resolvedSource, resolvedTarget, pool, validLimit, wordPreference)
+      playWords                       <- sampledPlayWords(sampled)
       now                             <- Clock.currentTime(TimeUnit.MILLISECONDS)
       wordCount                        = sampled.size
       maxScore                         = wordCount * GameScoring.pointsPerWord(mode)
@@ -991,14 +1065,59 @@ final case class GameServiceLive(
                                                sourceLanguage = resolvedSource,
                                                targetLanguage = resolvedTarget,
                                                wordLimit = validLimit,
-                                               includeDefiniteArticles = includeDefiniteArticles,
+                                               articleMode = ArticleMode.code(articleMode),
                                                wordPreference = WordPreference.code(wordPreference),
                                                mode = GameMode.code(mode),
                                              ),
-                                             sampled,
+                                             playWords,
                                            )
                                            .orDie
     } yield PlayStarted(row.id, wordCount, maxScore)
+  }
+
+  /** Turns a sampled pair list into the `game_play_words` rows the play is fixed to, recording the declension cell each
+    * side is asked in.
+    *
+    * A word that inflects nothing gets no relation and stands in the citation cell — that is every lemma, so an
+    * ordinary wordlist is unaffected. A form gets the relation [[FormSlot.preferred]] names, the nominative wherever it
+    * has one.
+    *
+    * '''Not a draw.''' A `word_tag_pairs` row records one reading, not every reading: somebody who marked `éjszakák`
+    * against `Nächte` meant the plural, and nothing in that pair would justify asking for the genitive plural `der
+    * Nächte` instead. It is still frozen onto the row rather than re-derived per request, for the reason the migration
+    * gives — importing a form edge mid-play must not change a question already asked.
+    */
+  private def sampledPlayWords(sampled: List[(Long, Long)]): UIO[List[GamePlayWordRow]] = {
+    val ids = (sampled.map(_._1) ++ sampled.map(_._2)).distinct
+    repo.formRelationsOf(ids).orDie.map { relations =>
+      val byWord = relations
+        .groupBy { case (wordId, _) => wordId }
+        .view
+        .mapValues(rows => rows.map { case (_, relation) => relation })
+        .toMap
+      sampled.map { case (wordId, translationId) =>
+        GamePlayWordRow(
+          0L,
+          0L,
+          wordId,
+          translationId,
+          preferredRelation(byWord.getOrElse(wordId, Nil)),
+          preferredRelation(byWord.getOrElse(translationId, Nil)),
+        )
+      }
+    }
+  }
+
+  /** Whichever of `relations` names the cell [[FormSlot.preferred]] picks, or `None` for a word that inflects nothing.
+    *
+    * Answers a relation *string*, since that is what the column stores — so the one recorded has to be a relation the
+    * word really carries rather than a cell name reconstructed from it. Two relations can name one cell (`Sache`
+    * reaches `Sachen` through `definite,nominative,plural` and through a bare `plural`); sorting first makes which of
+    * them lands in the column stable instead of dependent on the order the rows came back in.
+    */
+  private def preferredRelation(relations: List[String]): Option[String] = {
+    val wanted = FormSlot.preferred(relations.map(GrammarTag.slotOf).distinct)
+    relations.sorted.find(relation => GrammarTag.slotOf(relation) == wanted)
   }
 
   /** Unlike [[eligibleWordPoolFor]]'s draw pool (deduped to one translation per source word, for unambiguous grading),
@@ -1021,7 +1140,17 @@ final case class GameServiceLive(
       pool                             = dedupeToOnePerWord(rawPairs)
       stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
       words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
-      textById                         = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      // No play exists yet, so no cell is frozen: every word is shown in the first cell its own `word_forms` rows
+      // name. A started play may then ask a form in another case, which is the point of drawing one per play.
+      slots                           <- slotsFor(Map.empty, words.map(_.id))
+      textById                         = words.map { w =>
+                                           w.id -> Word.displayTextIn(
+                                             w.language,
+                                             w.text,
+                                             w.gender,
+                                             slots.getOrElse(w.id, FormSlot.citation),
+                                           )
+                                         }.toMap
       posById                          = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
       sortedPool                       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
       ordered                          = preferenceOrderedStable(sortedPool, stats, wordPreference)
@@ -1037,37 +1166,53 @@ final case class GameServiceLive(
   def nextPrompt(playId: Long, requesterUserId: Long): IO[GameFailure, GamePrompt] = {
     for {
       play       <- requireOwnedPlay(playId, requesterUserId)
-      pool       <- repo.wordPairsOf(playId).orDie
+      pool       <- repo.playWordsOf(playId).orDie
       answered   <- repo.answersOf(playId).orDie
       answeredIds = answered.map(_.wordId).toSet
-      remaining   = pool.filterNot(pair => answeredIds.contains(pair._1))
+      remaining   = pool.filterNot(row => answeredIds.contains(row.wordId))
       prompt     <- remaining match {
                       case Nil     =>
                         ZIO.succeed(GamePrompt(finished = true))
                       case choices =>
                         for {
-                          index                  <- Random.nextIntBounded(choices.size)
-                          (wordId, translationId) = choices(index)
-                          wordRows               <- repo.wordsByIds(List(wordId)).orDie
-                          wordRow                 = wordRows.headOption
-                          text                    =
-                            wordRow.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
-                          options                <- modeOf(play) match {
-                                                      case GameMode.Typing         =>
-                                                        ZIO.succeed(Nil)
-                                                      case GameMode.MultipleChoice =>
-                                                        optionsFor(play, wordId, translationId)
-                                                    }
+                          index     <- Random.nextIntBounded(choices.size)
+                          playWord   = choices(index)
+                          wordRows  <- repo.wordsByIds(List(playWord.wordId)).orDie
+                          wordRow    = wordRows.headOption
+                          text       =
+                            wordRow.map(row => wordText(row, play, slotOf(playWord.wordRelation))).getOrElse("")
+                          options   <- modeOf(play) match {
+                                         case GameMode.Typing         =>
+                                           ZIO.succeed(Nil)
+                                         case GameMode.MultipleChoice =>
+                                           optionsFor(play, pool, playWord.wordId, playWord.translationWordId)
+                                       }
+                          answerSlot = answerSlotOf(play, playWord)
                         } yield GamePrompt(
                           finished = false,
-                          wordId = Some(wordId),
+                          wordId = Some(playWord.wordId),
                           wordText = Some(text),
                           position = Some(answeredIds.size + 1),
                           options = options,
                           partOfSpeech = wordRow.flatMap(posOf),
+                          answerSlot = answerSlot,
                         )
                     }
     } yield prompt
+  }
+
+  /** The declension cell the expected answer stands in, for the browser's article picker and for the case named beside
+    * the prompt. `None` when the play shows no article at all, or when the answer's language has none to show — there
+    * is then nothing for a picker to offer and nothing a case label would explain.
+    *
+    * The '''answer''' side, not the shown word's: the prompt already wears its own article, so the cell the player has
+    * to produce is the one that is otherwise unguessable.
+    */
+  private def answerSlotOf(play: GamePlayRow, playWord: GamePlayWordRow): Option[FormSlot] = {
+    val targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En)
+    Option.when(ArticleMode.showsArticles(articleModeOf(play)) && LanguageProfile.of(targetLanguage).hasGenders)(
+      slotOf(playWord.translationRelation)
+    )
   }
 
   /** How many buttons a [[GameMode.MultipleChoice]] prompt shows at most: the accepted translation plus three
@@ -1095,7 +1240,12 @@ final case class GameServiceLive(
     * Every accepted translation of the prompt word is excluded: a distractor that would also be graded correct is not a
     * wrong answer.
     */
-  private def optionsFor(play: GamePlayRow, wordId: Long, translationId: Long): UIO[List[String]] = {
+  private def optionsFor(
+    play: GamePlayRow,
+    playWords: List[GamePlayWordRow],
+    wordId: Long,
+    translationId: Long,
+  ): UIO[List[String]] = {
     for {
       pairs        <- repo.eligibleWordPairs(play.gameId, play.sourceLanguage, play.targetLanguage).orDie
       acceptedIds   = (translationId :: pairs.collect { case (w, t) if w == wordId => t }).distinct
@@ -1104,16 +1254,22 @@ final case class GameServiceLive(
       relatedWords <- repo.relatedWords(poolIds).orDie
       correctRow    = poolWords.find(_.id == translationId)
       siblings     <- genderSiblingsOf(play, correctRow)
-      correct       = correctRow.map(row => wordText(row, play.includeDefiniteArticles)).getOrElse("")
-      excluded      = (correct :: poolWords.filter(row => acceptedIds.contains(row.id)).map { row =>
-                        wordText(row, play.includeDefiniteArticles)
-                      }).map(optionKey).toSet
-      poolTexts     = poolWords
-                        .filterNot(row => acceptedIds.contains(row.id))
-                        .map(row => wordText(row, play.includeDefiniteArticles))
+      // Every word that may end up on a button, so each is written in its own declension cell — a distractor shown
+      // under the wrong article would be wrong for a reason the game never taught.
+      slots        <- slotsFor(
+                        frozenSlots(playWords),
+                        (poolWords ++ relatedWords ++ siblings).map(_.id),
+                      )
+      textOf        = (row: WordRow) => wordText(row, play, slots.getOrElse(row.id, FormSlot.citation))
+      correctSlot   = correctRow.map(row => slots.getOrElse(row.id, FormSlot.citation)).getOrElse(FormSlot.citation)
+      correct       = correctRow.map(textOf).getOrElse("")
+      excluded      = (correct :: poolWords.filter(row => acceptedIds.contains(row.id)).map(textOf))
+                        .map(optionKey)
+                        .toSet
+      poolTexts     = poolWords.filterNot(row => acceptedIds.contains(row.id)).map(textOf)
       confusables   = (relatedWords.filter(_.language == play.targetLanguage) ++ siblings)
                         .filterNot(row => acceptedIds.contains(row.id))
-                        .map(row => wordText(row, play.includeDefiniteArticles)) ++ articleVariantsOf(play, correctRow)
+                        .map(textOf) ++ articleVariantsOf(play, correctRow, correctSlot)
       shuffledPool <- Random.shuffle(poolTexts)
       shuffledElse <- Random.shuffle(confusables)
       distractors   = (shuffledElse.take(1) ++ shuffledPool ++ shuffledElse.drop(1))
@@ -1132,7 +1288,9 @@ final case class GameServiceLive(
   private def genderSiblingsOf(play: GamePlayRow, correctRow: Option[WordRow]): UIO[List[WordRow]] = {
     val targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En)
     val genderedNoun   = correctRow.filter { row =>
-      play.includeDefiniteArticles && LanguageProfile.of(targetLanguage).hasGenders && row.gender.nonEmpty
+      ArticleMode.showsArticles(articleModeOf(play)) &&
+      LanguageProfile.of(targetLanguage).hasGenders &&
+      row.gender.nonEmpty
     }
     genderedNoun match {
       case None      =>
@@ -1142,18 +1300,27 @@ final case class GameServiceLive(
     }
   }
 
-  /** The accepted answer under each of its language's other articles — `die Hund`, `das Hund` for `der Hund`; `la
-    * perro` for `el perro`. The last-resort confusable, used when the dictionary holds no real sibling or form to
-    * offer: the article is the half of a gendered noun a learner has to memorise, so a prompt whose only distinction is
-    * the article is still the right question. Never produced for anything but a gendered noun shown with its article.
+  /** The accepted answer under each of the other articles its own declension cell allows — `die Hund`, `das Hund` for
+    * `der Hund`; `la perro` for `el perro`. The last-resort confusable, used when the dictionary holds no real sibling
+    * or form to offer: the article is the half of a gendered noun a learner has to memorise, so a prompt whose only
+    * distinction is the article is still the right question. Never produced for anything but a gendered noun shown with
+    * its article.
+    *
+    * Read from `slot`'s own row of the declension table, never from the citation row: a dative plural's alternatives
+    * have to be dative plural too, and in German there are none — every gender takes `den` there — so a plural prompt
+    * correctly offers no article variant rather than a `die`/`das` that no grammar would produce.
     */
-  private def articleVariantsOf(play: GamePlayRow, correctRow: Option[WordRow]): List[String] = {
+  private def articleVariantsOf(play: GamePlayRow, correctRow: Option[WordRow], slot: FormSlot): List[String] = {
     correctRow.toList.flatMap { row =>
       val targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En)
       val profile        = LanguageProfile.of(targetLanguage)
-      if (play.includeDefiniteArticles && profile.hasGenders) {
+      if (ArticleMode.showsArticles(articleModeOf(play)) && profile.hasGenders) {
         Gender.fromColumn(row.gender).toList.flatMap { own =>
-          profile.genders.filterNot(_ == own).flatMap(profile.article).map(article => article + " " + row.text)
+          val correctArticle = profile.declinedArticle(own, slot)
+          profile
+            .articlesFor(slot)
+            .filterNot(article => correctArticle.contains(article))
+            .map(article => article + " " + row.text)
         }
       } else
         Nil
@@ -1187,11 +1354,20 @@ final case class GameServiceLive(
   ): IO[GameFailure, GameAnswerResult] = {
     for {
       play            <- requireOwnedPlay(playId, requesterUserId)
-      pool            <- repo.wordPairsOf(playId).orDie
-      translationId   <- ZIO.fromOption(pool.find(_._1 == wordId).map(_._2)).orElseFail(GameFailure.NotFound)
+      pool            <- repo.playWordsOf(playId).orDie
+      playWord        <- ZIO.fromOption(pool.find(_.wordId == wordId)).orElseFail(GameFailure.NotFound)
+      translationId    = playWord.translationWordId
       candidateIds    <- candidateTranslationIds(play, wordId, translationId)
       candidateWords  <- repo.wordsByIds(candidateIds).orDie
-      textById         = candidateWords.map(row => row.id -> wordText(row, play.includeDefiniteArticles)).toMap
+      // This pair's own frozen cell is added last, so it wins: the answer is graded in the case the prompt asked,
+      // even where the same word id is also some other pair's prompt under a different relation.
+      slots           <- slotsFor(
+                           frozenSlots(pool) + (translationId -> slotOf(playWord.translationRelation)),
+                           candidateIds,
+                         )
+      textById         = candidateWords.map { row =>
+                           row.id -> wordText(row, play, slots.getOrElse(row.id, FormSlot.citation))
+                         }.toMap
       scoreOne         = GameScoring.scoreFor(modeOf(play))
       scoredById       = candidateIds.flatMap(id => textById.get(id).map(text => id -> scoreOne(text, answerText)))
       (bestId, scored) = {
@@ -1252,7 +1428,9 @@ final case class GameServiceLive(
                       }.toMap
       allIds        = answers.flatMap(a => a.wordId :: expectedIds.getOrElse(a.id, Nil)).distinct
       words        <- repo.wordsByIds(allIds).orDie
-      textOf        = words.map(w => w.id -> wordText(w, play.includeDefiniteArticles)).toMap
+      playWords    <- repo.playWordsOf(play.id).orDie
+      slots        <- slotsFor(frozenSlots(playWords), allIds)
+      textOf        = words.map(w => w.id -> wordText(w, play, slots.getOrElse(w.id, FormSlot.citation))).toMap
       posOfWord     = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
     } yield answers.map { a =>
       GameAnswerResult(
@@ -1261,6 +1439,9 @@ final case class GameServiceLive(
         givenText = a.userAnswer,
         outcome = AnswerOutcome.fromString(a.outcome).getOrElse(AnswerOutcome.Wrong),
         partOfSpeech = posOfWord.get(a.wordId),
+        // The cell the answer was graded in, so a results row explains its own expectation. `des Tisches` is otherwise
+        // an article the reader has no way to account for from the table alone.
+        answerSlot = slots.get(a.translationWordId),
       )
     }
   }
@@ -1274,7 +1455,7 @@ final case class GameServiceLive(
       sourceLanguage = WordLanguage.fromString(play.sourceLanguage).getOrElse(WordLanguage.En),
       targetLanguage = WordLanguage.fromString(play.targetLanguage).getOrElse(WordLanguage.En),
       wordLimit = play.wordLimit,
-      includeDefiniteArticles = play.includeDefiniteArticles,
+      articleMode = articleModeOf(play),
       wordPreference = WordPreference.fromString(play.wordPreference).getOrElse(WordPreference.All),
       mode = modeOf(play),
     )

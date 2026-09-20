@@ -2,7 +2,7 @@ package gathedge.frontend.components
 
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
-import gathedge.shared.domain.{LanguageProfile, WordLanguage}
+import gathedge.shared.domain.{FormSlot, LanguageProfile, WordLanguage}
 import org.scalajs.dom
 import zio.test._
 
@@ -20,7 +20,8 @@ object ArticlePickerSpec extends ZIOSpecDefault {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
     val textVar   = Var(start)
-    val root      = L.render(container, ArticlePicker.render("grp", german, textVar, () => ()))
+    val root      =
+      L.render(container, ArticlePicker.render("grp", german, german.articlesFor(FormSlot.citation), textVar, () => ()))
     try use(container, textVar)
     finally {
       root.unmount()
