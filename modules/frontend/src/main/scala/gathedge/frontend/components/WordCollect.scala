@@ -559,6 +559,7 @@ final class WordCollect(
         }
         I18n.t(key, word)
       },
+      tipPlacement = "tooltip-right",
     ).amend(
       onClick.compose(_.sample(tagged)) --> Observer[Boolean](isTagged => toggleBus.emit((wordId, isTagged)))
     )
@@ -571,17 +572,30 @@ final class WordCollect(
     * The state is stated for a screen reader as `aria-pressed`, since a colour is not a difference every reader can
     * see.
     */
-  private def toggleButton(active: Signal[Boolean], label: Signal[String]): HtmlElement = {
+  private def toggleButton(
+    active: Signal[Boolean],
+    label: Signal[String],
+    tipPlacement: String = "tooltip-top",
+  ): HtmlElement = {
     button(
       // A fixed box, so the column does not twitch when the icon swaps.
-      cls := "btn btn-ghost btn-xs group w-8 px-0",
+      cls := "btn btn-ghost btn-xs tooltip group w-8 px-0",
+      cls := tipPlacement,
       typ := "button",
       aria.pressed <-- active.map(_.toString),
       aria.label <-- label,
+      // Says what a click does, in the same daisyUI tooltip the missing-answer warning uses. Drawn by CSS off a `data-`
+      // attribute, which no screen reader announces, so the accessible name stays the `aria-label` above.
+      dataAttr("tip") <-- active.map(isActive => {
+        I18n.t(
+          if (isActive) UiKeys.wordsTagRemoveTip
+          else UiKeys.wordsTagAddTip
+        )
+      }),
       child <-- active.map(isActive => {
         if (isActive) {
           span(
-            cls    := "flex text-success",
+            cls := "flex text-success",
             span(cls := "flex group-hover:hidden", enterIcon(filled = true)),
             span(cls := "hidden text-error group-hover:flex", leaveIcon()),
           )
@@ -646,6 +660,11 @@ final class WordCollect(
 
     span(
       cls := "inline-flex items-center",
+      a(
+        cls := "link link-hover text-sm",
+        AppRouter.router.navigateTo(Page.WordDetail(translationWordId)),
+        child.text <-- text,
+      ),
       toggleButton(
         markedSignal,
         text.combineWithFn(markedSignal) { (translation, marked) =>
@@ -660,11 +679,6 @@ final class WordCollect(
       ).amend(
         onClick.compose(_.sample(markedSignal)) -->
           Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked)))
-      ),
-      a(
-        cls := "link link-hover text-sm",
-        AppRouter.router.navigateTo(Page.WordDetail(translationWordId)),
-        child.text <-- text,
       ),
     )
   }

@@ -650,6 +650,10 @@ object UiKeys {
   val wordsTagAdd: String    = key("ui.words.tagAdd")
   val wordsTagRemove: String = key("ui.words.tagRemove")
 
+  /** The hover tooltip on that same toggle: what a click does, without the word. */
+  val wordsTagAddTip: String    = key("ui.words.tagAddTip")
+  val wordsTagRemoveTip: String = key("ui.words.tagRemoveTip")
+
   /** Read out on each translation chip, so the control says what it acts on. `{0}` is the translation.
     *
     * A chip is a toggle, not a label: clicking one says "this is the answer I want to be asked for", which is a
