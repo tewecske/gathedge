@@ -51,7 +51,7 @@ object StreakBadge {
     extra: Option[SvgElement] = None,
   ): HtmlElement = {
     div(
-      cls                := "tooltip tooltip-bottom!",
+      cls                := "tooltip tooltip-bottom",
       dataAttr("tip")    := tip,
       dataAttr("streak") := (if (number.isDefined) "on" else "off"),
       aria.label         := tip,
