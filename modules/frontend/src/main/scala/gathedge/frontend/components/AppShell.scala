@@ -263,6 +263,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
         cls := "navbar-end gap-2",
         // All three stay on the signed-out shell — a visitor who cannot read this page has to be able
         // to reach one they can, and the theme is the browser's choice whether or not anyone is signed in.
+        StreakBadge.render(),
         LanguagePicker.render(),
         renderThemeSwap(),
         accountControls(),
@@ -445,6 +446,19 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
             li(
               a(
                 cls := (
+                  if (active.contains(Page.Profile))
+                    "menu-active"
+                  else
+                    ""
+                ),
+                AppRouter.router.navigateTo(Page.Profile),
+                I18n.t(UiKeys.navProfile),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
+            li(
+              a(
+                cls := (
                   if (active.contains(Page.Settings))
                     "menu-active"
                   else
@@ -489,6 +503,19 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
           )
         case Some(_)                    =>
           List(
+            li(
+              a(
+                cls := (
+                  if (active.contains(Page.Profile))
+                    "menu-active"
+                  else
+                    ""
+                ),
+                AppRouter.router.navigateTo(Page.Profile),
+                I18n.t(UiKeys.navProfile),
+                onClick.mapToUnit --> Observer[Unit](_ => Popover.hide(menuId)),
+              )
+            ),
             li(
               a(
                 cls := (

@@ -439,3 +439,16 @@ final case class ProgressShareCodeRow(
 
 /** One (sharer, viewer) grant: `viewerUserId` may read `sharerUserId`'s game history across every game. */
 final case class ProgressShareRow(id: Long, sharerUserId: Long, viewerUserId: Long, createdAt: Long)
+
+/** An account's daily play streak. `currentStreak` is the length as of `lastPlayDay`; whether it is still alive on a
+  * later day is [[gathedge.shared.domain.Streak.stateOn]]'s call, so the row never needs a sweep to expire.
+  * `lastPlayDay` is a UTC epoch day.
+  */
+final case class UserStreakRow(
+  userId: Long,
+  currentStreak: Int,
+  longestStreak: Int,
+  totalDays: Int,
+  lastPlayDay: Long,
+  updatedAt: Long,
+)

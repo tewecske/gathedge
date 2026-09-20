@@ -16,6 +16,7 @@ import gathedge.backend.db.{
   PasswordResetTokenRepository,
   ProgressShareRepository,
   SessionRepository,
+  StreakRepository,
   UsageEventRepository,
   UserRepository,
   WordRepository,
@@ -25,6 +26,7 @@ import gathedge.backend.http.{
   AuthRoutes,
   DocsRoutes,
   GameRoutes,
+  StreakRoutes,
   GroupRoutes,
   ProgressShareRoutes,
   RouteSupport,
@@ -48,6 +50,7 @@ import gathedge.backend.service.{
   ProgressShareService,
   RateLimiter,
   SessionReaper,
+  StreakService,
   SystemService,
   UsageStatsService,
   UsageTracker,
@@ -70,7 +73,7 @@ object Main extends ZIOAppDefault {
   private val allRoutes = {
     val combined = {
       AuthRoutes.routes ++ WordRoutes.routes ++ AdminRoutes.routes ++ GameRoutes.routes ++
-        ProgressShareRoutes.routes ++ GroupRoutes.routes ++ DocsRoutes.routes
+        ProgressShareRoutes.routes ++ GroupRoutes.routes ++ StreakRoutes.routes ++ DocsRoutes.routes
     }
     // Ours rather than `Middleware.requestLogging()`: that one logs the whole URL, and one of this API's URLs carries a
     // credential — the OAuth authorization code arrives as a query parameter. See `RouteSupport.loggableUrl`.
@@ -123,6 +126,8 @@ object Main extends ZIOAppDefault {
     WordRepository.live,
     GameRepository.live,
     GroupRepository.live,
+    StreakRepository.live,
+    StreakService.live,
     GameWordList.live,
     PasswordHasher.live,
     RateLimiter.configured,

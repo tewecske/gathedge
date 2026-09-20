@@ -7,6 +7,7 @@ import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
   AuthResponse,
+  StreakResponse,
   CaptchaStatusResponse,
   ClaimCodeResponse,
   ClaimRequest,
@@ -85,6 +86,11 @@ object ApiClient {
 
   def me: EventStream[Either[ApiError, AuthResponse]] = {
     HttpClient.get[AuthResponse]("/api/me")
+  }
+
+  /** The signed-in account's daily play streak. */
+  def streak: EventStream[Either[ApiError, StreakResponse]] = {
+    HttpClient.get[StreakResponse]("/api/me/streak")
   }
 
   def updateTheme(theme: Theme): EventStream[Either[ApiError, AuthResponse]] = {

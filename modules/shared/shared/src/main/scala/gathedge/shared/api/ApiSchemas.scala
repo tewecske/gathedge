@@ -13,6 +13,7 @@ import gathedge.shared.domain.{
   PairMatch,
   PartOfSpeech,
   Tag,
+  StreakState,
   Theme,
   User,
   Word,
@@ -132,6 +133,7 @@ import gathedge.shared.dto.{
   SharedViewer,
   SharedWithMe,
   ShareCodeResponse,
+  StreakResponse,
   SignupRequest,
   SignupResponse,
   StartPlayRequest,
@@ -178,6 +180,8 @@ import ApiFailure.given
 object ApiSchemas {
 
   given Schema[Theme]          = DeriveSchema.gen[Theme]
+  given Schema[StreakState]    = DeriveSchema.gen[StreakState]
+  given Schema[StreakResponse] = DeriveSchema.gen[StreakResponse]
   given Schema[Locale]         = DeriveSchema.gen[Locale]
   given Schema[OAuthProvider]  = DeriveSchema.gen[OAuthProvider]
   given Schema[WordLanguage]   = DeriveSchema.gen[WordLanguage]

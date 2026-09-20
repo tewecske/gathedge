@@ -34,6 +34,9 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
+  /** The account's daily streak and play totals. Auth-only: it is personal. */
+  case object Profile extends Page
+
   /** Mints a fresh wordlist and hands off to [[TagDetail]]. Public like [[GameSetup]], and for the same reason: it
     * mints a guest on arrival (through `TagCreatePage.asReader`) rather than bouncing a signed-out visitor to sign-in,
     * so the catalog's "New wordlist" button works before signing up.
@@ -276,6 +279,7 @@ object AppRouter {
   private val signUpRoute         = Route.static(SignUp, root / "sign-up", basePath)
   private val aboutRoute          = Route.static(About, root / "about", basePath)
   private val settingsRoute       = Route.static(Settings, root / "settings", basePath)
+  private val profileRoute        = Route.static(Profile, root / "profile", basePath)
   private val tagCreateRoute      = Route.static(TagCreate, root / "tags" / "new", basePath)
   private val gamesRoute          = Route.static(Games, root, basePath)
   private val gameSetupRoute      = Route.static(GameSetup, root / "games" / "vocabulary-quiz", basePath)
@@ -500,6 +504,8 @@ object AppRouter {
         "About"
       case Settings                       =>
         "Settings"
+      case Profile                        =>
+        "Profile"
       case TagCreate                      =>
         "TagCreate"
       case Games                          =>
@@ -713,6 +719,8 @@ object AppRouter {
           About
         case "Settings"            =>
           Settings
+        case "Profile"             =>
+          Profile
         case "TagCreate"           =>
           TagCreate
         case "Games"               =>
@@ -765,6 +773,7 @@ object AppRouter {
         signUpRoute,
         aboutRoute,
         settingsRoute,
+        profileRoute,
         tagCreateRoute,
         gamesRoute,
         gameSetupRoute,

@@ -6,6 +6,8 @@ import org.testcontainers.utility.DockerImageName
 import gathedge.backend.TestAuthLayers
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
+  StreakRepository,
+  UserStreakRow,
   AuditLogRepository,
   EmailChangeTokenRepository,
   EmailChangeTokenRow,
@@ -138,8 +140,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
   private type Env = DataSource & UserRepository & SessionRepository & OAuthIdentityRepository &
     EmailVerificationTokenRepository & EmailChangeTokenRepository & PasswordResetTokenRepository &
     LoginAttemptRepository & AuditLogRepository & UsageEventRepository & GuestClaimCodeRepository & WordRepository &
-    GameRepository & ProgressShareRepository & GroupRepository & AppConfig & EmailSender & PasswordHasher &
-    RateLimiter & GameWordList & AuthService & AuditTrail & GameService & AdminService & WordService
+    GameRepository & ProgressShareRepository & GroupRepository & StreakRepository & AppConfig & EmailSender &
+    PasswordHasher & RateLimiter & GameWordList & AuthService & AuditTrail & GameService & AdminService & WordService
 
   // `>+>` rather than `>>>` so `DataSource` stays in the environment alongside the repositories: the word-forms
   // cascade test below deletes a `words` row directly, which no repository method exposes -- there is no
@@ -151,7 +153,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
         EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++
         PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         AuditLogRepository.live ++ UsageEventRepository.live ++ GuestClaimCodeRepository.live ++
-        WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live ++ GroupRepository.live
+        WordRepository.live ++ GameRepository.live ++ ProgressShareRepository.live ++ GroupRepository.live ++
+        StreakRepository.live
     )
 
     repositories ++ PasswordHasher.live ++ RateLimiter.live ++ TestCaptchaService.live ++
@@ -294,6 +297,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // `game_favorites` references both `users` and `games`; `user_id` cascades directly, so deleting the
           // account that favorited a game must not raise a violation.
           _           <- GameRepository.addFavorite(target.id, game.id, 0L)
+          // `user_streaks.user_id` is the primary key and cascades: a deleted account takes its streak with it.
+          _           <- StreakRepository.upsert(UserStreakRow(target.id, 3, 5, 9, 20_000L, 0L))
           _           <- AdminService.deleteUser(AdminActor(admin.id), target.id)
           gone        <- AdminService.getUser(target.id).either
           sessions    <- SessionRepository.listForUser(target.id)
@@ -305,6 +310,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           codes       <- GuestClaimCodeRepository.countFor(target.id)
           gameGone    <- GameRepository.findBySlug(game.slug)
           favGone     <- GameRepository.favoriteCounts(List(game.id))
+          streakGone  <- StreakRepository.find(target.id)
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
           stillThere  <- WordRepository.findWordById(word.id)
           links       <- WordRepository.allTranslationsOf(word.id)
@@ -319,6 +325,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           codes == 0L,
           gameGone.isEmpty,
           favGone.isEmpty,
+          streakGone.isEmpty,
           stillThere.isDefined,
           stillThere.flatMap(_.createdBy).isEmpty,
           links.map(_._2.text) == List("kanál"),

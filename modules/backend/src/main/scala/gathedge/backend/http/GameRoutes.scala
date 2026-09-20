@@ -1,6 +1,6 @@
 package gathedge.backend.http
 
-import gathedge.backend.service.{AuthService, GameService}
+import gathedge.backend.service.{AuthService, GameService, StreakService}
 import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{User, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
@@ -226,6 +226,10 @@ object GameRoutes {
               body.mode,
             )
             .mapError(ApiFailures.gameStartPlay)
+            // Starting a play is what keeps the streak. A failure here must never fail the play.
+            .tap(_ =>
+              StreakService.recordPlay(id).catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause))
+            )
         })
       }
     )
@@ -328,7 +332,7 @@ object GameRoutes {
     ) @@ RouteSupport.authenticated
   }
 
-  val routes: Routes[AuthService & GameService, Response] = {
+  val routes: Routes[AuthService & GameService & StreakService, Response] = {
     (publicRoutes ++ sessionRoutes) @@ RouteSupport.csrf
   }
 }

@@ -9,6 +9,7 @@ import gathedge.shared.api.{
   GameEndpoints,
   GroupEndpoints,
   ProgressShareEndpoints,
+  StreakEndpoints,
   WordEndpoints,
 }
 import zio.http.*
@@ -33,7 +34,7 @@ object DocsRoutes {
 
   private val allEndpoints = {
     AuthEndpoints.all ++ WordEndpoints.all ++ AdminEndpoints.all ++ GameEndpoints.all ++
-      ProgressShareEndpoints.all ++ GroupEndpoints.all
+      ProgressShareEndpoints.all ++ GroupEndpoints.all ++ StreakEndpoints.all
   }
 
   /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the
