@@ -10,7 +10,8 @@ import java.util.concurrent.TimeUnit
 /** Daily play streaks. Days are UTC days: an account has no time zone on file. */
 trait StreakService {
 
-  /** Notes that the account played today. Extends, continues or restarts the streak by [[Streak.afterPlay]]. */
+  /** Notes that the account finished a game today. Extends, continues or restarts the streak by [[Streak.afterPlay]].
+    */
   def recordPlay(userId: Long): Task[Unit]
 
   /** The streak as it stands now. An account that never played gets zeros and `Inactive`. */

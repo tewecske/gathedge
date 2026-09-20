@@ -7,8 +7,8 @@ import zio.http.endpoint.Endpoint
 import ApiEndpoint.{failure, outFailure}
 import ApiSchemas.given
 
-/** The signed-in account's daily play streak. Playing a game writes it (see `StreakService.recordPlay`); this endpoint
-  * only reads it, so there is no input and no codec error.
+/** The signed-in account's daily play streak. Finishing a game writes it (see `StreakService.recordPlay`); this
+  * endpoint only reads it, so there is no input and no codec error.
   */
 object StreakEndpoints {
 
