@@ -16,10 +16,7 @@ object SharedProgressPage {
   def render(): HtmlElement = {
     AppShell.render(
       Page.SharedProgress,
-      div(
-        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.SharedProgress)),
-        new SharedProgressPage().render(),
-      ),
+      ProfileSubmenu.layout(Page.SharedProgress, new SharedProgressPage().render()),
     )
   }
 }
@@ -41,14 +38,12 @@ private class SharedProgressPage {
 
   def render(): HtmlElement = {
     div(
-      cls := "max-w-xl mx-auto",
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(noticeVar.signal),
       div(
-        cls := "card bg-base-100 shadow mt-4",
+        cls := "card bg-base-100 shadow",
         div(
           cls := "card-body",
-          h1(cls  := "card-title text-2xl", I18n.t(UiKeys.sharedProgressTitle)),
           renderRedeemForm(),
           div(cls := "divider"),
           renderList(),

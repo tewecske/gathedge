@@ -10,7 +10,8 @@ import gathedge.shared.dto.StreakResponse
 import gathedge.shared.i18n.UiKeys
 
 object ProfilePage {
-  def render(): HtmlElement = AppShell.render(Page.Profile, new ProfilePage().render())
+  def render(): HtmlElement =
+    AppShell.render(Page.Profile, ProfileSubmenu.layout(Page.Profile, new ProfilePage().render()))
 }
 
 /** The account's daily streak and play totals. */
@@ -20,9 +21,7 @@ private class ProfilePage {
 
   def render(): HtmlElement = {
     div(
-      cls := "max-w-2xl mx-auto flex flex-col gap-6",
-      h1(cls := "text-2xl font-bold", I18n.t(UiKeys.profileTitle)),
-      ProfileSubmenu.render(Page.Profile),
+      cls := "flex flex-col gap-6",
       child.maybe <-- errorVar.signal.map(_.map(message => Alert.error(message))),
       child.maybe <-- streakVar.signal.map(_.map(renderStreak)),
       ApiClient.streak --> Observer[Either[ApiError, StreakResponse]] {

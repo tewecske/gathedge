@@ -25,10 +25,7 @@ object SharedPlayerHistoryPage {
   def render(sharerUserId: Long, query: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]): HtmlElement = {
     AppShell.render(
       Page.SharedPlayerHistory(sharerUserId),
-      div(
-        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.SharedProgress)),
-        new SharedPlayerHistoryPage(sharerUserId, query, onQuery).render(),
-      ),
+      ProfileSubmenu.layout(Page.SharedProgress, new SharedPlayerHistoryPage(sharerUserId, query, onQuery).render()),
     )
   }
 }
@@ -46,7 +43,6 @@ private class SharedPlayerHistoryPage(
 
   def render(): HtmlElement = {
     div(
-      cls := "p-4",
       h1(cls := "text-2xl font-bold mb-4", child.text <-- headingSignal),
       PlayHistoryListing.render(pageQuery, onQuery, load, loadResults),
       labelLoadBus.events.flatMapSwitch(_ => ProgressShareApiClient.sharedWithMe()) -->
