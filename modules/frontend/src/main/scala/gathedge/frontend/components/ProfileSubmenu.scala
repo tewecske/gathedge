@@ -12,7 +12,20 @@ import gathedge.shared.i18n.UiKeys
   * list and returns to it.
   */
 object ProfileSubmenu {
-  def render(active: Page): HtmlElement = {
+
+  /** The frame every profile tab sits in: the page title, the tabs, then the tab's own content, so the title and the
+    * tab row stay put whichever tab is open.
+    */
+  def layout(active: Page, content: HtmlElement): HtmlElement = {
+    div(
+      cls := "p-4",
+      h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.profileTitle)),
+      render(active),
+      content,
+    )
+  }
+
+  private def render(active: Page): HtmlElement = {
     div(
       cls := "tabs tabs-boxed mb-4 w-fit",
       // Each tab links to its screen's default view — the plain path, with no listing state on it.

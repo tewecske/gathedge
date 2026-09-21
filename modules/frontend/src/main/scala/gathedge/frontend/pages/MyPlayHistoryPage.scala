@@ -36,10 +36,7 @@ object MyPlayHistoryPage {
   def render(query: Signal[MyPlayQuery], onQuery: Observer[MyPlayQuery]): HtmlElement = {
     AppShell.render(
       Page.MyPlays(),
-      div(
-        div(cls := "px-4 pt-4", ProfileSubmenu.render(Page.MyPlays())),
-        new MyPlayHistoryPage(query, onQuery).render(),
-      ),
+      ProfileSubmenu.layout(Page.MyPlays(), new MyPlayHistoryPage(query, onQuery).render()),
     )
   }
 }
@@ -93,10 +90,6 @@ private class MyPlayHistoryPage(pageQuery: Signal[MyPlayQuery], onQuery: Observe
 
   def render(): HtmlElement = {
     div(
-      div(
-        cls := "mb-4",
-        h1(cls := "text-2xl font-bold", I18n.t(UiKeys.myPlaysTitle)),
-      ),
       Alert.maybeError(errorVar.signal),
       renderSearch(),
       renderTable(),
