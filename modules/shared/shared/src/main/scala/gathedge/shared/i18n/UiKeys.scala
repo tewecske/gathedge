@@ -1240,8 +1240,8 @@ object UiKeys {
   /** The per-row link to the All games catalog, filtered to that one wordlist — see `TagsPage.renderViewGamesCell`. */
   val tagsListViewGames: String = key("ui.tagsList.viewGames")
 
-  /** The top button that opens the game setup screen with the ticked wordlists preselected — see
-    * `TagsPage.renderSelectionBar`. Plural: it counts the ticked wordlists.
+  /** The top button that creates a game straight from the ticked wordlists — see `TagsPage.renderSelectionBar`. Always
+    * shown, disabled until something is ticked. Plural: it counts the ticked wordlists.
     */
   val tagsListCreateSelectedGame: String = pluralKey("ui.tagsList.createSelectedGame")
 
