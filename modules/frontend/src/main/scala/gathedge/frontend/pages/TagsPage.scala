@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, Pagination, SortHeader, TagImportDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagQuery}
-import gathedge.frontend.state.{AppState, GameOwnership, GameSetupSeed}
+import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{GameRef, Tag, TagScope, User, WordLanguage}
 import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
@@ -99,6 +99,16 @@ private class TagsPage(
   private val selectedVar = Var(Map.empty[Long, Tag])
 
   private def pairOf(tag: Tag): (WordLanguage, WordLanguage) = (tag.sourceLanguage, tag.targetLanguage)
+
+  /** The selection bar's own "create game" button. Unlike [[createGameBus]] this carries no payload — the selected tags
+    * live in [[selectedVar]] already — and is sampled against it when clicked.
+    */
+  private val createSelectionBus = new EventBus[Unit]()
+
+  /** True while the selection bar's game is being created. Its own flag, not [[creatingTagIdVar]]: that one names a
+    * single row, and a multi-wordlist selection is not one.
+    */
+  private val creatingSelectionVar = Var(false)
 
   private val listRequests = EventStream.merge(querySignal.updates, reloadBus.events.sample(querySignal))
 
@@ -193,6 +203,21 @@ private class TagsPage(
             AppRouter.router.pushState(Page.GameInstance(created.slug))
           case Left(err)      =>
             Var.set(creatingTagIdVar -> None, errorVar -> Some(err.message))
+        },
+      createSelectionBus.events --> Observer[Unit](_ => Var.set(creatingSelectionVar -> true, errorVar -> None)),
+      createSelectionBus.events.sample(selectedVar.signal).flatMapSwitch { selected =>
+        val (source, target) = selected.values.headOption.map(pairOf).getOrElse((WordLanguage.De, WordLanguage.Hu))
+        asReader(() => GameApiClient.create(source, target, selected.keys.toList))
+      } -->
+        Observer[Either[ApiError, GameCreated]] {
+          case Right(created) =>
+            Var.set(creatingSelectionVar -> false, selectedVar -> Map.empty)
+            // This browser is the one that created it, so it is offered the rename control — the same mark the
+            // per-row button makes above.
+            GameOwnership.markOwned(created.slug)
+            AppRouter.router.pushState(Page.GameInstance(created.slug))
+          case Left(err)      =>
+            Var.set(creatingSelectionVar -> false, errorVar -> Some(err.message))
         },
       onMountCallback(_ => reloadBus.emit(())),
     )
@@ -374,36 +399,45 @@ private class TagsPage(
     )
   }
 
-  /** Shown once at least one wordlist is ticked: the button that opens the game setup screen with them chosen, and one
-    * to untick them all. The setup screen picks the language pair from the first ticked wordlist.
+  /** The button that creates a game straight from the ticked wordlists, in the pair the first ticked wordlist declares
+    * — every other ticked row shares it, since [[renderSelectCell]] disables a mismatched one. Always on the page, but
+    * disabled until something is ticked, so the control is never a surprise; "Clear selection" beside it is shown only
+    * once there is a selection to clear.
+    *
+    * Goes straight to the created game's own page ([[Page.GameInstance]]), the same as the per-row button — there is no
+    * setup-screen detour to re-pick anything, since the pair and the wordlists are already chosen.
     */
   private def renderSelectionBar(): HtmlElement = {
     div(
-      child.maybe <-- selectedVar.signal.map(_.size).distinct.map { count =>
-        Option.when(count > 0)(
-          div(
-            cls := "flex flex-wrap items-center gap-2 mb-4",
-            button(
-              typ := "button",
-              cls := "btn btn-sm btn-primary",
-              I18n.plural(UiKeys.tagsListCreateSelectedGame, count.toLong),
-              onClick.mapToUnit --> Observer[Unit] { _ =>
-                selectedVar.now().values.headOption.foreach { first =>
-                  val (source, target) = pairOf(first)
-                  GameSetupSeed.set(GameSetupSeed(source, target, selectedVar.now().keySet))
-                  AppRouter.router.pushState(Page.GameSetup)
-                }
-              },
-            ),
+      cls := "flex flex-wrap items-center gap-2 mb-4",
+      button(
+        typ := "button",
+        cls := "btn btn-sm btn-primary",
+        disabled <-- selectedVar.signal.map(_.isEmpty).combineWith(creatingSelectionVar.signal).map {
+          case (empty, creating) => empty || creating
+        },
+        child.maybe <-- creatingSelectionVar.signal.map(
+          Option.when(_)(span(cls := "loading loading-spinner loading-xs"))
+        ),
+        child.text <-- selectedVar.signal
+          .map(_.size)
+          .distinct
+          .map(count => I18n.plural(UiKeys.tagsListCreateSelectedGame, count.toLong)),
+        onClick.mapToUnit --> createSelectionBus.writer,
+      ),
+      child.maybe <-- selectedVar.signal
+        .map(_.nonEmpty)
+        .distinct
+        .map(
+          Option.when(_)(
             button(
               typ := "button",
               cls := "btn btn-sm btn-soft",
               I18n.t(UiKeys.tagsListClearSelection),
               onClick.mapToUnit --> Observer[Unit](_ => selectedVar.set(Map.empty)),
-            ),
+            )
           )
-        )
-      }
+        ),
     )
   }
 
