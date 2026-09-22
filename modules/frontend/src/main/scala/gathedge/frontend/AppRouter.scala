@@ -45,17 +45,15 @@ object Page {
     */
   case object TagCreate extends Page
 
-  /** The site root. It has no screen of its own: `App.redirectTarget` sends it to [[AllGames]]. Public, like [[Words]],
-    * so a signed-out visitor is never bounced to sign-in first.
-    */
-  case object Games extends Page
-
-  /** Every account's games: name, tags, language pair, and how many times each was played. Public, like [[Games]]: the
+  /** Every account's games: name, tags, language pair, and how many times each was played. Public, like [[Words]]: the
     * catalog is how a signed-out visitor finds a game to play, so it must render without bouncing to sign-in. A caller
     * with no session sees the games and none of the favorite marks — the heart and the "my favorites" filter are drawn
     * only when signed in, the same way [[Words]] hides its tag controls. It carries its whole listing state, the same
     * reason [[MyPlays]]/[[GameResults]]/[[Admin]] do — see [[gathedge.frontend.listing.AllGameQuery]] and the routes
     * below.
+    *
+    * Also the site root: nothing renders at `/` on its own, so the root route ([[AppRouter.rootRoute]]) decodes
+    * straight into this, default query, with no separate page and no post-boot redirect in between.
     */
   final case class AllGames(query: AllGameQuery = AllGameQuery.default) extends Page
 
@@ -112,7 +110,7 @@ object Page {
     */
   final case class ResetPassword(token: String) extends Page
 
-  /** What the site is for, who runs it, and how it is licensed. Public like [[Games]]: a visitor who lands on the
+  /** What the site is for, who runs it, and how it is licensed. Public like [[AllGames]]: a visitor who lands on the
     * sign-in page still needs a way to reach it, without being bounced back to sign-in.
     */
   case object About extends Page
@@ -219,7 +217,7 @@ object Page {
     /** Redirects an unauthenticated visitor to sign-in. */
     case RequireAuth
 
-    /** Redirects an already-authenticated visitor to Games (sign-in/sign-up). */
+    /** Redirects an already-authenticated visitor to the games catalog (sign-in/sign-up). */
     case RequireAnon
 
     /** Renders regardless of auth state (verify-email, check-inbox, forbidden, not-found). */
@@ -235,10 +233,9 @@ object Page {
       // The whole point of the vocabulary is that it is usable before signing up for anything.
       case Words(_) | WordDetail(_)                                                                      =>
         AuthGuard.Public
-      // Games is the target of the navbar's own link, always shown — it must not bounce a signed-out click back to
-      // sign-in. A shared link has to show the catalog, not sign-in. `AllGames` is the browsable catalog of every
-      // account's games: a signed-out visitor reads it to find a game to play, the same reason `Games` is public.
-      case Games | GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                                =>
+      // AllGames is the navbar's own link, always shown — it must not bounce a signed-out click back to sign-in. A
+      // shared link has to show the catalog, not sign-in, the same reason GameInstance/GamePlay stay public.
+      case GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                                        =>
         AuthGuard.Public
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
@@ -271,13 +268,24 @@ object AppRouter {
     */
   private val basePath = CurrentLocale.prefix
 
-  private val signInRoute         = Route.static(SignIn, root / "sign-in", basePath)
-  private val signUpRoute         = Route.static(SignUp, root / "sign-up", basePath)
-  private val aboutRoute          = Route.static(About, root / "about", basePath)
-  private val settingsRoute       = Route.static(Settings, root / "settings", basePath)
-  private val profileRoute        = Route.static(Profile, root / "profile", basePath)
-  private val tagCreateRoute      = Route.static(TagCreate, root / "tags" / "new", basePath)
-  private val gamesRoute          = Route.static(Games, root, basePath)
+  private val signInRoute    = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute    = Route.static(SignUp, root / "sign-up", basePath)
+  private val aboutRoute     = Route.static(About, root / "about", basePath)
+  private val settingsRoute  = Route.static(Settings, root / "settings", basePath)
+  private val profileRoute   = Route.static(Profile, root / "profile", basePath)
+  private val tagCreateRoute = Route.static(TagCreate, root / "tags" / "new", basePath)
+
+  /** The bare root decodes straight into the games catalog, default query — no `Games` page, no post-boot redirect.
+    * `matchEncode` is deliberately `PartialFunction.empty`: this route never claims an encode, so
+    * `relativeUrlForPage(AllGames())` always falls through to [[allGamesQueryRoute]]/[[allGamesRoute]] and keeps
+    * building `/games/all`, regardless of where this sits in [[router]]'s route list. Only decoding `/` uses it.
+    */
+  private val rootRoute           = Route.applyPF[AllGames, Unit](
+    matchEncode = PartialFunction.empty[Any, Unit],
+    decode = { case _ => AllGames() },
+    pattern = root,
+    basePath = basePath,
+  )
   private val sharedProgressRoute = Route.static(SharedProgress, root / "profile" / "shared", basePath)
 
   /** One sharer's play history — a path segment *and* a query, so it uses `withQuery` rather than the "two routes,
@@ -503,8 +511,6 @@ object AppRouter {
         "Profile"
       case TagCreate                      =>
         "TagCreate"
-      case Games                          =>
-        "Games"
       case AllGames(query)                =>
         "AllGames:" + AllGameQuery.params.createParamsString(query)
       case MyPlays(query)                 =>
@@ -716,8 +722,9 @@ object AppRouter {
           Profile
         case "TagCreate"           =>
           TagCreate
+        // "Games" is what a history entry written before the root became a direct alias for AllGames still holds.
         case "Games"               =>
-          Games
+          AllGames()
         case "AllGames"            =>
           AllGames()
         case "MyPlays"             =>
@@ -766,7 +773,7 @@ object AppRouter {
         settingsRoute,
         profileRoute,
         tagCreateRoute,
-        gamesRoute,
+        rootRoute,
         sharedProgressRoute,
         sharedPlayerHistoryRoute,
         gameInstanceRoute,

@@ -42,7 +42,7 @@ import gathedge.frontend.pages.{
   WordsPage,
 }
 import gathedge.frontend.facades.QRCode
-import gathedge.frontend.i18n.LocaleSync
+import gathedge.frontend.i18n.{CurrentLocale, LocaleSync}
 import gathedge.frontend.listing.{
   AllGameQuery,
   AuditQuery,
@@ -58,6 +58,7 @@ import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.Locale
 import gathedge.shared.dto.AuthResponse
+import org.scalajs.dom
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -104,7 +105,24 @@ object App {
       .distinct
   }
 
+  /** The root has no page of its own — `AppRouter.rootRoute` already decodes `/` straight into `Page.AllGames()`, so
+    * this only straightens out the *address bar*, replacing `/` with `/games/all` the instant the app boots. It runs
+    * unconditionally, before the session check: unlike a real auth redirect, this doesn't depend on `Gate` at all
+    * (`AllGames` is public), so there is no reason to wait on `GET /api/me` first the way the old
+    * `Page.Games`-through-`redirectTarget` detour did.
+    *
+    * Checking `location.pathname` rather than the decoded `Page` is what lets this fire once, synchronously, with no
+    * flash of a loading state: by the time anything reactive would see the page, the swap has already happened.
+    */
+  private def canonicalizeRoot(): Unit = {
+    val path = dom.window.location.pathname
+    if (path == CurrentLocale.prefix || path == s"${CurrentLocale.prefix}/") {
+      AppRouter.router.replaceState(Page.AllGames())
+    }
+  }
+
   def render(): HtmlElement = {
+    canonicalizeRoot()
     // `.distinct` matters: `currentPageSignal` is not deduplicated (Waypoint builds it from a merge
     // of route events), so navigating to the page already displayed emits it again — and every
     // emission here rebuilds the page element, discarding its state and re-running its mount loads.
@@ -450,10 +468,8 @@ object App {
         case Page.AuthGuard.RequireAuth if !gate.signedIn                 =>
           Some(Page.SignIn)
         // A guest has no address and no password, i.e. no identity of its own yet — `RequireAnon` exempts it so
-        // Page.SignUp can offer the in-place upgrade instead of bouncing it back to Games unseen.
+        // Page.SignUp can offer the in-place upgrade instead of bouncing it back to the games catalog unseen.
         case Page.AuthGuard.RequireAnon if gate.signedIn && !gate.isGuest =>
-          Some(Page.AllGames())
-        case _ if page == Page.Games                                      =>
           Some(Page.AllGames())
         case _                                                            =>
           None
@@ -485,9 +501,6 @@ object App {
         ProfilePage.render()
       case Page.TagCreate                                 =>
         TagCreatePage.render()
-      // Never drawn: `redirectTarget` has already sent the root to the games listing.
-      case Page.Games                                     =>
-        loadingView()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words`/`Page.GameResults`.
       case Page.AllGames(query)                           =>

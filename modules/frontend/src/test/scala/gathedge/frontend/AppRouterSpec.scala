@@ -60,10 +60,13 @@ object AppRouterSpec extends ZIOSpecDefault {
       test("the forgot-password route builds under the language prefix too") {
         assertTrue(AppRouter.router.relativeUrlForPage(Page.ForgotPassword) == s"$prefix/forgot-password")
       },
-      // The games route is the one whose un-prefixed form is bare `/`, so it is the one where a
-      // missing prefix would be least obvious.
-      test("the games route is the prefix itself") {
-        assertTrue(AppRouter.router.relativeUrlForPage(Page.Games) == s"$prefix/")
+      // The root has no page of its own: decoding it is the one place a missing prefix would be least obvious, and
+      // it must never come back out of encoding — `AllGames()` always builds `/games/all`, never bare `/`.
+      test("the site root decodes straight into the games catalog, but never encodes back to it") {
+        assertTrue(
+          AppRouter.router.pageForRelativeUrl(s"$prefix/").contains(Page.AllGames()),
+          AppRouter.router.relativeUrlForPage(Page.AllGames()) == s"$prefix/games/all",
+        )
       },
       // The verification link in transactional email is built server-side, by string concatenation, against this
       // same pattern. If the two ever disagree, a link that arrives in someone's inbox lands on NotFoundPage — and no

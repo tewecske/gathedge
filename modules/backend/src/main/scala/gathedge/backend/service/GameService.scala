@@ -520,29 +520,37 @@ final case class GameServiceLive(
     val favoritesOf = viewerId.filter(_ => favoritesOnly)
     val lang1Code   = language1.map(WordLanguage.code)
     val lang2Code   = language2.map(WordLanguage.code)
+    // Six repository round trips, but only two real dependency steps: `total` shares `rows`' filters, not its result,
+    // so it needs nothing from `rows` and runs alongside it; the other four all need `gameIds` (and `favoritedMine`
+    // needs `viewerId`) but nothing from each other, so once `rows` is back they run alongside each other too. `<&>`
+    // (`zipPar`) is what turns "sum of six round trips" into "two round trips, each as slow as its slowest query" —
+    // there is no SQL change behind this, each query is exactly the one in `GameRepository` it always was.
     for {
-      rows          <- repo
-                         .listAllGamesPage(
-                           nameContains,
-                           favoritesOf,
-                           Paging.offset(page, pageSize),
-                           pageSize,
-                           sort,
-                           descending,
-                           tagId,
-                           lang1Code,
-                           lang2Code,
-                         )
-                         .orDie
-      total         <- repo.countAllGamesMatching(nameContains, favoritesOf, tagId, lang1Code, lang2Code).orDie
-      gameIds        = rows.map(_.id)
-      tagsByGame    <- repo.tagsOfGames(gameIds).orDie.map(_.view.mapValues(tagRefs).toMap)
-      playCounts    <- repo.playCounts(gameIds).orDie
-      likeCounts    <- repo.favoriteCounts(gameIds).orDie
-      favoritedMine <- viewerId match {
-                         case Some(id) => repo.favoritedGameIds(id, gameIds).orDie
-                         case None     => ZIO.succeed(Set.empty[Long])
-                       }
+      pageAndTotal                                        <-
+        repo
+          .listAllGamesPage(
+            nameContains,
+            favoritesOf,
+            Paging.offset(page, pageSize),
+            pageSize,
+            sort,
+            descending,
+            tagId,
+            lang1Code,
+            lang2Code,
+          )
+          .orDie <&> repo.countAllGamesMatching(nameContains, favoritesOf, tagId, lang1Code, lang2Code).orDie
+      (rows, total)                                        = pageAndTotal
+      gameIds                                              = rows.map(_.id)
+      favoritedMineEffect                                  = viewerId match {
+                                                               case Some(id) => repo.favoritedGameIds(id, gameIds).orDie
+                                                               case None     => ZIO.succeed(Set.empty[Long])
+                                                             }
+      (tagsByGame, playCounts, likeCounts, favoritedMine) <-
+        repo.tagsOfGames(gameIds).orDie.map(_.view.mapValues(tagRefs).toMap) <&>
+          repo.playCounts(gameIds).orDie <&>
+          repo.favoriteCounts(gameIds).orDie <&>
+          favoritedMineEffect
     } yield AllGamePage(
       rows.map { row =>
         AllGameSummary(
