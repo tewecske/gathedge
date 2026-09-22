@@ -2,6 +2,7 @@ package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.listing.TagEntryQuery
+import gathedge.shared.api.WordPaths
 import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TagEntryFilter, TagScope, TranslationFilter, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
@@ -73,55 +74,59 @@ object WordApiClient {
     translationFilter: Option[TranslationFilter] = None,
     mainOnly: Option[Boolean] = None,
   ): EventStream[Either[ApiError, WordPage]] = {
-    HttpClient.get[WordPage](
-      s"/api/words${query(
-          "page"     -> page,
-          "pageSize" -> pageSize,
-          "sort"     -> sort,
-          "dir"      -> dir,
-          "q"        -> search,
-          "lang"     -> language.map(WordLanguage.code),
-          "target"   -> target.map(WordLanguage.code),
-          "pos"      -> partOfSpeech.map(PartOfSpeech.code),
-          "mine"     -> mine,
-          "tr"       -> translationFilter.map(TranslationFilter.code),
-          "main"     -> mainOnly,
-        )}"
+    HttpClient.call[WordPage](
+      WordPaths
+        .list()
+        .withQuery(
+          query(
+            "page"     -> page,
+            "pageSize" -> pageSize,
+            "sort"     -> sort,
+            "dir"      -> dir,
+            "q"        -> search,
+            "lang"     -> language.map(WordLanguage.code),
+            "target"   -> target.map(WordLanguage.code),
+            "pos"      -> partOfSpeech.map(PartOfSpeech.code),
+            "mine"     -> mine,
+            "tr"       -> translationFilter.map(TranslationFilter.code),
+            "main"     -> mainOnly,
+          )
+        )
     )
   }
 
   def get(id: Long): EventStream[Either[ApiError, WordDetail]] = {
-    HttpClient.get[WordDetail](s"/api/words/$id")
+    HttpClient.call[WordDetail](WordPaths.get(id))
   }
 
   def create(request: CreateWordRequest): EventStream[Either[ApiError, WordDetail]] = {
-    HttpClient.post[WordDetail]("/api/words", Some(request.toJson))
+    HttpClient.call[WordDetail](WordPaths.create(), Some(request.toJson))
   }
 
   def addTranslation(wordId: Long, translation: NewTranslation): EventStream[Either[ApiError, WordDetail]] = {
-    HttpClient.post[WordDetail](s"/api/words/$wordId/translations", Some(AddTranslationRequest(translation).toJson))
+    HttpClient.call[WordDetail](WordPaths.addTranslation(wordId), Some(AddTranslationRequest(translation).toJson))
   }
 
   /** Fills in the article a noun was imported without. Answers the whole word again, so the caller replaces what it is
     * showing rather than patching the one field.
     */
   def setGender(wordId: Long, gender: Gender): EventStream[Either[ApiError, WordDetail]] = {
-    HttpClient.put[WordDetail](s"/api/words/$wordId/gender", Some(SetGenderRequest(gender).toJson))
+    HttpClient.call[WordDetail](WordPaths.setGender(wordId), Some(SetGenderRequest(gender).toJson))
   }
 
   def removeTranslation(wordId: Long, translationId: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/words/$wordId/translations/$translationId")
+    HttpClient.callUnit(WordPaths.removeTranslation(wordId, translationId))
   }
 
   def listTags: EventStream[Either[ApiError, List[Tag]]] = {
-    HttpClient.get[List[Tag]]("/api/tags")
+    HttpClient.call[List[Tag]](WordPaths.listTags())
   }
 
   /** One wordlist, by id — the fine-grained counterpart of [[listTags]] for a caller who already knows which tag it
     * wants, such as the wordlist detail page.
     */
   def getTag(tagId: Long): EventStream[Either[ApiError, Tag]] = {
-    HttpClient.get[Tag](s"/api/tags/$tagId")
+    HttpClient.call[Tag](WordPaths.getTag(tagId))
   }
 
   /** The catalog's own paged/sorted/filtered listing — `GET /api/tags/page`, [[TagsPage]]'s own call. [[listTags]]
@@ -135,15 +140,19 @@ object WordApiClient {
     search: Option[String] = None,
     scope: Option[TagScope] = None,
   ): EventStream[Either[ApiError, TagPage]] = {
-    HttpClient.get[TagPage](
-      s"/api/tags/page${query(
-          "page"     -> page,
-          "pageSize" -> pageSize,
-          "sort"     -> sort,
-          "dir"      -> dir,
-          "q"        -> search,
-          "scope"    -> scope.map(TagScope.code),
-        )}"
+    HttpClient.call[TagPage](
+      WordPaths
+        .listTagsPage()
+        .withQuery(
+          query(
+            "page"     -> page,
+            "pageSize" -> pageSize,
+            "sort"     -> sort,
+            "dir"      -> dir,
+            "q"        -> search,
+            "scope"    -> scope.map(TagScope.code),
+          )
+        )
     )
   }
 
@@ -152,16 +161,17 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, TagResponse]] = {
-    HttpClient.post[TagResponse]("/api/tags", Some(CreateTagRequest(name, sourceLanguage, targetLanguage).toJson))
+    HttpClient
+      .call[TagResponse](WordPaths.createTag(), Some(CreateTagRequest(name, sourceLanguage, targetLanguage).toJson))
   }
 
   /** Creates a tag together with every bilingual pair the tag-creation page assembled, as one request. */
   def createTagWithPairs(request: CreateTagWithPairsRequest): EventStream[Either[ApiError, TagResponse]] = {
-    HttpClient.post[TagResponse]("/api/tags/with-pairs", Some(request.toJson))
+    HttpClient.call[TagResponse](WordPaths.createTagWithPairs(), Some(request.toJson))
   }
 
   def renameTag(tagId: Long, name: String): EventStream[Either[ApiError, TagResponse]] = {
-    HttpClient.put[TagResponse](s"/api/tags/$tagId", Some(RenameTagRequest(name).toJson))
+    HttpClient.call[TagResponse](WordPaths.renameTag(tagId), Some(RenameTagRequest(name).toJson))
   }
 
   /** Sets a tag's language pair — the editor's language selects, usable only before the tag has a practice pair. */
@@ -170,31 +180,31 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, TagResponse]] = {
-    HttpClient.put[TagResponse](
-      s"/api/tags/$tagId/languages",
+    HttpClient.call[TagResponse](
+      WordPaths.setTagLanguages(tagId),
       Some(SetTagLanguagesRequest(sourceLanguage, targetLanguage).toJson),
     )
   }
 
   def deleteTag(tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/tags/$tagId")
+    HttpClient.callUnit(WordPaths.deleteTag(tagId))
   }
 
   /** Seeds a tag of the caller's own from another tag's name, whoever owns it, and copies its word/pair snapshot with
     * it.
     */
   def copyTag(tagId: Long): EventStream[Either[ApiError, TagResponse]] = {
-    HttpClient.post[TagResponse](s"/api/tags/$tagId/copy")
+    HttpClient.call[TagResponse](WordPaths.copyTag(tagId))
   }
 
   /** The whole of one tag as a portable file — for `Download`. Any tag, whoever owns it. */
   def exportTag(tagId: Long): EventStream[Either[ApiError, TagExportFile]] = {
-    HttpClient.get[TagExportFile](s"/api/tags/$tagId/export")
+    HttpClient.call[TagExportFile](WordPaths.exportTag(tagId))
   }
 
   /** Every tag the caller owns, in one file. */
   def exportOwnedTags: EventStream[Either[ApiError, TagExportFile]] = {
-    HttpClient.get[TagExportFile]("/api/tags/export")
+    HttpClient.call[TagExportFile](WordPaths.exportOwnedTags())
   }
 
   /** Rebuilds the tags in `file` under the caller's account. `resolutions` decides what to do about each tag whose name
@@ -205,16 +215,16 @@ object WordApiClient {
     file: TagExportFile,
     resolutions: Map[String, TagImportChoice],
   ): EventStream[Either[ApiError, TagImportResponse]] = {
-    HttpClient.post[TagImportResponse]("/api/tags/import", Some(TagImportRequest(file, resolutions).toJson))
+    HttpClient.call[TagImportResponse](WordPaths.importTags(), Some(TagImportRequest(file, resolutions).toJson))
   }
 
   /** Idempotent, which is what lets the listing's row toggle fire on every click without tracking what is in flight. */
   def tagWord(wordId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.PUT, s"/api/words/$wordId/tags/$tagId")
+    HttpClient.callUnit(WordPaths.tagWord(wordId, tagId))
   }
 
   def untagWord(wordId: Long, tagId: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/words/$wordId/tags/$tagId")
+    HttpClient.callUnit(WordPaths.untagWord(wordId, tagId))
   }
 
   /** Marks a translation as a practice answer for a word, inside the tag the page is collecting into. Idempotent for
@@ -225,16 +235,16 @@ object WordApiClient {
     tagId: Long,
     translationWordId: Long,
   ): EventStream[Either[ApiError, PairSelectionResponse]] = {
-    HttpClient.put[PairSelectionResponse](s"/api/words/$wordId/tags/$tagId/translations/$translationWordId")
+    HttpClient.call[PairSelectionResponse](WordPaths.selectPair(wordId, tagId, translationWordId))
   }
 
   def deselectPair(wordId: Long, tagId: Long, translationWordId: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/words/$wordId/tags/$tagId/translations/$translationWordId")
+    HttpClient.callUnit(WordPaths.deselectPair(wordId, tagId, translationWordId))
   }
 
   /** The unified tag editor's rows, in the order they were added. */
   def tagEntries(tagId: Long): EventStream[Either[ApiError, List[TagEntry]]] = {
-    HttpClient.get[List[TagEntry]](s"/api/tags/$tagId/entries")
+    HttpClient.call[List[TagEntry]](WordPaths.tagEntries(tagId))
   }
 
   /** One page of them, narrowed by the editor's own chips — `TagEditorPage`'s own call. [[tagEntries]] above stays as
@@ -242,25 +252,29 @@ object WordApiClient {
     */
   def tagEntriesPage(tagId: Long, query: TagEntryQuery): EventStream[Either[ApiError, TagEntryPage]] = {
     val matchParam = Option(TagEntryFilter.codes(query.buckets)).filter(_.nonEmpty)
-    HttpClient.get[TagEntryPage](
-      s"/api/tags/$tagId/entries/page${HttpClient.query(
-          "page"     -> Some(query.page),
-          "pageSize" -> Some(query.pageSize),
-          "match"    -> matchParam,
-          "mine"     -> Option.when(query.importedByMe)(true),
-          "unique"   -> Option.when(query.uniqueToTag)(true),
-        )}"
+    HttpClient.call[TagEntryPage](
+      WordPaths
+        .tagEntriesPage(tagId)
+        .withQuery(
+          HttpClient.query(
+            "page"     -> Some(query.page),
+            "pageSize" -> Some(query.pageSize),
+            "match"    -> matchParam,
+            "mine"     -> Option.when(query.importedByMe)(true),
+            "unique"   -> Option.when(query.uniqueToTag)(true),
+          )
+        )
     )
   }
 
   /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */
   def addPair(tagId: Long, pair: TagPairInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.post[TagEntryResponse](s"/api/tags/$tagId/pairs", Some(pair.toJson))
+    HttpClient.call[TagEntryResponse](WordPaths.addPair(tagId), Some(pair.toJson))
   }
 
   /** Adds one word to a tag on its own, no answer yet. The word may be one to create (`TagPairWord.New`). */
   def attachWord(tagId: Long, word: TagWordInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.post[TagEntryResponse](s"/api/tags/$tagId/words", Some(word.toJson))
+    HttpClient.call[TagEntryResponse](WordPaths.attachWord(tagId), Some(word.toJson))
   }
 
   /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */
@@ -270,8 +284,8 @@ object WordApiClient {
     oldTargetWordId: Option[Long],
     next: TagPairInput,
   ): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.put[TagEntryResponse](
-      s"/api/tags/$tagId/pairs",
+    HttpClient.call[TagEntryResponse](
+      WordPaths.replacePair(tagId),
       Some(ReplacePairRequest(oldSourceWordId, oldTargetWordId, next).toJson),
     )
   }
@@ -284,9 +298,8 @@ object WordApiClient {
     sourceWordId: Long,
     targetWordId: Option[Long] = None,
   ): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(
-      _.DELETE,
-      s"/api/tags/$tagId/pairs/$sourceWordId${HttpClient.query("targetWordId" -> targetWordId)}",
+    HttpClient.callUnit(
+      WordPaths.deletePair(tagId, sourceWordId).withQuery(HttpClient.query("targetWordId" -> targetWordId))
     )
   }
 
@@ -297,9 +310,8 @@ object WordApiClient {
     tagId: Long,
     pairs: List[(Long, Option[Long])],
   ): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(
-      _.POST,
-      s"/api/tags/$tagId/pairs/bulk-delete",
+    HttpClient.callUnit(
+      WordPaths.bulkDeletePairs(tagId),
       Some(BulkDeletePairsRequest(pairs.map { case (source, target) => PairRef(source, target) }).toJson),
     )
   }
@@ -308,7 +320,7 @@ object WordApiClient {
     * caller minted that carry no other tag; anything else is ignored, so the whole selection is safe to send.
     */
   def deleteWords(tagId: Long, wordIds: List[Long]): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, s"/api/tags/$tagId/words/bulk-delete", Some(BulkDeleteWordsRequest(wordIds).toJson))
+    HttpClient.callUnit(WordPaths.bulkDeleteWords(tagId), Some(BulkDeleteWordsRequest(wordIds).toJson))
   }
 
   /** Tokenizes free text and writes every token into the tag in text order, then answers the counts. */
@@ -318,8 +330,8 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, BulkImportResponse]] = {
-    HttpClient.post[BulkImportResponse](
-      s"/api/tags/$tagId/bulk-import",
+    HttpClient.call[BulkImportResponse](
+      WordPaths.bulkImport(tagId),
       Some(BulkImportRequest(content, sourceLanguage, targetLanguage).toJson),
     )
   }
@@ -332,8 +344,8 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, LanguageCheckResponse]] = {
-    HttpClient.post[LanguageCheckResponse](
-      "/api/words/language-check",
+    HttpClient.call[LanguageCheckResponse](
+      WordPaths.languageCheck(),
       Some(LanguageCheckRequest(content, sourceLanguage, targetLanguage).toJson),
     )
   }
@@ -345,8 +357,8 @@ object WordApiClient {
     sourceLanguage: WordLanguage,
     targetLanguage: WordLanguage,
   ): EventStream[Either[ApiError, TabularImportResponse]] = {
-    HttpClient.post[TabularImportResponse](
-      s"/api/tags/$tagId/tabular-import",
+    HttpClient.call[TabularImportResponse](
+      WordPaths.tabularImport(tagId),
       Some(TabularImportRequest(rows, sourceLanguage, targetLanguage).toJson),
     )
   }
@@ -357,8 +369,8 @@ object WordApiClient {
   def checkColumnLanguages(
     columns: List[ColumnSample]
   ): EventStream[Either[ApiError, ColumnLanguageCheckResponse]] = {
-    HttpClient.post[ColumnLanguageCheckResponse](
-      "/api/words/column-language-check",
+    HttpClient.call[ColumnLanguageCheckResponse](
+      WordPaths.columnLanguageCheck(),
       Some(ColumnLanguageCheckRequest(columns).toJson),
     )
   }
@@ -376,8 +388,8 @@ object WordApiClient {
     manualPairs: List[BulkUploadManualPair],
     standaloneWords: List[BulkUploadManualWord],
   ): EventStream[Either[ApiError, BulkUploadConfirmResponse]] = {
-    HttpClient.post[BulkUploadConfirmResponse](
-      s"/api/words/tags/$tagId/bulk-upload/confirm",
+    HttpClient.call[BulkUploadConfirmResponse](
+      WordPaths.bulkUploadConfirm(tagId),
       Some(
         BulkUploadConfirmRequest(
           sourceLanguage,

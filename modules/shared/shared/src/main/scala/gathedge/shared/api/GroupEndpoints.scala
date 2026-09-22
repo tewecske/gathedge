@@ -10,12 +10,48 @@ import gathedge.shared.dto.{
   RenameGroupRequest,
   SetMemberRoleRequest,
 }
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, withCodecError}
 import ApiSchemas.given
+
+/** The method and path of every group call, written once. [[GroupEndpoints]] builds its routes from these; the frontend
+  * fills them in. No zio-http here, so the frontend can load this object.
+  */
+object GroupPaths {
+
+  import ApiMethod.*
+
+  val list                 = ApiPath0(GET, "/api/groups")
+  val get                  = ApiPath1[Long](GET, "/api/groups/{groupId}")
+  val create               = ApiPath0(POST, "/api/groups")
+  val join                 = ApiPath0(POST, "/api/groups/join")
+  val leave                = ApiPath1[Long](POST, "/api/groups/{groupId}/leave")
+  val renameGroup          = ApiPath1[Long](PUT, "/api/groups/{groupId}")
+  val regenerateInviteCode = ApiPath1[Long](POST, "/api/groups/{groupId}/invite-code/regenerate")
+  val setMemberRole        = ApiPath2[Long, Long](PUT, "/api/groups/{groupId}/members/{userId}/role")
+  val removeMember         = ApiPath2[Long, Long](DELETE, "/api/groups/{groupId}/members/{userId}")
+  val deleteGroup          = ApiPath1[Long](DELETE, "/api/groups/{groupId}")
+  val attachTag            = ApiPath2[Long, Long](PUT, "/api/groups/{groupId}/tags/{tagId}")
+  val detachTag            = ApiPath2[Long, Long](DELETE, "/api/groups/{groupId}/tags/{tagId}")
+
+  val all: List[ApiPath] = List(
+    list,
+    get,
+    create,
+    join,
+    leave,
+    renameGroup,
+    regenerateInviteCode,
+    setMemberRole,
+    removeMember,
+    deleteGroup,
+    attachTag,
+    detachTag,
+  )
+}
 
 /** Shareable tag groups — classroom-style collaboration on top of the tag/word model. A group has two roles, `admin`
   * and `member`; attaching one of a caller's own tags to a group they belong to opens that tag's *content* (words,
@@ -29,9 +65,7 @@ import ApiSchemas.given
   */
 object GroupEndpoints {
 
-  private val groupId = PathCodec.long("groupId")
-  private val userId  = PathCodec.long("userId")
-  private val tagId   = PathCodec.long("tagId")
+  private val paths = GroupPaths
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
@@ -50,7 +84,7 @@ object GroupEndpoints {
     * page is built from.
     */
   val list = {
-    Endpoint(Method.GET / "api" / "groups")
+    Endpoint(ApiRoutes.route0(paths.list))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -67,14 +101,14 @@ object GroupEndpoints {
     * all, the same as [[WordEndpoints.get]] — a visitor gets the same detail with no roster/invite-code/role.
     */
   val get = {
-    Endpoint(Method.GET / "api" / "groups" / groupId).withCodecError
+    Endpoint(ApiRoutes.route1(paths.get, PathCodec.long)).withCodecError
       .out[GroupDetail]
       .outErrors(failure.badRequest, failure.notFound)
   }
 
   /** Creates a group; the caller becomes its sole admin. 400 covers a blank name or one over `Group.maxNameLength`. */
   val create = {
-    Endpoint(Method.POST / "api" / "groups")
+    Endpoint(ApiRoutes.route0(paths.create))
       .in[CreateGroupRequest]
       .withCodecError
       .out[GroupDetail](Status.Created)
@@ -87,7 +121,7 @@ object GroupEndpoints {
     * `RateLimitKey.groupJoin` budget, the same reason `claimGuest` has one for guessing.
     */
   val join = {
-    Endpoint(Method.POST / "api" / "groups" / "join")
+    Endpoint(ApiRoutes.route0(paths.join))
       .in[JoinGroupRequest]
       .withCodecError
       .outCodec(noContent)
@@ -98,7 +132,7 @@ object GroupEndpoints {
     * with none; promote a second admin first.
     */
   val leave = {
-    Endpoint(Method.POST / "api" / "groups" / groupId / "leave").withCodecError
+    Endpoint(ApiRoutes.route1(paths.leave, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -108,7 +142,7 @@ object GroupEndpoints {
     * legitimately share a name.
     */
   val renameGroup = {
-    Endpoint(Method.PUT / "api" / "groups" / groupId)
+    Endpoint(ApiRoutes.route1(paths.renameGroup, PathCodec.long))
       .in[RenameGroupRequest]
       .withCodecError
       .out[GroupDetail]
@@ -117,14 +151,14 @@ object GroupEndpoints {
 
   /** Admin-only. Mints a fresh invite code and immediately invalidates the old one. */
   val regenerateInviteCode = {
-    Endpoint(Method.POST / "api" / "groups" / groupId / "invite-code" / "regenerate").withCodecError
+    Endpoint(ApiRoutes.route1(paths.regenerateInviteCode, PathCodec.long)).withCodecError
       .out[InviteCodeResponse]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 
   /** Admin-only. Promotes or demotes another member. 409 covers demoting the group's last admin. */
   val setMemberRole = {
-    Endpoint(Method.PUT / "api" / "groups" / groupId / "members" / userId / "role")
+    Endpoint(ApiRoutes.route2(paths.setMemberRole, PathCodec.long, PathCodec.long))
       .in[SetMemberRoleRequest]
       .withCodecError
       .out[GroupMemberSummary]
@@ -133,7 +167,7 @@ object GroupEndpoints {
 
   /** Admin-only. Removes another member outright. 409 covers removing the group's last admin. */
   val removeMember = {
-    Endpoint(Method.DELETE / "api" / "groups" / groupId / "members" / userId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.removeMember, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
@@ -142,7 +176,7 @@ object GroupEndpoints {
     * row is dropped, both at the database level.
     */
   val deleteGroup = {
-    Endpoint(Method.DELETE / "api" / "groups" / groupId).withCodecError
+    Endpoint(ApiRoutes.route1(paths.deleteGroup, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
@@ -152,7 +186,7 @@ object GroupEndpoints {
     * a group (possibly this one) — detach it first.
     */
   val attachTag = {
-    Endpoint(Method.PUT / "api" / "groups" / groupId / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.attachTag, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
@@ -161,7 +195,7 @@ object GroupEndpoints {
     * admin of the group it currently belongs to — a moderation valve independent of who owns the tag.
     */
   val detachTag = {
-    Endpoint(Method.DELETE / "api" / "groups" / groupId / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.detachTag, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }

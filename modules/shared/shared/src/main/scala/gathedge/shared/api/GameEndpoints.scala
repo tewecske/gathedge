@@ -18,17 +18,64 @@ import gathedge.shared.dto.{
   StartPlayRequest,
   SubmitAnswerRequest,
 }
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, withCodecError}
 import ApiSchemas.given
 
+/** The method and path of every game call, written once. [[GameEndpoints]] builds its routes from these; the frontend
+  * fills them in. No zio-http here, so the frontend can load this object.
+  */
+object GamePaths {
+
+  import ApiMethod.*
+
+  val setup        = ApiPath0(GET, "/api/games/setup")
+  val setupWords   = ApiPath0(GET, "/api/games/setup/words")
+  val allGames     = ApiPath0(GET, "/api/games/all")
+  val favorite     = ApiPath1[String](POST, "/api/games/{slug}/favorite")
+  val unfavorite   = ApiPath1[String](DELETE, "/api/games/{slug}/favorite")
+  val sameTagGames = ApiPath0(GET, "/api/games/same-tags")
+  val create       = ApiPath0(POST, "/api/games")
+  val get          = ApiPath1[String](GET, "/api/games/{slug}")
+  val rename       = ApiPath1[String](PATCH, "/api/games/{slug}")
+  val delete       = ApiPath1[String](DELETE, "/api/games/{slug}")
+  val startPlay    = ApiPath1[String](POST, "/api/games/{slug}/plays")
+  val playSetup    = ApiPath1[String](GET, "/api/games/{slug}/plays/setup")
+  val nextPrompt   = ApiPath1[Long](GET, "/api/games/plays/{playId}/prompt")
+  val submitAnswer = ApiPath1[Long](POST, "/api/games/plays/{playId}/answers")
+  val results      = ApiPath1[Long](GET, "/api/games/plays/{playId}/results")
+  val listPlays    = ApiPath1[String](GET, "/api/games/{slug}/plays")
+  val playDetail   = ApiPath2[String, Long](GET, "/api/games/{slug}/plays/{playId}")
+  val myPlays      = ApiPath0(GET, "/api/games/plays/mine")
+
+  val all: List[ApiPath] = List(
+    setup,
+    setupWords,
+    allGames,
+    favorite,
+    unfavorite,
+    sameTagGames,
+    create,
+    get,
+    rename,
+    delete,
+    startPlay,
+    playSetup,
+    nextPrompt,
+    submitAnswer,
+    results,
+    listPlays,
+    playDetail,
+    myPlays,
+  )
+}
+
 object GameEndpoints {
 
-  private val gameSlug = PathCodec.string("slug")
-  private val playId   = PathCodec.long("playId")
+  private val paths = GamePaths
 
   private val sourceLanguageQuery = HttpCodec.query[String]("sourceLanguage").optional
   private val targetLanguageQuery = HttpCodec.query[String]("targetLanguage").optional
@@ -70,7 +117,7 @@ object GameEndpoints {
   private val noContent = HttpCodec.status(Status.NoContent)
 
   val setup = {
-    Endpoint(Method.GET / "api" / "games" / "setup")
+    Endpoint(ApiRoutes.route0(paths.setup))
       .query(sourceLanguageQuery)
       .query(targetLanguageQuery)
       .out[List[Tag]]
@@ -83,7 +130,7 @@ object GameEndpoints {
     * state is not an error.
     */
   val setupWords = {
-    Endpoint(Method.GET / "api" / "games" / "setup" / "words")
+    Endpoint(ApiRoutes.route0(paths.setupWords))
       .query(sourceLanguageQuery)
       .query(targetLanguageQuery)
       .query(tagIdsQuery)
@@ -103,7 +150,7 @@ object GameEndpoints {
     * the 400 `withCodecError` answers for a query parameter that does not decode.
     */
   val allGames = {
-    Endpoint(Method.GET / "api" / "games" / "all")
+    Endpoint(ApiRoutes.route0(paths.allGames))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -122,14 +169,14 @@ object GameEndpoints {
     * path toggle the heart on the games listing. See `GameService.favoriteGame`.
     */
   val favorite = {
-    Endpoint(Method.POST / "api" / "games" / gameSlug / "favorite").withCodecError
+    Endpoint(ApiRoutes.route1(paths.favorite, PathCodec.string)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
   /** Clears the caller's favorite mark on `slug` — idempotent, a 204 whether or not it was marked. */
   val unfavorite = {
-    Endpoint(Method.DELETE / "api" / "games" / gameSlug / "favorite").withCodecError
+    Endpoint(ApiRoutes.route1(paths.unfavorite, PathCodec.string)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
@@ -142,7 +189,7 @@ object GameEndpoints {
     * missing `tagIds` answers an empty list rather than a 400, the same leniency [[setupWords]] shows.
     */
   val sameTagGames = {
-    Endpoint(Method.GET / "api" / "games" / "same-tags")
+    Endpoint(ApiRoutes.route0(paths.sameTagGames))
       .query(tagIdsQuery)
       .withCodecError
       .out[List[GameRef]]
@@ -150,7 +197,7 @@ object GameEndpoints {
   }
 
   val create = {
-    Endpoint(Method.POST / "api" / "games")
+    Endpoint(ApiRoutes.route0(paths.create))
       .in[CreateGameRequest]
       .withCodecError
       .out[GameCreated](Status.Created)
@@ -158,14 +205,14 @@ object GameEndpoints {
   }
 
   val get = {
-    Endpoint(Method.GET / "api" / "games" / gameSlug)
+    Endpoint(ApiRoutes.route1(paths.get, PathCodec.string))
       .out[GameDetail]
       .outFailure(failure.notFound)
   }
 
   /** 409 is a stale write: the game was renamed by someone else between this caller's read and this write. */
   val rename = {
-    Endpoint(Method.PATCH / "api" / "games" / gameSlug)
+    Endpoint(ApiRoutes.route1(paths.rename, PathCodec.string))
       .in[RenameGameRequest]
       .withCodecError
       .out[GameDetail]
@@ -177,7 +224,7 @@ object GameEndpoints {
     * 204.
     */
   val delete = {
-    Endpoint(Method.DELETE / "api" / "games" / gameSlug).withCodecError
+    Endpoint(ApiRoutes.route1(paths.delete, PathCodec.string)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
@@ -187,7 +234,7 @@ object GameEndpoints {
     * eligible pool) and `NoEligibleWords` (the resolved direction's pool is empty right now).
     */
   val startPlay = {
-    Endpoint(Method.POST / "api" / "games" / gameSlug / "plays")
+    Endpoint(ApiRoutes.route1(paths.startPlay, PathCodec.string))
       .in[StartPlayRequest]
       .withCodecError
       .out[PlayStarted](Status.Created)
@@ -201,7 +248,7 @@ object GameEndpoints {
     * history in this game; an anonymous caller has none, so both preferences degrade to the same order as `All`.
     */
   val playSetup = {
-    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / "setup")
+    Endpoint(ApiRoutes.route1(paths.playSetup, PathCodec.string))
       .query(swapDirectionQuery)
       .query(wordPreferenceQuery)
       .withCodecError
@@ -213,7 +260,7 @@ object GameEndpoints {
     * fails to parse as a `Long`; `forbidden` covers a `playId` that belongs to somebody else.
     */
   val nextPrompt = {
-    Endpoint(Method.GET / "api" / "games" / "plays" / playId / "prompt").withCodecError
+    Endpoint(ApiRoutes.route1(paths.nextPrompt, PathCodec.long)).withCodecError
       .out[GamePrompt]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
@@ -224,7 +271,7 @@ object GameEndpoints {
     * out of it: a player still learns their total only when the play ends.
     */
   val submitAnswer = {
-    Endpoint(Method.POST / "api" / "games" / "plays" / playId / "answers")
+    Endpoint(ApiRoutes.route1(paths.submitAnswer, PathCodec.long))
       .in[SubmitAnswerRequest]
       .withCodecError
       .out[GameAnswerResult]
@@ -233,7 +280,7 @@ object GameEndpoints {
 
   /** The finished play's score and full answer history, for the results screen. */
   val results = {
-    Endpoint(Method.GET / "api" / "games" / "plays" / playId / "results").withCodecError
+    Endpoint(ApiRoutes.route1(paths.results, PathCodec.long)).withCodecError
       .out[GameResults]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
@@ -242,7 +289,7 @@ object GameEndpoints {
     * `GameService.listPlays`.
     */
   val listPlays = {
-    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays")
+    Endpoint(ApiRoutes.route1(paths.listPlays, PathCodec.string))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -257,7 +304,7 @@ object GameEndpoints {
     * owner can never be handed a play id that belongs to somebody else's game. See `GameService.getPlayDetail`.
     */
   val playDetail = {
-    Endpoint(Method.GET / "api" / "games" / gameSlug / "plays" / playId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.playDetail, PathCodec.string, PathCodec.long)).withCodecError
       .out[GamePlayDetail]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
@@ -267,7 +314,7 @@ object GameEndpoints {
     * is a case-insensitive substring of the game's name, the cross-game counterpart of [[listPlays]]'s player filter.
     */
   val myPlays = {
-    Endpoint(Method.GET / "api" / "games" / "plays" / "mine")
+    Endpoint(ApiRoutes.route0(paths.myPlays))
       .query(gameIdQuery)
       .query(pageQuery)
       .query(pageSizeQuery)

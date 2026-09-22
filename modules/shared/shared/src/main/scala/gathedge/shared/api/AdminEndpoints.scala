@@ -20,12 +20,72 @@ import gathedge.shared.dto.{
   UserPage,
   WordFormAnomaly,
 }
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, withCodecError}
 import ApiSchemas.given
+
+/** The method and path of every administrator call, written once. [[AdminEndpoints]] builds its routes from these; the
+  * frontend fills them in. No zio-http here, so the frontend can load this object.
+  */
+object AdminPaths {
+
+  import ApiMethod.*
+
+  val listUsers              = ApiPath0(GET, "/api/admin/users")
+  val getUser                = ApiPath1[Long](GET, "/api/admin/users/{id}")
+  val createUser             = ApiPath0(POST, "/api/admin/users")
+  val updateUser             = ApiPath1[Long](PUT, "/api/admin/users/{id}")
+  val deleteUser             = ApiPath1[Long](DELETE, "/api/admin/users/{id}")
+  val userDetail             = ApiPath1[Long](GET, "/api/admin/users/{id}/detail")
+  val verifyUserEmail        = ApiPath1[Long](POST, "/api/admin/users/{id}/verify-email")
+  val resendUserVerification = ApiPath1[Long](POST, "/api/admin/users/{id}/verification/resend")
+  val revokeUserSessions     = ApiPath1[Long](DELETE, "/api/admin/users/{id}/sessions")
+  val unlinkUserIdentity     = ApiPath2[Long, String](DELETE, "/api/admin/users/{id}/identities/{provider}")
+  val clearUserLockout       = ApiPath1[Long](DELETE, "/api/admin/users/{id}/lockout")
+  val auditLog               = ApiPath0(GET, "/api/admin/audit")
+  val loginAttempts          = ApiPath0(GET, "/api/admin/login-attempts")
+  val rateLimits             = ApiPath0(GET, "/api/admin/rate-limits")
+  val clearRateLimits        = ApiPath0(POST, "/api/admin/rate-limits/clear")
+  val systemOverview         = ApiPath0(GET, "/api/admin/system")
+  val systemPrune            = ApiPath0(POST, "/api/admin/system/prune")
+  val wordFormAnomalies      = ApiPath0(GET, "/api/admin/word-forms/anomalies")
+  val deleteWordFormAnomaly  = ApiPath0(POST, "/api/admin/word-forms/anomalies/delete")
+  val duplicateGames         = ApiPath0(GET, "/api/admin/games/same-tags")
+  val usageRoutes            = ApiPath0(GET, "/api/admin/usage/routes")
+  val usageSuspicious        = ApiPath0(GET, "/api/admin/usage/suspicious")
+  val userPlays              = ApiPath1[Long](GET, "/api/admin/users/{id}/plays")
+  val userPlayResults        = ApiPath2[Long, Long](GET, "/api/admin/users/{id}/plays/{playId}/results")
+
+  val all: List[ApiPath] = List(
+    listUsers,
+    getUser,
+    createUser,
+    updateUser,
+    deleteUser,
+    userDetail,
+    verifyUserEmail,
+    resendUserVerification,
+    revokeUserSessions,
+    unlinkUserIdentity,
+    clearUserLockout,
+    auditLog,
+    loginAttempts,
+    rateLimits,
+    clearRateLimits,
+    systemOverview,
+    systemPrune,
+    wordFormAnomalies,
+    deleteWordFormAnomaly,
+    duplicateGames,
+    usageRoutes,
+    usageSuspicious,
+    userPlays,
+    userPlayResults,
+  )
+}
 
 /** Administrator user management, account diagnostics, the audit trail and the system overview.
   *
@@ -40,9 +100,7 @@ import ApiSchemas.given
   */
 object AdminEndpoints {
 
-  private val userId   = PathCodec.long("id")
-  private val playId   = PathCodec.long("playId")
-  private val provider = PathCodec.string("provider")
+  private val paths = AdminPaths
 
   /** See [[deleteUser]] for why an empty 204 is described as a status codec and never as `.out[Unit]`. */
   private val noContent = HttpCodec.status(Status.NoContent)
@@ -79,7 +137,7 @@ object AdminEndpoints {
     * number never reaches the handler.
     */
   val listUsers = {
-    Endpoint(Method.GET / "api" / "admin" / "users")
+    Endpoint(ApiRoutes.route0(paths.listUsers))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -91,13 +149,13 @@ object AdminEndpoints {
   }
 
   val getUser = {
-    Endpoint(Method.GET / "api" / "admin" / "users" / userId)
+    Endpoint(ApiRoutes.route1(paths.getUser, PathCodec.long))
       .out[User]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   val createUser = {
-    Endpoint(Method.POST / "api" / "admin" / "users")
+    Endpoint(ApiRoutes.route0(paths.createUser))
       .in[CreateUserRequest]
       .withCodecError
       .out[User](Status.Created)
@@ -105,7 +163,7 @@ object AdminEndpoints {
   }
 
   val updateUser = {
-    Endpoint(Method.PUT / "api" / "admin" / "users" / userId)
+    Endpoint(ApiRoutes.route1(paths.updateUser, PathCodec.long))
       .in[UpdateUserRequest]
       .withCodecError
       .out[User]
@@ -121,7 +179,7 @@ object AdminEndpoints {
     * decode and sidesteps it. Every other 204 in this package is described the same way for the same reason.
     */
   val deleteUser = {
-    Endpoint(Method.DELETE / "api" / "admin" / "users" / userId)
+    Endpoint(ApiRoutes.route1(paths.deleteUser, PathCodec.long))
       .outCodec(HttpCodec.status(Status.NoContent))
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -133,14 +191,14 @@ object AdminEndpoints {
     * process-local `Ref` rather than the database, so splitting it into its own endpoint would buy nothing.
     */
   val userDetail = {
-    Endpoint(Method.GET / "api" / "admin" / "users" / userId / "detail")
+    Endpoint(ApiRoutes.route1(paths.userDetail, PathCodec.long))
       .out[AdminUserDetail]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Confirms an address on the account's behalf, for the case where the user cannot receive the link at all. */
   val verifyUserEmail = {
-    Endpoint(Method.POST / "api" / "admin" / "users" / userId / "verify-email")
+    Endpoint(ApiRoutes.route1(paths.verifyUserEmail, PathCodec.long))
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -150,7 +208,7 @@ object AdminEndpoints {
     * so there is nothing to conceal from them and no one to throttle.
     */
   val resendUserVerification = {
-    Endpoint(Method.POST / "api" / "admin" / "users" / userId / "verification" / "resend")
+    Endpoint(ApiRoutes.route1(paths.resendUserVerification, PathCodec.long))
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -159,7 +217,7 @@ object AdminEndpoints {
     * identifier, because the sessions table's primary key *is* the bearer token.
     */
   val revokeUserSessions = {
-    Endpoint(Method.DELETE / "api" / "admin" / "users" / userId / "sessions")
+    Endpoint(ApiRoutes.route1(paths.revokeUserSessions, PathCodec.long))
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -168,7 +226,7 @@ object AdminEndpoints {
     * own settings screen is held to, enforced here as well rather than only there.
     */
   val unlinkUserIdentity = {
-    Endpoint(Method.DELETE / "api" / "admin" / "users" / userId / "identities" / provider)
+    Endpoint(ApiRoutes.route2(paths.unlinkUserIdentity, PathCodec.long, PathCodec.string))
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -177,7 +235,7 @@ object AdminEndpoints {
     * was recently attempted from.
     */
   val clearUserLockout = {
-    Endpoint(Method.DELETE / "api" / "admin" / "users" / userId / "lockout")
+    Endpoint(ApiRoutes.route1(paths.clearUserLockout, PathCodec.long))
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -190,7 +248,7 @@ object AdminEndpoints {
     * count a total against. Numbered pages and a row count were the point; this is what they cost.
     */
   val auditLog = {
-    Endpoint(Method.GET / "api" / "admin" / "audit")
+    Endpoint(ApiRoutes.route0(paths.auditLog))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -205,7 +263,7 @@ object AdminEndpoints {
 
   /** Recorded sign-in attempts across every address, most recent first. */
   val loginAttempts = {
-    Endpoint(Method.GET / "api" / "admin" / "login-attempts")
+    Endpoint(ApiRoutes.route0(paths.loginAttempts))
       .query(limitQuery)
       .query(outcomeQuery)
       .withCodecError
@@ -217,11 +275,11 @@ object AdminEndpoints {
     * only the aspect and a defect can fail this.
     */
   val rateLimits = {
-    Endpoint(Method.GET / "api" / "admin" / "rate-limits").out[List[RateLimitEntry]].outFailure(failure.unauthorized)
+    Endpoint(ApiRoutes.route0(paths.rateLimits)).out[List[RateLimitEntry]].outFailure(failure.unauthorized)
   }
 
   val clearRateLimits = {
-    Endpoint(Method.POST / "api" / "admin" / "rate-limits" / "clear")
+    Endpoint(ApiRoutes.route0(paths.clearRateLimits))
       .in[ClearRateLimitRequest]
       .withCodecError
       .outCodec(noContent)
@@ -230,26 +288,26 @@ object AdminEndpoints {
 
   /** Configuration, runtime and row counts. `SystemService.overview` cannot fail. */
   val systemOverview = {
-    Endpoint(Method.GET / "api" / "admin" / "system").out[SystemOverview].outFailure(failure.unauthorized)
+    Endpoint(ApiRoutes.route0(paths.systemOverview)).out[SystemOverview].outFailure(failure.unauthorized)
   }
 
   /** Runs the sweep `SessionReaper` performs hourly, now. `SystemService.prune` cannot fail. */
   val systemPrune = {
-    Endpoint(Method.POST / "api" / "admin" / "system" / "prune").out[PruneResult].outFailure(failure.unauthorized)
+    Endpoint(ApiRoutes.route0(paths.systemPrune)).out[PruneResult].outFailure(failure.unauthorized)
   }
 
   /** Every `word_forms` `(form word, relation)` pair claiming more than the anomaly threshold's worth of distinct
     * lemmas — see `gathedge.shared.dto.WordFormAnomaly`. `AdminService.wordFormAnomalies` is a `UIO`.
     */
   val wordFormAnomalies = {
-    Endpoint(Method.GET / "api" / "admin" / "word-forms" / "anomalies")
+    Endpoint(ApiRoutes.route0(paths.wordFormAnomalies))
       .out[List[WordFormAnomaly]]
       .outFailure(failure.unauthorized)
   }
 
   /** Deletes every `word_forms` row for one `(form word, relation)` pair. */
   val deleteWordFormAnomaly = {
-    Endpoint(Method.POST / "api" / "admin" / "word-forms" / "anomalies" / "delete")
+    Endpoint(ApiRoutes.route0(paths.deleteWordFormAnomaly))
       .in[DeleteWordFormRequest]
       .withCodecError
       .outCodec(noContent)
@@ -261,7 +319,7 @@ object AdminEndpoints {
     * pages make and this screen reviews. `GameService.duplicateTagGames` is a `UIO`.
     */
   val duplicateGames = {
-    Endpoint(Method.GET / "api" / "admin" / "games" / "same-tags")
+    Endpoint(ApiRoutes.route0(paths.duplicateGames))
       .out[List[DuplicateGameGroup]]
       .outFailure(failure.unauthorized)
   }
@@ -270,7 +328,7 @@ object AdminEndpoints {
     * sorted the other way is the least-used report, so there is only one endpoint for both.
     */
   val usageRoutes = {
-    Endpoint(Method.GET / "api" / "admin" / "usage" / "routes")
+    Endpoint(ApiRoutes.route0(paths.usageRoutes))
       .query(windowQuery)
       .withCodecError
       .out[List[RouteUsage]]
@@ -281,7 +339,7 @@ object AdminEndpoints {
     * `gathedge.backend.service.UsageStatsService` for what "crossed" means.
     */
   val usageSuspicious = {
-    Endpoint(Method.GET / "api" / "admin" / "usage" / "suspicious")
+    Endpoint(ApiRoutes.route0(paths.usageSuspicious))
       .query(windowQuery)
       .query(actionThresholdQuery)
       .query(ipThresholdQuery)
@@ -294,7 +352,7 @@ object AdminEndpoints {
     * narrows to games whose name contains it, a case-insensitive substring. See `AdminService.userPlays`.
     */
   val userPlays = {
-    Endpoint(Method.GET / "api" / "admin" / "users" / userId / "plays")
+    Endpoint(ApiRoutes.route1(paths.userPlays, PathCodec.long))
       .query(gameIdQuery)
       .query(pageQuery)
       .query(pageSizeQuery)
@@ -311,7 +369,7 @@ object AdminEndpoints {
     * `AdminService.userPlayResults`.
     */
   val userPlayResults = {
-    Endpoint(Method.GET / "api" / "admin" / "users" / userId / "plays" / playId / "results").withCodecError
+    Endpoint(ApiRoutes.route2(paths.userPlayResults, PathCodec.long, PathCodec.long)).withCodecError
       .out[GameResults]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }

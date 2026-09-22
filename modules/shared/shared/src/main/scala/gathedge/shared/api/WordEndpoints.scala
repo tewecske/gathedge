@@ -38,12 +38,96 @@ import gathedge.shared.dto.{
   WordDetail,
   WordPage,
 }
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, withCodecError}
 import ApiSchemas.given
+
+/** The method and path of every vocabulary and wordlist call, written once. [[WordEndpoints]] builds its routes from
+  * these; the frontend fills them in. No zio-http here, so the frontend can load this object.
+  */
+object WordPaths {
+
+  import ApiMethod.*
+
+  val list                = ApiPath0(GET, "/api/words")
+  val get                 = ApiPath1[Long](GET, "/api/words/{id}")
+  val create              = ApiPath0(POST, "/api/words")
+  val addTranslation      = ApiPath1[Long](POST, "/api/words/{id}/translations")
+  val setGender           = ApiPath1[Long](PUT, "/api/words/{id}/gender")
+  val removeTranslation   = ApiPath2[Long, Long](DELETE, "/api/words/{id}/translations/{translationId}")
+  val listTags            = ApiPath0(GET, "/api/tags")
+  val getTag              = ApiPath1[Long](GET, "/api/tags/{tagId}")
+  val listTagsPage        = ApiPath0(GET, "/api/tags/page")
+  val createTag           = ApiPath0(POST, "/api/tags")
+  val createTagWithPairs  = ApiPath0(POST, "/api/tags/with-pairs")
+  val renameTag           = ApiPath1[Long](PUT, "/api/tags/{tagId}")
+  val deleteTag           = ApiPath1[Long](DELETE, "/api/tags/{tagId}")
+  val setTagLanguages     = ApiPath1[Long](PUT, "/api/tags/{tagId}/languages")
+  val copyTag             = ApiPath1[Long](POST, "/api/tags/{tagId}/copy")
+  val exportTag           = ApiPath1[Long](GET, "/api/tags/{tagId}/export")
+  val exportOwnedTags     = ApiPath0(GET, "/api/tags/export")
+  val importTags          = ApiPath0(POST, "/api/tags/import")
+  val tagWord             = ApiPath2[Long, Long](PUT, "/api/words/{id}/tags/{tagId}")
+  val untagWord           = ApiPath2[Long, Long](DELETE, "/api/words/{id}/tags/{tagId}")
+  val selectPair          = ApiPath3[Long, Long, Long](PUT, "/api/words/{id}/tags/{tagId}/translations/{translationWordId}")
+  val deselectPair        = ApiPath3[Long, Long, Long](DELETE, "/api/words/{id}/tags/{tagId}/translations/{translationWordId}")
+  val tagEntries          = ApiPath1[Long](GET, "/api/tags/{tagId}/entries")
+  val tagEntriesPage      = ApiPath1[Long](GET, "/api/tags/{tagId}/entries/page")
+  val addPair             = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs")
+  val attachWord          = ApiPath1[Long](POST, "/api/tags/{tagId}/words")
+  val replacePair         = ApiPath1[Long](PUT, "/api/tags/{tagId}/pairs")
+  val deletePair          = ApiPath2[Long, Long](DELETE, "/api/tags/{tagId}/pairs/{sourceWordId}")
+  val bulkDeletePairs     = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs/bulk-delete")
+  val bulkDeleteWords     = ApiPath1[Long](POST, "/api/tags/{tagId}/words/bulk-delete")
+  val bulkImport          = ApiPath1[Long](POST, "/api/tags/{tagId}/bulk-import")
+  val languageCheck       = ApiPath0(POST, "/api/words/language-check")
+  val tabularImport       = ApiPath1[Long](POST, "/api/tags/{tagId}/tabular-import")
+  val columnLanguageCheck = ApiPath0(POST, "/api/words/column-language-check")
+  val bulkUploadPreview   = ApiPath1[Long](POST, "/api/words/tags/{tagId}/bulk-upload/preview")
+  val bulkUploadConfirm   = ApiPath1[Long](POST, "/api/words/tags/{tagId}/bulk-upload/confirm")
+
+  val all: List[ApiPath] = List(
+    list,
+    get,
+    create,
+    addTranslation,
+    setGender,
+    removeTranslation,
+    listTags,
+    getTag,
+    listTagsPage,
+    createTag,
+    createTagWithPairs,
+    renameTag,
+    deleteTag,
+    setTagLanguages,
+    copyTag,
+    exportTag,
+    exportOwnedTags,
+    importTags,
+    tagWord,
+    untagWord,
+    selectPair,
+    deselectPair,
+    tagEntries,
+    tagEntriesPage,
+    addPair,
+    attachWord,
+    replacePair,
+    deletePair,
+    bulkDeletePairs,
+    bulkDeleteWords,
+    bulkImport,
+    languageCheck,
+    tabularImport,
+    columnLanguageCheck,
+    bulkUploadPreview,
+    bulkUploadConfirm,
+  )
+}
 
 /** The vocabulary: browsing the dictionary, tagging words, and adding what it does not have.
   *
@@ -59,16 +143,12 @@ import ApiSchemas.given
   */
 object WordEndpoints {
 
-  private val wordId        = PathCodec.long("id")
-  private val tagId         = PathCodec.long("tagId")
-  private val translationId = PathCodec.long("translationId")
-  private val sourceWordId  = PathCodec.long("sourceWordId")
+  private val paths = WordPaths
 
   /** A `words.id`, and deliberately not the same thing as [[translationId]] above, which is a `word_translations.id` —
     * an edge somebody recorded. A practice answer names the word itself, because the answer belongs to the reader's tag
     * while the edge belongs to whoever typed it. Two similar-looking paths, two different keys.
     */
-  private val translationWordId = PathCodec.long("translationWordId")
 
   private val noContent = HttpCodec.status(Status.NoContent)
 
@@ -108,7 +188,7 @@ object WordEndpoints {
     * or `tag` given as prose. Nothing else can fail: a filter that matches nothing is an empty page, not an error.
     */
   val list = {
-    Endpoint(Method.GET / "api" / "words")
+    Endpoint(ApiRoutes.route0(paths.list))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -130,7 +210,7 @@ object WordEndpoints {
     * [[list]]; a caller with no session simply has no tags.
     */
   val get = {
-    Endpoint(Method.GET / "api" / "words" / wordId).withCodecError
+    Endpoint(ApiRoutes.route1(paths.get, PathCodec.long)).withCodecError
       .out[WordDetail]
       .outErrors(failure.badRequest, failure.notFound)
   }
@@ -146,7 +226,7 @@ object WordEndpoints {
     * follows.
     */
   val create = {
-    Endpoint(Method.POST / "api" / "words")
+    Endpoint(ApiRoutes.route0(paths.create))
       .in[CreateWordRequest]
       .withCodecError
       .out[WordDetail](Status.Created)
@@ -157,7 +237,7 @@ object WordEndpoints {
     * conflict, since a translation is per-account and additive.
     */
   val addTranslation = {
-    Endpoint(Method.POST / "api" / "words" / wordId / "translations")
+    Endpoint(ApiRoutes.route1(paths.addTranslation, PathCodec.long))
       .in[AddTranslationRequest]
       .withCodecError
       .out[WordDetail]
@@ -175,7 +255,7 @@ object WordEndpoints {
     * is told the other word exists.
     */
   val setGender = {
-    Endpoint(Method.PUT / "api" / "words" / wordId / "gender")
+    Endpoint(ApiRoutes.route1(paths.setGender, PathCodec.long))
       .in[SetGenderRequest]
       .withCodecError
       .out[WordDetail]
@@ -189,7 +269,7 @@ object WordEndpoints {
     * on [[AdminEndpoints.deleteUser]].
     */
   val removeTranslation = {
-    Endpoint(Method.DELETE / "api" / "words" / wordId / "translations" / translationId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.removeTranslation, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
@@ -199,7 +279,7 @@ object WordEndpoints {
     * and `editableByMe` false on every row. The listing takes no input, so it declares no failure at all.
     */
   val listTags = {
-    Endpoint(Method.GET / "api" / "tags").out[List[Tag]]
+    Endpoint(ApiRoutes.route0(paths.listTags)).out[List[Tag]]
   }
 
   /** One wordlist, by id — the fine-grained counterpart of [[listTags]] for a caller who already knows which tag it
@@ -207,7 +287,7 @@ object WordEndpoints {
     * with no session gets the row with `ownedByMe`/`editableByMe` false. 404 is an id that names no tag.
     */
   val getTag = {
-    Endpoint(Method.GET / "api" / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route1(paths.getTag, PathCodec.long)).withCodecError
       .out[Tag]
       .outErrors(failure.badRequest, failure.notFound)
   }
@@ -219,7 +299,7 @@ object WordEndpoints {
     * matches nothing is an empty page, not an error, the same rule [[list]] follows.
     */
   val listTagsPage = {
-    Endpoint(Method.GET / "api" / "tags" / "page")
+    Endpoint(ApiRoutes.route0(paths.listTagsPage))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(sortQuery)
@@ -238,7 +318,7 @@ object WordEndpoints {
     * of failing when the write only crossed the quota's *soft* threshold.
     */
   val createTag = {
-    Endpoint(Method.POST / "api" / "tags")
+    Endpoint(ApiRoutes.route0(paths.createTag))
       .in[CreateTagRequest]
       .withCodecError
       .out[TagResponse](Status.Created)
@@ -257,7 +337,7 @@ object WordEndpoints {
     * distinguished the same way by `error.key`.
     */
   val createTagWithPairs = {
-    Endpoint(Method.POST / "api" / "tags" / "with-pairs")
+    Endpoint(ApiRoutes.route0(paths.createTagWithPairs))
       .in[CreateTagWithPairsRequest]
       .withCodecError
       .out[TagResponse](Status.Created)
@@ -269,7 +349,7 @@ object WordEndpoints {
     * insensitively — and 404 for a tag that is not theirs, the same as every other tag-scoped write here.
     */
   val renameTag = {
-    Endpoint(Method.PUT / "api" / "tags" / tagId)
+    Endpoint(ApiRoutes.route1(paths.renameTag, PathCodec.long))
       .in[RenameTagRequest]
       .withCodecError
       .out[TagResponse]
@@ -278,7 +358,7 @@ object WordEndpoints {
 
   /** 409 is a stale write: the tag was changed by someone else between this caller's read of it and this delete. */
   val deleteTag = {
-    Endpoint(Method.DELETE / "api" / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route1(paths.deleteTag, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -289,7 +369,7 @@ object WordEndpoints {
     * (`error.key` `words.tagLanguagesLocked`) is a locked tag being given a different pair, not its own reversed.
     */
   val setTagLanguages = {
-    Endpoint(Method.PUT / "api" / "tags" / tagId / "languages")
+    Endpoint(ApiRoutes.route1(paths.setTagLanguages, PathCodec.long))
       .in[SetTagLanguagesRequest]
       .withCodecError
       .out[TagResponse]
@@ -308,7 +388,7 @@ object WordEndpoints {
     * threshold writes nothing at all; crossing only a *soft* one still succeeds, with a warning on the answer.
     */
   val copyTag = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "copy").withCodecError
+    Endpoint(ApiRoutes.route1(paths.copyTag, PathCodec.long)).withCodecError
       .out[TagResponse](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -322,7 +402,7 @@ object WordEndpoints {
     * that names nothing.
     */
   val exportTag = {
-    Endpoint(Method.GET / "api" / "tags" / tagId / "export").withCodecError
+    Endpoint(ApiRoutes.route1(paths.exportTag, PathCodec.long)).withCodecError
       .out[TagExportFile]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
@@ -331,7 +411,7 @@ object WordEndpoints {
     * `Long`, so the literal `export` segment here never collides with it.
     */
   val exportOwnedTags = {
-    Endpoint(Method.GET / "api" / "tags" / "export")
+    Endpoint(ApiRoutes.route0(paths.exportOwnedTags))
       .out[TagExportFile]
       .outFailure(failure.unauthorized)
   }
@@ -344,7 +424,7 @@ object WordEndpoints {
     * [[bulkUploadPreview]]'s rate-limit budget, shared because one call can create many rows.
     */
   val importTags = {
-    Endpoint(Method.POST / "api" / "tags" / "import")
+    Endpoint(ApiRoutes.route0(paths.importTags))
       .in[TagImportRequest]
       .withCodecError
       .out[TagImportResponse]
@@ -352,13 +432,13 @@ object WordEndpoints {
   }
 
   val tagWord = {
-    Endpoint(Method.PUT / "api" / "words" / wordId / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.tagWord, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
   val untagWord = {
-    Endpoint(Method.DELETE / "api" / "words" / wordId / "tags" / tagId).withCodecError
+    Endpoint(ApiRoutes.route2(paths.untagWord, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
@@ -382,9 +462,7 @@ object WordEndpoints {
     * crossed the quota's *soft* threshold — a 204 must never carry one (RFC 9110 §8.6).
     */
   val selectPair = {
-    Endpoint(
-      Method.PUT / "api" / "words" / wordId / "tags" / tagId / "translations" / translationWordId
-    ).withCodecError
+    Endpoint(ApiRoutes.route3(paths.selectPair, PathCodec.long, PathCodec.long, PathCodec.long)).withCodecError
       .out[PairSelectionResponse]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
@@ -393,9 +471,7 @@ object WordEndpoints {
     * vocabulary is what the row's tick is for.
     */
   val deselectPair = {
-    Endpoint(
-      Method.DELETE / "api" / "words" / wordId / "tags" / tagId / "translations" / translationWordId
-    ).withCodecError
+    Endpoint(ApiRoutes.route3(paths.deselectPair, PathCodec.long, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
@@ -406,7 +482,7 @@ object WordEndpoints {
     * visitor sees every row with its `createdByMe`/`inMyOtherTags` marks cleared. 404 is only an id that names nothing.
     */
   val tagEntries = {
-    Endpoint(Method.GET / "api" / "tags" / tagId / "entries").withCodecError
+    Endpoint(ApiRoutes.route1(paths.tagEntries, PathCodec.long)).withCodecError
       .out[List[TagEntry]]
       .outErrors(failure.badRequest, failure.notFound)
   }
@@ -424,7 +500,7 @@ object WordEndpoints {
     * an id that names no wordlist. A filter that matches nothing is an empty page, not an error.
     */
   val tagEntriesPage = {
-    Endpoint(Method.GET / "api" / "tags" / tagId / "entries" / "page")
+    Endpoint(ApiRoutes.route1(paths.tagEntriesPage, PathCodec.long))
       .query(pageQuery)
       .query(pageSizeQuery)
       .query(matchQuery)
@@ -441,7 +517,7 @@ object WordEndpoints {
     * hard limit, with a soft-threshold crossing carried as a warning on the answer instead.
     */
   val addPair = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "pairs")
+    Endpoint(ApiRoutes.route1(paths.addPair, PathCodec.long))
       .in[TagPairInput]
       .withCodecError
       .out[TagEntryResponse](Status.Created)
@@ -456,7 +532,7 @@ object WordEndpoints {
     * `TagPairWord.Existing` naming no word.
     */
   val attachWord = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "words")
+    Endpoint(ApiRoutes.route1(paths.attachWord, PathCodec.long))
       .in[TagWordInput]
       .withCodecError
       .out[TagEntryResponse](Status.Created)
@@ -468,7 +544,7 @@ object WordEndpoints {
     * hand-edited pair is no longer an exact import match. Same 404/409 rules as [[addPair]].
     */
   val replacePair = {
-    Endpoint(Method.PUT / "api" / "tags" / tagId / "pairs")
+    Endpoint(ApiRoutes.route1(paths.replacePair, PathCodec.long))
       .in[ReplacePairRequest]
       .withCodecError
       .out[TagEntryResponse]
@@ -481,7 +557,7 @@ object WordEndpoints {
     * naming it go, the same effect as [[untagWord]]. Idempotent either way.
     */
   val deletePair = {
-    Endpoint(Method.DELETE / "api" / "tags" / tagId / "pairs" / sourceWordId)
+    Endpoint(ApiRoutes.route2(paths.deletePair, PathCodec.long, PathCodec.long))
       .query(targetWordIdQuery)
       .withCodecError
       .outCodec(noContent)
@@ -493,7 +569,7 @@ object WordEndpoints {
     * a `PairRef` that names nothing is skipped. 404 is a tag that is not the caller's (or their group's).
     */
   val bulkDeletePairs = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "pairs" / "bulk-delete")
+    Endpoint(ApiRoutes.route1(paths.bulkDeletePairs, PathCodec.long))
       .in[BulkDeletePairsRequest]
       .withCodecError
       .outCodec(noContent)
@@ -506,7 +582,7 @@ object WordEndpoints {
     * a tag that is not the caller's (or their group's).
     */
   val bulkDeleteWords = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "words" / "bulk-delete")
+    Endpoint(ApiRoutes.route1(paths.bulkDeleteWords, PathCodec.long))
       .in[BulkDeleteWordsRequest]
       .withCodecError
       .outCodec(noContent)
@@ -523,7 +599,7 @@ object WordEndpoints {
     * `WordService.maxBulkUploadTokens` tokens.
     */
   val bulkImport = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "bulk-import")
+    Endpoint(ApiRoutes.route1(paths.bulkImport, PathCodec.long))
       .in[BulkImportRequest]
       .withCodecError
       .out[BulkImportResponse]
@@ -538,7 +614,7 @@ object WordEndpoints {
     * `language-check` config section). No 404: it names no tag.
     */
   val languageCheck = {
-    Endpoint(Method.POST / "api" / "words" / "language-check")
+    Endpoint(ApiRoutes.route0(paths.languageCheck))
       .in[LanguageCheckRequest]
       .withCodecError
       .out[LanguageCheckResponse]
@@ -559,7 +635,7 @@ object WordEndpoints {
     * reason: one call writes up to `WordService.maxTabularRows` rows.
     */
   val tabularImport = {
-    Endpoint(Method.POST / "api" / "tags" / tagId / "tabular-import")
+    Endpoint(ApiRoutes.route1(paths.tabularImport, PathCodec.long))
       .in[TabularImportRequest]
       .withCodecError
       .out[TabularImportResponse]
@@ -573,7 +649,7 @@ object WordEndpoints {
     * looks German" about a column nobody has assigned yet. '''Writes nothing'''; no 404, since it names no tag.
     */
   val columnLanguageCheck = {
-    Endpoint(Method.POST / "api" / "words" / "column-language-check")
+    Endpoint(ApiRoutes.route0(paths.columnLanguageCheck))
       .in[ColumnLanguageCheckRequest]
       .withCodecError
       .out[ColumnLanguageCheckResponse]
@@ -591,7 +667,7 @@ object WordEndpoints {
     * here, a single one can scan up to `WordService.maxBulkUploadTokens` tokens at once.
     */
   val bulkUploadPreview = {
-    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload" / "preview")
+    Endpoint(ApiRoutes.route1(paths.bulkUploadPreview, PathCodec.long))
       .in[BulkUploadPreviewRequest]
       .withCodecError
       .out[BulkUploadPreviewResponse]
@@ -607,7 +683,7 @@ object WordEndpoints {
     * 404 and 429 follow [[bulkUploadPreview]]'s own rules exactly, sharing its rate-limit budget.
     */
   val bulkUploadConfirm = {
-    Endpoint(Method.POST / "api" / "words" / "tags" / tagId / "bulk-upload" / "confirm")
+    Endpoint(ApiRoutes.route1(paths.bulkUploadConfirm, PathCodec.long))
       .in[BulkUploadConfirmRequest]
       .withCodecError
       .out[BulkUploadConfirmResponse]

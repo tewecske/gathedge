@@ -3,6 +3,7 @@ package gathedge.frontend.api
 import com.raquo.laminar.api.L._
 import gathedge.frontend.i18n.CurrentLocale
 import gathedge.frontend.state.AppState
+import gathedge.shared.api.{AuthPaths, StreakPaths}
 import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
@@ -47,82 +48,78 @@ object ApiClient {
     * it. The cookie is in the jar regardless — that is what the next call authenticates with.
     */
   def signup(request: SignupRequest): EventStream[Either[ApiError, SignupResponse]] = {
-    HttpClient.post[SignupResponse]("/api/auth/signup", Some(request.toJson))
+    HttpClient.call[SignupResponse](AuthPaths.signup(), Some(request.toJson))
   }
 
   /** Redeems the token out of a verification link. Public — the account it verifies typically cannot sign in yet. */
   def verifyEmail(token: String): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/auth/verify", Some(VerifyEmailRequest(token).toJson))
+    HttpClient.callUnit(AuthPaths.verifyEmail(), Some(VerifyEmailRequest(token).toJson))
   }
 
   /** Answers the same whether or not the address has an account, so a page can only ever report "sent". */
   def resendVerification(email: String, captchaToken: Option[String] = None): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(
-      _.POST,
-      "/api/auth/verification/resend",
-      Some(ResendVerificationRequest(email, captchaToken).toJson),
-    )
+    HttpClient.callUnit(AuthPaths.resendVerification(), Some(ResendVerificationRequest(email, captchaToken).toJson))
   }
 
   def login(request: LoginRequest): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.post[AuthResponse]("/api/auth/login", Some(request.toJson))
+    HttpClient.call[AuthResponse](AuthPaths.login(), Some(request.toJson))
   }
 
   /** Answers the same whether or not the address has an account, same non-committal shape as [[resendVerification]]. */
   def forgotPassword(email: String, captchaToken: Option[String] = None): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/auth/password/forgot", Some(ForgotPasswordRequest(email, captchaToken).toJson))
+    HttpClient.callUnit(AuthPaths.forgotPassword(), Some(ForgotPasswordRequest(email, captchaToken).toJson))
   }
 
   /** Redeems a password-reset link. No session comes back — this proves the address controls the reset link, not that
     * whoever clicked it meant to sign in on this device, the same reasoning [[verifyEmail]] follows.
     */
   def resetPassword(token: String, newPassword: String): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/auth/password/reset", Some(ResetPasswordRequest(token, newPassword).toJson))
+    HttpClient.callUnit(AuthPaths.resetPassword(), Some(ResetPasswordRequest(token, newPassword).toJson))
   }
 
   def logout: EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/auth/logout")
+    HttpClient.callUnit(AuthPaths.logout())
   }
 
   def me: EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.get[AuthResponse]("/api/me")
+    HttpClient.call[AuthResponse](AuthPaths.me())
   }
 
   /** The signed-in account's daily play streak. */
   def streak: EventStream[Either[ApiError, StreakResponse]] = {
-    HttpClient.get[StreakResponse]("/api/me/streak")
+    HttpClient.call[StreakResponse](StreakPaths.streak())
   }
 
   def updateTheme(theme: Theme): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.put[AuthResponse]("/api/me/theme", Some(UpdateThemeRequest(theme).toJson))
+    HttpClient.call[AuthResponse](AuthPaths.updateTheme(), Some(UpdateThemeRequest(theme).toJson))
   }
 
   /** Records the choice; it does not change the current page's language. The picker navigates to the other prefix,
     * which is what actually switches languages — see `CurrentLocale`.
     */
   def updateLocale(locale: Locale): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.put[AuthResponse]("/api/me/locale", Some(UpdateLocaleRequest(locale).toJson))
+    HttpClient.call[AuthResponse](AuthPaths.updateLocale(), Some(UpdateLocaleRequest(locale).toJson))
   }
 
   /** Replaces the account's username and name. Both are sent on every save, and an empty box arrives as `None`, which
     * is what clears the column — see `dto.UpdateProfileRequest`.
     */
   def updateProfile(request: UpdateProfileRequest): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.put[AuthResponse]("/api/me/profile", Some(request.toJson))
+    HttpClient.call[AuthResponse](AuthPaths.updateProfile(), Some(request.toJson))
   }
 
   /** Starts changing the account's own address. `pendingConfirmation` on the answer says which of the two things just
     * happened — see `dto.UpdateEmailResponse`.
     */
   def updateEmail(email: String): EventStream[Either[ApiError, UpdateEmailResponse]] = {
-    HttpClient.put[UpdateEmailResponse]("/api/me/email", Some(UpdateEmailRequest(email).toJson))
+    HttpClient.call[UpdateEmailResponse](AuthPaths.updateEmail(), Some(UpdateEmailRequest(email).toJson))
   }
 
   /** Redeems the token out of an email-change confirmation link. Public — the account it changes may be read from a
     * browser with no session at all, the same reasoning as [[verifyEmail]].
     */
   def confirmEmailChange(token: String): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/auth/email-change/confirm", Some(ConfirmEmailChangeRequest(token).toJson))
+    HttpClient.callUnit(AuthPaths.confirmEmailChange(), Some(ConfirmEmailChangeRequest(token).toJson))
   }
 
   // --- Guest accounts -----------------------------------------------------------------------------------------
@@ -136,17 +133,17 @@ object ApiClient {
     * silently overwritten the moment they add their first word.
     */
   def createGuest: EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.post[AuthResponse]("/api/guest", Some(UpdateThemeRequest(AppState.currentTheme).toJson))
+    HttpClient.call[AuthResponse](AuthPaths.createGuest(), Some(UpdateThemeRequest(AppState.currentTheme).toJson))
   }
 
   /** The guest account's transfer code — the same one every time once it exists. */
   def guestCode: EventStream[Either[ApiError, ClaimCodeResponse]] = {
-    HttpClient.post[ClaimCodeResponse]("/api/guest/code")
+    HttpClient.call[ClaimCodeResponse](AuthPaths.guestCode())
   }
 
   /** Signs the caller in as the guest account a transfer code belongs to. */
   def claimGuest(code: String): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.post[AuthResponse]("/api/guest/claim", Some(ClaimRequest(code).toJson))
+    HttpClient.call[AuthResponse](AuthPaths.claimGuest(), Some(ClaimRequest(code).toJson))
   }
 
   /** Turns the caller's guest account into a real one, keeping everything on it. */
@@ -155,7 +152,7 @@ object ApiClient {
     password: String,
     captchaToken: Option[String] = None,
   ): EventStream[Either[ApiError, AuthResponse]] = {
-    HttpClient.post[AuthResponse]("/api/auth/upgrade", Some(UpgradeRequest(email, password, captchaToken).toJson))
+    HttpClient.call[AuthResponse](AuthPaths.upgradeGuest(), Some(UpgradeRequest(email, password, captchaToken).toJson))
   }
 
   // --- Account settings ---------------------------------------------------------------------------------------
@@ -164,26 +161,26 @@ object ApiClient {
     * [[identities]] rather than a field on it.
     */
   def providers: EventStream[Either[ApiError, ProvidersResponse]] = {
-    HttpClient.get[ProvidersResponse]("/api/auth/providers")
+    HttpClient.call[ProvidersResponse](AuthPaths.providers())
   }
 
   /** Tells a captcha-gated form whether to render the Turnstile widget (the site key) and, for the sign-in form,
     * whether this address has crossed the threshold of failed attempts that turns it on.
     */
   def captchaStatus: EventStream[Either[ApiError, CaptchaStatusResponse]] = {
-    HttpClient.get[CaptchaStatusResponse]("/api/auth/captcha-status")
+    HttpClient.call[CaptchaStatusResponse](AuthPaths.captchaStatus())
   }
 
   def identities: EventStream[Either[ApiError, IdentitiesResponse]] = {
-    HttpClient.get[IdentitiesResponse]("/api/me/identities")
+    HttpClient.call[IdentitiesResponse](AuthPaths.identities())
   }
 
   def unlinkIdentity(provider: OAuthProvider): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/me/identities/${HttpClient.segment(provider.wire)}")
+    HttpClient.callUnit(AuthPaths.unlinkIdentity(provider.wire))
   }
 
   def setPassword(request: SetPasswordRequest): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.PUT, "/api/me/password", Some(request.toJson))
+    HttpClient.callUnit(AuthPaths.setPassword(), Some(request.toJson))
   }
 
   /** Where the browser must be *navigated* to start a social sign-in — deliberately a URL rather than a call.

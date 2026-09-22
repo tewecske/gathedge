@@ -126,7 +126,9 @@ Flyway migrations live under `backend/src/main/resources/db/migration/postgresql
 - `backend/http/*Routes.scala` implements handlers via `implementHandler`.
 - `backend/http/DocsRoutes.scala` generates the OpenAPI document, served with Swagger UI at `/api/docs/openapi`. Public endpoints are hand-listed in `DocsRoutes.publicEndpoints`.
 
-The frontend does **not** use the zio-http `Endpoint` client: `frontend/api/HttpClient.scala` is a thin wrapper over Airstream's `FetchStream` and zio-json, and `ApiClient.scala`/`AdminApiClient.scala`/the other `*ApiClient.scala` files spell out each call's path and method by hand against it. Keeping zio-http off the JS classpath's *used* surface is what lets the Scala.js linker drop the endpoint-executor/zio-schema machinery from the bundle; the descriptions in `shared` stay what the backend and the OpenAPI document are built from, and the DTOs going over `HttpClient` are the same case classes, decoded via their `derives JsonCodec` zio-json instances rather than the endpoint's zio-schema codecs.
+The frontend does **not** use the zio-http `Endpoint` client: `frontend/api/HttpClient.scala` is a thin wrapper over Airstream's `FetchStream` and zio-json, and `ApiClient.scala`/`AdminApiClient.scala`/the other `*ApiClient.scala` files make each call against it, one method per call. Keeping zio-http off the JS classpath's *used* surface is what lets the Scala.js linker drop the endpoint-executor/zio-schema machinery from the bundle; the descriptions in `shared` stay what the backend and the OpenAPI document are built from, and the DTOs going over `HttpClient` are the same case classes, decoded via their `derives JsonCodec` zio-json instances rather than the endpoint's zio-schema codecs.
+
+**A resource's method and path templates live in a shared `*Paths` object** (`shared/api/ApiPath.scala`, plain Scala, no zio-http). The `*Endpoints` object builds each route from it with `ApiRoutes.routeN`, which takes only the parameter codecs (`PathCodec.long`); the `*ApiClient` fills the same template (`GamePaths.favorite(slug)`) and sends it with `HttpClient.call`/`.callUnit`. A path is then written once, so the two sides cannot drift. Filling a template percent-encodes each value, so a call site passes the raw value. `ApiPathSpec` pins that each `*Endpoints.all` and its `*Paths.all` hold the same routes — a new resource adds its line there. A new endpoint adds its template to the `*Paths` object first. Only the two OAuth redirect routes stay outside, since they are not described.
 
 The two OAuth routes (`/api/auth/{provider}/start` and `/callback`) are plain `Method / path -> handler`, built as top-level 302 navigations. They're absent from the OpenAPI document and exempt from the CSRF header. `GET /api/auth/providers` is an ordinary described endpoint.
 
@@ -316,7 +318,7 @@ Pages render through `components/AppShell`. `AppShell.render` is authenticated; 
 
 `components/OAuthButtons` are plain anchors, never `ApiClient` calls.
 
-`ApiClient`/`AdminApiClient`/the other `*ApiClient` objects are hand-written against `HttpClient`, one method per call, returning `EventStream[Either[ApiError, A]]`. `HttpClient` decodes every non-2xx body as `dto.ErrorResponse` into an `ApiError` carrying the real status; only a call with no HTTP answer at all (offline, a dead socket, a response nothing could decode) becomes `ApiError(0, ...)`.
+`ApiClient`/`AdminApiClient`/the other `*ApiClient` objects call `HttpClient` with a shared `*Paths` template, one method per call, returning `EventStream[Either[ApiError, A]]`. `HttpClient` decodes every non-2xx body as `dto.ErrorResponse` into an `ApiError` carrying the real status; only a call with no HTTP answer at all (offline, a dead socket, a response nothing could decode) becomes `ApiError(0, ...)`.
 
 **Laminar note**: `.split` is deprecated in favor of `.splitSeq`.
 

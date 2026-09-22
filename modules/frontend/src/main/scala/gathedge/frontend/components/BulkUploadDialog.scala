@@ -5,6 +5,7 @@ import org.scalajs.dom
 import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.i18n.{CurrentLocale, I18n}
 import gathedge.frontend.ocr.ImageOcr
+import gathedge.shared.api.WordPaths
 import gathedge.shared.domain.{Tag, TranslationFilter, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkUploadConfirmResponse,
@@ -259,8 +260,10 @@ final class BulkUploadDialog(
   }
 
   private def sendPreviewRequest(tagId: Long, content: String): Unit = {
-    val xhr = new dom.XMLHttpRequest()
-    xhr.open("POST", s"/api/words/tags/$tagId/bulk-upload/preview")
+    // A hand-built request, not `HttpClient`, for the upload progress events; the path still comes from `WordPaths`.
+    val call = WordPaths.bulkUploadPreview(tagId)
+    val xhr  = new dom.XMLHttpRequest()
+    xhr.open(call.method.toString, call.path)
     xhr.setRequestHeader("Content-Type", "application/json; charset=UTF-8")
     // The two headers `HttpClient` sets on every call — CSRF, and the language transactional mail is written in.
     // Neither is automatic on a hand-built `XMLHttpRequest`; the session cookie is, since this is same-origin in

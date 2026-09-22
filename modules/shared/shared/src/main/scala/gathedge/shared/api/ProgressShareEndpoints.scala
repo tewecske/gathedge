@@ -1,12 +1,31 @@
 package gathedge.shared.api
 
 import gathedge.shared.dto.{GameResults, MyPlayPage, RedeemShareRequest, SharedViewer, SharedWithMe, ShareCodeResponse}
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, withCodecError}
 import ApiSchemas.given
+
+/** The method and path of every progress-sharing call, written once. [[ProgressShareEndpoints]] builds its routes from
+  * these; the frontend's `ProgressShareApiClient` fills them in. No zio-http here, so the frontend can load this
+  * object.
+  */
+object ProgressSharePaths {
+
+  import ApiMethod.*
+
+  val code              = ApiPath0(POST, "/api/progress-shares/code")
+  val redeem            = ApiPath0(POST, "/api/progress-shares/redeem")
+  val viewers           = ApiPath0(GET, "/api/progress-shares/viewers")
+  val sharedWithMe      = ApiPath0(GET, "/api/progress-shares/shared-with-me")
+  val sharerPlays       = ApiPath1[Long](GET, "/api/progress-shares/{sharerUserId}/plays")
+  val sharerPlayResults = ApiPath2[Long, Long](GET, "/api/progress-shares/{sharerUserId}/plays/{playId}/results")
+  val revokeViewer      = ApiPath1[Long](DELETE, "/api/progress-shares/viewers/{viewerUserId}")
+
+  val all: List[ApiPath] = List(code, redeem, viewers, sharedWithMe, sharerPlays, sharerPlayResults, revokeViewer)
+}
 
 /** Letting one account read another's game history, on either side's own say-so — a "sharer" whose plays become visible
   * and a "viewer" who may read them, joined by a share code, never a role like "parent" or "teacher".
@@ -18,9 +37,7 @@ import ApiSchemas.given
   */
 object ProgressShareEndpoints {
 
-  private val sharerUserId = PathCodec.long("sharerUserId")
-  private val viewerUserId = PathCodec.long("viewerUserId")
-  private val playId       = PathCodec.long("playId")
+  private val paths = ProgressSharePaths
 
   private val gameIdQuery   = HttpCodec.query[Long]("gameId").optional
   private val pageQuery     = HttpCodec.query[Int]("page").optional
@@ -33,7 +50,7 @@ object ProgressShareEndpoints {
 
   /** Mints the caller's own share code, or answers the one already minted — see `ProgressShareService.issueCode`. */
   val code = {
-    Endpoint(Method.POST / "api" / "progress-shares" / "code")
+    Endpoint(ApiRoutes.route0(paths.code))
       .out[ShareCodeResponse]
       .outFailure(failure.unauthorized)
   }
@@ -44,7 +61,7 @@ object ProgressShareEndpoints {
     * `RateLimitKey.shareRedeem` budget, the same reason `claimGuest` has one for guessing.
     */
   val redeem = {
-    Endpoint(Method.POST / "api" / "progress-shares" / "redeem")
+    Endpoint(ApiRoutes.route0(paths.redeem))
       .in[RedeemShareRequest]
       .withCodecError
       .outCodec(noContent)
@@ -53,14 +70,14 @@ object ProgressShareEndpoints {
 
   /** Every account that may currently read the caller's game history. */
   val viewers = {
-    Endpoint(Method.GET / "api" / "progress-shares" / "viewers")
+    Endpoint(ApiRoutes.route0(paths.viewers))
       .out[List[SharedViewer]]
       .outFailure(failure.unauthorized)
   }
 
   /** Every account whose game history the caller may currently read. */
   val sharedWithMe = {
-    Endpoint(Method.GET / "api" / "progress-shares" / "shared-with-me")
+    Endpoint(ApiRoutes.route0(paths.sharedWithMe))
       .out[List[SharedWithMe]]
       .outFailure(failure.unauthorized)
   }
@@ -70,7 +87,7 @@ object ProgressShareEndpoints {
     * a caller with no share from `sharerUserId`.
     */
   val sharerPlays = {
-    Endpoint(Method.GET / "api" / "progress-shares" / sharerUserId / "plays")
+    Endpoint(ApiRoutes.route1(paths.sharerPlays, PathCodec.long))
       .query(gameIdQuery)
       .query(pageQuery)
       .query(pageSizeQuery)
@@ -88,7 +105,7 @@ object ProgressShareEndpoints {
     * a play id belonging to somebody else.
     */
   val sharerPlayResults = {
-    Endpoint(Method.GET / "api" / "progress-shares" / sharerUserId / "plays" / playId / "results").withCodecError
+    Endpoint(ApiRoutes.route2(paths.sharerPlayResults, PathCodec.long, PathCodec.long)).withCodecError
       .out[GameResults]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
@@ -97,7 +114,7 @@ object ProgressShareEndpoints {
     * same 204 as one that had one, so a stale page reloading this twice is not an error.
     */
   val revokeViewer = {
-    Endpoint(Method.DELETE / "api" / "progress-shares" / "viewers" / viewerUserId)
+    Endpoint(ApiRoutes.route1(paths.revokeViewer, PathCodec.long))
       .outCodec(noContent)
       .outFailure(failure.unauthorized)
   }

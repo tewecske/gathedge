@@ -4,6 +4,7 @@ import com.raquo.airstream.web.FetchStream
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.i18n.{CurrentLocale, I18n}
+import gathedge.shared.api.{ApiCall, ApiMethod}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.ErrorResponse
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
@@ -13,9 +14,9 @@ import scala.scalajs.js
 
 /** What every API call in this app goes through: a thin wrapper over Airstream's [[FetchStream]] and zio-json.
   *
-  * There is no ZIO runtime and no zio-http client on the frontend. The path and method of every call are spelled out in
-  * the `*ApiClient` objects; the shared `*Endpoints.scala` descriptions stay the backend's and the OpenAPI document's
-  * source of truth.
+  * There is no ZIO runtime and no zio-http client on the frontend. A call takes its method and path from a shared
+  * `*Paths` object (see `ApiPath`) through [[call]] and [[callUnit]]; the backend builds its routes from the same
+  * object, so the two cannot drift.
   *
   * Two headers ride on every request. `X-Requested-With` is the CSRF token `RouteSupport.csrf` checks on the server;
   * `X-Locale` tells `RouteSupport.requestContext` which language this page runs in, which is the language the two
@@ -43,9 +44,6 @@ object HttpClient {
     val parts = params.collect { case (k, Some(v)) => s"${enc(k)}=${enc(v.toString)}" }
     if (parts.isEmpty) "" else parts.mkString("?", "&", "")
   }
-
-  /** For a path segment built from reader data (a provider name, a game slug) rather than a literal in this file. */
-  def segment(s: String): String = enc(s)
 
   /** Resolves a server-sent catalog key to the reader's language, the seam every call passes through on its way to a
     * page. The English `message` the server sends alongside the key is for callers with no catalog and is ignored here.
@@ -115,29 +113,19 @@ object HttpClient {
     decoded(send(method, path, body))(text => text.fromJson[A].left.map(_ => noAnswer))
   }
 
-  def get[A: JsonDecoder](path: String): EventStream[Either[ApiError, A]] =
-    json(_.GET, path, None)
-
-  def post[A: JsonDecoder](path: String, body: Option[String] = None): EventStream[Either[ApiError, A]] =
-    json(_.POST, path, body)
-
-  def put[A: JsonDecoder](path: String, body: Option[String] = None): EventStream[Either[ApiError, A]] =
-    json(_.PUT, path, body)
-
-  def patch[A: JsonDecoder](path: String, body: Option[String] = None): EventStream[Either[ApiError, A]] =
-    json(_.PATCH, path, body)
-
-  def delete[A: JsonDecoder](path: String, body: Option[String] = None): EventStream[Either[ApiError, A]] =
-    json(_.DELETE, path, body)
-
-  /** For an endpoint whose success is a bare 204 — see the `outCodec(noContent)` endpoints. The body on success is
-    * empty and ignored; a failure still decodes the error body.
-    */
-  def unit(
-    method: dom.HttpMethod.type => dom.HttpMethod,
-    path: String,
-    body: Option[String] = None,
-  ): EventStream[Either[ApiError, Unit]] = {
-    decoded(send(method, path, body))(_ => Right(()))
+  private def verb(method: ApiMethod): dom.HttpMethod.type => dom.HttpMethod = method match {
+    case ApiMethod.GET    => _.GET
+    case ApiMethod.POST   => _.POST
+    case ApiMethod.PUT    => _.PUT
+    case ApiMethod.PATCH  => _.PATCH
+    case ApiMethod.DELETE => _.DELETE
   }
+
+  /** A call from a shared `*Paths` object, answered with a JSON body. */
+  def call[A: JsonDecoder](c: ApiCall, body: Option[String] = None): EventStream[Either[ApiError, A]] =
+    json(verb(c.method), c.path, body)
+
+  /** A call from a shared `*Paths` object, answered with a bare 204. A failure still decodes the error body. */
+  def callUnit(c: ApiCall, body: Option[String] = None): EventStream[Either[ApiError, Unit]] =
+    decoded(send(verb(c.method), c.path, body))(_ => Right(()))
 }

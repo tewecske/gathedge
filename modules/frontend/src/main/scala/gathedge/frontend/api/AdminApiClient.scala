@@ -1,6 +1,7 @@
 package gathedge.frontend.api
 
 import com.raquo.laminar.api.L._
+import gathedge.shared.api.AdminPaths
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{
   AdminUserDetail,
@@ -23,7 +24,7 @@ import gathedge.shared.dto.{
 }
 import zio.json._
 
-import HttpClient.{query, segment}
+import HttpClient.query
 
 /** The admin pages' calls. Split from [[ApiClient]] only because the admin pages are the only callers; it is built the
   * same way, over [[HttpClient]].
@@ -41,29 +42,31 @@ object AdminApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, UserPage]] = {
-    HttpClient.get[UserPage](
-      s"/api/admin/users${query("page" -> page, "pageSize" -> pageSize, "sort" -> sort, "dir" -> dir, "q" -> search)}"
+    HttpClient.call[UserPage](
+      AdminPaths
+        .listUsers()
+        .withQuery(query("page" -> page, "pageSize" -> pageSize, "sort" -> sort, "dir" -> dir, "q" -> search))
     )
   }
 
   def getUser(id: Long): EventStream[Either[ApiError, User]] = {
-    HttpClient.get[User](s"/api/admin/users/$id")
+    HttpClient.call[User](AdminPaths.getUser(id))
   }
 
   def createUser(request: CreateUserRequest): EventStream[Either[ApiError, User]] = {
-    HttpClient.post[User]("/api/admin/users", Some(request.toJson))
+    HttpClient.call[User](AdminPaths.createUser(), Some(request.toJson))
   }
 
   def updateUser(id: Long, request: UpdateUserRequest): EventStream[Either[ApiError, User]] = {
-    HttpClient.put[User](s"/api/admin/users/$id", Some(request.toJson))
+    HttpClient.call[User](AdminPaths.updateUser(id), Some(request.toJson))
   }
 
   def deleteUser(id: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/admin/users/$id")
+    HttpClient.callUnit(AdminPaths.deleteUser(id))
   }
 
   def userDetail(id: Long): EventStream[Either[ApiError, AdminUserDetail]] = {
-    HttpClient.get[AdminUserDetail](s"/api/admin/users/$id/detail")
+    HttpClient.call[AdminUserDetail](AdminPaths.userDetail(id))
   }
 
   /** One page of `id`'s game plays across every game. `search` is a case-insensitive substring of the game's name. */
@@ -76,15 +79,19 @@ object AdminApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
   ): EventStream[Either[ApiError, MyPlayPage]] = {
-    HttpClient.get[MyPlayPage](
-      s"/api/admin/users/$id/plays${query(
-          "gameId"   -> gameId,
-          "page"     -> page,
-          "pageSize" -> pageSize,
-          "sort"     -> sort,
-          "dir"      -> dir,
-          "q"        -> search,
-        )}"
+    HttpClient.call[MyPlayPage](
+      AdminPaths
+        .userPlays(id)
+        .withQuery(
+          query(
+            "gameId"   -> gameId,
+            "page"     -> page,
+            "pageSize" -> pageSize,
+            "sort"     -> sort,
+            "dir"      -> dir,
+            "q"        -> search,
+          )
+        )
     )
   }
 
@@ -92,27 +99,27 @@ object AdminApiClient {
     * `GameApiClient.getResults`, which is owner-only.
     */
   def userPlayResults(id: Long, playId: Long): EventStream[Either[ApiError, GameResults]] = {
-    HttpClient.get[GameResults](s"/api/admin/users/$id/plays/$playId/results")
+    HttpClient.call[GameResults](AdminPaths.userPlayResults(id, playId))
   }
 
   def verifyUserEmail(id: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, s"/api/admin/users/$id/verify-email")
+    HttpClient.callUnit(AdminPaths.verifyUserEmail(id))
   }
 
   def resendUserVerification(id: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, s"/api/admin/users/$id/verification/resend")
+    HttpClient.callUnit(AdminPaths.resendUserVerification(id))
   }
 
   def revokeUserSessions(id: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/sessions")
+    HttpClient.callUnit(AdminPaths.revokeUserSessions(id))
   }
 
   def unlinkUserIdentity(id: Long, provider: OAuthProvider): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/identities/${segment(OAuthProvider.wireName(provider))}")
+    HttpClient.callUnit(AdminPaths.unlinkUserIdentity(id, OAuthProvider.wireName(provider)))
   }
 
   def clearUserLockout(id: Long): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.DELETE, s"/api/admin/users/$id/lockout")
+    HttpClient.callUnit(AdminPaths.clearUserLockout(id))
   }
 
   /** The query parameters are all optional, so a page that wants the first page of everything passes nothing. */
@@ -125,16 +132,20 @@ object AdminApiClient {
     actorId: Option[Long] = None,
     targetId: Option[String] = None,
   ): EventStream[Either[ApiError, AuditPage]] = {
-    HttpClient.get[AuditPage](
-      s"/api/admin/audit${query(
-          "page"     -> page,
-          "pageSize" -> pageSize,
-          "sort"     -> sort,
-          "dir"      -> dir,
-          "action"   -> action,
-          "actorId"  -> actorId,
-          "targetId" -> targetId,
-        )}"
+    HttpClient.call[AuditPage](
+      AdminPaths
+        .auditLog()
+        .withQuery(
+          query(
+            "page"     -> page,
+            "pageSize" -> pageSize,
+            "sort"     -> sort,
+            "dir"      -> dir,
+            "action"   -> action,
+            "actorId"  -> actorId,
+            "targetId" -> targetId,
+          )
+        )
     )
   }
 
@@ -142,47 +153,43 @@ object AdminApiClient {
     limit: Option[Int] = None,
     outcome: Option[String] = None,
   ): EventStream[Either[ApiError, List[LoginAttemptEntry]]] = {
-    HttpClient.get[List[LoginAttemptEntry]](
-      s"/api/admin/login-attempts${query("limit" -> limit, "outcome" -> outcome)}"
+    HttpClient.call[List[LoginAttemptEntry]](
+      AdminPaths.loginAttempts().withQuery(query("limit" -> limit, "outcome" -> outcome))
     )
   }
 
   def rateLimits: EventStream[Either[ApiError, List[RateLimitEntry]]] = {
-    HttpClient.get[List[RateLimitEntry]]("/api/admin/rate-limits")
+    HttpClient.call[List[RateLimitEntry]](AdminPaths.rateLimits())
   }
 
   /** `None` clears every key. */
   def clearRateLimits(key: Option[String]): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(_.POST, "/api/admin/rate-limits/clear", Some(ClearRateLimitRequest(key).toJson))
+    HttpClient.callUnit(AdminPaths.clearRateLimits(), Some(ClearRateLimitRequest(key).toJson))
   }
 
   def systemOverview: EventStream[Either[ApiError, SystemOverview]] = {
-    HttpClient.get[SystemOverview]("/api/admin/system")
+    HttpClient.call[SystemOverview](AdminPaths.systemOverview())
   }
 
   def systemPrune: EventStream[Either[ApiError, PruneResult]] = {
-    HttpClient.post[PruneResult]("/api/admin/system/prune")
+    HttpClient.call[PruneResult](AdminPaths.systemPrune())
   }
 
   def wordFormAnomalies: EventStream[Either[ApiError, List[WordFormAnomaly]]] = {
-    HttpClient.get[List[WordFormAnomaly]]("/api/admin/word-forms/anomalies")
+    HttpClient.call[List[WordFormAnomaly]](AdminPaths.wordFormAnomalies())
   }
 
   def deleteWordFormAnomaly(formWordId: Long, relation: String): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.unit(
-      _.POST,
-      "/api/admin/word-forms/anomalies/delete",
-      Some(DeleteWordFormRequest(formWordId, relation).toJson),
-    )
+    HttpClient.callUnit(AdminPaths.deleteWordFormAnomaly(), Some(DeleteWordFormRequest(formWordId, relation).toJson))
   }
 
   /** Every set of wordlists more than one game was built from — the duplicate report. */
   def duplicateGames: EventStream[Either[ApiError, List[DuplicateGameGroup]]] = {
-    HttpClient.get[List[DuplicateGameGroup]]("/api/admin/games/same-tags")
+    HttpClient.call[List[DuplicateGameGroup]](AdminPaths.duplicateGames())
   }
 
   def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {
-    HttpClient.get[List[RouteUsage]](s"/api/admin/usage/routes${query("windowHours" -> windowHours)}")
+    HttpClient.call[List[RouteUsage]](AdminPaths.usageRoutes().withQuery(query("windowHours" -> windowHours)))
   }
 
   def usageSuspicious(
@@ -190,8 +197,12 @@ object AdminApiClient {
     actionThreshold: Option[Int] = None,
     ipThreshold: Option[Int] = None,
   ): EventStream[Either[ApiError, List[SuspiciousUser]]] = {
-    HttpClient.get[List[SuspiciousUser]](
-      s"/api/admin/usage/suspicious${query("windowHours" -> windowHours, "actionThreshold" -> actionThreshold, "ipThreshold" -> ipThreshold)}"
+    HttpClient.call[List[SuspiciousUser]](
+      AdminPaths
+        .usageSuspicious()
+        .withQuery(
+          query("windowHours" -> windowHours, "actionThreshold" -> actionThreshold, "ipThreshold" -> ipThreshold)
+        )
     )
   }
 }

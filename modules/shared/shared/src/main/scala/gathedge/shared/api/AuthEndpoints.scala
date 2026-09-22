@@ -23,12 +23,72 @@ import gathedge.shared.dto.{
   UpgradeRequest,
   VerifyEmailRequest,
 }
-import zio.http.{Method, Status}
+import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
 import zio.http.endpoint.Endpoint
 
 import ApiEndpoint.{failure, outFailure, sessionCookie, withCodecError}
 import ApiSchemas.given
+
+/** The method and path of every sign-in and account call, written once. [[AuthEndpoints]] builds its routes from these;
+  * the frontend fills them in. No zio-http here, so the frontend can load this object.
+  */
+object AuthPaths {
+
+  import ApiMethod.*
+
+  val signup             = ApiPath0(POST, "/api/auth/signup")
+  val login              = ApiPath0(POST, "/api/auth/login")
+  val verifyEmail        = ApiPath0(POST, "/api/auth/verify")
+  val resendVerification = ApiPath0(POST, "/api/auth/verification/resend")
+  val forgotPassword     = ApiPath0(POST, "/api/auth/password/forgot")
+  val resetPassword      = ApiPath0(POST, "/api/auth/password/reset")
+  val logout             = ApiPath0(POST, "/api/auth/logout")
+  val me                 = ApiPath0(GET, "/api/me")
+  val updateTheme        = ApiPath0(PUT, "/api/me/theme")
+  val updateLocale       = ApiPath0(PUT, "/api/me/locale")
+  val updateProfile      = ApiPath0(PUT, "/api/me/profile")
+  val updateEmail        = ApiPath0(PUT, "/api/me/email")
+  val confirmEmailChange = ApiPath0(POST, "/api/auth/email-change/confirm")
+  val providers          = ApiPath0(GET, "/api/auth/providers")
+  val captchaStatus      = ApiPath0(GET, "/api/auth/captcha-status")
+  val identities         = ApiPath0(GET, "/api/me/identities")
+
+  /** `provider` is a plain string, not a codec over `OAuthProvider`. An unknown segment is then a 400 that names what
+    * the handler wanted, not a path that fails to match and falls through to the catch-all 404.
+    */
+  val unlinkIdentity = ApiPath1[String](DELETE, "/api/me/identities/{provider}")
+  val setPassword    = ApiPath0(PUT, "/api/me/password")
+  val createGuest    = ApiPath0(POST, "/api/guest")
+  val guestCode      = ApiPath0(POST, "/api/guest/code")
+  val claimGuest     = ApiPath0(POST, "/api/guest/claim")
+  val upgradeGuest   = ApiPath0(POST, "/api/auth/upgrade")
+
+  val all: List[ApiPath] = List(
+    signup,
+    login,
+    verifyEmail,
+    resendVerification,
+    forgotPassword,
+    resetPassword,
+    logout,
+    me,
+    updateTheme,
+    updateLocale,
+    updateProfile,
+    updateEmail,
+    confirmEmailChange,
+    providers,
+    captchaStatus,
+    identities,
+    unlinkIdentity,
+    setPassword,
+    createGuest,
+    guestCode,
+    claimGuest,
+    upgradeGuest,
+  )
+}
 
 /** Sign-up, sign-in, sign-out and the signed-in user's own record.
   *
@@ -44,12 +104,14 @@ import ApiSchemas.given
   */
 object AuthEndpoints {
 
+  private val paths = AuthPaths
+
   /** Answers `SignupResponse` rather than `AuthResponse` because a successful signup does not always sign anybody in:
     * with `app.require-email-verification` on, the account exists but has no session until the emailed link is
     * followed, and `signedIn` is the only way the browser can tell (a missing `Set-Cookie` is invisible to `fetch`).
     */
   val signup = {
-    Endpoint(Method.POST / "api" / "auth" / "signup")
+    Endpoint(ApiRoutes.route0(paths.signup))
       .in[SignupRequest]
       .withCodecError
       .out[SignupResponse](Status.Created)
@@ -62,7 +124,7 @@ object AuthEndpoints {
     * telling the user to check their typing.
     */
   val login = {
-    Endpoint(Method.POST / "api" / "auth" / "login")
+    Endpoint(ApiRoutes.route0(paths.login))
       .in[LoginRequest]
       .withCodecError
       .out[AuthResponse]
@@ -75,7 +137,7 @@ object AuthEndpoints {
     * the token space cannot be probed.
     */
   val verifyEmail = {
-    Endpoint(Method.POST / "api" / "auth" / "verify")
+    Endpoint(ApiRoutes.route0(paths.verifyEmail))
       .in[VerifyEmailRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -87,7 +149,7 @@ object AuthEndpoints {
     * limiter's 429.
     */
   val resendVerification = {
-    Endpoint(Method.POST / "api" / "auth" / "verification" / "resend")
+    Endpoint(ApiRoutes.route0(paths.resendVerification))
       .in[ResendVerificationRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -100,7 +162,7 @@ object AuthEndpoints {
     * attacker spend somebody else's budget just by knowing their address — see `RateLimitKey.passwordReset`.
     */
   val forgotPassword = {
-    Endpoint(Method.POST / "api" / "auth" / "password" / "forgot")
+    Endpoint(ApiRoutes.route0(paths.forgotPassword))
       .in[ForgotPasswordRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -112,7 +174,7 @@ object AuthEndpoints {
     * that fails validation, reported the same way [[setPassword]] reports one.
     */
   val resetPassword = {
-    Endpoint(Method.POST / "api" / "auth" / "password" / "reset")
+    Endpoint(ApiRoutes.route0(paths.resetPassword))
       .in[ResetPasswordRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -130,7 +192,7 @@ object AuthEndpoints {
     * on [[ApiEndpoint.failure]]. This is consequently the one endpoint in the API that declares no failure at all.
     */
   val logout = {
-    Endpoint(Method.POST / "api" / "auth" / "logout")
+    Endpoint(ApiRoutes.route0(paths.logout))
       .outCodec(HttpCodec.status(Status.NoContent))
       .outHeader(sessionCookie)
   }
@@ -139,7 +201,7 @@ object AuthEndpoints {
     * caller can act on.
     */
   val me = {
-    Endpoint(Method.GET / "api" / "me").out[AuthResponse].outFailure(failure.unauthorized)
+    Endpoint(ApiRoutes.route0(paths.me)).out[AuthResponse].outFailure(failure.unauthorized)
   }
 
   /** `AuthService.updateTheme` is `.orDie`'d in the handler — a failure there is a bug or a dead database, not
@@ -149,7 +211,7 @@ object AuthEndpoints {
     * description omits is not decodable at all.
     */
   val updateTheme = {
-    Endpoint(Method.PUT / "api" / "me" / "theme")
+    Endpoint(ApiRoutes.route0(paths.updateTheme))
       .in[UpdateThemeRequest]
       .withCodecError
       .out[AuthResponse]
@@ -160,7 +222,7 @@ object AuthEndpoints {
     * modelled on: the service call is `.orDie`'d, so the 400 exists only for a body the codec rejects.
     */
   val updateLocale = {
-    Endpoint(Method.PUT / "api" / "me" / "locale")
+    Endpoint(ApiRoutes.route0(paths.updateLocale))
       .in[UpdateLocaleRequest]
       .withCodecError
       .out[AuthResponse]
@@ -173,7 +235,7 @@ object AuthEndpoints {
     * caller can act on by typing something else.
     */
   val updateProfile = {
-    Endpoint(Method.PUT / "api" / "me" / "profile")
+    Endpoint(ApiRoutes.route0(paths.updateProfile))
       .in[UpdateProfileRequest]
       .withCodecError
       .out[AuthResponse]
@@ -186,7 +248,7 @@ object AuthEndpoints {
     * other account already answering to the requested address; 400 covers both validation and the body's codec.
     */
   val updateEmail = {
-    Endpoint(Method.PUT / "api" / "me" / "email")
+    Endpoint(ApiRoutes.route0(paths.updateEmail))
       .in[UpdateEmailRequest]
       .withCodecError
       .out[UpdateEmailResponse]
@@ -200,7 +262,7 @@ object AuthEndpoints {
     * between the request and this confirmation.
     */
   val confirmEmailChange = {
-    Endpoint(Method.POST / "api" / "auth" / "email-change" / "confirm")
+    Endpoint(ApiRoutes.route0(paths.confirmEmailChange))
       .in[ConfirmEmailChangeRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -215,7 +277,7 @@ object AuthEndpoints {
     * it. The list is not a secret; a provider button is visible to every visitor anyway.
     */
   val providers = {
-    Endpoint(Method.GET / "api" / "auth" / "providers").out[ProvidersResponse]
+    Endpoint(ApiRoutes.route0(paths.providers)).out[ProvidersResponse]
   }
 
   /** Tells the captcha-gated forms whether to render the Turnstile widget, and — for the sign-in form — whether this
@@ -227,20 +289,14 @@ object AuthEndpoints {
     * rather than by the description, for the reason recorded on [[RouteSupport.RequestContext]].
     */
   val captchaStatus = {
-    Endpoint(Method.GET / "api" / "auth" / "captcha-status").out[CaptchaStatusResponse]
+    Endpoint(ApiRoutes.route0(paths.captchaStatus)).out[CaptchaStatusResponse]
   }
-
-  /** Carried as a plain string rather than a codec over `OAuthProvider`, so an unknown segment is a 400 the handler
-    * raises with a message naming what it wanted, rather than a path that simply fails to match and falls through to
-    * the catch-all 404.
-    */
-  private val provider = PathCodec.string("provider")
 
   /** What the settings page needs to render itself: the linked social accounts, whether a password is set, and which
     * providers this deployment actually has credentials for.
     */
   val identities = {
-    Endpoint(Method.GET / "api" / "me" / "identities").out[IdentitiesResponse].outFailure(failure.unauthorized)
+    Endpoint(ApiRoutes.route0(paths.identities)).out[IdentitiesResponse].outFailure(failure.unauthorized)
   }
 
   /** 409 covers the lockout guard: unlinking the account's last remaining credential is refused, since there would be
@@ -249,7 +305,7 @@ object AuthEndpoints {
     * union onto signup and login, which cannot raise it.
     */
   val unlinkIdentity = {
-    Endpoint(Method.DELETE / "api" / "me" / "identities" / provider).withCodecError
+    Endpoint(ApiRoutes.route1(paths.unlinkIdentity, PathCodec.string)).withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
       .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
   }
@@ -259,7 +315,7 @@ object AuthEndpoints {
     * `newPassword` — so the form can put each message under its own input.
     */
   val setPassword = {
-    Endpoint(Method.PUT / "api" / "me" / "password")
+    Endpoint(ApiRoutes.route0(paths.setPassword))
       .in[SetPasswordRequest]
       .withCodecError
       .outCodec(HttpCodec.status(Status.NoContent))
@@ -280,7 +336,7 @@ object AuthEndpoints {
     * of failures lock every account out.
     */
   val createGuest = {
-    Endpoint(Method.POST / "api" / "guest")
+    Endpoint(ApiRoutes.route0(paths.createGuest))
       .in[UpdateThemeRequest]
       .withCodecError
       .out[AuthResponse](Status.Created)
@@ -296,7 +352,7 @@ object AuthEndpoints {
     * *service* raises it, and it is an answer to a well-formed request rather than an aspect's rejection.
     */
   val guestCode = {
-    Endpoint(Method.POST / "api" / "guest" / "code")
+    Endpoint(ApiRoutes.route0(paths.guestCode))
       .out[ClaimCodeResponse]
       .outErrors(failure.unauthorized, failure.forbidden)
   }
@@ -308,7 +364,7 @@ object AuthEndpoints {
     * 429 is its own rate-limit namespace, since this is the one endpoint where guessing is worth an attacker's time.
     */
   val claimGuest = {
-    Endpoint(Method.POST / "api" / "guest" / "claim")
+    Endpoint(ApiRoutes.route0(paths.claimGuest))
       .in[ClaimRequest]
       .withCodecError
       .out[AuthResponse]
@@ -323,7 +379,7 @@ object AuthEndpoints {
     * account has nothing to upgrade.
     */
   val upgradeGuest = {
-    Endpoint(Method.POST / "api" / "auth" / "upgrade")
+    Endpoint(ApiRoutes.route0(paths.upgradeGuest))
       .in[UpgradeRequest]
       .withCodecError
       .out[AuthResponse]
