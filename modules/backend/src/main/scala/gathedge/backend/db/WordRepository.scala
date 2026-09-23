@@ -236,6 +236,9 @@ trait WordRepository {
     */
   def tagWord(wordId: Long, tagId: Long, createdAt: Long): Task[Boolean]
 
+  /** Whether the word is a member of the tag — the editor's per-word writes check it before touching anything. */
+  def isInTag(wordId: Long, tagId: Long): Task[Boolean]
+
   /** Removes the tag from the word — and with it every practice pair naming that word inside that tag, in both
     * directions. A pair whose word is no longer in the tag is a question with a missing half, and it is invisible to
     * the listing, so nothing else would ever offer to clear it.
@@ -686,6 +689,9 @@ object WordRepository {
 
   def tagWord(wordId: Long, tagId: Long, createdAt: Long): RIO[WordRepository, Boolean] =
     ZIO.serviceWithZIO[WordRepository](_.tagWord(wordId, tagId, createdAt))
+
+  def isInTag(wordId: Long, tagId: Long): RIO[WordRepository, Boolean] =
+    ZIO.serviceWithZIO[WordRepository](_.isInTag(wordId, tagId))
 
   def untagWord(wordId: Long, tagId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.untagWord(wordId, tagId))
@@ -1490,6 +1496,11 @@ final class WordRepositoryLive(dataSource: DataSource)
     logged(run(linkOnce(wordId, tagId, createdAt, imported = true))) { added =>
       s"wordTags.import word=$wordId tag=$tagId added=$added"
     }.unit
+  }
+
+  def isInTag(wordId: Long, tagId: Long): Task[Boolean] = {
+    val q = quote(wordTags.filter(row => row.wordId == lift(wordId) && row.tagId == lift(tagId)).nonEmpty)
+    logged(run(ctx.run(q)))(found => s"wordTags.isInTag word=$wordId tag=$tagId found=$found")
   }
 
   /** Writes the note a reader wrote beside this word in this tag, over whatever the membership held.

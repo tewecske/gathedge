@@ -64,6 +64,9 @@ import gathedge.shared.dto.{
   TagPairInput,
   TagPairWord,
   TagWordInput,
+  TagEntryNoteRequest,
+  TagEntryFormRequest,
+  TagEntryFormResponse,
   CreateWordRequest,
   DbStats,
   DeleteWordFormRequest,
@@ -238,6 +241,9 @@ object ApiSchemas {
   given Schema[TagPairWord]                   = DeriveSchema.gen[TagPairWord]
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]
   given Schema[TagWordInput]                  = DeriveSchema.gen[TagWordInput]
+  given Schema[TagEntryNoteRequest]           = DeriveSchema.gen[TagEntryNoteRequest]
+  given Schema[TagEntryFormRequest]           = DeriveSchema.gen[TagEntryFormRequest]
+  given Schema[TagEntryFormResponse]          = DeriveSchema.gen[TagEntryFormResponse]
   given Schema[CreateTagWithPairsRequest]     = DeriveSchema.gen[CreateTagWithPairsRequest]
   given Schema[RenameTagRequest]              = DeriveSchema.gen[RenameTagRequest]
   given Schema[SetTagLanguagesRequest]        = DeriveSchema.gen[SetTagLanguagesRequest]

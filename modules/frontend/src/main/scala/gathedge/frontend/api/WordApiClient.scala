@@ -35,6 +35,9 @@ import gathedge.shared.dto.{
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryPage,
+  TagEntryFormRequest,
+  TagEntryFormResponse,
+  TagEntryNoteRequest,
   TagEntryResponse,
   TagExportFile,
   TagImportChoice,
@@ -275,6 +278,24 @@ object WordApiClient {
   /** Adds one word to a tag on its own, no answer yet. The word may be one to create (`TagPairWord.New`). */
   def attachWord(tagId: Long, word: TagWordInput): EventStream[Either[ApiError, TagEntryResponse]] = {
     HttpClient.call[TagEntryResponse](WordPaths.attachWord(tagId), Some(word.toJson))
+  }
+
+  /** Sets or clears the reader's note beside one word of a wordlist. `None` or a blank note clears it. */
+  def setEntryNote(tagId: Long, wordId: Long, note: Option[String]): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.callUnit(WordPaths.setEntryNote(tagId, wordId), Some(TagEntryNoteRequest(note).toJson))
+  }
+
+  /** Files an inflected word under one word of a wordlist, as an import's extra column would. */
+  def addEntryForm(
+    tagId: Long,
+    wordId: Long,
+    text: String,
+    relation: String,
+  ): EventStream[Either[ApiError, TagEntryFormResponse]] = {
+    HttpClient.call[TagEntryFormResponse](
+      WordPaths.addEntryForm(tagId, wordId),
+      Some(TagEntryFormRequest(text, relation).toJson),
+    )
   }
 
   /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */

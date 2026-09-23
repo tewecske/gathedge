@@ -75,6 +75,19 @@ object TagEditorPage {
   private[pages] def targetIsNew(entry: TagEntry): Boolean =
     entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
 
+  /** Puts a saved note on every row that shows the word. The note is on the word's membership of the wordlist, not on
+    * one row, so a word with two marked answers carries it on both, and a word that is the answer of one row and the
+    * source of another carries it on both sides.
+    */
+  private[pages] def withNote(entries: List[TagEntry], wordId: Long, note: Option[String]): List[TagEntry] = {
+    entries.map(entry => {
+      entry.copy(
+        comment = if (entry.source.id == wordId) note else entry.comment,
+        targetComment = if (entry.target.exists(_.id == wordId)) note else entry.targetComment,
+      )
+    })
+  }
+
   /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
   private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
 
@@ -554,6 +567,15 @@ private final class TagEditorPage(
 
   private def toggleSelected(key: (Long, Option[Long])): Unit =
     selectedVar.update(s => if (s.contains(key)) s - key else s + key)
+
+  /** The row whose note-and-forms panel is open under it, if any. One at a time, like the inline edit. */
+  private val detailsOpenVar = Var(Option.empty[(Long, Option[Long])])
+
+  private def toggleDetails(key: (Long, Option[Long])): Unit =
+    detailsOpenVar.update(open => if (open.contains(key)) None else Some(key))
+
+  private def applyNote(wordId: Long, note: Option[String]): Unit =
+    entriesVar.update(TagEditorPage.withNote(_, wordId, note))
 
   private def startEdit(entry: TagEntry): Unit = {
     editingVar.set(Some(TagEditorPage.rowKey(entry)))
@@ -1313,7 +1335,7 @@ private final class TagEditorPage(
             thead(
               tr(
                 th(
-                  cls := "w-4",
+                  cls  := "w-4",
                   child.maybe <-- canEditSignal.map(
                     Option.when(_)(
                       input(
@@ -1330,12 +1352,13 @@ private final class TagEditorPage(
                 th(child.text <-- sourceLangVar.signal.map(Labels.language)),
                 th(child.text <-- targetLangVar.signal.map(Labels.language)),
                 th(I18n.t(UiKeys.wordsColPos)),
-                th(""),
+                // The pair's badges have their own column only from `sm` up; below it they sit under the word.
+                th(cls := "hidden sm:table-cell", ""),
                 th(""),
               )
             ),
             tbody(
-              rows.map(renderRow)
+              rows.flatMap(entry => List(renderRow(entry), renderDetailsRow(entry)))
             ),
           )
         }
@@ -1347,22 +1370,88 @@ private final class TagEditorPage(
     * which sense was meant and is not part of the word itself.
     */
   private def renderComment(comment: Option[String]): Option[HtmlElement] = {
-    comment.map(note => span(cls := "opacity-50 text-xs ml-1", s"($note)"))
+    comment.map(note => span(cls := "opacity-50 text-xs sm:ml-1", s"($note)"))
   }
 
   /** The "New word" badge, shown beside a source or answer word this reader minted that no other tag of theirs holds.
     */
   private def newBadge(): HtmlElement =
-    span(cls := "badge badge-accent badge-xs ml-1", I18n.t(UiKeys.tagsEditorNewBadge))
+    span(cls := "badge badge-accent badge-xs sm:ml-1", I18n.t(UiKeys.tagsEditorNewBadge))
+
+  /** The badges that say who made a row's pair: an import that found it in the dictionary, one that put it on a line,
+    * or an import that left the row unpaired.
+    */
+  private def pairBadges(entry: TagEntry): List[HtmlElement] = {
+    List(
+      Option.when(entry.matchKind == PairMatch.Verified)(
+        span(cls := "badge badge-success badge-xs", I18n.t(UiKeys.tagsEditorVerifiedBadge))
+      ),
+      Option.when(entry.matchKind == PairMatch.Paired)(
+        span(cls := "badge badge-info badge-xs", I18n.t(UiKeys.tagsEditorPairedBadge))
+      ),
+      Option.when(entry.imported && entry.matchKind == PairMatch.Manual)(
+        span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.tagsEditorImportedBadge))
+      ),
+    ).flatten
+  }
 
   /** One word column of a row: the word with its note and badge, or the "no answer" placeholder when the row has
     * nothing on this side.
+    *
+    * Below `sm` the note and the badges stack under the word, since a phone has no width to put them beside it. `below`
+    * is what else goes under the word only there — the pair's badges, which have a column of their own from `sm` up.
     */
-  private def renderWordCell(side: Option[TagEditorPage.Side]): HtmlElement = side match {
-    case Some(s) =>
-      span(Word.display(s.word), renderComment(s.comment), Option.when(s.isNew)(newBadge()))
-    case None    =>
-      span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
+  private def renderWordCell(side: Option[TagEditorPage.Side], below: List[HtmlElement] = Nil): HtmlElement = {
+    val phoneOnly = Option.when(below.nonEmpty)(div(cls := "flex flex-wrap gap-1 sm:hidden", below))
+    side match {
+      case Some(s) =>
+        div(
+          cls := "flex flex-col items-start gap-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-0",
+          span(Word.display(s.word)),
+          renderComment(s.comment),
+          Option.when(s.isNew)(newBadge()),
+          phoneOnly,
+        )
+      case None    =>
+        div(
+          cls := "flex flex-col items-start gap-0.5",
+          span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer)),
+          phoneOnly,
+        )
+    }
+  }
+
+  /** The row under a row that holds its note-and-forms panel: one [[TagEntryDetails]] per word, in the columns' order.
+    * Always in the table so the row count stays even, but hidden, and with nothing mounted, until it is opened.
+    */
+  private def renderDetailsRow(entry: TagEntry): HtmlElement = {
+    val rowKey = TagEditorPage.rowKey(entry)
+    val isOpen = detailsOpenVar.signal.map(_.contains(rowKey)).distinct
+    tr(
+      cls("hidden") <-- isOpen.map(!_),
+      cls := "bg-base-200",
+      td(
+        colSpan := 6,
+        child.maybe <-- Signal.combine(isOpen, sourceLangVar.signal, targetLangVar.signal).map {
+          case (false, _, _)       => None
+          case (true, left, right) =>
+            val (first, second) = TagEditorPage.orient(entry, left, right)
+            Some(
+              div(
+                cls := "grid grid-cols-1 sm:grid-cols-2 gap-4 py-2",
+                List(first, second).flatten.map(side => {
+                  new TagEntryDetails(
+                    tagId,
+                    side.word,
+                    side.comment,
+                    Observer[Option[String]](note => applyNote(side.word.id, note)),
+                  ).render()
+                }),
+              )
+            )
+        },
+      ),
+    )
   }
 
   private def renderRow(entry: TagEntry): HtmlElement = {
@@ -1390,7 +1479,7 @@ private final class TagEditorPage(
       td(
         child <-- Signal.combine(isEditing, sourceLangVar.signal, targetLangVar.signal).map {
           case (true, _, _)         => editSourcePicker.render()
-          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._1)
+          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._1, pairBadges(entry))
         }
       ),
       td(
@@ -1408,18 +1497,8 @@ private final class TagEditorPage(
         }
       ),
       td(
-        div(
-          cls := "flex gap-1",
-          Option.when(entry.matchKind == PairMatch.Verified)(
-            span(cls := "badge badge-success badge-xs", I18n.t(UiKeys.tagsEditorVerifiedBadge))
-          ),
-          Option.when(entry.matchKind == PairMatch.Paired)(
-            span(cls := "badge badge-info badge-xs", I18n.t(UiKeys.tagsEditorPairedBadge))
-          ),
-          Option.when(entry.imported && entry.matchKind == PairMatch.Manual)(
-            span(cls := "badge badge-ghost badge-xs", I18n.t(UiKeys.tagsEditorImportedBadge))
-          ),
-        )
+        cls := "hidden sm:table-cell",
+        div(cls := "flex gap-1", pairBadges(entry)),
       ),
       td(
         child <-- Signal.combine(isEditing, canEditSignal, isDeleting).map {
@@ -1457,6 +1536,11 @@ private final class TagEditorPage(
           case (false, true, false) =>
             div(
               cls := "flex gap-1",
+              InlineRename.iconButton(
+                I18n.t(UiKeys.tagsEditorDetails),
+                noteMark(),
+                onClick.mapToUnit --> Observer[Unit](_ => toggleDetails(rowKey)),
+              ),
               InlineRename.iconButton(
                 I18n.t(UiKeys.tagsEditorEditRow),
                 pencilMark(),
@@ -1839,6 +1923,20 @@ private final class TagEditorPage(
     svg.strokeLineJoin := "round",
     svg.path(
       svg.d := "m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+    ),
+  )
+
+  /** A page with lines on it — the row's note and forms. */
+  private def noteMark(): SvgElement = svg.svg(
+    svg.cls            := "h-4 w-4",
+    svg.viewBox        := "0 0 24 24",
+    svg.fill           := "none",
+    svg.stroke         := "currentColor",
+    svg.strokeWidth    := "1.5",
+    svg.strokeLineCap  := "round",
+    svg.strokeLineJoin := "round",
+    svg.path(
+      svg.d := "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
     ),
   )
 

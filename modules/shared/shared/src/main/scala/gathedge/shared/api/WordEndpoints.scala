@@ -24,6 +24,9 @@ import gathedge.shared.dto.{
   SetGenderRequest,
   SetTagLanguagesRequest,
   TagEntry,
+  TagEntryFormRequest,
+  TagEntryFormResponse,
+  TagEntryNoteRequest,
   TagEntryResponse,
   TagExportFile,
   TagImportRequest,
@@ -78,6 +81,8 @@ object WordPaths {
   val tagEntriesPage      = ApiPath1[Long](GET, "/api/tags/{tagId}/entries/page")
   val addPair             = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs")
   val attachWord          = ApiPath1[Long](POST, "/api/tags/{tagId}/words")
+  val setEntryNote        = ApiPath2[Long, Long](PUT, "/api/tags/{tagId}/words/{wordId}/note")
+  val addEntryForm        = ApiPath2[Long, Long](POST, "/api/tags/{tagId}/words/{wordId}/forms")
   val replacePair         = ApiPath1[Long](PUT, "/api/tags/{tagId}/pairs")
   val deletePair          = ApiPath2[Long, Long](DELETE, "/api/tags/{tagId}/pairs/{sourceWordId}")
   val bulkDeletePairs     = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs/bulk-delete")
@@ -116,6 +121,8 @@ object WordPaths {
     tagEntriesPage,
     addPair,
     attachWord,
+    setEntryNote,
+    addEntryForm,
     replacePair,
     deletePair,
     bulkDeletePairs,
@@ -539,6 +546,32 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
+  /** Sets or clears the reader's note beside one word of the wordlist — what an import reads off a cell's parenthesised
+    * group, entered by hand. The note belongs to the membership, not to the shared word. 404 is a tag the caller may
+    * not edit, or a word the wordlist does not hold. 400 is a note over `word_tags.comment`'s width.
+    */
+  val setEntryNote = {
+    Endpoint(ApiRoutes.route2(paths.setEntryNote, PathCodec.long, PathCodec.long))
+      .in[TagEntryNoteRequest]
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Files an inflected word under one word of the wordlist, as a `word_forms` row — what an import's extra column
+    * writes, entered by hand. The form word is found or minted in the lemma's language with the lemma's part of speech.
+    * Idempotent: a form already filed under that relation answers `alreadyPresent`. 404 is a tag the caller may not
+    * edit, or a word the wordlist does not hold. 400 is a blank or over-long word, a relation outside
+    * `GrammarTag.pickable`, or a form that is the word itself.
+    */
+  val addEntryForm = {
+    Endpoint(ApiRoutes.route2(paths.addEntryForm, PathCodec.long, PathCodec.long))
+      .in[TagEntryFormRequest]
+      .withCodecError
+      .out[TagEntryFormResponse](Status.Created)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
   /** Replaces one editor row's pair in place — the row's inline edit. The body names the row (its old source word id,
     * and its old answer word id when it had one) and the pair it should become. The pair's `exact` flag is cleared: a
     * hand-edited pair is no longer an exact import match. Same 404/409 rules as [[addPair]].
@@ -719,6 +752,8 @@ object WordEndpoints {
       tagEntriesPage,
       addPair,
       attachWord,
+      setEntryNote,
+      addEntryForm,
       replacePair,
       deletePair,
       bulkDeletePairs,

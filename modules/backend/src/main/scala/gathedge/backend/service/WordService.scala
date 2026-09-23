@@ -53,6 +53,9 @@ import gathedge.shared.dto.{
   PairRef,
   ReplacePairRequest,
   TagEntry,
+  TagEntryFormRequest,
+  TagEntryFormResponse,
+  TagEntryNoteRequest,
   TagEntryPage,
   TagEntryResponse,
   TagExportEntry,
@@ -368,6 +371,21 @@ trait WordService {
     */
   def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse]
 
+  /** Sets or clears the reader's note beside one word of the wordlist. `TagNotFound` for a tag the caller may not edit,
+    * `NotFound` for a word the wordlist does not hold.
+    */
+  def setEntryNote(tagId: Long, wordId: Long, request: TagEntryNoteRequest, userId: Long): IO[WordFailure, Unit]
+
+  /** Files an inflected word under one word of the wordlist — an import's extra column, entered by hand. The form word
+    * is found or minted in the lemma's language and part of speech. Idempotent per `(lemma, form, relation)`.
+    */
+  def addEntryForm(
+    tagId: Long,
+    wordId: Long,
+    request: TagEntryFormRequest,
+    userId: Long,
+  ): IO[WordFailure, TagEntryFormResponse]
+
   /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
     * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair is
     * [[gathedge.shared.domain.PairMatch.Manual]]: a hand-edited pair carries no import's claim.
@@ -679,6 +697,22 @@ object WordService {
     userId: Long,
   ): ZIO[WordService, WordFailure, TagEntryResponse] =
     ZIO.serviceWithZIO[WordService](_.attachWord(tagId, input, userId))
+
+  def setEntryNote(
+    tagId: Long,
+    wordId: Long,
+    request: TagEntryNoteRequest,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.setEntryNote(tagId, wordId, request, userId))
+
+  def addEntryForm(
+    tagId: Long,
+    wordId: Long,
+    request: TagEntryFormRequest,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, TagEntryFormResponse] =
+    ZIO.serviceWithZIO[WordService](_.addEntryForm(tagId, wordId, request, userId))
 
   def replacePair(
     tagId: Long,
@@ -2149,6 +2183,49 @@ final case class WordServiceLive(
       added           <- repo.tagWord(wordId, tagId, now).orDie
       entry           <- entryAfterWrite(tag, wordId, None, userId)
     } yield TagEntryResponse(entry, warning = None, alreadyPresent = !added)
+  }
+
+  def setEntryNote(tagId: Long, wordId: Long, request: TagEntryNoteRequest, userId: Long): IO[WordFailure, Unit] = {
+    for {
+      _    <- requireEditableTag(tagId, userId)
+      note <- ZIO
+                .fromEither(Validation.validateNote(request.note))
+                .mapError(error => WordFailure.ValidationError(Map("note" -> error)))
+      rows <- repo.setTagComment(wordId, tagId, note).orDie
+      _    <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.NotFound))
+    } yield ()
+  }
+
+  def addEntryForm(
+    tagId: Long,
+    wordId: Long,
+    request: TagEntryFormRequest,
+    userId: Long,
+  ): IO[WordFailure, TagEntryFormResponse] = {
+    val badRelation =
+      WordFailure.ValidationError(Map("relation" -> MessageRef(MessageKeys.wordFormRelationInvalid)))
+    val selfForm    = WordFailure.ValidationError(Map("text" -> MessageRef(MessageKeys.wordFormIsLemma)))
+    for {
+      _        <- requireEditableTag(tagId, userId)
+      _        <- ZIO.unless(GrammarTag.pickable.contains(request.relation))(ZIO.fail(badRelation))
+      member   <- repo.isInTag(wordId, tagId).orDie
+      _        <- ZIO.unless(member)(ZIO.fail(WordFailure.NotFound))
+      lemma    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      language <- ZIO.fromOption(WordLanguage.fromString(lemma.language)).orElseFail(WordFailure.NotFound)
+      // Compared by text, not by id: the form is minted with no gender, so `Haus` beside `das Haus` would otherwise
+      // become a second, genderless row rather than being caught as the word itself.
+      _        <- ZIO.when(request.text.trim.toLowerCase == lemma.textNorm)(ZIO.fail(selfForm))
+      // The same call an import's extra column makes: the form takes the lemma's part of speech and no gender of its
+      // own, since a plural or a past tense has no article to read one from.
+      form     <- ensure(language, request.text, decode(lemma.partOfSpeech), None, userId)
+      _        <- ZIO.when(form.id == lemma.id)(ZIO.fail(selfForm))
+      known    <- repo.existingFormRelations(List(lemma.id)).orDie
+      already   = known.contains((lemma.id, form.id, request.relation))
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _        <- ZIO.unless(already)(
+                    repo.insertForms(List(WordFormRow(0L, lemma.id, form.id, request.relation, now))).orDie
+                  )
+    } yield TagEntryFormResponse(toDomain(form), alreadyPresent = already)
   }
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {

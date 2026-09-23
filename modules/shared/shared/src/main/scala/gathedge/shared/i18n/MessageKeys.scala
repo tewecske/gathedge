@@ -58,6 +58,7 @@ object MessageKeys {
   val fieldPassword: String  = key("field.password")
   val fieldWord: String      = key("field.word")
   val fieldTag: String       = key("field.tag")
+  val fieldNote: String      = key("field.note")
   val fieldGameName: String  = key("field.gameName")
   val fieldGroupName: String = key("field.groupName")
 
@@ -132,6 +133,16 @@ object MessageKeys {
     * so repeating either in the sentence would only give Hungarian an article to decline.
     */
   val wordGenderConflict: String = key("words.genderConflict")
+
+  /** A form added by hand named a relation outside `GrammarTag.pickable`. Takes no argument: the editor offers only
+    * those, so a caller reached this past the picker.
+    */
+  val wordFormRelationInvalid: String = key("words.formRelationInvalid")
+
+  /** A form added by hand is the word it was to be filed under. A `word_forms` self-edge would set `is_form` on the
+    * lemma and drop it out of the listing.
+    */
+  val wordFormIsLemma: String = key("words.formIsLemma")
 
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.

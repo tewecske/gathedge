@@ -1030,6 +1030,21 @@ object UiKeys {
     */
   val tagsEditorNewBadge: String = key("ui.tags.editor.newBadge")
 
+  /** A row's "note and forms" button, and the panel it opens under the row: per word, the reader's note beside it and
+    * the forms filed under it, each editable by hand — what an import writes from a cell's note and an extra column.
+    * `{0}` in `formExists` is the form word.
+    */
+  val tagsEditorDetails: String         = key("ui.tags.editor.details")
+  val tagsEditorNoteLabel: String       = key("ui.tags.editor.noteLabel")
+  val tagsEditorNotePlaceholder: String = key("ui.tags.editor.notePlaceholder")
+  val tagsEditorSaveNote: String        = key("ui.tags.editor.saveNote")
+  val tagsEditorFormsLabel: String      = key("ui.tags.editor.formsLabel")
+  val tagsEditorNoForms: String         = key("ui.tags.editor.noForms")
+  val tagsEditorFormPlaceholder: String = key("ui.tags.editor.formPlaceholder")
+  val tagsEditorFormRelation: String    = key("ui.tags.editor.formRelation")
+  val tagsEditorAddForm: String         = key("ui.tags.editor.addForm")
+  val tagsEditorFormExists: String      = key("ui.tags.editor.formExists")
+
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
     * in this tag" is a word in none of the reader's other tags.
