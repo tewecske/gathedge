@@ -12,9 +12,13 @@ import scala.concurrent.Future
 import scala.scalajs.js
 import scala.util.{Failure, Success}
 
-/** Copy-link, Web Share, QR code and one button per share page for one URL — the row `GameInstancePage` and
-  * `GroupDetailPage` both put next to whatever they are sharing (a quiz's own URL for the former, an invite link built
-  * from a code for the latter).
+/** One "Share" button for one URL, and the popup it opens: copy-link, Web Share, QR code and one button per share page.
+  * `GameInstancePage` and `GroupDetailPage` both put it next to whatever they share (a quiz's own URL for the former,
+  * an invite link built from a code for the latter).
+  *
+  * The options sit in a popup, not in a row on the page. Sharing is not what either page is for, so the page shows one
+  * button and nothing more. The popup is a bottom sheet on a narrow screen and a centred box from `sm` up, and its
+  * buttons wrap, so it fits a phone.
   *
   * The per-network buttons are [[ShareTarget]]: each opens that site's own share page with the link already in it, so
   * nothing here talks to a network itself. The Web Share button stays in front of them, since a phone's own share sheet
@@ -28,19 +32,20 @@ import scala.util.{Failure, Success}
   * comment: it keeps the `qrcode` npm package's `@JSImport` out of this component's reachable graph under the Scala.js
   * test linker, which would otherwise fail every spec that renders either caller page at all.
   *
-  * `notify` receives the already-translated "Link copied!" message on a successful copy — the two current callers both
-  * feed it into their own page-level notice banner (`Alert.maybeInfo`), rather than this component owning one.
+  * A successful copy shows a toast in the corner. A toast floats over the page, so the content does not move, which an
+  * alert banner at the top of the page did.
   */
 final class ShareRow(
   link: () => String,
   shareTitle: () => String,
   generateQr: String => Future[String],
-  notify: String => Unit,
 ) {
 
+  private val openVar                           = Var(false)
   private val qrOpenVar                         = Var(false)
   private val qrDataUriVar: Var[Option[String]] = Var(None)
   private val qrErrorVar: Var[Option[String]]   = Var(None)
+  private val toastVar: Var[Option[String]]     = Var(None)
 
   /** Clears the cached QR code — call this when `link` changes under the page (a group's invite-code regenerate), so
     * the next open re-fetches rather than showing a code for a now-dead link.
@@ -49,27 +54,23 @@ final class ShareRow(
 
   def render(): HtmlElement = {
     div(
-      cls := "flex flex-wrap items-center gap-2 mt-3",
+      cls := "mt-3",
       button(
-        cls := "btn btn-ghost btn-xs",
+        cls := "btn btn-sm",
         typ := "button",
-        I18n.t(UiKeys.shareCopyLink),
-        onClick.mapToUnit --> Observer[Unit](_ => copyLink()),
-      ),
-      button(
-        cls := "btn btn-ghost btn-xs",
-        typ := "button",
+        shareMark(),
         I18n.t(UiKeys.shareButton),
-        onClick.mapToUnit --> Observer[Unit](_ => share()),
+        onClick.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
       ),
-      button(
-        cls := "btn btn-ghost btn-xs",
-        typ := "button",
-        I18n.t(UiKeys.shareQrGenerate),
-        onClick.mapToUnit --> Observer[Unit](_ => openQr()),
+      renderModal(),
+      child.maybe <-- toastVar.signal.map(
+        _.map(msg => {
+          div(
+            cls := "toast toast-top toast-end z-[1000]",
+            div(cls := "alert alert-success", span(msg)),
+          )
+        })
       ),
-      children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetButton)),
-      renderQrModal(),
       // Left alone on a failure rather than cleared: a row that cannot reach the server has no news about the app id,
       // and a cached one from an earlier page is still right. See [[ShareRow.messengerAppIdVar]].
       ApiClient.providers -->
@@ -82,25 +83,69 @@ final class ShareRow(
     )
   }
 
-  /** One share page, as an icon with its name on the tooltip — the shape `GameSetupPage.renderSwap` uses for an icon
-    * button that has no room for a label.
+  /** A `div.modal` with `modal-open` toggled off a `Var[Boolean]`, not `HTMLDialogElement.showModal` — that call is
+    * unimplemented in jsdom, which the frontend specs run under. The QR code opens inside the same box, under the
+    * buttons, rather than in a second modal on top of this one.
+    */
+  private def renderModal(): HtmlElement = {
+    div(
+      cls := "modal modal-bottom sm:modal-middle",
+      cls("modal-open") <-- openVar.signal,
+      div(
+        cls   := "modal-box flex flex-col gap-4",
+        h3(cls := "font-semibold text-lg", I18n.t(UiKeys.shareButton)),
+        div(
+          cls  := "flex flex-wrap gap-2",
+          actionButton(I18n.t(UiKeys.shareCopyLink), () => copyLink()),
+          actionButton(I18n.t(UiKeys.shareDevice), () => share()),
+          actionButton(I18n.t(UiKeys.shareQrGenerate), () => openQr()),
+        ),
+        div(
+          cls  := "grid grid-cols-2 sm:grid-cols-3 gap-2",
+          children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetButton)),
+        ),
+        child.maybe <-- qrOpenVar.signal.map(Option.when(_)(renderQr())),
+        div(
+          cls  := "modal-action mt-0",
+          button(
+            cls := "btn",
+            typ := "button",
+            I18n.t(UiKeys.shareQrClose),
+            onClick.mapToUnit --> Observer[Unit](_ => close()),
+          ),
+        ),
+      ),
+      // Closes on an outside click, same as `AppShell.renderSignInConfirmModal`'s `modal-backdrop`.
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => close())),
+    )
+  }
+
+  private def close(): Unit = Var.set(openVar -> false, qrOpenVar -> false)
+
+  private def actionButton(label: String, action: () => Unit): HtmlElement = {
+    button(
+      cls := "btn btn-sm",
+      typ := "button",
+      label,
+      onClick.mapToUnit --> Observer[Unit](_ => action()),
+    )
+  }
+
+  /** One share page, as its icon and its name. The popup has room for the name, so it is text on the button rather than
+    * a tooltip.
     *
     * The URL is built in the click handler rather than put on an anchor's `href`, for the reason `link` is a function
     * at all: a group's invite link changes under the page when its code is regenerated, and an `href` written at render
     * time would go on pointing at the dead one.
     */
   private def targetButton(target: ShareTarget): HtmlElement = {
-    val name             = ShareTarget.label(target)
-    span(
-      cls             := "tooltip",
-      dataAttr("tip") := name,
-      button(
-        cls        := "btn btn-ghost btn-xs btn-square",
-        typ        := "button",
-        aria.label := name,
-        ShareTarget.icon(target),
-        onClick.mapToUnit --> Observer[Unit](_ => openTarget(target)),
-      ),
+    button(
+      cls        := "btn btn-ghost btn-sm justify-start",
+      typ        := "button",
+      aria.label := ShareTarget.label(target),
+      ShareTarget.icon(target),
+      ShareTarget.displayName(target),
+      onClick.mapToUnit --> Observer[Unit](_ => openTarget(target)),
     )
   }
 
@@ -127,8 +172,17 @@ final class ShareRow(
 
   private def copyLink(): Unit = {
     if (copyToClipboard(link())) {
-      notify(I18n.t(UiKeys.shareCopied))
+      showToast(I18n.t(UiKeys.shareCopied))
     }
+  }
+
+  /** Shows `message` in the corner for [[ShareRow.toastMs]]. A second copy inside that time restarts nothing; the first
+    * timer clears it, which is soon enough for a line that only confirms.
+    */
+  private def showToast(message: String): Unit = {
+    toastVar.set(Some(message))
+    dom.window.setTimeout(() => toastVar.set(None), ShareRow.toastMs)
+    ()
   }
 
   /** `navigator.share` first, falling back to [[copyLink]] when the API is absent — mobile browsers overwhelmingly have
@@ -150,8 +204,8 @@ final class ShareRow(
     }
   }
 
-  /** Opens the modal immediately and fills it in once the QR code is ready, rather than generating it up front — a
-    * reader who never asks for the code never pays for it. Cached in [[qrDataUriVar]] until [[resetQr]] clears it.
+  /** Shows the QR block at once and fills it in once the code is ready, rather than generating it up front — a reader
+    * who never asks for the code never pays for it. Cached in [[qrDataUriVar]] until [[resetQr]] clears it.
     */
   private def openQr(): Unit = {
     Var.set(qrOpenVar -> true, qrErrorVar -> None)
@@ -165,43 +219,44 @@ final class ShareRow(
     }
   }
 
-  /** A `div.modal` with `modal-open` toggled off a `Var[Boolean]`, not `HTMLDialogElement.showModal` — that call is
-    * unimplemented in jsdom, which the frontend specs run under.
-    */
-  private def renderQrModal(): HtmlElement = {
+  private def renderQr(): HtmlElement = {
     div(
-      cls := "modal",
-      cls("modal-open") <-- qrOpenVar.signal,
-      div(
-        cls   := "modal-box",
-        h3(cls := "font-semibold text-lg", I18n.t(UiKeys.shareQrTitle)),
-        div(
-          cls  := "flex justify-center py-6",
-          child <-- qrDataUriVar.signal.map {
-            case Some(uri) =>
-              img(cls := "w-48 h-48", src := uri, alt := I18n.t(UiKeys.shareQrAlt))
-            case None      =>
-              span(cls := "loading loading-spinner")
-          },
-        ),
-        child.maybe <-- qrErrorVar.signal.map(_.map(msg => p(cls := "text-error text-sm text-center", msg))),
-        div(
-          cls  := "modal-action",
-          button(
-            cls := "btn",
-            typ := "button",
-            I18n.t(UiKeys.shareQrClose),
-            onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false)),
-          ),
-        ),
+      cls := "flex flex-col items-center gap-2",
+      h4(cls := "font-semibold", I18n.t(UiKeys.shareQrTitle)),
+      child <-- Signal.combine(qrDataUriVar.signal, qrErrorVar.signal).map {
+        case (Some(uri), _)  =>
+          img(cls := "w-48 h-48", src := uri, alt := I18n.t(UiKeys.shareQrAlt))
+        case (None, Some(_)) =>
+          emptyNode
+        case (None, None)    =>
+          span(cls := "loading loading-spinner")
+      },
+      child.maybe <-- qrErrorVar.signal.map(_.map(msg => p(cls := "text-error text-sm text-center", msg))),
+    )
+  }
+
+  /** Heroicons' outline "share" mark, the icon set `HelpIcon` and the page chrome already draw from. */
+  private def shareMark(): SvgElement = {
+    svg.svg(
+      svg.cls            := "h-4 w-4",
+      svg.viewBox        := "0 0 24 24",
+      svg.fill           := "none",
+      svg.stroke         := "currentColor",
+      svg.strokeWidth    := "1.5",
+      svg.strokeLineCap  := "round",
+      svg.strokeLineJoin := "round",
+      svg.path(
+        svg.d :=
+          "M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"
       ),
-      // Closes on an outside click, same as `AppShell.renderSignInConfirmModal`'s `modal-backdrop`.
-      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false))),
     )
   }
 }
 
 object ShareRow {
+
+  /** How long the "Link copied!" toast stays up. */
+  private val toastMs = 3000
 
   /** The Facebook app id [[ShareTarget.Messenger]] needs, cached here rather than in each row: it is the same for every
     * reader and for the life of the deployment, so a second share row can draw its Messenger button at once while the

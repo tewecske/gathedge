@@ -79,8 +79,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     */
   private val nameVar = Var("")
 
-  private val errorVar: Var[Option[String]]  = Var(None)
-  private val noticeVar: Var[Option[String]] = Var(None)
+  private val errorVar: Var[Option[String]] = Var(None)
 
   /** The direction-swap arrow's own state — `false` plays the game's stored direction, `true` reverses it for this play
     * only. See the design doc's "no dropdowns, just an arrow" direction control.
@@ -207,10 +206,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val inlineRename = new InlineRename[GameDetail](text => GameApiClient.rename(slug, text))
 
-  /** Copy-link, Web Share and QR code — all three act on this page's own URL, which is the shared link itself. See
+  /** The Share button and its popup — every option acts on this page's own URL, which is the shared link itself. See
     * [[components.ShareRow]] for why `generateQr` is threaded in rather than called directly.
     */
-  private val shareRow = new ShareRow(() => pageUrl(), () => nameVar.now(), generateQr, msg => noticeVar.set(Some(msg)))
+  private val shareRow = new ShareRow(() => pageUrl(), () => nameVar.now(), generateQr)
 
   /** Mirrors who the reader is at the moment a request is made — same trick as `GameSetupPage.readerVar`, needed
     * because [[asReader]] reads it outside a subscription.
@@ -243,7 +242,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     div(
       cls := "max-w-xl mx-auto",
       Alert.maybeError(errorVar.signal),
-      Alert.maybeInfo(noticeVar.signal),
       child.maybe <-- missingVar.signal.map(Option.when(_)(Alert.info(I18n.t(UiKeys.gameInstanceNotFound)))),
       // Built once, the moment the game finishes loading, and never again — see `renderGameCard`'s doc comment. A
       // rename only ever writes through `nameVar`, so it does not need to rebuild anything else under it.
@@ -362,9 +360,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  /** The card's chrome — name, language pair, tags, share row, and the picker — built exactly once, the first time
-    * [[render]] sees the game loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never
-    * change after load (a rename only ever touches [[nameVar]]).
+  /** The card's chrome — name, wordlists, Share button, and the picker — built exactly once, the first time [[render]]
+    * sees the game loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never change after
+    * load (a rename only ever touches [[nameVar]]).
     */
   private def renderGameCard(): HtmlElement = {
     val detail = gameVar
@@ -383,17 +381,12 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
           deleteIcon(),
-          HelpIcon.render(I18n.t(UiKeys.helpGameShare)),
           resultsLink(),
         ),
         renderDeleteModal(detail),
-        p(
-          cls   := "text-sm opacity-70",
-          s"${Labels.language(detail.sourceLanguage)} → ${Labels.language(detail.targetLanguage)}",
-        ),
         if (detail.tags.nonEmpty) {
           div(
-            cls := "flex flex-wrap gap-2 mt-1",
+            cls := "flex flex-wrap items-center gap-2 mt-1",
             detail.tags.map(tag => {
               a(
                 cls := "link",
@@ -401,6 +394,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
                 tag.name,
               )
             }),
+            HelpIcon.render(I18n.t(UiKeys.helpGameWordlists)),
           )
         } else
           emptyNode,

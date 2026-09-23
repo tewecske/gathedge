@@ -36,9 +36,8 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   private val detailVar: Var[Option[GroupDetail]] = Var(None)
   private val myTagsVar                           = Var(List.empty[Tag])
 
-  private val errorVar: Var[Option[String]]  = Var(None)
-  private val noticeVar: Var[Option[String]] = Var(None)
-  private val busyVar                        = Var(false)
+  private val errorVar: Var[Option[String]] = Var(None)
+  private val busyVar                       = Var(false)
 
   private val attachSelectionVar = Var(Option.empty[Long])
 
@@ -48,7 +47,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     */
   private val inviteCodeVar = Var("")
 
-  /** Copy-link, Web Share and QR code for `/groups/join/{code}` — see [[components.ShareRow]]. Unlike
+  /** The Share button and its popup for `/groups/join/{code}` — see [[components.ShareRow]]. Unlike
     * `GameInstancePage`'s own, this page's URL is not the shareable one, so `link` builds `inviteLink` from
     * [[inviteCodeVar]] instead of reading `dom.window.location.href`.
     */
@@ -56,7 +55,6 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     () => inviteLink(inviteCodeVar.now()),
     () => detailVar.now().map(_.name).getOrElse(""),
     generateQr,
-    msg => noticeVar.set(Some(msg)),
   )
 
   private val inlineRename = new InlineRename[GroupDetail](name => GroupApiClient.renameGroup(groupId, name))
@@ -102,7 +100,6 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     div(
       cls := "max-w-3xl mx-auto",
       Alert.maybeError(errorVar.signal),
-      Alert.maybeInfo(noticeVar.signal),
       div(
         cls := "card bg-base-100 shadow mt-4",
         div(
