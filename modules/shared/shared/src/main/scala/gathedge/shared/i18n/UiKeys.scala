@@ -110,6 +110,11 @@ object UiKeys {
   val shareVia: String   = key("ui.share.via")
   val shareEmail: String = key("ui.share.email")
 
+  /** The Web Share button inside the popup. "Share" names the button that opens the popup, so this one says where it
+    * goes instead: the device's own share sheet.
+    */
+  val shareDevice: String = key("ui.share.device")
+
   // -- Navigation ------------------------------------------------------------------------------
 
   val navMenu: String = key("ui.nav.menu")
@@ -1504,7 +1509,7 @@ object UiKeys {
 
   val helpTags: String            = key("ui.help.tags")
   val helpBulkImport: String      = key("ui.help.bulkImport")
-  val helpGameShare: String       = key("ui.help.gameShare")
+  val helpGameWordlists: String   = key("ui.help.gameWordlists")
   val helpGameMode: String        = key("ui.help.gameMode")
   val helpShareHistory: String    = key("ui.help.shareHistory")
   val helpGroups: String          = key("ui.help.groups")
