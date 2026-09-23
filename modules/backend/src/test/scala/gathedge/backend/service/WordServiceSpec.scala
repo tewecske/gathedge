@@ -44,6 +44,8 @@ import gathedge.shared.dto.{
   TagPairWord,
   TagSort,
   TagWordInput,
+  TagEntryFormRequest,
+  TagEntryNoteRequest,
   TaggedPair,
   WordSort,
 }
@@ -2172,6 +2174,80 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows  <- WordService.tagEntries(tag.id, Some(1L))
           alien <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 2L).either
         } yield assertTrue(rows.length == 1, alien == Left(WordFailure.TagNotFound))
+      },
+      test("setEntryNote writes, replaces and clears the reader's note on one word of the wordlist") {
+        for {
+          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag     <- createTag("noteb7", 1L, WordLanguage.De, WordLanguage.Hu)
+          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          _       <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("  Gebäude ")), 1L)
+          written <- WordService.tagEntries(tag.id, Some(1L))
+          _       <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("   ")), 1L)
+          cleared <- WordService.tagEntries(tag.id, Some(1L))
+        } yield assertTrue(
+          written.map(_.comment) == List(Some("Gebäude")),
+          cleared.map(_.comment) == List(None),
+        )
+      },
+      test("setEntryNote refuses a word outside the wordlist, somebody else's tag, and an over-long note") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          baum   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baum", gender = Some(Gender.Masculine)))
+          tag    <- createTag("noteb8", 1L, WordLanguage.De, WordLanguage.Hu)
+          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          absent <- WordService.setEntryNote(tag.id, baum.id, TagEntryNoteRequest(Some("x")), 1L).either
+          alien  <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("x")), 2L).either
+          long   <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("x" * 256)), 1L).either
+        } yield assertTrue(
+          absent == Left(WordFailure.NotFound),
+          alien == Left(WordFailure.TagNotFound),
+          long.left.exists {
+            case WordFailure.ValidationError(fields) => fields.contains("note")
+            case _                                   => false
+          },
+        )
+      },
+      test("addEntryForm files a minted form under the word, once per relation") {
+        for {
+          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          tag   <- createTag("formb9", 1L, WordLanguage.De, WordLanguage.Hu)
+          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          first <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 1L)
+          again <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 1L)
+          forms <- WordRepository.formsOf(haus.id)
+          lemma <- WordRepository.findWordById(haus.id)
+        } yield assertTrue(
+          first.form.text == "Häuser",
+          first.form.partOfSpeech == PartOfSpeech.Noun,
+          !first.alreadyPresent,
+          again.alreadyPresent,
+          forms.map(row => (row.formWordId, row.relation)) == List((first.form.id, "plural")),
+          // The lemma stays a main word: only the form is marked `is_form`.
+          lemma.exists(!_.isForm),
+        )
+      },
+      test("addEntryForm refuses an unknown relation, the word itself, and a word outside the wordlist") {
+        for {
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          baum   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baum", gender = Some(Gender.Masculine)))
+          tag    <- createTag("formb10", 1L, WordLanguage.De, WordLanguage.Hu)
+          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
+          badRel <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "ergative"), 1L).either
+          self   <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Haus", "singular"), 1L).either
+          absent <- WordService.addEntryForm(tag.id, baum.id, TagEntryFormRequest("Bäume", "plural"), 1L).either
+          alien  <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 2L).either
+        } yield {
+          def field(result: Either[WordFailure, ?], name: String): Boolean = result.left.exists {
+            case WordFailure.ValidationError(fields) => fields.contains(name)
+            case _                                   => false
+          }
+          assertTrue(
+            field(badRel, "relation"),
+            field(self, "text"),
+            absent == Left(WordFailure.NotFound),
+            alien == Left(WordFailure.TagNotFound),
+          )
+        }
       },
       // The pair is mandatory at creation, editable while the tag has no practice pair, and locked once it does.
       test("a tag's language pair is set at creation, editable until the first pair, then locked") {

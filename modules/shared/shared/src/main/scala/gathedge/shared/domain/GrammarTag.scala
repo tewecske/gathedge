@@ -86,6 +86,27 @@ object GrammarTag {
     )
   }
 
+  /** The relations the wordlist editor offers when a reader adds a form by hand, in the order its picker lists them.
+    *
+    * A short list on purpose: the commonest forms a vocabulary list writes down, not every tag a wiktextract dump
+    * carries. Each one is a single tag, so it renders through the same labels an imported form does. The server accepts
+    * only these, so a hand-added form never files itself under a relation nobody can read.
+    */
+  val pickable: List[String] = List(
+    "plural",
+    "singular",
+    "genitive",
+    "dative",
+    "accusative",
+    "past",
+    "participle",
+    "third-person",
+    "comparative",
+    "superlative",
+    "diminutive",
+    "alternative",
+  )
+
   /** The category of a whole `relation` string: the lowest-priority category among its constituent tags wins, so
     * `"dative,definite,plural"` reads as a plural/case form even though `definite`/`plural` alone would tie.
     */

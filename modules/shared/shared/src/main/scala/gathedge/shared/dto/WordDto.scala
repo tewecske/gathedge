@@ -294,6 +294,22 @@ final case class TagEntryResponse(
   alreadyPresent: Boolean = false,
 ) derives JsonCodec
 
+/** [[gathedge.shared.api.WordEndpoints.setEntryNote]]'s body: the reader's note beside one word of one wordlist — the
+  * `(növény)` of `levél (növény)`, which an import reads off the cell. `None` or a blank note clears it.
+  */
+final case class TagEntryNoteRequest(note: Option[String]) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addEntryForm]]'s body: an inflected word to file under a word of the wordlist,
+  * and the relation it has to it. `relation` must be one of `GrammarTag.pickable`. This is what an import's extra
+  * column writes, entered by hand.
+  */
+final case class TagEntryFormRequest(text: String, relation: String) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addEntryForm]]'s answer: the form word, found or minted. `alreadyPresent` says
+  * the word already had this form under this relation, so nothing was written.
+  */
+final case class TagEntryFormResponse(form: Word, alreadyPresent: Boolean) derives JsonCodec
+
 /** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
   * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may
   * be an existing word or one to create.

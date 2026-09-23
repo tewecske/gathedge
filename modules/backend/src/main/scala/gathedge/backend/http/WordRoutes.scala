@@ -23,6 +23,8 @@ import gathedge.shared.dto.{
   SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
+  TagEntryFormRequest,
+  TagEntryNoteRequest,
   TagImportRequest,
   TagPairInput,
   TagWordInput,
@@ -339,6 +341,22 @@ object WordRoutes {
     )
   }
 
+  private val setEntryNoteRoute = {
+    WordEndpoints.setEntryNote.implementHandler(
+      handler { (tagId: Long, wordId: Long, body: TagEntryNoteRequest) =>
+        userId.flatMap(id => WordService.setEntryNote(tagId, wordId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val addEntryFormRoute = {
+    WordEndpoints.addEntryForm.implementHandler(
+      handler { (tagId: Long, wordId: Long, body: TagEntryFormRequest) =>
+        userId.flatMap(id => WordService.addEntryForm(tagId, wordId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
   private val replacePairRoute = {
     WordEndpoints.replacePair.implementHandler(
       handler { (tagId: Long, body: ReplacePairRequest) =>
@@ -481,6 +499,8 @@ object WordRoutes {
       deselectPairRoute,
       addPairRoute,
       attachWordRoute,
+      setEntryNoteRoute,
+      addEntryFormRoute,
       replacePairRoute,
       deletePairRoute,
       bulkDeletePairsRoute,
