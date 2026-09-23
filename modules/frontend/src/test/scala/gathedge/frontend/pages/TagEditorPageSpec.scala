@@ -5,7 +5,7 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{GrammarTag, PairMatch, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
@@ -222,6 +222,47 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             TagEditorPage.rowsFor(grid, Map.empty).isEmpty,
           )
         },
+      ),
+      suite("withNote")(
+        test("a saved note reaches every row that shows the word, on whichever side it is") {
+          val rows    = List(entry(1, Some(2)), entry(1, Some(3)), entry(2, Some(4)), entry(5, None))
+          val updated = TagEditorPage.withNote(rows, 2L, Some("n"))
+          assertTrue(
+            updated.map(r => (r.comment, r.targetComment)) == List(
+              (None, Some("n")),
+              (None, None),
+              (Some("n"), None),
+              (None, None),
+            )
+          )
+        },
+        test("clearing a note clears it everywhere the word is shown") {
+          val rows = List(entry(1, Some(2), comment = Some("a")), entry(1, None, comment = Some("a")))
+          assertTrue(TagEditorPage.withNote(rows, 1L, None).forall(_.comment.isEmpty))
+        },
+      ),
+      suite("TagEntryDetails")(
+        test("opens on the word's current note, with every pickable form type on offer") {
+          val container = dom.document.createElement("div")
+          dom.document.body.appendChild(container)
+          val word      = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
+          val rootNode  =
+            L.render(container, new TagEntryDetails(1L, word, Some("Gebäude"), Observer.empty).render())
+          try {
+            val note    = container.querySelector("input").asInstanceOf[dom.html.Input].value
+            val options = container.querySelectorAll("select option").toList.map(_.getAttribute("value"))
+            val text    = container.textContent
+            assertTrue(
+              note == "Gebäude",
+              options == GrammarTag.pickable,
+              text.contains(UiKeys.tagsEditorNoteLabel),
+              text.contains(UiKeys.tagsEditorAddForm),
+            )
+          } finally {
+            rootNode.unmount()
+            dom.document.body.removeChild(container)
+          }
+        }
       ),
       suite("orient")(
         test("a pair sits with each word under its own language's column") {
