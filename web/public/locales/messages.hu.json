@@ -81,7 +81,6 @@
   "ui.share.qrGenerate": "QR-kód létrehozása",
   "ui.share.qrTitle": "QR-kód",
   "ui.share.qrAlt": "QR-kód, mely erre az oldalra mutat",
-  "ui.share.qrClose": "Bezárás",
   "ui.share.qrError": "A QR-kód létrehozása nem sikerült.",
   "ui.share.via": "Megosztás itt: {0}",
   "ui.share.email": "Megosztás e-mailben",

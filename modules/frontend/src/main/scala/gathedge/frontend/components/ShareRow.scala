@@ -12,19 +12,20 @@ import scala.concurrent.Future
 import scala.scalajs.js
 import scala.util.{Failure, Success}
 
-/** One "Share" button for one URL, and the popup it opens: copy-link, Web Share, QR code and one button per share page.
-  * `GameInstancePage` and `GroupDetailPage` both put it next to whatever they share (a quiz's own URL for the former,
-  * an invite link built from a code for the latter).
+/** One "Share" button for one URL, and the dropdown it opens: copy-link, Web Share, QR code and one entry per share
+  * page. `GameInstancePage` and `GroupDetailPage` both put it next to whatever they share (a quiz's own URL for the
+  * former, an invite link built from a code for the latter).
   *
-  * The button comes in two shapes: [[render]] draws a labelled button with its popup in one block, and
+  * The button comes in two shapes: [[render]] draws a labelled button with its dropdown in one block, and
   * [[renderIconButton]] draws the icon alone for a title row, with [[renderPopup]] placed elsewhere.
   *
-  * The options sit in a popup, not in a row on the page. Sharing is not what either page is for, so the page shows one
-  * button and nothing more. The popup is a bottom sheet on a narrow screen and a centred box from `sm` up, and its
-  * buttons wrap, so it fits a phone.
+  * The options sit in a dropdown, not in a row on the page. Sharing is not what either page is for, so the page shows
+  * one button and nothing more. The dropdown is daisyUI's popover-API one, built through [[Popover]] like the account
+  * menu and [[LanguagePicker]]: CSS anchor positioning opens it next to the button, and a click outside closes it. It
+  * is one narrow menu column, capped at the screen width less a margin, so it fits a phone.
   *
-  * The per-network buttons are [[ShareTarget]]: each opens that site's own share page with the link already in it, so
-  * nothing here talks to a network itself. The Web Share button stays in front of them, since a phone's own share sheet
+  * The per-network entries are [[ShareTarget]]: each opens that site's own share page with the link already in it, so
+  * nothing here talks to a network itself. The Web Share entry stays in front of them, since a phone's own share sheet
   * reaches every app installed on it rather than the seven listed here.
   *
   * `link`/`shareTitle` are read fresh on every click rather than captured once, since a group's invite link can change
@@ -44,7 +45,8 @@ final class ShareRow(
   generateQr: String => Future[String],
 ) {
 
-  private val openVar                           = Var(false)
+  private val (menuId, menuAnchor) = Popover.nextIds("share-menu")
+
   private val qrOpenVar                         = Var(false)
   private val qrDataUriVar: Var[Option[String]] = Var(None)
   private val qrErrorVar: Var[Option[String]]   = Var(None)
@@ -55,16 +57,16 @@ final class ShareRow(
     */
   def resetQr(): Unit = Var.set(qrDataUriVar -> None, qrErrorVar -> None)
 
-  /** The labelled Share button with its popup, in one block — `GroupDetailPage`'s shape. */
+  /** The labelled Share button with its dropdown, in one block — `GroupDetailPage`'s shape. */
   def render(): HtmlElement = {
     div(
       cls := "mt-3",
       button(
         cls := "btn btn-sm",
         typ := "button",
+        opensMenu,
         shareMark(),
         I18n.t(UiKeys.shareButton),
-        onClick.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
       ),
       renderPopup(),
     )
@@ -72,20 +74,16 @@ final class ShareRow(
 
   /** The share mark alone, with "Share" on its tooltip — the shape of the pencil and trash icons it sits beside in
     * `GameInstancePage`'s title. Pair it with [[renderPopup]], placed outside the title: the title's `h1` type would
-    * otherwise style the popup's text too.
+    * otherwise style the dropdown's text too.
     */
   def renderIconButton(): HtmlElement = {
-    InlineRename.iconButton(
-      I18n.t(UiKeys.shareButton),
-      shareMark(),
-      onClick.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
-    )
+    InlineRename.iconButton(I18n.t(UiKeys.shareButton), shareMark(), opensMenu)
   }
 
-  /** The popup, the copy toast, and the Messenger app-id fetch — everything but the button that opens the popup. */
+  /** The dropdown, the copy toast, and the Messenger app-id fetch — everything but the button that opens it. */
   def renderPopup(): HtmlElement = {
     div(
-      renderModal(),
+      renderMenu(),
       child.maybe <-- toastVar.signal.map(
         _.map(msg => {
           div(
@@ -106,69 +104,76 @@ final class ShareRow(
     )
   }
 
-  /** A `div.modal` with `modal-open` toggled off a `Var[Boolean]`, not `HTMLDialogElement.showModal` — that call is
-    * unimplemented in jsdom, which the frontend specs run under. The QR code opens inside the same box, under the
-    * buttons, rather than in a second modal on top of this one.
+  /** What makes a button open the dropdown: `popovertarget` names it, `anchor-name` is what it is placed against. */
+  private def opensMenu: Modifier[HtmlElement] = {
+    Seq(Popover.targetAttr := menuId, styleAttr := s"anchor-name:$menuAnchor")
+  }
+
+  /** daisyUI's popover-API dropdown, as in [[LanguagePicker.renderMenu]]: `dropdown` sits on the popover element
+    * itself. `w-60` keeps it narrow; `max-w` keeps it inside a phone's width however the anchor falls.
+    *
+    * The QR code opens inside the same dropdown, under the entries, so the dropdown stays open for it. Every other
+    * entry has done its work once clicked, so it closes the dropdown.
     */
-  private def renderModal(): HtmlElement = {
+  private def renderMenu(): HtmlElement = {
     div(
-      cls := "modal modal-bottom sm:modal-middle",
-      cls("modal-open") <-- openVar.signal,
-      div(
-        cls   := "modal-box flex flex-col gap-4",
-        h3(cls := "font-semibold text-lg", I18n.t(UiKeys.shareButton)),
-        div(
-          cls  := "flex flex-wrap gap-2",
-          actionButton(I18n.t(UiKeys.shareCopyLink), () => copyLink()),
-          actionButton(I18n.t(UiKeys.shareDevice), () => share()),
-          actionButton(I18n.t(UiKeys.shareQrGenerate), () => openQr()),
-        ),
-        div(
-          cls  := "grid grid-cols-2 sm:grid-cols-3 gap-2",
-          children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetButton)),
-        ),
-        child.maybe <-- qrOpenVar.signal.map(Option.when(_)(renderQr())),
-        div(
-          cls  := "modal-action mt-0",
+      cls                 := "dropdown rounded-box bg-base-100 shadow-md p-2 w-60 max-w-[calc(100vw-2rem)]",
+      Popover.popoverAttr := "auto",
+      idAttr              := menuId,
+      styleAttr           := s"position-anchor:$menuAnchor",
+      ul(
+        cls   := "menu menu-sm w-full p-0",
+        menuItem(I18n.t(UiKeys.shareCopyLink), () => copyLink()),
+        menuItem(I18n.t(UiKeys.shareDevice), () => share()),
+        li(
           button(
-            cls := "btn",
             typ := "button",
-            I18n.t(UiKeys.shareQrClose),
-            onClick.mapToUnit --> Observer[Unit](_ => close()),
-          ),
+            I18n.t(UiKeys.shareQrGenerate),
+            onClick.mapToUnit --> Observer[Unit](_ => openQr()),
+          )
         ),
       ),
-      // Closes on an outside click, same as `AppShell.renderSignInConfirmModal`'s `modal-backdrop`.
-      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => close())),
+      div(cls := "divider my-1"),
+      ul(
+        cls   := "menu menu-sm w-full p-0",
+        children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetItem)),
+      ),
+      child.maybe <-- qrOpenVar.signal.map(Option.when(_)(renderQr())),
     )
   }
 
-  private def close(): Unit = Var.set(openVar -> false, qrOpenVar -> false)
-
-  private def actionButton(label: String, action: () => Unit): HtmlElement = {
-    button(
-      cls := "btn btn-sm",
-      typ := "button",
-      label,
-      onClick.mapToUnit --> Observer[Unit](_ => action()),
+  /** An entry that closes the dropdown, then acts. Closing first leaves the toast a copy raises in plain view. */
+  private def menuItem(label: String, action: () => Unit): HtmlElement = {
+    li(
+      button(
+        typ := "button",
+        label,
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          Popover.hide(menuId)
+          action()
+        },
+      )
     )
   }
 
-  /** One share page, as its icon and its name. The popup has room for the name, so it is text on the button rather than
-    * a tooltip.
+  /** One share page, as its icon and its name.
     *
     * The URL is built in the click handler rather than put on an anchor's `href`, for the reason `link` is a function
     * at all: a group's invite link changes under the page when its code is regenerated, and an `href` written at render
     * time would go on pointing at the dead one.
     */
-  private def targetButton(target: ShareTarget): HtmlElement = {
-    button(
-      cls        := "btn btn-ghost btn-sm justify-start",
-      typ        := "button",
-      aria.label := ShareTarget.label(target),
-      ShareTarget.icon(target),
-      ShareTarget.displayName(target),
-      onClick.mapToUnit --> Observer[Unit](_ => openTarget(target)),
+  private def targetItem(target: ShareTarget): HtmlElement = {
+    li(
+      button(
+        typ        := "button",
+        aria.label := ShareTarget.label(target),
+        ShareTarget.icon(target),
+        ShareTarget.displayName(target),
+        onClick.mapToUnit --> Observer[Unit] { _ =>
+          Popover.hide(menuId)
+          openTarget(target)
+        },
+      )
     )
   }
 
