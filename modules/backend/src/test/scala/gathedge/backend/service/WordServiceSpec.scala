@@ -44,7 +44,7 @@ import gathedge.shared.dto.{
   TagPairWord,
   TagSort,
   TagWordInput,
-  TagEntryFormRequest,
+  TagEntryMainWordRequest,
   TagEntryNoteRequest,
   TaggedPair,
   WordSort,
@@ -180,6 +180,25 @@ object WordServiceSpec extends ZIOSpecDefault {
     target: WordLanguage = WordLanguage.Hu,
   ): ZIO[WordService, WordFailure, Tag] =
     WordService.createTagWithPairs(name, source, target, pairs, userId).map(_.tag)
+
+  /** `count` dictionary lemmas of one language and part of speech, each with one form under `relation` — the rows the
+    * importer leaves behind, which is what `WordService.formRelations` reads the picker's form types from.
+    */
+  private def seedForms(
+    language: WordLanguage,
+    pos: PartOfSpeech,
+    relation: String,
+    count: Int,
+  ): RIO[WordRepository, Unit] = {
+    val stem = s"seed${WordLanguage.code(language)}${PartOfSpeech.code(pos)}${relation.filter(_.isLetterOrDigit)}"
+    ZIO.foreachDiscard(1 to count)(i => {
+      for {
+        lemma <- WordRepository.ensureWord(dictionaryWord(language, s"$stem$i", pos))
+        form  <- WordRepository.ensureWord(dictionaryWord(language, s"${stem}form$i", pos))
+        _     <- WordRepository.insertForms(List(WordFormRow(0L, lemma.id, form.id, relation, 0L)))
+      } yield ()
+    })
+  }
 
   /** A dictionary row, as the importer would write it: no author, and a rank that decides where it lands in a search.
     */
@@ -2207,43 +2226,96 @@ object WordServiceSpec extends ZIOSpecDefault {
           },
         )
       },
-      test("addEntryForm files a minted form under the word, once per relation") {
+      // The spec's schema is shared by every test in it, and other tests file forms too, so each test here seeds
+      // relations and words of its own and asserts only on those.
+      test("formRelations offers this language's common relations for the part of speech, simplest first") {
         for {
-          haus  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag   <- createTag("formb9", 1L, WordLanguage.De, WordLanguage.Hu)
-          _     <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
-          first <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 1L)
-          again <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 1L)
-          forms <- WordRepository.formsOf(haus.id)
-          lemma <- WordRepository.findWordById(haus.id)
+          _     <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr1combo,fr1tag", 9)
+          _     <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr1common", 7)
+          _     <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr1less", 5)
+          _     <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr1rare", 2)
+          _     <- seedForms(WordLanguage.De, PartOfSpeech.Verb, "fr1verb", 6)
+          nouns <- WordService.formRelations(WordLanguage.De, PartOfSpeech.Noun)
+          verbs <- WordService.formRelations(WordLanguage.De, PartOfSpeech.Verb)
         } yield assertTrue(
-          first.form.text == "Häuser",
-          first.form.partOfSpeech == PartOfSpeech.Noun,
-          !first.alreadyPresent,
-          again.alreadyPresent,
-          forms.map(row => (row.formWordId, row.relation)) == List((first.form.id, "plural")),
-          // The lemma stays a main word: only the form is marked `is_form`.
-          lemma.exists(!_.isForm),
+          nouns.indexOf("fr1common") >= 0,
+          nouns.indexOf("fr1common") < nouns.indexOf("fr1less"),
+          // A two-tag relation comes after every one-tag relation, however common it is.
+          nouns.indexOf("fr1less") < nouns.indexOf("fr1combo,fr1tag"),
+          // Too rare to offer, and a verb's relation never reaches a noun.
+          !nouns.contains("fr1rare"),
+          !nouns.contains("fr1verb"),
+          verbs.contains("fr1verb"),
+          !verbs.contains("fr1common"),
         )
       },
-      test("addEntryForm refuses an unknown relation, the word itself, and a word outside the wordlist") {
+      test("formRelations borrows other languages' relations for a language with no forms of its own") {
         for {
-          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          baum   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baum", gender = Some(Gender.Masculine)))
-          tag    <- createTag("formb10", 1L, WordLanguage.De, WordLanguage.Hu)
-          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
-          badRel <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "ergative"), 1L).either
-          self   <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Haus", "singular"), 1L).either
-          absent <- WordService.addEntryForm(tag.id, baum.id, TagEntryFormRequest("Bäume", "plural"), 1L).either
-          alien  <- WordService.addEntryForm(tag.id, haus.id, TagEntryFormRequest("Häuser", "plural"), 2L).either
+          _         <- seedForms(WordLanguage.De, PartOfSpeech.Adverb, "fr2borrowed", 5)
+          _         <- seedForms(WordLanguage.Hu, PartOfSpeech.Adverb, "fr2own", 5)
+          english   <- WordService.formRelations(WordLanguage.En, PartOfSpeech.Adverb)
+          hungarian <- WordService.formRelations(WordLanguage.Hu, PartOfSpeech.Adverb)
+        } yield assertTrue(
+          english.contains("fr2borrowed"),
+          english.contains("fr2own"),
+          hungarian.contains("fr2own"),
+          !hungarian.contains("fr2borrowed"),
+        )
+      },
+      test("addMainWord files the word as a form of the main word, once per relation, and removeMainWord undoes it") {
+        for {
+          _      <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr3plural", 5)
+          main   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hausfr3", gender = Some(Gender.Neuter)))
+          form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuserfr3"))
+          tag    <- createTag("mainb9", 1L, WordLanguage.De, WordLanguage.Hu)
+          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
+          first  <- WordService.addMainWord(tag.id, form.id, TagEntryMainWordRequest(main.id, "fr3plural"), 1L)
+          again  <- WordService.addMainWord(tag.id, form.id, TagEntryMainWordRequest(main.id, "fr3plural"), 1L)
+          forms  <- WordRepository.formsOf(main.id)
+          linked <- WordRepository.findWordById(form.id)
+          _      <- WordService.removeMainWord(tag.id, form.id, main.id, "fr3plural", 1L)
+          after  <- WordRepository.formsOf(main.id)
+          freed  <- WordRepository.findWordById(form.id)
+        } yield assertTrue(
+          first.mainWord.id == main.id,
+          !first.alreadyPresent,
+          again.alreadyPresent,
+          forms.map(row => (row.formWordId, row.relation)) == List((form.id, "fr3plural")),
+          linked.exists(_.isForm),
+          after.isEmpty,
+          freed.exists(!_.isForm),
+        )
+      },
+      test("addMainWord refuses a relation the main word's kind has not got, itself, another language, and a form") {
+        for {
+          _       <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr4plural", 5)
+          _       <- seedForms(WordLanguage.De, PartOfSpeech.Verb, "fr4past", 5)
+          main    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hausfr4", gender = Some(Gender.Neuter)))
+          form    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuserfr4"))
+          foreign <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házfr4"))
+          other   <-
+            WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baumfr4", gender = Some(Gender.Masculine)))
+          tag     <- createTag("mainb10", 1L, WordLanguage.De, WordLanguage.Hu)
+          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
+          _       <- WordService.addMainWord(tag.id, form.id, TagEntryMainWordRequest(main.id, "fr4plural"), 1L)
+          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(other.id)), 1L)
+          past    <- WordService.addMainWord(tag.id, other.id, TagEntryMainWordRequest(main.id, "fr4past"), 1L).either
+          self    <- WordService.addMainWord(tag.id, other.id, TagEntryMainWordRequest(other.id, "fr4plural"), 1L).either
+          abroad  <-
+            WordService.addMainWord(tag.id, other.id, TagEntryMainWordRequest(foreign.id, "fr4plural"), 1L).either
+          ofForm  <- WordService.addMainWord(tag.id, other.id, TagEntryMainWordRequest(form.id, "fr4plural"), 1L).either
+          absent  <- WordService.addMainWord(tag.id, main.id, TagEntryMainWordRequest(other.id, "fr4plural"), 1L).either
+          alien   <- WordService.addMainWord(tag.id, other.id, TagEntryMainWordRequest(main.id, "fr4plural"), 2L).either
         } yield {
           def field(result: Either[WordFailure, ?], name: String): Boolean = result.left.exists {
             case WordFailure.ValidationError(fields) => fields.contains(name)
             case _                                   => false
           }
           assertTrue(
-            field(badRel, "relation"),
-            field(self, "text"),
+            field(past, "relation"),
+            field(self, "mainWordId"),
+            field(abroad, "mainWordId"),
+            field(ofForm, "mainWordId"),
             absent == Left(WordFailure.NotFound),
             alien == Left(WordFailure.TagNotFound),
           )

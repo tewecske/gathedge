@@ -299,16 +299,16 @@ final case class TagEntryResponse(
   */
 final case class TagEntryNoteRequest(note: Option[String]) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addEntryForm]]'s body: an inflected word to file under a word of the wordlist,
-  * and the relation it has to it. `relation` must be one of `GrammarTag.pickable`. This is what an import's extra
-  * column writes, entered by hand.
+/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s body: the main word that a word of the wordlist is a form of,
+  * and which form it is — `Häuser` is the `plural` of `Haus`. `relation` must be one of the relations
+  * [[gathedge.shared.api.WordEndpoints.formRelations]] offers for the main word's language and part of speech.
   */
-final case class TagEntryFormRequest(text: String, relation: String) derives JsonCodec
+final case class TagEntryMainWordRequest(mainWordId: Long, relation: String) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addEntryForm]]'s answer: the form word, found or minted. `alreadyPresent` says
-  * the word already had this form under this relation, so nothing was written.
+/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s answer: the main word the form is now filed under.
+  * `alreadyPresent` says it already was, under that relation, so nothing was written.
   */
-final case class TagEntryFormResponse(form: Word, alreadyPresent: Boolean) derives JsonCodec
+final case class TagEntryMainWordResponse(mainWord: Word, relation: String, alreadyPresent: Boolean) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
   * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may
