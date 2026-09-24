@@ -69,6 +69,7 @@ final class ShareRow(
   def renderPopup(): HtmlElement = {
     div(
       renderMenu(),
+      renderQrModal(),
       child.maybe <-- toastVar.signal.map(
         _.map(msg => {
           div(
@@ -97,8 +98,7 @@ final class ShareRow(
   /** daisyUI's popover-API dropdown, as in [[LanguagePicker.renderMenu]]: `dropdown` sits on the popover element
     * itself. `w-60` keeps it narrow; `max-w` keeps it inside a phone's width however the anchor falls.
     *
-    * The QR code opens inside the same dropdown, under the entries, so the dropdown stays open for it. Every other
-    * entry has done its work once clicked, so it closes the dropdown.
+    * Every entry has done its work once clicked, so it closes the dropdown. The QR entry then opens [[renderQrModal]].
     */
   private def renderMenu(): HtmlElement = {
     div(
@@ -110,20 +110,13 @@ final class ShareRow(
         cls   := "menu menu-sm w-full p-0",
         menuItem(I18n.t(UiKeys.shareCopyLink), () => copyLink()),
         menuItem(I18n.t(UiKeys.shareDevice), () => share()),
-        li(
-          button(
-            typ := "button",
-            I18n.t(UiKeys.shareQrGenerate),
-            onClick.mapToUnit --> Observer[Unit](_ => openQr()),
-          )
-        ),
+        menuItem(I18n.t(UiKeys.shareQrGenerate), () => openQr()),
       ),
       div(cls := "divider my-1"),
       ul(
         cls   := "menu menu-sm w-full p-0",
         children <-- ShareRow.messengerAppIdVar.signal.map(ShareTarget.available(_).map(targetItem)),
       ),
-      child.maybe <-- qrOpenVar.signal.map(Option.when(_)(renderQr())),
     )
   }
 
@@ -217,7 +210,7 @@ final class ShareRow(
     }
   }
 
-  /** Shows the QR block at once and fills it in once the code is ready, rather than generating it up front — a reader
+  /** Opens the QR modal at once and fills it in once the code is ready, rather than generating it up front — a reader
     * who never asks for the code never pays for it. Cached in [[qrDataUriVar]] until [[resetQr]] clears it.
     */
   private def openQr(): Unit = {
@@ -232,10 +225,33 @@ final class ShareRow(
     }
   }
 
+  /** The QR code, in a modal in the middle of the screen. A `div.modal` with `modal-open` toggled off [[qrOpenVar]],
+    * not `HTMLDialogElement.showModal` — that call is unimplemented in jsdom, which the frontend specs run under. A
+    * click on the backdrop or on the ✕ in the corner closes it.
+    */
+  private def renderQrModal(): HtmlElement = {
+    div(
+      cls := "modal modal-middle",
+      cls("modal-open") <-- qrOpenVar.signal,
+      div(
+        cls   := "modal-box relative w-auto max-w-[calc(100vw-2rem)] flex flex-col items-center gap-2 px-8",
+        button(
+          cls        := "btn btn-sm btn-circle btn-ghost absolute right-2 top-2",
+          typ        := "button",
+          aria.label := I18n.t(UiKeys.shareQrClose),
+          "✕",
+          onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false)),
+        ),
+        renderQr(),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => qrOpenVar.set(false))),
+    )
+  }
+
   private def renderQr(): HtmlElement = {
     div(
       cls := "flex flex-col items-center gap-2",
-      h4(cls := "font-semibold", I18n.t(UiKeys.shareQrTitle)),
+      h3(cls := "font-semibold text-lg", I18n.t(UiKeys.shareQrTitle)),
       child <-- Signal.combine(qrDataUriVar.signal, qrErrorVar.signal).map {
         case (Some(uri), _)  =>
           img(cls := "w-48 h-48", src := uri, alt := I18n.t(UiKeys.shareQrAlt))
