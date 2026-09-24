@@ -1048,6 +1048,13 @@ object UiKeys {
   val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
   val tagsEditorFormExists: String      = key("ui.tags.editor.formExists")
 
+  /** The panel's part-of-speech select, the hint shown when the reader may not change it, and the warning an
+    * administrator confirms before changing or removing dictionary data.
+    */
+  val tagsEditorPartOfSpeech: String   = key("ui.tags.editor.partOfSpeech")
+  val tagsEditorPosLocked: String      = key("ui.tags.editor.posLocked")
+  val tagsEditorDictionaryWarn: String = key("ui.tags.editor.dictionaryWarning")
+
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
     * in this tag" is a word in none of the reader's other tags.

@@ -241,6 +241,18 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(TagEditorPage.withNote(rows, 1L, None).forall(_.comment.isEmpty))
         },
       ),
+      suite("withWord")(
+        test("a changed word replaces itself on every row that shows it, on whichever side") {
+          val rows    = List(entry(1, Some(2)), entry(2, Some(3)), entry(4, None))
+          val changed = Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Verb, None)
+          val updated = TagEditorPage.withWord(rows, changed)
+          assertTrue(
+            updated(0).target.contains(changed),
+            updated(1).source == changed,
+            updated(2) == rows(2),
+          )
+        }
+      ),
       suite("TagEntryDetails")(
         test("opens on the word's current note, with a main-word search and no form type until one is picked") {
           val container = dom.document.createElement("div")
@@ -249,13 +261,17 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           val rootNode  =
             L.render(container, new TagEntryDetails(1L, word, Some("Gebäude"), Observer.empty).render())
           try {
-            val inputs = container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input])
-            val text   = container.textContent
+            // Read before `assertTrue`, which evaluates lazily — after `finally` has unmounted the panel.
+            val inputs  = container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input])
+            val selects = container.querySelectorAll("select").toList.map(_.asInstanceOf[dom.html.Select])
+            val text    = container.textContent
             assertTrue(
               inputs.headOption.map(_.value).contains("Gebäude"),
               inputs.exists(_.placeholder == UiKeys.tagsEditorMainWordSearch),
-              // The form types depend on the main word, so none are offered before one is picked.
-              container.querySelectorAll("select").length == 0,
+              // Only the part-of-speech select: the form types wait for a main word.
+              selects.size == 1,
+              // Locked until the server says whose word it is.
+              selects.forall(_.disabled),
               text.contains(UiKeys.tagsEditorNoteLabel),
               text.contains(UiKeys.tagsEditorFormOfLabel),
             )

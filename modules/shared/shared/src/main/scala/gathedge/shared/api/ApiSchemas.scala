@@ -116,6 +116,7 @@ import gathedge.shared.dto.{
   RouteUsage,
   RuntimeInfo,
   SetGenderRequest,
+  SetPartOfSpeechRequest,
   SetMemberRoleRequest,
   SetPasswordRequest,
   TagExportEntry,
@@ -237,6 +238,7 @@ object ApiSchemas {
   given Schema[CreateWordRequest]             = DeriveSchema.gen[CreateWordRequest]
   given Schema[AddTranslationRequest]         = DeriveSchema.gen[AddTranslationRequest]
   given Schema[SetGenderRequest]              = DeriveSchema.gen[SetGenderRequest]
+  given Schema[SetPartOfSpeechRequest]        = DeriveSchema.gen[SetPartOfSpeechRequest]
   given Schema[CreateTagRequest]              = DeriveSchema.gen[CreateTagRequest]
   given Schema[TagPairWord]                   = DeriveSchema.gen[TagPairWord]
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]

@@ -32,6 +32,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetPartOfSpeechRequest,
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryPage,
@@ -45,6 +46,7 @@ import gathedge.shared.dto.{
   TagImportResponse,
   TagPage,
   TagPairInput,
+  TagPairWord,
   TagResponse,
   TagWordInput,
   WordDetail,
@@ -285,28 +287,45 @@ object WordApiClient {
     HttpClient.callUnit(WordPaths.setEntryNote(tagId, wordId), Some(TagEntryNoteRequest(note).toJson))
   }
 
-  /** Files a word of a wordlist as a form of a main word, under `relation`. */
+  /** Files a word of a wordlist as a form of a main word, under `relation`. The main word may be one to create. */
   def addMainWord(
     tagId: Long,
     wordId: Long,
-    mainWordId: Long,
+    mainWord: TagPairWord,
     relation: String,
   ): EventStream[Either[ApiError, TagEntryMainWordResponse]] = {
     HttpClient.call[TagEntryMainWordResponse](
       WordPaths.addMainWord(tagId, wordId),
-      Some(TagEntryMainWordRequest(mainWordId, relation).toJson),
+      Some(TagEntryMainWordRequest(mainWord, relation).toJson),
     )
   }
 
-  /** Undoes [[addMainWord]]: the word is no longer that form of that main word. */
+  /** Undoes [[addMainWord]]: the word is no longer that form of that main word. `confirm` answers the warning an
+    * administrator is shown before removing a dictionary link; the server refuses one without it.
+    */
   def removeMainWord(
     tagId: Long,
     wordId: Long,
     mainWordId: Long,
     relation: String,
+    confirm: Boolean,
   ): EventStream[Either[ApiError, Unit]] = {
     HttpClient.callUnit(
-      WordPaths.removeMainWord(tagId, wordId, mainWordId).withQuery(HttpClient.query("relation" -> Some(relation)))
+      WordPaths
+        .removeMainWord(tagId, wordId, mainWordId)
+        .withQuery(HttpClient.query("relation" -> Some(relation), "confirm" -> Option.when(confirm)(true)))
+    )
+  }
+
+  /** Changes a word's part of speech. `confirm` answers the warning shown before changing a dictionary word. */
+  def setPartOfSpeech(
+    wordId: Long,
+    partOfSpeech: PartOfSpeech,
+    confirm: Boolean,
+  ): EventStream[Either[ApiError, WordDetail]] = {
+    HttpClient.call[WordDetail](
+      WordPaths.setPartOfSpeech(wordId),
+      Some(SetPartOfSpeechRequest(partOfSpeech, confirm).toJson),
     )
   }
 

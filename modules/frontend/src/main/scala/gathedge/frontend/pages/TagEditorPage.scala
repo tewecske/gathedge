@@ -88,6 +88,16 @@ object TagEditorPage {
     })
   }
 
+  /** Puts a changed word — a new part of speech — on every row that shows it, on whichever side. */
+  private[pages] def withWord(entries: List[TagEntry], word: Word): List[TagEntry] = {
+    entries.map(entry => {
+      entry.copy(
+        source = if (entry.source.id == word.id) word else entry.source,
+        target = entry.target.map(target => if (target.id == word.id) word else target),
+      )
+    })
+  }
+
   /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
   private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
 
@@ -1445,6 +1455,7 @@ private final class TagEditorPage(
                     side.word,
                     side.comment,
                     Observer[Option[String]](note => applyNote(side.word.id, note)),
+                    Observer[Word](word => entriesVar.update(TagEditorPage.withWord(_, word))),
                   ).render()
                 }),
               )

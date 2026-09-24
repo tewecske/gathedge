@@ -15,6 +15,7 @@ import gathedge.backend.service.{
   ProfileFailure,
   ProgressShareFailure,
   TagImportFailure,
+  WordEditFailure,
   WordFailure,
 }
 import gathedge.shared.api.ApiFailure
@@ -291,6 +292,28 @@ object ApiFailures {
     }
   }
 
+  /** The two edits that can reach data shared by every reader: [[word]]'s answers, plus the 403 for data that is not
+    * the caller's and the 409 for dictionary data changed without confirming the warning.
+    */
+  def wordEdit(
+    failure: WordEditFailure
+  ): ApiFailure.BadRequest | ApiFailure.Forbidden | ApiFailure.NotFound | ApiFailure.Conflict = {
+    failure match {
+      case WordEditFailure.Failed(inner)   =>
+        word(inner)
+      case WordEditFailure.Protected       =>
+        ApiFailure.Forbidden(
+          MessageRef(MessageKeys.wordDictionaryProtected),
+          "Only an administrator can change dictionary data or another reader's",
+        )
+      case WordEditFailure.ConfirmRequired =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordDictionaryConfirmRequired),
+          "This is dictionary data; confirm to change it",
+        )
+    }
+  }
+
   def word(failure: WordFailure): ApiFailure.BadRequest | ApiFailure.NotFound | ApiFailure.Conflict = {
     failure match {
       case WordFailure.ValidationError(fieldErrors) =>
@@ -312,6 +335,11 @@ object ApiFailures {
         ApiFailure.BadRequest(
           MessageRef(MessageKeys.wordGenderNotApplicable),
           "That word cannot take that article",
+        )
+      case WordFailure.PartOfSpeechConflict         =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordPartOfSpeechConflict),
+          "That word already exists with that part of speech",
         )
       case WordFailure.GenderConflict               =>
         ApiFailure.Conflict(
