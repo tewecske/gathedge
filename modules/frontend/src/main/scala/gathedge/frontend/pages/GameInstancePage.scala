@@ -360,9 +360,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  /** The card's chrome — name, wordlists, Share button, and the picker — built exactly once, the first time [[render]]
-    * sees the game loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never change after
-    * load (a rename only ever touches [[nameVar]]).
+  /** The card's chrome — name with its share icon, wordlists, and the picker — built exactly once, the first time
+    * [[render]] sees the game loaded. It reads [[gameVar]] with `.now()` rather than reactively: those fields never
+    * change after load (a rename only ever touches [[nameVar]]).
     */
   private def renderGameCard(): HtmlElement = {
     val detail = gameVar
@@ -380,10 +380,12 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           I18n.t(UiKeys.gameInstanceRenameEdit),
           I18n.t(UiKeys.gameInstanceRenameLabel),
           "input text-xl",
+          shareRow.renderIconButton(),
           deleteIcon(),
           resultsLink(),
         ),
         renderDeleteModal(detail),
+        shareRow.renderPopup(),
         if (detail.tags.nonEmpty) {
           div(
             cls := "flex flex-wrap items-center gap-2 mt-1",
@@ -398,7 +400,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
           )
         } else
           emptyNode,
-        shareRow.render(),
         div(cls := "mt-4", renderStart()),
       ),
     )

@@ -68,20 +68,24 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
     * @param inputCls
     *   lets a caller match the edit input to what it replaces — `TagDetailPage` sizes it like the title it stands in
     *   for, `GameInstancePage` like the ordinary `input-sm` beside its own heading.
+    * @param leading
+    *   drawn after the name and before the pencil — `GameInstancePage`'s share icon. Required rather than defaulted:
+    *   with a default, a caller's first `extra` would silently bind to it instead. Pass `emptyMod` for none.
     */
   def renderTitle(
     nameSignal: Signal[String],
     canEdit: Signal[Boolean],
     editLabel: String,
     formLabel: String,
-    inputCls: String = "input input-sm",
+    inputCls: String,
+    leading: Modifier[HtmlElement],
     extra: Modifier[HtmlElement]*
   ): HtmlElement = {
     h1(
       cls := "card-title text-2xl",
       child <-- editingSignal.map {
         case true  => renderForm(formLabel, inputCls)
-        case false => renderDisplay(nameSignal, canEdit, editLabel, extra)
+        case false => renderDisplay(nameSignal, canEdit, editLabel, leading, extra)
       },
     )
   }
@@ -90,11 +94,13 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
     nameSignal: Signal[String],
     canEdit: Signal[Boolean],
     editLabel: String,
+    leading: Modifier[HtmlElement],
     extra: Seq[Modifier[HtmlElement]],
   ): HtmlElement = {
     div(
       cls := "flex items-center gap-2 flex-wrap",
       span(child.text <-- nameSignal),
+      leading,
       child.maybe <-- canEdit.map(
         Option.when(_)(
           InlineRename.iconButton(

@@ -814,6 +814,7 @@ private final class TagEditorPage(
             I18n.t(UiKeys.wordsTagRenameButton),
             I18n.t(UiKeys.wordsTagRenameLabel),
             "input text-xl",
+            emptyMod,
             deleteIcon(),
           ),
           child.maybe <-- canEditSignal.map(can =>

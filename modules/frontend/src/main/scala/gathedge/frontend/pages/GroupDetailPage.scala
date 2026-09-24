@@ -110,6 +110,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             I18n.t(UiKeys.groupDetailRenameEdit),
             I18n.t(UiKeys.groupDetailRenameLabel),
             "input input-sm",
+            emptyMod,
             deleteIcon(),
           ),
           child.maybe <-- Signal

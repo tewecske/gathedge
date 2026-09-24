@@ -16,6 +16,9 @@ import scala.util.{Failure, Success}
   * `GameInstancePage` and `GroupDetailPage` both put it next to whatever they share (a quiz's own URL for the former,
   * an invite link built from a code for the latter).
   *
+  * The button comes in two shapes: [[render]] draws a labelled button with its popup in one block, and
+  * [[renderIconButton]] draws the icon alone for a title row, with [[renderPopup]] placed elsewhere.
+  *
   * The options sit in a popup, not in a row on the page. Sharing is not what either page is for, so the page shows one
   * button and nothing more. The popup is a bottom sheet on a narrow screen and a centred box from `sm` up, and its
   * buttons wrap, so it fits a phone.
@@ -52,6 +55,7 @@ final class ShareRow(
     */
   def resetQr(): Unit = Var.set(qrDataUriVar -> None, qrErrorVar -> None)
 
+  /** The labelled Share button with its popup, in one block — `GroupDetailPage`'s shape. */
   def render(): HtmlElement = {
     div(
       cls := "mt-3",
@@ -62,6 +66,25 @@ final class ShareRow(
         I18n.t(UiKeys.shareButton),
         onClick.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
       ),
+      renderPopup(),
+    )
+  }
+
+  /** The share mark alone, with "Share" on its tooltip — the shape of the pencil and trash icons it sits beside in
+    * `GameInstancePage`'s title. Pair it with [[renderPopup]], placed outside the title: the title's `h1` type would
+    * otherwise style the popup's text too.
+    */
+  def renderIconButton(): HtmlElement = {
+    InlineRename.iconButton(
+      I18n.t(UiKeys.shareButton),
+      shareMark(),
+      onClick.mapToUnit --> Observer[Unit](_ => openVar.set(true)),
+    )
+  }
+
+  /** The popup, the copy toast, and the Messenger app-id fetch — everything but the button that opens the popup. */
+  def renderPopup(): HtmlElement = {
+    div(
       renderModal(),
       child.maybe <-- toastVar.signal.map(
         _.map(msg => {
