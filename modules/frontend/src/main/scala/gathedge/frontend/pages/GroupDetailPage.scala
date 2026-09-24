@@ -110,9 +110,10 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             I18n.t(UiKeys.groupDetailRenameEdit),
             I18n.t(UiKeys.groupDetailRenameLabel),
             "input input-sm",
-            emptyMod,
+            shareIcon(),
             deleteIcon(),
           ),
+          shareRow.renderPopup(),
           child.maybe <-- Signal
             .combine(detailVar.signal, AppState.isGlobalAdminSignal)
             .map { case (detail, globalAdmin) => detail.map(renderBody(_, globalAdmin)) },
@@ -378,8 +379,17 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
           },
         ),
       ),
-      shareRow.render(),
     )
+  }
+
+  /** The share icon beside the name, for whoever the group detail hands an invite code — the same rule that draws the
+    * invite-code block. It shares the invite link, not this page.
+    */
+  private def shareIcon(): Modifier[HtmlElement] = {
+    child.maybe <-- detailVar.signal
+      .map(_.exists(_.inviteCode.isDefined))
+      .distinct
+      .map(Option.when(_)(shareRow.renderIconButton()))
   }
 
   private def inviteLink(code: String): String = {
