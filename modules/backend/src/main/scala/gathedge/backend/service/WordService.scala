@@ -53,8 +53,8 @@ import gathedge.shared.dto.{
   PairRef,
   ReplacePairRequest,
   TagEntry,
-  TagEntryFormRequest,
-  TagEntryFormResponse,
+  TagEntryMainWordRequest,
+  TagEntryMainWordResponse,
   TagEntryNoteRequest,
   TagEntryPage,
   TagEntryResponse,
@@ -376,15 +376,24 @@ trait WordService {
     */
   def setEntryNote(tagId: Long, wordId: Long, request: TagEntryNoteRequest, userId: Long): IO[WordFailure, Unit]
 
-  /** Files an inflected word under one word of the wordlist — an import's extra column, entered by hand. The form word
-    * is found or minted in the lemma's language and part of speech. Idempotent per `(lemma, form, relation)`.
+  /** Files a word of the wordlist as a form of a main word, under a relation [[formRelations]] offers for that main
+    * word. Idempotent per `(main word, word, relation)`.
     */
-  def addEntryForm(
+  def addMainWord(
     tagId: Long,
     wordId: Long,
-    request: TagEntryFormRequest,
+    request: TagEntryMainWordRequest,
     userId: Long,
-  ): IO[WordFailure, TagEntryFormResponse]
+  ): IO[WordFailure, TagEntryMainWordResponse]
+
+  /** Undoes one [[addMainWord]] link. Idempotent. */
+  def removeMainWord(tagId: Long, wordId: Long, mainWordId: Long, relation: String, userId: Long): IO[WordFailure, Unit]
+
+  /** The relations a form may have to a main word of this language and part of speech, simplest and commonest first,
+    * read from the dictionary's own `word_forms` rows. Falls back to every language's rows for the part of speech when
+    * this language has none.
+    */
+  def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]]
 
   /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
     * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair is
@@ -706,13 +715,25 @@ object WordService {
   ): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.setEntryNote(tagId, wordId, request, userId))
 
-  def addEntryForm(
+  def addMainWord(
     tagId: Long,
     wordId: Long,
-    request: TagEntryFormRequest,
+    request: TagEntryMainWordRequest,
     userId: Long,
-  ): ZIO[WordService, WordFailure, TagEntryFormResponse] =
-    ZIO.serviceWithZIO[WordService](_.addEntryForm(tagId, wordId, request, userId))
+  ): ZIO[WordService, WordFailure, TagEntryMainWordResponse] =
+    ZIO.serviceWithZIO[WordService](_.addMainWord(tagId, wordId, request, userId))
+
+  def removeMainWord(
+    tagId: Long,
+    wordId: Long,
+    mainWordId: Long,
+    relation: String,
+    userId: Long,
+  ): ZIO[WordService, WordFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.removeMainWord(tagId, wordId, mainWordId, relation, userId))
+
+  def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): URIO[WordService, List[String]] =
+    ZIO.serviceWithZIO[WordService](_.formRelations(language, partOfSpeech))
 
   def replacePair(
     tagId: Long,
@@ -894,6 +915,12 @@ object WordService {
     * is a stricter budget rather than a looser one.
     */
   val maxTabularRows = 2000
+
+  /** [[WordService.formRelations]]: how many `word_forms` rows a relation needs before the form-type picker offers it,
+    * and how many the picker offers at most. The dump's rare tags are noise, and a verb has over a hundred real ones.
+    */
+  val formRelationMinRows = 5
+  val formRelationCap     = 40
 
   /** Damerau-Levenshtein distance a bulk-upload token may be from a dictionary word and still be offered as a
     * suggestion — 2 catches the common single-substitution/transposition/insertion OCR misread without matching
@@ -2196,36 +2223,82 @@ final case class WordServiceLive(
     } yield ()
   }
 
-  def addEntryForm(
+  /** The word must be in the wordlist and the caller must be able to edit it — the gate every editor write passes. */
+  private def requireEntry(tagId: Long, wordId: Long, userId: Long): IO[WordFailure, WordRow] = {
+    for {
+      _      <- requireEditableTag(tagId, userId)
+      member <- repo.isInTag(wordId, tagId).orDie
+      _      <- ZIO.unless(member)(ZIO.fail(WordFailure.NotFound))
+      word   <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+    } yield word
+  }
+
+  def addMainWord(
     tagId: Long,
     wordId: Long,
-    request: TagEntryFormRequest,
+    request: TagEntryMainWordRequest,
     userId: Long,
-  ): IO[WordFailure, TagEntryFormResponse] = {
-    val badRelation =
-      WordFailure.ValidationError(Map("relation" -> MessageRef(MessageKeys.wordFormRelationInvalid)))
-    val selfForm    = WordFailure.ValidationError(Map("text" -> MessageRef(MessageKeys.wordFormIsLemma)))
+  ): IO[WordFailure, TagEntryMainWordResponse] = {
+    def invalid(field: String, key: String) = WordFailure.ValidationError(Map(field -> MessageRef(key)))
     for {
-      _        <- requireEditableTag(tagId, userId)
-      _        <- ZIO.unless(GrammarTag.pickable.contains(request.relation))(ZIO.fail(badRelation))
-      member   <- repo.isInTag(wordId, tagId).orDie
-      _        <- ZIO.unless(member)(ZIO.fail(WordFailure.NotFound))
-      lemma    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-      language <- ZIO.fromOption(WordLanguage.fromString(lemma.language)).orElseFail(WordFailure.NotFound)
-      // Compared by text, not by id: the form is minted with no gender, so `Haus` beside `das Haus` would otherwise
-      // become a second, genderless row rather than being caught as the word itself.
-      _        <- ZIO.when(request.text.trim.toLowerCase == lemma.textNorm)(ZIO.fail(selfForm))
-      // The same call an import's extra column makes: the form takes the lemma's part of speech and no gender of its
-      // own, since a plural or a past tense has no article to read one from.
-      form     <- ensure(language, request.text, decode(lemma.partOfSpeech), None, userId)
-      _        <- ZIO.when(form.id == lemma.id)(ZIO.fail(selfForm))
-      known    <- repo.existingFormRelations(List(lemma.id)).orDie
-      already   = known.contains((lemma.id, form.id, request.relation))
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _        <- ZIO.unless(already)(
-                    repo.insertForms(List(WordFormRow(0L, lemma.id, form.id, request.relation, now))).orDie
-                  )
-    } yield TagEntryFormResponse(toDomain(form), alreadyPresent = already)
+      form    <- requireEntry(tagId, wordId, userId)
+      _       <- ZIO.when(request.mainWordId == form.id)(ZIO.fail(invalid("mainWordId", MessageKeys.wordFormIsLemma)))
+      main    <- repo.findWordById(request.mainWordId).orDie.someOrFail(WordFailure.NotFound)
+      // A main word shares the form's language, and is not itself a form: `word_forms` is one level deep.
+      _       <- ZIO.when(main.language != form.language || main.isForm)(
+                   ZIO.fail(invalid("mainWordId", MessageKeys.wordMainWordInvalid))
+                 )
+      offered <- formRelations(
+                   WordLanguage.fromString(main.language).getOrElse(WordLanguage.En),
+                   decode(main.partOfSpeech),
+                 )
+      _       <- ZIO.unless(offered.contains(request.relation))(
+                   ZIO.fail(invalid("relation", MessageKeys.wordFormRelationInvalid))
+                 )
+      known   <- repo.existingFormRelations(List(main.id)).orDie
+      already  = known.contains((main.id, form.id, request.relation))
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _       <- ZIO.unless(already)(
+                   repo.insertForms(List(WordFormRow(0L, main.id, form.id, request.relation, now))).orDie
+                 )
+    } yield TagEntryMainWordResponse(toDomain(main), request.relation, alreadyPresent = already)
+  }
+
+  def removeMainWord(
+    tagId: Long,
+    wordId: Long,
+    mainWordId: Long,
+    relation: String,
+    userId: Long,
+  ): IO[WordFailure, Unit] = {
+    for {
+      _ <- requireEntry(tagId, wordId, userId)
+      _ <- repo.deleteWordForm(mainWordId, wordId, relation).orDie
+    } yield ()
+  }
+
+  def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]] = {
+    val pos = PartOfSpeech.code(partOfSpeech)
+
+    // The long tail of a wiktextract dump is noise — a stray `also` or `jargon` on a handful of rows — so a relation
+    // must be common enough to have been written on purpose. The simplest relations come first, commonest first among
+    // equals, then the list is capped: a Spanish verb's commonest relations are five-tag clitic combinations, and
+    // ordering by count alone would fill the picker with them before `participle,past` came up.
+    def common(counts: List[(String, Long)]): List[String] = {
+      counts
+        .filter { case (_, rows) => rows >= WordService.formRelationMinRows }
+        .sortBy { case (relation, rows) => (relation.count(_ == ','), -rows, relation) }
+        .map { case (relation, _) => relation }
+        .take(WordService.formRelationCap)
+    }
+
+    for {
+      own       <- repo.formRelationCounts(Some(WordLanguage.code(language)), pos).orDie.map(common)
+      // A language whose import brought no forms yet borrows what this part of speech has elsewhere, rather than
+      // offering nothing.
+      relations <- if (own.nonEmpty) ZIO.succeed(own)
+                   else repo.formRelationCounts(None, pos).orDie.map(common)
+    } yield relations
   }
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {

@@ -24,8 +24,8 @@ import gathedge.shared.dto.{
   SetGenderRequest,
   SetTagLanguagesRequest,
   TagEntry,
-  TagEntryFormRequest,
-  TagEntryFormResponse,
+  TagEntryMainWordRequest,
+  TagEntryMainWordResponse,
   TagEntryNoteRequest,
   TagEntryResponse,
   TagExportFile,
@@ -82,7 +82,9 @@ object WordPaths {
   val addPair             = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs")
   val attachWord          = ApiPath1[Long](POST, "/api/tags/{tagId}/words")
   val setEntryNote        = ApiPath2[Long, Long](PUT, "/api/tags/{tagId}/words/{wordId}/note")
-  val addEntryForm        = ApiPath2[Long, Long](POST, "/api/tags/{tagId}/words/{wordId}/forms")
+  val addMainWord         = ApiPath2[Long, Long](POST, "/api/tags/{tagId}/words/{wordId}/main-words")
+  val removeMainWord      = ApiPath3[Long, Long, Long](DELETE, "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}")
+  val formRelations       = ApiPath0(GET, "/api/words/form-relations")
   val replacePair         = ApiPath1[Long](PUT, "/api/tags/{tagId}/pairs")
   val deletePair          = ApiPath2[Long, Long](DELETE, "/api/tags/{tagId}/pairs/{sourceWordId}")
   val bulkDeletePairs     = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs/bulk-delete")
@@ -122,7 +124,9 @@ object WordPaths {
     addPair,
     attachWord,
     setEntryNote,
-    addEntryForm,
+    addMainWord,
+    removeMainWord,
+    formRelations,
     replacePair,
     deletePair,
     bulkDeletePairs,
@@ -182,6 +186,11 @@ object WordEndpoints {
   private val uniqueQuery = HttpCodec.query[Boolean]("unique").optional
 
   private val targetWordIdQuery = HttpCodec.query[Long]("targetWordId").optional
+
+  /** [[formRelations]] needs both, so unlike the listing's `lang`/`pos` they are required. */
+  private val requiredLangQuery = HttpCodec.query[String]("lang")
+  private val requiredPosQuery  = HttpCodec.query[String]("pos")
+  private val relationQuery     = HttpCodec.query[String]("relation")
 
   /** The browse-and-tag listing, paged and counted by the database.
     *
@@ -558,18 +567,48 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
-  /** Files an inflected word under one word of the wordlist, as a `word_forms` row — what an import's extra column
-    * writes, entered by hand. The form word is found or minted in the lemma's language with the lemma's part of speech.
-    * Idempotent: a form already filed under that relation answers `alreadyPresent`. 404 is a tag the caller may not
-    * edit, or a word the wordlist does not hold. 400 is a blank or over-long word, a relation outside
-    * `GrammarTag.pickable`, or a form that is the word itself.
+  /** Files a word of the wordlist as a form of a main word — `Häuser` as the `plural` of `Haus` — as a `word_forms` row
+    * with the main word as its lemma. The word then counts as a form, so the listing's "main words only" filter leaves
+    * it out. Idempotent: a link already there answers `alreadyPresent`.
+    *
+    * 404 is a tag the caller may not edit, a word the wordlist does not hold, or a main word that does not exist. 400
+    * is a main word in another language, one that is itself a form, the word itself, or a relation [[formRelations]]
+    * does not offer for the main word.
     */
-  val addEntryForm = {
-    Endpoint(ApiRoutes.route2(paths.addEntryForm, PathCodec.long, PathCodec.long))
-      .in[TagEntryFormRequest]
+  val addMainWord = {
+    Endpoint(ApiRoutes.route2(paths.addMainWord, PathCodec.long, PathCodec.long))
+      .in[TagEntryMainWordRequest]
       .withCodecError
-      .out[TagEntryFormResponse](Status.Created)
+      .out[TagEntryMainWordResponse](Status.Created)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** Removes one [[addMainWord]] link: the word is no longer that form of that main word. The word counts as a main
+    * word again once no link names it as a form. Idempotent. 404 is a tag the caller may not edit, or a word the
+    * wordlist does not hold.
+    */
+  val removeMainWord = {
+    Endpoint(ApiRoutes.route3(paths.removeMainWord, PathCodec.long, PathCodec.long, PathCodec.long))
+      .query(relationQuery)
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+  }
+
+  /** The relations a form may have to a main word of this language and part of speech, the fewest tags first and the
+    * commonest first among equals — what the editor's form-type picker offers.
+    *
+    * Read from the dictionary's own `word_forms` rows, not from a list in code, so a language added later brings its
+    * own grammar with its import. A relation that only a handful of rows carry is left out as noise. A language with no
+    * such rows gets the relations its part of speech has in the other languages. '''Writes nothing'''.
+    */
+  val formRelations = {
+    Endpoint(ApiRoutes.route0(paths.formRelations))
+      .query(requiredLangQuery)
+      .query(requiredPosQuery)
+      .withCodecError
+      .out[List[String]]
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   /** Replaces one editor row's pair in place — the row's inline edit. The body names the row (its old source word id,
@@ -753,7 +792,9 @@ object WordEndpoints {
       addPair,
       attachWord,
       setEntryNote,
-      addEntryForm,
+      addMainWord,
+      removeMainWord,
+      formRelations,
       replacePair,
       deletePair,
       bulkDeletePairs,

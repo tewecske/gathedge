@@ -109,7 +109,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/{tagId}/words",
               "/api/tags/{tagId}/words/bulk-delete",
               "/api/tags/{tagId}/words/{wordId}/note",
-              "/api/tags/{tagId}/words/{wordId}/forms",
+              "/api/tags/{tagId}/words/{wordId}/main-words",
+              "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}",
+              "/api/words/form-relations",
               "/api/tags/{tagId}/bulk-import",
               "/api/tags/{tagId}/tabular-import",
               "/api/words/column-language-check",
@@ -325,11 +327,16 @@ object OpenApiSpec extends ZIOSpecDefault {
               // and no 409 — otherwise the same 400/404 shape as adding a pair.
               ("POST", "/api/tags/{tagId}/words")                                         ->
                 Set(Created, BadRequest, Unauthorized, NotFound),
-              // The editor's per-word note and form writes: 404 is the tag or a word it does not hold.
+              // The editor's per-word note and main-word writes: 404 is the tag or a word it does not hold.
               ("PUT", "/api/tags/{tagId}/words/{wordId}/note")                            ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
-              ("POST", "/api/tags/{tagId}/words/{wordId}/forms")                          ->
+              ("POST", "/api/tags/{tagId}/words/{wordId}/main-words")                     ->
                 Set(Created, BadRequest, Unauthorized, NotFound),
+              ("DELETE", "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}")      ->
+                Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // A read of the dictionary's grammar: an unknown language or part of speech is an empty list, not a 404.
+              ("GET", "/api/words/form-relations")                                        ->
+                Set(Ok, BadRequest, Unauthorized),
               ("PUT", "/api/tags/{tagId}/pairs")                                          ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("DELETE", "/api/tags/{tagId}/pairs/{sourceWordId}")                        ->
@@ -552,7 +559,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 339,
+          declared == 344,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

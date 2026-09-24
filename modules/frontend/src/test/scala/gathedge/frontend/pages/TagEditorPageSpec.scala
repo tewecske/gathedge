@@ -5,7 +5,7 @@ import com.raquo.laminar.api.L._
 import org.scalajs.dom
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.shared.domain.{GrammarTag, PairMatch, PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
 import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
@@ -242,21 +242,22 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         },
       ),
       suite("TagEntryDetails")(
-        test("opens on the word's current note, with every pickable form type on offer") {
+        test("opens on the word's current note, with a main-word search and no form type until one is picked") {
           val container = dom.document.createElement("div")
           dom.document.body.appendChild(container)
           val word      = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
           val rootNode  =
             L.render(container, new TagEntryDetails(1L, word, Some("Gebäude"), Observer.empty).render())
           try {
-            val note    = container.querySelector("input").asInstanceOf[dom.html.Input].value
-            val options = container.querySelectorAll("select option").toList.map(_.getAttribute("value"))
-            val text    = container.textContent
+            val inputs = container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input])
+            val text   = container.textContent
             assertTrue(
-              note == "Gebäude",
-              options == GrammarTag.pickable,
+              inputs.headOption.map(_.value).contains("Gebäude"),
+              inputs.exists(_.placeholder == UiKeys.tagsEditorMainWordSearch),
+              // The form types depend on the main word, so none are offered before one is picked.
+              container.querySelectorAll("select").length == 0,
               text.contains(UiKeys.tagsEditorNoteLabel),
-              text.contains(UiKeys.tagsEditorAddForm),
+              text.contains(UiKeys.tagsEditorFormOfLabel),
             )
           } finally {
             rootNode.unmount()

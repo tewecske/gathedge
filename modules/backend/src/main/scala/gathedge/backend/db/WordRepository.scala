@@ -491,6 +491,16 @@ trait WordRepository {
     */
   def deleteWordForms(formWordId: Long, relation: String): Task[Long]
 
+  /** Deletes one `word_forms` row — one form of one main word under one relation — the editor's undo for a link a
+    * reader made. Clears `is_form` the same way [[deleteWordForms]] does, once no relation names the word as a form.
+    */
+  def deleteWordForm(lemmaWordId: Long, formWordId: Long, relation: String): Task[Long]
+
+  /** How many `word_forms` rows use each relation, over the lemmas of one part of speech — in one language, or in every
+    * language when `language` is `None`. What the editor's form-type picker is built from.
+    */
+  def formRelationCounts(language: Option[String], partOfSpeech: String): Task[List[(String, Long)]]
+
   def countWords: Task[Long]
   def countTranslations: Task[Long]
   def countTags: Task[Long]
@@ -864,6 +874,12 @@ object WordRepository {
 
   def formFanOutAnomalies(threshold: Int): RIO[WordRepository, List[(WordRow, String, Long)]] =
     ZIO.serviceWithZIO[WordRepository](_.formFanOutAnomalies(threshold))
+
+  def deleteWordForm(lemmaWordId: Long, formWordId: Long, relation: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.deleteWordForm(lemmaWordId, formWordId, relation))
+
+  def formRelationCounts(language: Option[String], partOfSpeech: String): RIO[WordRepository, List[(String, Long)]] =
+    ZIO.serviceWithZIO[WordRepository](_.formRelationCounts(language, partOfSpeech))
 
   def deleteWordForms(formWordId: Long, relation: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteWordForms(formWordId, relation))
@@ -2538,6 +2554,56 @@ final class WordRepositoryLive(dataSource: DataSource)
       } yield rows
     )
     logged(deleted)(rows => s"wordForms.delete form=$formWordId relation=$relation rows=$rows")
+  }
+
+  def deleteWordForm(lemmaWordId: Long, formWordId: Long, relation: String): Task[Long] = {
+    val q         = quote(
+      wordForms
+        .filter(row => {
+          row.lemmaWordId == lift(lemmaWordId) && row.formWordId == lift(formWordId) && row.relation == lift(relation)
+        })
+        .delete
+    )
+    // The same upkeep as `deleteWordForms`, in the same transaction: the word is a main word again only once no
+    // relation names it as a form.
+    val remaining = quote(wordForms.filter(row => row.formWordId == lift(formWordId)).size)
+    val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
+    val deleted   = transaction(
+      for {
+        rows <- ctx.run(q)
+        left <- ctx.run(remaining)
+        _    <- ZIO.when(left == 0L)(ctx.run(clear))
+      } yield rows
+    )
+    logged(deleted)(rows => s"wordForms.deleteOne lemma=$lemmaWordId form=$formWordId relation=$relation rows=$rows")
+  }
+
+  def formRelationCounts(language: Option[String], partOfSpeech: String): Task[List[(String, Long)]] = {
+    val counted = language match {
+      case Some(code) =>
+        val q = quote {
+          wordForms
+            .join(words)
+            .on((form, lemma) => form.lemmaWordId == lemma.id)
+            .filter { case (_, lemma) => lemma.language == lift(code) && lemma.partOfSpeech == lift(partOfSpeech) }
+            .groupBy { case (form, _) => form.relation }
+            .map { case (relation, rows) => (relation, rows.size) }
+        }
+        run(ctx.run(q))
+      case None       =>
+        val q = quote {
+          wordForms
+            .join(words)
+            .on((form, lemma) => form.lemmaWordId == lemma.id)
+            .filter { case (_, lemma) => lemma.partOfSpeech == lift(partOfSpeech) }
+            .groupBy { case (form, _) => form.relation }
+            .map { case (relation, rows) => (relation, rows.size) }
+        }
+        run(ctx.run(q))
+    }
+    logged(counted)(rows =>
+      s"wordForms.relationCounts lang=${language.getOrElse("-")} pos=$partOfSpeech rows=${rows.size}"
+    )
   }
 
   def countWords: Task[Long] = {

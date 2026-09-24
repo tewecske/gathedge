@@ -134,15 +134,20 @@ object MessageKeys {
     */
   val wordGenderConflict: String = key("words.genderConflict")
 
-  /** A form added by hand named a relation outside `GrammarTag.pickable`. Takes no argument: the editor offers only
-    * those, so a caller reached this past the picker.
+  /** A word was filed as a form under a relation the dictionary does not offer for its main word — a `past` of a noun.
+    * Takes no argument: the editor offers only the relations that fit, so a caller reached this past the picker.
     */
   val wordFormRelationInvalid: String = key("words.formRelationInvalid")
 
-  /** A form added by hand is the word it was to be filed under. A `word_forms` self-edge would set `is_form` on the
-    * lemma and drop it out of the listing.
+  /** A word was filed as a form of itself. A `word_forms` self-edge would set `is_form` on the word and drop it out of
+    * the listing.
     */
   val wordFormIsLemma: String = key("words.formIsLemma")
+
+  /** A word was filed as a form of a main word it cannot belong to: one in another language, or one that is itself a
+    * form. Takes no argument: the editor's picker offers only main words of the word's own language.
+    */
+  val wordMainWordInvalid: String = key("words.mainWordInvalid")
 
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.
