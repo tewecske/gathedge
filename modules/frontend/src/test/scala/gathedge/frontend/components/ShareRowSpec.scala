@@ -57,6 +57,23 @@ object ShareRowSpec extends ZIOSpecDefault {
           assertTrue(copy == 1, device == 1, qr == 1, targets.forall(_ == 1))
         }
       },
+      test("the icon button has no text, and it opens a popup placed elsewhere") {
+        val container = dom.document.createElement("div")
+        dom.document.body.appendChild(container)
+        val row       = new ShareRow(() => "https://example.test/g/abc", () => "Quiz", stubGenerateQr)
+        val root      = L.render(container, div(h1(row.renderIconButton()), row.renderPopup()))
+        try {
+          val trigger = container.querySelector(s"h1 button[aria-label='${UiKeys.shareButton}']")
+          val text    = trigger.textContent.trim
+          val inTitle = container.querySelector("h1 .modal") != null
+          trigger.asInstanceOf[dom.html.Button].click()
+          val openNow = modal(container).classList.contains("modal-open")
+          assertTrue(text.isEmpty, !inTitle, openNow)
+        } finally {
+          root.unmount()
+          dom.document.body.removeChild(container)
+        }
+      },
       test("the close button closes the popup") {
         withRow { c =>
           buttonsWithText(c, UiKeys.shareButton).head.click()
