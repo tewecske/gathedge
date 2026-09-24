@@ -35,8 +35,8 @@ import gathedge.shared.dto.{
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryPage,
-  TagEntryFormRequest,
-  TagEntryFormResponse,
+  TagEntryMainWordRequest,
+  TagEntryMainWordResponse,
   TagEntryNoteRequest,
   TagEntryResponse,
   TagExportFile,
@@ -285,16 +285,39 @@ object WordApiClient {
     HttpClient.callUnit(WordPaths.setEntryNote(tagId, wordId), Some(TagEntryNoteRequest(note).toJson))
   }
 
-  /** Files an inflected word under one word of a wordlist, as an import's extra column would. */
-  def addEntryForm(
+  /** Files a word of a wordlist as a form of a main word, under `relation`. */
+  def addMainWord(
     tagId: Long,
     wordId: Long,
-    text: String,
+    mainWordId: Long,
     relation: String,
-  ): EventStream[Either[ApiError, TagEntryFormResponse]] = {
-    HttpClient.call[TagEntryFormResponse](
-      WordPaths.addEntryForm(tagId, wordId),
-      Some(TagEntryFormRequest(text, relation).toJson),
+  ): EventStream[Either[ApiError, TagEntryMainWordResponse]] = {
+    HttpClient.call[TagEntryMainWordResponse](
+      WordPaths.addMainWord(tagId, wordId),
+      Some(TagEntryMainWordRequest(mainWordId, relation).toJson),
+    )
+  }
+
+  /** Undoes [[addMainWord]]: the word is no longer that form of that main word. */
+  def removeMainWord(
+    tagId: Long,
+    wordId: Long,
+    mainWordId: Long,
+    relation: String,
+  ): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.callUnit(
+      WordPaths.removeMainWord(tagId, wordId, mainWordId).withQuery(HttpClient.query("relation" -> Some(relation)))
+    )
+  }
+
+  /** The form types a main word of this language and part of speech can have, commonest first. */
+  def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): EventStream[Either[ApiError, List[String]]] = {
+    HttpClient.call[List[String]](
+      WordPaths
+        .formRelations()
+        .withQuery(
+          HttpClient.query("lang" -> Some(WordLanguage.code(language)), "pos" -> Some(PartOfSpeech.code(partOfSpeech)))
+        )
     )
   }
 

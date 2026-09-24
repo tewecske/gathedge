@@ -23,7 +23,7 @@ import gathedge.shared.dto.{
   SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
-  TagEntryFormRequest,
+  TagEntryMainWordRequest,
   TagEntryNoteRequest,
   TagImportRequest,
   TagPairInput,
@@ -349,10 +349,34 @@ object WordRoutes {
     )
   }
 
-  private val addEntryFormRoute = {
-    WordEndpoints.addEntryForm.implementHandler(
-      handler { (tagId: Long, wordId: Long, body: TagEntryFormRequest) =>
-        userId.flatMap(id => WordService.addEntryForm(tagId, wordId, body, id).mapError(ApiFailures.word))
+  private val addMainWordRoute = {
+    WordEndpoints.addMainWord.implementHandler(
+      handler { (tagId: Long, wordId: Long, body: TagEntryMainWordRequest) =>
+        userId.flatMap(id => WordService.addMainWord(tagId, wordId, body, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val removeMainWordRoute = {
+    WordEndpoints.removeMainWord.implementHandler(
+      handler { (tagId: Long, wordId: Long, mainWordId: Long, relation: String) =>
+        userId.flatMap(id =>
+          WordService.removeMainWord(tagId, wordId, mainWordId, relation, id).mapError(ApiFailures.word)
+        )
+      }
+    )
+  }
+
+  /** An unrecognised `lang` or `pos` answers an empty list rather than failing — the lenient treatment [[listRoute]]
+    * gives the same two parameters. A missing one is still the codec's 400.
+    */
+  private val formRelationsRoute = {
+    WordEndpoints.formRelations.implementHandler(
+      handler { (lang: String, pos: String) =>
+        (WordLanguage.fromString(lang), PartOfSpeech.fromString(pos)) match {
+          case (Some(language), Some(partOfSpeech)) => WordService.formRelations(language, partOfSpeech)
+          case _                                    => ZIO.succeed(List.empty[String])
+        }
       }
     )
   }
@@ -500,7 +524,9 @@ object WordRoutes {
       addPairRoute,
       attachWordRoute,
       setEntryNoteRoute,
-      addEntryFormRoute,
+      addMainWordRoute,
+      removeMainWordRoute,
+      formRelationsRoute,
       replacePairRoute,
       deletePairRoute,
       bulkDeletePairsRoute,

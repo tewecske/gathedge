@@ -37,6 +37,10 @@ final class WordPicker(
   onCommitWord: Observer[Option[Word]] = Observer.empty[Option[Word]],
   // Enter pressed while the field is empty and offers nothing. The add row uses it to add the source word alone.
   onEmptyCommit: Observer[Unit] = Observer.empty[Unit],
+  // Offer only main words, never a word that is itself a form — the "form of" picker's rule.
+  mainOnly: Boolean = false,
+  // Offer the typed text as a word to create. Off where the pick must be a word the dictionary already has.
+  allowNew: Boolean = true,
 ) {
 
   private val queryVar                         = Var("")
@@ -73,7 +77,7 @@ final class WordPicker(
       .map(_._1)
       .take(maxRows)
     val exact  = ranked.exists(_.text.equalsIgnoreCase(search))
-    val newRow = if (search.nonEmpty && !exact) List[Completion](NewCompletion(search)) else Nil
+    val newRow = if (allowNew && search.nonEmpty && !exact) List[Completion](NewCompletion(search)) else Nil
     ranked.map(DictionaryCompletion.apply) ++ newRow
   }
 
@@ -120,7 +124,7 @@ final class WordPicker(
     val list = currentOptions()
     val h    = highlightVar.now()
     if (list.nonEmpty) commit(list(if (h >= 0 && h < list.size) h else 0))
-    else if (bare(langMirror.now(), queryVar.now()).nonEmpty)
+    else if (allowNew && bare(langMirror.now(), queryVar.now()).nonEmpty)
       commit(NewCompletion(bare(langMirror.now(), queryVar.now())))
     else onEmptyCommit.onNext(())
   }
@@ -208,7 +212,13 @@ final class WordPicker(
           if (search.isEmpty) EventStream.fromValue(List.empty[Word])
           else {
             WordApiClient
-              .list(pageSize = Some(12), search = Some(search), language = Some(lang), partOfSpeech = pos)
+              .list(
+                pageSize = Some(12),
+                search = Some(search),
+                language = Some(lang),
+                partOfSpeech = pos,
+                mainOnly = Option.when(mainOnly)(true),
+              )
               .map(_.getOrElse(WordPage(Nil, 0L)).items.map(_.word))
           }
         } --> Observer[List[Word]] { items =>
