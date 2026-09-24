@@ -16,8 +16,8 @@ import scala.util.{Failure, Success}
   * page. `GameInstancePage` and `GroupDetailPage` both put it next to whatever they share (a quiz's own URL for the
   * former, an invite link built from a code for the latter).
   *
-  * The button comes in two shapes: [[render]] draws a labelled button with its dropdown in one block, and
-  * [[renderIconButton]] draws the icon alone for a title row, with [[renderPopup]] placed elsewhere.
+  * The button is an icon alone, for the title row beside the name ([[renderIconButton]]). The dropdown is drawn apart
+  * from it ([[renderPopup]]), outside the title.
   *
   * The options sit in a dropdown, not in a row on the page. Sharing is not what either page is for, so the page shows
   * one button and nothing more. The dropdown is daisyUI's popover-API one, built through [[Popover]] like the account
@@ -57,24 +57,9 @@ final class ShareRow(
     */
   def resetQr(): Unit = Var.set(qrDataUriVar -> None, qrErrorVar -> None)
 
-  /** The labelled Share button with its dropdown, in one block — `GroupDetailPage`'s shape. */
-  def render(): HtmlElement = {
-    div(
-      cls := "mt-3",
-      button(
-        cls := "btn btn-sm",
-        typ := "button",
-        opensMenu,
-        shareMark(),
-        I18n.t(UiKeys.shareButton),
-      ),
-      renderPopup(),
-    )
-  }
-
   /** The share mark alone, with "Share" on its tooltip — the shape of the pencil and trash icons it sits beside in
-    * `GameInstancePage`'s title. Pair it with [[renderPopup]], placed outside the title: the title's `h1` type would
-    * otherwise style the dropdown's text too.
+    * `GameInstancePage`'s and `GroupDetailPage`'s titles. Pair it with [[renderPopup]], placed outside the title: the
+    * title's `h1` type would otherwise style the dropdown's text too.
     */
   def renderIconButton(): HtmlElement = {
     InlineRename.iconButton(I18n.t(UiKeys.shareButton), shareMark(), opensMenu)

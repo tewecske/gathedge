@@ -22,6 +22,13 @@ object ShareRowSpec extends ZIOSpecDefault {
 
   private def newRow(): ShareRow = new ShareRow(() => "https://example.test/g/abc", () => "Quiz", stubGenerateQr)
 
+  /** The shape both pages use: the icon inside the title, the dropdown beside it. */
+  private def titled(row: ShareRow): HtmlElement = div(h1(row.renderIconButton()), row.renderPopup())
+
+  private def trigger(c: dom.Element): dom.Element = {
+    c.querySelector(s"h1 button[aria-label='${UiKeys.shareButton}']")
+  }
+
   private def withRendered[A](element: HtmlElement)(use: dom.Element => A): A = {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
@@ -47,17 +54,16 @@ object ShareRowSpec extends ZIOSpecDefault {
 
   def spec = {
     suite("ShareRow")(
-      test("the Share button opens the dropdown, anchored to it") {
-        withRendered(newRow().render()) { c =>
-          val trigger  = buttonsWithText(c, UiKeys.shareButton).head
-          val opens    = targetOf(c, trigger) == menu(c)
-          val anchor   = trigger.getAttribute("style").stripPrefix("anchor-name:")
+      test("the Share icon opens the dropdown, anchored to it") {
+        withRendered(titled(newRow())) { c =>
+          val opens    = targetOf(c, trigger(c)) == menu(c)
+          val anchor   = trigger(c).getAttribute("style").stripPrefix("anchor-name:")
           val anchored = menu(c).getAttribute("style") == s"position-anchor:$anchor"
           assertTrue(opens, anchored, anchor.nonEmpty)
         }
       },
       test("the dropdown holds copy-link, device share, QR code and the share pages") {
-        withRendered(newRow().render()) { c =>
+        withRendered(titled(newRow())) { c =>
           val box     = menu(c)
           val copy    = buttonsWithText(box, UiKeys.shareCopyLink).size
           val device  = buttonsWithText(box, UiKeys.shareDevice).size
@@ -66,19 +72,16 @@ object ShareRowSpec extends ZIOSpecDefault {
           assertTrue(copy == 1, device == 1, qr == 1, targets.forall(_ == 1))
         }
       },
-      test("the icon button has no text, and it opens a dropdown placed outside the title") {
-        val row = newRow()
-        withRendered(div(h1(row.renderIconButton()), row.renderPopup())) { c =>
-          val trigger = c.querySelector(s"h1 button[aria-label='${UiKeys.shareButton}']")
-          val text    = trigger.textContent.trim
+      test("the icon has no text, and the dropdown sits outside the title") {
+        withRendered(titled(newRow())) { c =>
+          val text    = trigger(c).textContent.trim
           val inTitle = c.querySelector("h1 [popover]") != null
-          val opens   = targetOf(c, trigger) == menu(c)
-          assertTrue(text.isEmpty, !inTitle, opens)
+          assertTrue(text.isEmpty, !inTitle)
         }
       },
       test("the QR entry opens the QR block inside the dropdown") {
         // The code itself lands a tick later, when the `Future` completes; the block and its heading appear at once.
-        withRendered(newRow().render()) { c =>
+        withRendered(titled(newRow())) { c =>
           def qrHeadings = menu(c).querySelectorAll("h4").length
           val before     = qrHeadings
           buttonsWithText(c, UiKeys.shareQrGenerate).head.click()
