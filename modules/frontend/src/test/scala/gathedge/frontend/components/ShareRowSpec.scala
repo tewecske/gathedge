@@ -79,14 +79,24 @@ object ShareRowSpec extends ZIOSpecDefault {
           assertTrue(text.isEmpty, !inTitle)
         }
       },
-      test("the QR entry opens the QR block inside the dropdown") {
-        // The code itself lands a tick later, when the `Future` completes; the block and its heading appear at once.
+      test("the QR entry opens a modal outside the dropdown, and the X closes it") {
         withRendered(titled(newRow())) { c =>
-          def qrHeadings = menu(c).querySelectorAll("h4").length
-          val before     = qrHeadings
-          buttonsWithText(c, UiKeys.shareQrGenerate).head.click()
-          val after      = qrHeadings
-          assertTrue(before == 0, after == 1)
+          def qrOpen = c.querySelector(".modal").classList.contains("modal-open")
+          val before = qrOpen
+          buttonsWithText(menu(c), UiKeys.shareQrGenerate).head.click()
+          val opened = qrOpen
+          val inMenu = menu(c).querySelector(".modal") != null
+          c.querySelector(s"button[aria-label='${UiKeys.shareQrClose}']").asInstanceOf[dom.html.Button].click()
+          val afterX = qrOpen
+          assertTrue(!before, opened, !inMenu, !afterX)
+        }
+      },
+      test("a click on the backdrop closes the QR modal") {
+        withRendered(titled(newRow())) { c =>
+          buttonsWithText(menu(c), UiKeys.shareQrGenerate).head.click()
+          c.querySelector(".modal-backdrop").asInstanceOf[dom.html.Element].click()
+          val open = c.querySelector(".modal").classList.contains("modal-open")
+          assertTrue(!open)
         }
       },
     )

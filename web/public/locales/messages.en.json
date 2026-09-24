@@ -81,6 +81,7 @@
   "ui.share.qrGenerate": "Generate QR code",
   "ui.share.qrTitle": "QR code",
   "ui.share.qrAlt": "QR code linking to this page",
+  "ui.share.qrClose": "Close",
   "ui.share.qrError": "The QR code could not be generated.",
   "ui.share.via": "Share on {0}",
   "ui.share.email": "Share by email",
