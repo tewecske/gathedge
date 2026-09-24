@@ -85,6 +85,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words",
               "/api/words/{id}",
               "/api/words/{id}/gender",
+              "/api/words/{id}/part-of-speech",
               "/api/words/{id}/translations",
               "/api/words/{id}/translations/{translationId}",
               "/api/words/{id}/tags/{tagId}",
@@ -260,6 +261,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               // 404 covers a `mainWordId` naming no word and a `tagIds` entry naming a tag that is not the caller's
               // alike, the same rule every tag-scoped write in this resource follows.
               ("POST", "/api/words")                                                      -> Set(Created, BadRequest, Unauthorized, NotFound),
+              // The author changes their own word; anything else is an administrator's (403), and dictionary data
+              // needs the warning confirmed (409), which is also the identity collision `setGender` answers.
+              ("PUT", "/api/words/{id}/part-of-speech")                                   ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("PUT", "/api/words/{id}/gender")                                           ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/words/{id}/translations")                                    ->
@@ -332,8 +337,10 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/tags/{tagId}/words/{wordId}/main-words")                     ->
                 Set(Created, BadRequest, Unauthorized, NotFound),
+              // Removing a link the caller did not make is an administrator's (403); a dictionary link needs the
+              // warning confirmed (409).
               ("DELETE", "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}")      ->
-                Set(NoContent, BadRequest, Unauthorized, NotFound),
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               // A read of the dictionary's grammar: an unknown language or part of speech is an empty list, not a 404.
               ("GET", "/api/words/form-relations")                                        ->
                 Set(Ok, BadRequest, Unauthorized),
@@ -559,7 +566,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 344,
+          declared == 351,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -591,6 +598,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("PUT", "/api/groups/{groupId}/tags/{tagId}"),
               ("DELETE", "/api/groups/{groupId}/tags/{tagId}"),
               ("DELETE", "/api/groups/{groupId}"),
+              // `WordService.guardSharedEdit`: dictionary data, or another reader's, is an administrator's to change.
+              ("PUT", "/api/words/{id}/part-of-speech"),
+              ("DELETE", "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,

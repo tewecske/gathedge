@@ -349,6 +349,8 @@ Four load-bearing columns:
 
 **Translation edges are stored in both directions.** `origin` is `dictionary`, `user`, or `pivot`.
 
+**Dictionary data is never a reader's to delete or change.** `words.source`, `word_translations.origin` and `word_forms.origin` say whether the import wrote a row; `created_by` says which reader made it. A reader, guests included, changes or removes only their own rows. Everything else is a global administrator's, and dictionary data also needs `confirm` on the request — the answer to the warning the page shows first. `WordService.guardSharedEdit` is the one rule; every new endpoint that changes or removes shared words or relations goes through it, and answers 403 (`WordEditFailure.Protected`) and 409 (`ConfirmRequired`).
+
 **Two tag controls, not one.** `WordQuery.tagId` narrows the listing. The **collect tag** is page-local state in `localStorage`. Consequences: a tick reads the collect tag; creating a tag selects it; `reconcileCollectTag` re-points it.
 
 **A tick means a word is being learned; a chip marks the answer translation** (inside the collect tag, `word_tag_pairs`):

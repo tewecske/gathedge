@@ -149,6 +149,17 @@ object MessageKeys {
     */
   val wordMainWordInvalid: String = key("words.mainWordInvalid")
 
+  /** A reader tried to change or remove data that is not theirs: a dictionary word or link, or another reader's. Only a
+    * global administrator may.
+    */
+  val wordDictionaryProtected: String = key("words.dictionaryProtected")
+
+  /** An administrator tried to change or remove dictionary data without confirming the editor's warning. */
+  val wordDictionaryConfirmRequired: String = key("words.dictionaryConfirmRequired")
+
+  /** Changing a word's part of speech would collide with the row that already holds that identity. */
+  val wordPartOfSpeechConflict: String = key("words.partOfSpeechConflict")
+
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.
     */
