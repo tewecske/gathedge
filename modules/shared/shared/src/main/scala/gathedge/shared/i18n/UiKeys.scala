@@ -100,7 +100,6 @@ object UiKeys {
   val shareQrGenerate: String = key("ui.share.qrGenerate")
   val shareQrTitle: String    = key("ui.share.qrTitle")
   val shareQrAlt: String      = key("ui.share.qrAlt")
-  val shareQrClose: String    = key("ui.share.qrClose")
   val shareQrError: String    = key("ui.share.qrError")
 
   /** The per-network buttons beside them. `{0}` is the network's own name, which stays untranslated (the endonym rule
