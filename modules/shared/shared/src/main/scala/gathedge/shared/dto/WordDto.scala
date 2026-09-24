@@ -25,8 +25,17 @@ final case class TaggedPair(tagId: Long, translationWordId: Long) derives JsonCo
   * type label. Used where the direction is shown but not interacted with: [[WordSummary.mainWord]] and
   * [[WordDetail.mainWords]]. `relation` is the raw canonical tag string (e.g. `"dative,definite,plural"`); rendering it
   * into words is `Labels.grammarRelation` on the client, so it follows the reader's own locale.
+  *
+  * `fromDictionary` says the import wrote the link; `createdByMe` says this reader made it. Filled on
+  * [[WordDetail.mainWords]], where the wordlist editor offers to remove a link, and read there to decide whether it
+  * may: a reader removes their own, and only an administrator removes the rest, after a warning for dictionary data.
   */
-final case class WordFormRef(word: Word, relation: String) derives JsonCodec
+final case class WordFormRef(
+  word: Word,
+  relation: String,
+  fromDictionary: Boolean = false,
+  createdByMe: Boolean = false,
+) derives JsonCodec
 
 /** One entry of a lemma's [[WordSummary.variants]] column: the form, its relation, and whether it is the row a search
   * landed on directly — the ★ marker the listing shows when this exact word id is also present as its own row on the
@@ -88,6 +97,9 @@ final case class TranslationEntry(
   *
   * `mainWords` names every lemma this word is a form of — ordinarily zero or one. `forms` lists every form of this
   * word, uncapped (unlike [[WordSummary.variants]]'s listing-row cap): the detail screen is where the whole set lives.
+  *
+  * `fromDictionary` says the import wrote the word; `createdByMe` says this reader minted it. Together they decide who
+  * may change the word's part of speech: its author, and otherwise only an administrator.
   */
 final case class WordDetail(
   word: Word,
@@ -96,6 +108,8 @@ final case class WordDetail(
   pairs: List[TaggedPair],
   mainWords: List[WordFormRef],
   forms: List[WordFormEntry],
+  fromDictionary: Boolean = false,
+  createdByMe: Boolean = false,
 ) derives JsonCodec
 
 /** One page of the vocabulary, counted the way [[UserPage]] is: `total` counts what the filter matches, not what the
@@ -150,6 +164,11 @@ final case class AddTranslationRequest(translation: NewTranslation) derives Json
   * correction, which is refused outright.
   */
 final case class SetGenderRequest(gender: Gender) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.setPartOfSpeech]]'s body. `confirm` is the reader's answer to the warning the
+  * editor shows before changing a dictionary word; the server refuses a dictionary word without it.
+  */
+final case class SetPartOfSpeechRequest(partOfSpeech: PartOfSpeech, confirm: Boolean = false) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.createTag]]'s body: a tag name and its mandatory language pair. The pair is
   * fixed here and stays editable only while the tag has no `word_tag_pairs` row (see [[SetTagLanguagesRequest]]);
@@ -300,10 +319,11 @@ final case class TagEntryResponse(
 final case class TagEntryNoteRequest(note: Option[String]) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s body: the main word that a word of the wordlist is a form of,
-  * and which form it is — `Häuser` is the `plural` of `Haus`. `relation` must be one of the relations
-  * [[gathedge.shared.api.WordEndpoints.formRelations]] offers for the main word's language and part of speech.
+  * and which form it is — `Häuser` is the `plural` of `Haus`. `mainWord` may be a dictionary word or one to create, as
+  * on the add row; either way it has the form's language and part of speech. `relation` must be one of the relations
+  * [[gathedge.shared.api.WordEndpoints.formRelations]] offers for that language and part of speech.
   */
-final case class TagEntryMainWordRequest(mainWordId: Long, relation: String) derives JsonCodec
+final case class TagEntryMainWordRequest(mainWord: TagPairWord, relation: String) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s answer: the main word the form is now filed under.
   * `alreadyPresent` says it already was, under that relation, so nothing was written.

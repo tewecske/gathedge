@@ -22,6 +22,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetPartOfSpeechRequest,
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryMainWordRequest,
@@ -60,6 +61,7 @@ object WordPaths {
   val create              = ApiPath0(POST, "/api/words")
   val addTranslation      = ApiPath1[Long](POST, "/api/words/{id}/translations")
   val setGender           = ApiPath1[Long](PUT, "/api/words/{id}/gender")
+  val setPartOfSpeech     = ApiPath1[Long](PUT, "/api/words/{id}/part-of-speech")
   val removeTranslation   = ApiPath2[Long, Long](DELETE, "/api/words/{id}/translations/{translationId}")
   val listTags            = ApiPath0(GET, "/api/tags")
   val getTag              = ApiPath1[Long](GET, "/api/tags/{tagId}")
@@ -102,6 +104,7 @@ object WordPaths {
     create,
     addTranslation,
     setGender,
+    setPartOfSpeech,
     removeTranslation,
     listTags,
     getTag,
@@ -192,6 +195,9 @@ object WordEndpoints {
   private val requiredPosQuery  = HttpCodec.query[String]("pos")
   private val relationQuery     = HttpCodec.query[String]("relation")
 
+  /** The answer to the editor's warning before an administrator removes dictionary data. */
+  private val confirmQuery = HttpCodec.query[Boolean]("confirm").optional
+
   /** The browse-and-tag listing, paged and counted by the database.
     *
     * `lang` narrows to one study language and `target` picks which language the rendered translations are in; both are
@@ -276,6 +282,21 @@ object WordEndpoints {
       .withCodecError
       .out[WordDetail]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Changes a word's part of speech — what the wordlist editor offers for a word typed in by hand, which the add row
+    * files as `other` when the dictionary has never heard of it. A word that stops being a noun loses its gender.
+    *
+    * The word's author may change it. Anybody else's word, and every dictionary word, is an administrator's to change:
+    * 403 for anyone else. A dictionary word also needs `confirm`, the answer to the editor's warning: 409 without it.
+    * 409 is also the identity collision, as on [[setGender]]: the same word with that part of speech is already a row.
+    */
+  val setPartOfSpeech = {
+    Endpoint(ApiRoutes.route1(paths.setPartOfSpeech, PathCodec.long))
+      .in[SetPartOfSpeechRequest]
+      .withCodecError
+      .out[WordDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Removes one of the caller's own translations. A dictionary edge belongs to nobody and cannot be removed here;
@@ -583,16 +604,20 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
   }
 
-  /** Removes one [[addMainWord]] link: the word is no longer that form of that main word. The word counts as a main
-    * word again once no link names it as a form. Idempotent. 404 is a tag the caller may not edit, or a word the
-    * wordlist does not hold.
+  /** Removes one form-of link: the word is no longer that form of that main word. The word counts as a main word again
+    * once no link names it as a form. Idempotent.
+    *
+    * A reader removes only a link they made. Anybody else's link, and every link the dictionary import wrote, is an
+    * administrator's to remove: 403 for anyone else. A dictionary link also needs `confirm=true`, the answer to the
+    * editor's warning: 409 without it. 404 is a tag the caller may not edit, or a word the wordlist does not hold.
     */
   val removeMainWord = {
     Endpoint(ApiRoutes.route3(paths.removeMainWord, PathCodec.long, PathCodec.long, PathCodec.long))
       .query(relationQuery)
+      .query(confirmQuery)
       .withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** The relations a form may have to a main word of this language and part of speech, the fewest tags first and the
@@ -770,6 +795,7 @@ object WordEndpoints {
       create,
       addTranslation,
       setGender,
+      setPartOfSpeech,
       removeTranslation,
       listTags,
       getTag,

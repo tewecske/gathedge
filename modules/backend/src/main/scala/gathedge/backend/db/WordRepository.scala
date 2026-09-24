@@ -61,6 +61,11 @@ trait WordRepository {
     */
   def setWordGender(id: Long, gender: String): Task[Long]
 
+  /** Changes a word's part of speech, and its gender with it, since the gender is kept only on a noun. Both are part of
+    * the word's identity, so the unique index refuses a change that would duplicate another row. Rows affected.
+    */
+  def setWordPartOfSpeech(id: Long, partOfSpeech: String, gender: String): Task[Long]
+
   /** One page of the listing. `search` is matched as a **prefix** of the accent-folded text, which is what an
     * autocomplete needs and what `idx_words_search` answers.
     *
@@ -491,6 +496,9 @@ trait WordRepository {
     */
   def deleteWordForms(formWordId: Long, relation: String): Task[Long]
 
+  /** The one `word_forms` row linking this form to this main word under this relation, if there is one. */
+  def findWordForm(lemmaWordId: Long, formWordId: Long, relation: String): Task[Option[WordFormRow]]
+
   /** Deletes one `word_forms` row — one form of one main word under one relation — the editor's undo for a link a
     * reader made. Clears `is_form` the same way [[deleteWordForms]] does, once no relation names the word as a form.
     */
@@ -525,6 +533,12 @@ object WordRepository {
 
   def ensureWordCounted(row: WordRow): RIO[WordRepository, (WordRow, Boolean)] =
     ZIO.serviceWithZIO[WordRepository](_.ensureWordCounted(row))
+
+  def setWordPartOfSpeech(id: Long, partOfSpeech: String, gender: String): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.setWordPartOfSpeech(id, partOfSpeech, gender))
+
+  def findWordForm(lemmaWordId: Long, formWordId: Long, relation: String): RIO[WordRepository, Option[WordFormRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.findWordForm(lemmaWordId, formWordId, relation))
 
   def setWordGender(id: Long, gender: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.setWordGender(id, gender))
@@ -946,6 +960,15 @@ final class WordRepositoryLive(dataSource: DataSource)
   def setWordGender(id: Long, gender: String): Task[Long] = {
     val q = quote(words.filter(word => word.id == lift(id) && word.gender == lift("")).update(_.gender -> lift(gender)))
     logged(run(ctx.run(q)))(rows => s"words.setGender id=$id gender=$gender rows=$rows")
+  }
+
+  def setWordPartOfSpeech(id: Long, partOfSpeech: String, gender: String): Task[Long] = {
+    val q = quote(
+      words
+        .filter(word => word.id == lift(id))
+        .update(_.partOfSpeech -> lift(partOfSpeech), _.gender -> lift(gender))
+    )
+    logged(run(ctx.run(q)))(rows => s"words.setPartOfSpeech id=$id pos=$partOfSpeech gender=$gender rows=$rows")
   }
 
   /** Every article form of every language this app teaches, longest first so `"los"` is not shadowed by a shorter form
@@ -2237,28 +2260,37 @@ final class WordRepositoryLive(dataSource: DataSource)
   }
 
   def deleteOwnedWord(wordId: Long, userId: Long): Task[Long] = {
-    val work = transaction(
-      for {
-        _       <- ctx.run(quote {
-                     translations.filter(e => e.sourceWordId == lift(wordId) || e.targetWordId == lift(wordId)).delete
-                   })
-        _       <- ctx.run(quote {
-                     wordTagPairs.filter(p => p.wordId == lift(wordId) || p.translationWordId == lift(wordId)).delete
-                   })
-        _       <- ctx.run(quote {
-                     wordForms.filter(f => f.lemmaWordId == lift(wordId) || f.formWordId == lift(wordId)).delete
-                   })
-        _       <- ctx.run(quote(wordTags.filter(_.wordId == lift(wordId)).delete))
-        deleted <- ctx.run(quote {
-                     words
-                       .filter(w =>
-                         w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId))
-                       )
-                       .delete
-                   })
-      } yield deleted
+    // Ownership is checked before anything is touched. The relations below go first only because they reference the
+    // word, and a dictionary word — or another reader's — must never lose its translations and forms to a caller who
+    // then fails to delete the word itself.
+    val owned = quote {
+      words.filter(w => w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId))).size
+    }
+    val work  = transaction(
+      ctx.run(owned).flatMap(count => if (count == 0L) ZIO.succeed(0L) else deleteOwned(wordId, userId))
     )
     logged(work)(n => s"words.deleteOwned word=$wordId user=$userId deleted=$n")
+  }
+
+  private def deleteOwned(wordId: Long, userId: Long) = {
+    for {
+      _       <- ctx.run(quote {
+                   translations.filter(e => e.sourceWordId == lift(wordId) || e.targetWordId == lift(wordId)).delete
+                 })
+      _       <- ctx.run(quote {
+                   wordTagPairs.filter(p => p.wordId == lift(wordId) || p.translationWordId == lift(wordId)).delete
+                 })
+      _       <- ctx.run(quote {
+                   wordForms.filter(f => f.lemmaWordId == lift(wordId) || f.formWordId == lift(wordId)).delete
+                 })
+      _       <- ctx.run(quote(wordTags.filter(_.wordId == lift(wordId)).delete))
+      deleted <-
+        ctx.run(quote {
+          words
+            .filter(w => w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId)))
+            .delete
+        })
+    } yield deleted
   }
 
   /** Seeds the tag and its pairs in one transaction. Inserting the tag and then calling [[pairTranslation]] would leave
@@ -2446,6 +2478,8 @@ final class WordRepositoryLive(dataSource: DataSource)
             _.formWordId  -> row.formWordId,
             _.relation    -> row.relation,
             _.createdAt   -> row.createdAt,
+            _.origin      -> row.origin,
+            _.createdBy   -> row.createdBy,
           )
         })
       }
@@ -2554,6 +2588,17 @@ final class WordRepositoryLive(dataSource: DataSource)
       } yield rows
     )
     logged(deleted)(rows => s"wordForms.delete form=$formWordId relation=$relation rows=$rows")
+  }
+
+  def findWordForm(lemmaWordId: Long, formWordId: Long, relation: String): Task[Option[WordFormRow]] = {
+    val q = quote(
+      wordForms.filter(row => {
+        row.lemmaWordId == lift(lemmaWordId) && row.formWordId == lift(formWordId) && row.relation == lift(relation)
+      })
+    )
+    logged(run(ctx.run(q)).map(_.headOption))(row =>
+      s"wordForms.find lemma=$lemmaWordId form=$formWordId relation=$relation found=${row.isDefined}"
+    )
   }
 
   def deleteWordForm(lemmaWordId: Long, formWordId: Long, relation: String): Task[Long] = {

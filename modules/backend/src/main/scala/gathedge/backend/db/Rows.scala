@@ -195,6 +195,10 @@ final case class WordTranslationRow(
   * `"dative,definite,plural"`), following the same free-form-string convention [[WordTranslationRow.origin]] does.
   * Never a closed enum: German case x number x definiteness, and Hungarian's case system, are both larger than any list
   * this application would maintain by hand.
+  *
+  * `origin` is [[WordSource.dictionary]] for a row the import wrote and [[WordSource.user]] for one a reader made;
+  * `createdBy` is that reader. The two decide who may remove the row — see `WordService.guardSharedEdit`. Both default
+  * to the dictionary case, which is what the importer writes.
   */
 final case class WordFormRow(
   id: Long,
@@ -202,6 +206,8 @@ final case class WordFormRow(
   formWordId: Long,
   relation: String,
   createdAt: Long,
+  origin: String = WordSource.dictionary,
+  createdBy: Option[Long] = None,
 )
 
 /** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on.

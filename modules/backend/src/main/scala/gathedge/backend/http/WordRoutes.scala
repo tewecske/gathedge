@@ -20,6 +20,7 @@ import gathedge.shared.dto.{
   RenameTagRequest,
   ReplacePairRequest,
   SetGenderRequest,
+  SetPartOfSpeechRequest,
   SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
@@ -349,6 +350,14 @@ object WordRoutes {
     )
   }
 
+  private val setPartOfSpeechRoute = {
+    WordEndpoints.setPartOfSpeech.implementHandler(
+      handler { (wordId: Long, body: SetPartOfSpeechRequest) =>
+        userId.flatMap(id => WordService.setPartOfSpeech(wordId, body, id).mapError(ApiFailures.wordEdit))
+      }
+    )
+  }
+
   private val addMainWordRoute = {
     WordEndpoints.addMainWord.implementHandler(
       handler { (tagId: Long, wordId: Long, body: TagEntryMainWordRequest) =>
@@ -359,10 +368,12 @@ object WordRoutes {
 
   private val removeMainWordRoute = {
     WordEndpoints.removeMainWord.implementHandler(
-      handler { (tagId: Long, wordId: Long, mainWordId: Long, relation: String) =>
-        userId.flatMap(id =>
-          WordService.removeMainWord(tagId, wordId, mainWordId, relation, id).mapError(ApiFailures.word)
-        )
+      handler { (tagId: Long, wordId: Long, mainWordId: Long, relation: String, confirm: Option[Boolean]) =>
+        userId.flatMap(id => {
+          WordService
+            .removeMainWord(tagId, wordId, mainWordId, relation, confirm.contains(true), id)
+            .mapError(ApiFailures.wordEdit)
+        })
       }
     )
   }
@@ -524,6 +535,7 @@ object WordRoutes {
       addPairRoute,
       attachWordRoute,
       setEntryNoteRoute,
+      setPartOfSpeechRoute,
       addMainWordRoute,
       removeMainWordRoute,
       formRelationsRoute,
