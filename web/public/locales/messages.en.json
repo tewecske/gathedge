@@ -659,7 +659,6 @@
   "ui.tags.editor.removeForm": "Remove",
   "ui.tags.editor.formExists": "Already a form of {0}.",
   "ui.tags.editor.partOfSpeech": "Part of speech",
-  "ui.tags.editor.posLocked": "Only an administrator can change a dictionary word or another user's.",
   "ui.tags.editor.dictionaryWarning": "This is dictionary data that every user shares. Change it anyway?",
   "ui.tags.editor.filterHeading": "Show",
   "ui.tags.editor.filterVerified": "Verified matches",

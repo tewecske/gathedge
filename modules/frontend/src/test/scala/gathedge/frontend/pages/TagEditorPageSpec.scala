@@ -241,6 +241,30 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           assertTrue(TagEditorPage.withNote(rows, 1L, None).forall(_.comment.isEmpty))
         },
       ),
+      suite("posChanges")(
+        test("a change touches only the words not already at that part of speech") {
+          val row = entry(1, Some(2), createdByMe = true, targetCreatedByMe = true)
+            .copy(target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+          assertTrue(
+            TagEditorPage.posChanges(row, PartOfSpeech.Noun, admin = false).map(_.map(_.word.id)).contains(List(2L))
+          )
+        },
+        test("a word the reader may not change refuses the whole change, unless they are an administrator") {
+          val dictionary = entry(1, Some(2), targetCreatedByMe = true)
+            .copy(fromDictionary = true, target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+          assertTrue(
+            TagEditorPage.posChanges(dictionary, PartOfSpeech.Verb, admin = false).isEmpty,
+            TagEditorPage.posChanges(dictionary, PartOfSpeech.Verb, admin = true).map(_.size).contains(2),
+          )
+        },
+        test("a dictionary word already at the chosen part of speech needs no permission") {
+          val row = entry(1, Some(2), targetCreatedByMe = true)
+            .copy(fromDictionary = true, target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+          assertTrue(
+            TagEditorPage.posChanges(row, PartOfSpeech.Noun, admin = false).map(_.map(_.word.id)).contains(List(2L))
+          )
+        },
+      ),
       suite("withWord")(
         test("a changed word replaces itself on every row that shows it, on whichever side") {
           val rows    = List(entry(1, Some(2)), entry(2, Some(3)), entry(4, None))
@@ -254,7 +278,7 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         }
       ),
       suite("TagEntryDetails")(
-        test("opens on the word's current note, with a main-word search and no form type until one is picked") {
+        test("opens on the word's current note, with a main-word search and no select until a main word is picked") {
           val container = dom.document.createElement("div")
           dom.document.body.appendChild(container)
           val word      = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
@@ -268,10 +292,8 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             assertTrue(
               inputs.headOption.map(_.value).contains("Gebäude"),
               inputs.exists(_.placeholder == UiKeys.tagsEditorMainWordSearch),
-              // Only the part-of-speech select: the form types wait for a main word.
-              selects.size == 1,
-              // Locked until the server says whose word it is.
-              selects.forall(_.disabled),
+              // The part of speech is the row's, and the form types wait for a main word.
+              selects.isEmpty,
               text.contains(UiKeys.tagsEditorNoteLabel),
               text.contains(UiKeys.tagsEditorFormOfLabel),
             )

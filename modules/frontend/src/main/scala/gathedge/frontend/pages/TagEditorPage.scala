@@ -88,6 +88,23 @@ object TagEditorPage {
     })
   }
 
+  /** One word of a row, with what decides whether the reader may change its part of speech. */
+  private[pages] final case class PosSide(word: Word, fromDictionary: Boolean, mine: Boolean)
+
+  private[pages] def posSides(entry: TagEntry): List[PosSide] = {
+    PosSide(entry.source, entry.fromDictionary, entry.createdByMe) ::
+      entry.target.map(word => PosSide(word, entry.targetFromDictionary, entry.targetCreatedByMe)).toList
+  }
+
+  /** The words a change of the row's part of speech to `pos` must touch, or `None` when one of them is not the reader's
+    * to change. All or nothing: a pair left half-changed is the mismatch this control exists to fix. A word already at
+    * `pos` is not touched, so it needs no permission.
+    */
+  private[pages] def posChanges(entry: TagEntry, pos: PartOfSpeech, admin: Boolean): Option[List[PosSide]] = {
+    val needed = posSides(entry).filter(_.word.partOfSpeech != pos)
+    Option.when(admin || needed.forall(side => side.mine && !side.fromDictionary))(needed)
+  }
+
   /** Puts a changed word — a new part of speech — on every row that shows it, on whichever side. */
   private[pages] def withWord(entries: List[TagEntry], word: Word): List[TagEntry] = {
     entries.map(entry => {
@@ -1431,8 +1448,9 @@ private final class TagEditorPage(
     }
   }
 
-  /** The row under a row that holds its note-and-forms panel: one [[TagEntryDetails]] per word, in the columns' order.
-    * Always in the table so the row count stays even, but hidden, and with nothing mounted, until it is opened.
+  /** The row under a row that holds its note-and-forms panel: the pair's part of speech, then one [[TagEntryDetails]]
+    * per word, in the columns' order. Always in the table so the row count stays even, but hidden, and with nothing
+    * mounted, until it is opened.
     */
   private def renderDetailsRow(entry: TagEntry): HtmlElement = {
     val rowKey = TagEditorPage.rowKey(entry)
@@ -1448,20 +1466,95 @@ private final class TagEditorPage(
             val (first, second) = TagEditorPage.orient(entry, left, right)
             Some(
               div(
-                cls := "grid grid-cols-1 sm:grid-cols-2 gap-4 py-2",
-                List(first, second).flatten.map(side => {
-                  new TagEntryDetails(
-                    tagId,
-                    side.word,
-                    side.comment,
-                    Observer[Option[String]](note => applyNote(side.word.id, note)),
-                    Observer[Word](word => entriesVar.update(TagEditorPage.withWord(_, word))),
-                  ).render()
-                }),
+                cls := "flex flex-col gap-3 py-2",
+                renderRowPartOfSpeech(entry),
+                div(
+                  cls := "grid grid-cols-1 sm:grid-cols-2 gap-4",
+                  List(first, second).flatten.map(side => {
+                    new TagEntryDetails(
+                      tagId,
+                      side.word,
+                      side.comment,
+                      Observer[Option[String]](note => applyNote(side.word.id, note)),
+                    ).render()
+                  }),
+                ),
               )
             )
         },
       ),
+    )
+  }
+
+  /** The pair's part of speech: one select for the row, setting both words, so the two can never drift apart. Both
+    * words' main-word pickers are held to it.
+    *
+    * The whole change is worked out before anything is sent ([[TagEditorPage.posChanges]]). A word not the reader's to
+    * change refuses it outright rather than leaving the pair half-changed. An administrator confirms one warning when
+    * either word is dictionary data. The server applies the same rule to each word.
+    */
+  private def renderRowPartOfSpeech(entry: TagEntry): HtmlElement = {
+    val errorVar  = Var(Option.empty[String])
+    val busyVar   = Var(false)
+    val changeBus = new EventBus[PartOfSpeech]()
+
+    // One word after another, so a failure stops the rest and says which answer came back.
+    def changeAll(
+      sides: List[TagEditorPage.PosSide],
+      pos: PartOfSpeech,
+      confirm: Boolean,
+    ): EventStream[Either[ApiError, List[Word]]] = {
+      sides match {
+        case Nil          =>
+          EventStream.fromValue(Right(Nil))
+        case side :: rest =>
+          WordApiClient.setPartOfSpeech(side.word.id, pos, confirm).flatMapSwitch {
+            case Left(err)     => EventStream.fromValue(Left(err))
+            case Right(detail) => changeAll(rest, pos, confirm).map(_.map(detail.word :: _))
+          }
+      }
+    }
+
+    div(
+      cls := "flex flex-col gap-1",
+      span(cls     := "label-text text-xs", I18n.t(UiKeys.tagsEditorPartOfSpeech)),
+      select(
+        cls        := "select select-sm w-full sm:w-48",
+        aria.label := I18n.t(UiKeys.tagsEditorPartOfSpeech),
+        disabled <-- busyVar.signal,
+        PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
+        // The select follows the row; a refused or declined change leaves it where it was.
+        controlled(
+          value <-- Val(PartOfSpeech.code(entry.source.partOfSpeech)),
+          onChange.mapToValue.map(PartOfSpeech.fromString).collect { case Some(pos) => pos } --> changeBus.writer,
+        ),
+      ),
+      child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
+      changeBus.events
+        .withCurrentValueOf(AppState.isGlobalAdminSignal)
+        .map { case (pos, admin) => (pos, TagEditorPage.posChanges(entry, pos, admin)) }
+        .filter {
+          case (_, None)        =>
+            errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
+            false
+          case (_, Some(sides)) =>
+            sides.nonEmpty
+        }
+        .collect { case (pos, Some(sides)) => (pos, sides, sides.exists(_.fromDictionary)) }
+        .filter { case (_, _, dictionary) =>
+          !dictionary || dom.window.confirm(I18n.t(UiKeys.tagsEditorDictionaryWarn))
+        }
+        .flatMapSwitch { case (pos, sides, dictionary) =>
+          Var.set(busyVar -> true, errorVar -> None)
+          changeAll(sides, pos, confirm = dictionary)
+        } --> Observer[Either[ApiError, List[Word]]] {
+        case Right(words) =>
+          busyVar.set(false)
+          // The row redraws with the new words, and the open panels under it with them.
+          entriesVar.update(entries => words.foldLeft(entries)(TagEditorPage.withWord))
+        case Left(err)    =>
+          Var.set(busyVar -> false, errorVar -> Some(err.message))
+      },
     )
   }
 

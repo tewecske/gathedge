@@ -659,7 +659,6 @@
   "ui.tags.editor.removeForm": "Eltávolítás",
   "ui.tags.editor.formExists": "Már alakja ennek: {0}",
   "ui.tags.editor.partOfSpeech": "Szófaj",
-  "ui.tags.editor.posLocked": "Szótári szót vagy más felhasználó szavát csak adminisztrátor módosíthatja.",
   "ui.tags.editor.dictionaryWarning": "Ez szótári adat, amelyet minden felhasználó használ. Biztosan módosítod?",
   "ui.tags.editor.filterHeading": "Megjelenítés",
   "ui.tags.editor.filterVerified": "Ellenőrzött találatok",

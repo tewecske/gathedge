@@ -2150,6 +2150,8 @@ final case class WordServiceLive(
         others,
         row.comment,
         row.targetComment,
+        fromDictionary = row.source.source != WordSource.user,
+        targetFromDictionary = row.target.exists(_.source != WordSource.user),
       )
     }
   }

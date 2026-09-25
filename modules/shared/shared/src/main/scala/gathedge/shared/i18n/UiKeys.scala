@@ -1048,11 +1048,10 @@ object UiKeys {
   val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
   val tagsEditorFormExists: String      = key("ui.tags.editor.formExists")
 
-  /** The panel's part-of-speech select, the hint shown when the reader may not change it, and the warning an
-    * administrator confirms before changing or removing dictionary data.
+  /** The panel's part-of-speech select, and the warning an administrator confirms before changing or removing
+    * dictionary data.
     */
   val tagsEditorPartOfSpeech: String   = key("ui.tags.editor.partOfSpeech")
-  val tagsEditorPosLocked: String      = key("ui.tags.editor.posLocked")
   val tagsEditorDictionaryWarn: String = key("ui.tags.editor.dictionaryWarning")
 
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive

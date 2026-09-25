@@ -2170,6 +2170,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           out.warning.isEmpty,
           rows.map(r => (r.source.text, r.target)) == List(("Haus", None)),
           rows.forall(r => !r.imported && r.matchKind == PairMatch.Manual),
+          // A dictionary word, which the editor reads before offering to change its part of speech.
+          rows.forall(_.fromDictionary),
         )
       },
       test("attachWord mints a word the dictionary does not have yet") {
@@ -2181,7 +2183,10 @@ object WordServiceSpec extends ZIOSpecDefault {
                     1L,
                   )
           rows <- WordService.tagEntries(tag.id, Some(1L))
-        } yield assertTrue(rows.map(r => (r.source.text, r.target)) == List(("Fenster", None)))
+        } yield assertTrue(
+          rows.map(r => (r.source.text, r.target)) == List(("Fenster", None)),
+          rows.forall(r => !r.fromDictionary && r.createdByMe),
+        )
       },
       test("attachWord takes a word in either of the tag's languages and rejects a third") {
         for {

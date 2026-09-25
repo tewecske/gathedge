@@ -5,40 +5,38 @@ import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{PartOfSpeech, Word}
+import gathedge.shared.domain.Word
 import gathedge.shared.dto.{TagEntryMainWordResponse, TagPairWord, WordDetail, WordFormRef}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
-/** The panel a wordlist row opens under itself, for one of its words: the reader's note beside the word, its part of
-  * speech, and the main words it is a form of.
+/** The panel a wordlist row opens under itself, for one of its words: the reader's note beside the word, and the main
+  * words it is a form of. The pair's part of speech is the row's, set above the two panels — see
+  * `TagEditorPage.renderRowPartOfSpeech`.
   *
-  * An import writes all three from the file. This is the same writes by hand, so a word the reader typed in can carry
-  * them too.
+  * An import writes both from the file. This is the same writes by hand, so a word the reader typed in can carry them
+  * too.
   *
   * The note belongs to this wordlist's membership, so a save hands the new note to `onNoteSaved` and the page redraws
-  * the cell. The part of speech and the form-of links are dictionary facts about the word. A changed part of speech
-  * goes to `onWordChanged`, so the row shows it. The panel reads the word's links itself, and reads them again after
-  * each change.
+  * the cell. The form-of links are dictionary facts about the word, so the panel reads them itself, and reads them
+  * again after each change.
   *
-  * '''Shared data is guarded.''' The part of speech of a word the reader did not mint, and a link they did not make,
-  * are an administrator's to change. The controls say so, and an administrator confirms a warning before changing
-  * dictionary data. The server applies the same rule, so the page is not what enforces it.
+  * '''Shared data is guarded.''' A link the reader did not make is an administrator's to remove, and an administrator
+  * confirms a warning before removing a dictionary link. The server applies the same rule, so the page is not what
+  * enforces it.
   *
-  * A main word has the form's part of speech. The picker searches only those, and a main word the reader types that the
-  * dictionary lacks is created with it. The form types on offer are the ones the dictionary's own forms carry for that
-  * language and part of speech, so a noun is never offered `past`.
+  * A main word has the form's part of speech, which is the row's. The picker searches only those, and a main word the
+  * reader types that the dictionary lacks is created with it. The form types on offer are the ones the dictionary's own
+  * forms carry for that language and part of speech, so a noun is never offered `past`.
   */
 private[pages] final class TagEntryDetails(
   tagId: Long,
   word: Word,
   comment: Option[String],
   onNoteSaved: Observer[Option[String]],
-  onWordChanged: Observer[Word] = Observer.empty,
 ) {
 
   private val noteVar      = Var(comment.getOrElse(""))
-  private val posVar       = Var(word.partOfSpeech)
   private val detailVar    = Var(Option.empty[WordDetail])
   private val mainRefVar   = Var(Option.empty[TagPairWord])
   private val relationsVar = Var(Option.empty[List[String]])
@@ -48,22 +46,13 @@ private[pages] final class TagEntryDetails(
   private val busyVar      = Var(false)
 
   private val saveNoteBus  = new EventBus[Unit]()
-  private val posBus       = new EventBus[PartOfSpeech]()
   private val saveFormBus  = new EventBus[Unit]()
   private val removeBus    = new EventBus[WordFormRef]()
   private val loadFormsBus = new EventBus[Unit]()
 
-  /** The reader may change what they minted; an administrator may change anything. */
-  private val canEditPosSignal: Signal[Boolean] = {
-    detailVar.signal.combineWith(AppState.isGlobalAdminSignal).map {
-      case (Some(detail), admin) => detail.createdByMe || admin
-      case (None, _)             => false
-    }
-  }
-
   private val mainPicker = new WordPicker(
     language = Val(word.language),
-    partOfSpeech = posVar.signal.map(Some(_)),
+    partOfSpeech = Val(Some(word.partOfSpeech)),
     onCommit = Observer[TagPairWord](ref => Var.set(mainRefVar -> Some(ref), statusVar -> None)),
     placeholderSignal = Val(I18n.t(UiKeys.tagsEditorMainWordSearch)),
     mainOnly = true,
@@ -83,7 +72,6 @@ private[pages] final class TagEntryDetails(
       dataAttr("testid") := s"entry-details-${word.id}",
       div(cls := "font-semibold", Word.display(word)),
       renderNote(),
-      renderPartOfSpeech(),
       renderFormOf(),
       child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
       child.maybe <-- statusVar.signal.map(_.map(msg => p(cls := "text-xs opacity-70", msg))),
@@ -100,25 +88,8 @@ private[pages] final class TagEntryDetails(
         case Left(err)   =>
           fail(err)
       },
-      // A declined warning leaves the select where it was: `posVar` never moved, and the select follows it.
-      posBus.events
-        .withCurrentValueOf(detailVar.signal)
-        .collect {
-          case (pos, Some(detail)) if pos != posVar.now() && confirmed(detail.fromDictionary) => (pos, detail)
-        }
-        .flatMapSwitch { case (pos, detail) =>
-          Var.set(busyVar -> true, errorVar -> None)
-          WordApiClient.setPartOfSpeech(word.id, pos, confirm = detail.fromDictionary)
-        } --> Observer[Either[ApiError, WordDetail]] {
-        case Right(detail) =>
-          Var.set(busyVar -> false, detailVar -> Some(detail), posVar -> detail.word.partOfSpeech, mainRefVar -> None)
-          mainPicker.clear()
-          onWordChanged.onNext(detail.word)
-        case Left(err)     =>
-          fail(err)
-      },
       // The form types follow the word's part of speech, which a main word shares.
-      posVar.signal.distinct.flatMapSwitch(pos => WordApiClient.formRelations(word.language, pos)) -->
+      WordApiClient.formRelations(word.language, word.partOfSpeech) -->
         Observer[Either[ApiError, List[String]]] {
           case Right(relations) =>
             Var.set(relationsVar -> Some(relations), relationVar -> relations.headOption.getOrElse(""))
@@ -184,28 +155,6 @@ private[pages] final class TagEntryDetails(
           I18n.t(UiKeys.tagsEditorSaveNote),
         ),
       ),
-    )
-  }
-
-  /** The word's part of speech. Locked, with the reason, for a word the reader may not change. */
-  private def renderPartOfSpeech(): HtmlElement = {
-    div(
-      cls := "flex flex-col gap-1",
-      span(cls     := "label-text text-xs", I18n.t(UiKeys.tagsEditorPartOfSpeech)),
-      select(
-        cls        := "select select-sm w-full sm:w-48",
-        aria.label := I18n.t(UiKeys.tagsEditorPartOfSpeech),
-        disabled <-- canEditPosSignal.combineWithFn(busyVar.signal)((can, busy) => !can || busy),
-        PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
-        controlled(
-          value <-- posVar.signal.map(PartOfSpeech.code),
-          onChange.mapToValue.map(PartOfSpeech.fromString).collect { case Some(pos) => pos } --> posBus.writer,
-        ),
-      ),
-      child.maybe <-- detailVar.signal.combineWith(canEditPosSignal).map {
-        case (Some(_), false) => Some(p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorPosLocked)))
-        case _                => None
-      },
     )
   }
 
