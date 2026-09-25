@@ -272,6 +272,9 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
   * `comment`/`targetComment` are the notes the reader wrote beside each side — the `(növény)` of `levél (növény)`. One
   * per side because either cell of an imported line may have carried one and they say different things. They are the
   * reader's own, held on `word_tags`, and never a property of the shared word.
+  *
+  * `fromDictionary`/`targetFromDictionary` say the import wrote that side's word. With `createdByMe` they tell the
+  * editor who may change the pair's part of speech before it asks the server, which applies the same rule.
   */
 final case class TagEntry(
   source: Word,
@@ -285,6 +288,8 @@ final case class TagEntry(
   otherTranslations: List[TranslationOption],
   comment: Option[String] = None,
   targetComment: Option[String] = None,
+  fromDictionary: Boolean = false,
+  targetFromDictionary: Boolean = false,
 ) derives JsonCodec
 
 /** One page of one wordlist's rows — what `GET /api/tags/{tagId}/entries/page` answers, unlike the unpaged
