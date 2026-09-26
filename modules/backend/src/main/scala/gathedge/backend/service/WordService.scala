@@ -399,13 +399,16 @@ trait WordService {
 
   /** Files a word of the wordlist as a form of a main word, under a relation [[formRelations]] offers for that main
     * word. Idempotent per `(main word, word, relation)`.
+    *
+    * `request.partOfSpeech` is the row's. A form word whose own part of speech differs is set to it first, under the
+    * [[setPartOfSpeech]] rule, so the pair and the link agree.
     */
   def addMainWord(
     tagId: Long,
     wordId: Long,
     request: TagEntryMainWordRequest,
     userId: Long,
-  ): IO[WordFailure, TagEntryMainWordResponse]
+  ): IO[WordEditFailure, TagEntryMainWordResponse]
 
   /** Undoes one form-of link. Idempotent. A reader removes only a link they made; anything else is a global
     * administrator's, and a dictionary link needs `confirm` too — see [[WordServiceLive.guardSharedEdit]].
@@ -755,7 +758,7 @@ object WordService {
     wordId: Long,
     request: TagEntryMainWordRequest,
     userId: Long,
-  ): ZIO[WordService, WordFailure, TagEntryMainWordResponse] =
+  ): ZIO[WordService, WordEditFailure, TagEntryMainWordResponse] =
     ZIO.serviceWithZIO[WordService](_.addMainWord(tagId, wordId, request, userId))
 
   def removeMainWord(
@@ -2296,31 +2299,39 @@ final case class WordServiceLive(
     wordId: Long,
     request: TagEntryMainWordRequest,
     userId: Long,
-  ): IO[WordFailure, TagEntryMainWordResponse] = {
-    def invalid(field: String, key: String) = WordFailure.ValidationError(Map(field -> MessageRef(key)))
+  ): IO[WordEditFailure, TagEntryMainWordResponse] = {
+    def invalid(field: String, key: String) =
+      WordEditFailure.Failed(WordFailure.ValidationError(Map(field -> MessageRef(key))))
     val wrongMain                           = invalid("mainWord", MessageKeys.wordMainWordInvalid)
     for {
-      form    <- requireEntry(tagId, wordId, userId)
+      form    <- requireEntry(tagId, wordId, userId).mapError(WordEditFailure.Failed(_))
       language = WordLanguage.fromString(form.language).getOrElse(WordLanguage.En)
-      pos      = decode(form.partOfSpeech)
+      // The row's part of speech, which the form takes if it has another: an imported Hungarian word is `other` beside
+      // a German noun, since no article told the import what it was.
+      pos      = request.partOfSpeech.getOrElse(decode(form.partOfSpeech))
       // A main word has the form's language and part of speech: `Häuser` is a form of the noun `Haus`, never of a verb.
       // A new one is minted with them, so the check below only ever refuses a dictionary pick made past the editor.
       main    <- request.mainWord match {
                    case TagPairWord.Existing(id) =>
-                     repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound)
+                     repo.findWordById(id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
                    case word: TagPairWord.New    =>
                      if (word.language != language || word.partOfSpeech != pos) ZIO.fail(wrongMain)
-                     else ensure(word.language, word.text, word.partOfSpeech, word.gender, userId)
+                     else {
+                       ensure(word.language, word.text, word.partOfSpeech, word.gender, userId)
+                         .mapError(WordEditFailure.Failed(_))
+                  }
                  }
       _       <- ZIO.when(main.id == form.id)(ZIO.fail(invalid("mainWord", MessageKeys.wordFormIsLemma)))
       // Not itself a form either: `word_forms` is one level deep.
-      _       <- ZIO.when(main.language != form.language || main.partOfSpeech != form.partOfSpeech || main.isForm)(
+      _       <- ZIO.when(main.language != form.language || decode(main.partOfSpeech) != pos || main.isForm)(
                    ZIO.fail(wrongMain)
                  )
       offered <- formRelations(language, pos)
       _       <- ZIO.unless(offered.contains(request.relation))(
                    ZIO.fail(invalid("relation", MessageKeys.wordFormRelationInvalid))
                  )
+      _       <- changePartOfSpeech(form, pos, userId, request.confirm)
+      aligned <- repo.findWordById(form.id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
       known   <- repo.existingFormRelations(List(main.id)).orDie
       already  = known.contains((main.id, form.id, request.relation))
       now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
@@ -2331,7 +2342,12 @@ final case class WordServiceLive(
                      )
                      .orDie
                  )
-    } yield TagEntryMainWordResponse(toDomain(main), request.relation, alreadyPresent = already)
+    } yield TagEntryMainWordResponse(
+      toDomain(main),
+      request.relation,
+      alreadyPresent = already,
+      form = toDomain(aligned),
+    )
   }
 
   /** The one permission rule for changing data other readers share — a word, or a form-of link.
@@ -2382,29 +2398,39 @@ final case class WordServiceLive(
   }
 
   def setPartOfSpeech(wordId: Long, request: SetPartOfSpeechRequest, userId: Long): IO[WordEditFailure, WordDetail] = {
-    val pos = PartOfSpeech.code(request.partOfSpeech)
     for {
       row    <- repo.findWordById(wordId).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
-      _      <- ZIO.unless(row.partOfSpeech == pos)(
-                  for {
-                    _       <- guardSharedEdit(row.source != WordSource.user, row.createdBy, userId, request.confirm)
-                    language = WordLanguage.fromString(row.language).getOrElse(WordLanguage.En)
-                    // The gender is kept only on a noun of a gendered language — the rule `ensure` applies to a new word.
-                    gender   = if (request.partOfSpeech == PartOfSpeech.Noun && LanguageProfile.of(language).hasGenders)
-                                 row.gender
-                               else ""
-                    taken   <- repo.findWord(row.language, row.textNorm, pos, gender).orDie
-                    _       <- ZIO.when(taken.isDefined)(ZIO.fail(WordEditFailure.Failed(WordFailure.PartOfSpeechConflict)))
-                    // A race past the lookup meets the unique index; it is the same conflict.
-                    _       <- repo
-                                 .setWordPartOfSpeech(wordId, pos, gender)
-                                 .mapError(_ => WordEditFailure.Failed(WordFailure.PartOfSpeechConflict))
-                    _       <- ZIO.logInfo(s"words.setPartOfSpeech id=$wordId pos=$pos user=$userId")
-                  } yield ()
-                )
+      _      <- changePartOfSpeech(row, request.partOfSpeech, userId, request.confirm)
       filled <- repo.findWordById(wordId).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
       detail <- detailOf(filled, Some(userId))
     } yield detail
+  }
+
+  /** Sets `row`'s part of speech under [[guardSharedEdit]]'s rule. Nothing to do, and so nothing to be allowed, when it
+    * already has it. The gender is kept only on a noun of a gendered language, the rule `ensure` applies to a new word.
+    */
+  private def changePartOfSpeech(
+    row: WordRow,
+    partOfSpeech: PartOfSpeech,
+    userId: Long,
+    confirm: Boolean,
+  ): IO[WordEditFailure, Unit] = {
+    val pos      = PartOfSpeech.code(partOfSpeech)
+    val conflict = WordEditFailure.Failed(WordFailure.PartOfSpeechConflict)
+    ZIO
+      .unless(row.partOfSpeech == pos)(
+        for {
+          _       <- guardSharedEdit(row.source != WordSource.user, row.createdBy, userId, confirm)
+          language = WordLanguage.fromString(row.language).getOrElse(WordLanguage.En)
+          gender   = if (partOfSpeech == PartOfSpeech.Noun && LanguageProfile.of(language).hasGenders) row.gender else ""
+          taken   <- repo.findWord(row.language, row.textNorm, pos, gender).orDie
+          _       <- ZIO.when(taken.isDefined)(ZIO.fail(conflict))
+          // A race past the lookup meets the unique index; it is the same conflict.
+          _       <- repo.setWordPartOfSpeech(row.id, pos, gender).mapError(_ => conflict)
+          _       <- ZIO.logInfo(s"words.setPartOfSpeech id=${row.id} pos=$pos user=$userId")
+        } yield ()
+      )
+      .unit
   }
 
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]] = {

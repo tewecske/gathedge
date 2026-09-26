@@ -325,15 +325,30 @@ final case class TagEntryNoteRequest(note: Option[String]) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s body: the main word that a word of the wordlist is a form of,
   * and which form it is — `Häuser` is the `plural` of `Haus`. `mainWord` may be a dictionary word or one to create, as
-  * on the add row; either way it has the form's language and part of speech. `relation` must be one of the relations
-  * [[gathedge.shared.api.WordEndpoints.formRelations]] offers for that language and part of speech.
+  * on the add row. `relation` must be one of the relations [[gathedge.shared.api.WordEndpoints.formRelations]] offers
+  * for that language and part of speech.
+  *
+  * `partOfSpeech` is the row's, which the main word must have. The form word takes it too when its own differs, under
+  * the rule [[gathedge.shared.api.WordEndpoints.setPartOfSpeech]] follows; `confirm` is that rule's answer to the
+  * warning for dictionary data. With no `partOfSpeech` the form word's own is used and nothing is changed.
   */
-final case class TagEntryMainWordRequest(mainWord: TagPairWord, relation: String) derives JsonCodec
+final case class TagEntryMainWordRequest(
+  mainWord: TagPairWord,
+  relation: String,
+  partOfSpeech: Option[PartOfSpeech] = None,
+  confirm: Boolean = false,
+) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s answer: the main word the form is now filed under.
-  * `alreadyPresent` says it already was, under that relation, so nothing was written.
+/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s answer: the main word the form is now filed under, and the form
+  * word as it now stands, with the part of speech it may have been given. `alreadyPresent` says the link was already
+  * there, under that relation, so no link was written.
   */
-final case class TagEntryMainWordResponse(mainWord: Word, relation: String, alreadyPresent: Boolean) derives JsonCodec
+final case class TagEntryMainWordResponse(
+  mainWord: Word,
+  relation: String,
+  alreadyPresent: Boolean,
+  form: Word,
+) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
   * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may

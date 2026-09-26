@@ -592,16 +592,19 @@ object WordEndpoints {
     * with the main word as its lemma. The word then counts as a form, so the listing's "main words only" filter leaves
     * it out. Idempotent: a link already there answers `alreadyPresent`.
     *
+    * The body's `partOfSpeech` is the row's. A form word with another part of speech is given it first, under the
+    * [[setPartOfSpeech]] rule: 403 for a word that is not the caller's, 409 for a dictionary word without `confirm`.
+    *
     * 404 is a tag the caller may not edit, a word the wordlist does not hold, or a main word that does not exist. 400
-    * is a main word in another language, one that is itself a form, the word itself, or a relation [[formRelations]]
-    * does not offer for the main word.
+    * is a main word in another language or part of speech, one that is itself a form, the word itself, or a relation
+    * [[formRelations]] does not offer.
     */
   val addMainWord = {
     Endpoint(ApiRoutes.route2(paths.addMainWord, PathCodec.long, PathCodec.long))
       .in[TagEntryMainWordRequest]
       .withCodecError
       .out[TagEntryMainWordResponse](Status.Created)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Removes one form-of link: the word is no longer that form of that main word. The word counts as a main word again

@@ -287,16 +287,21 @@ object WordApiClient {
     HttpClient.callUnit(WordPaths.setEntryNote(tagId, wordId), Some(TagEntryNoteRequest(note).toJson))
   }
 
-  /** Files a word of a wordlist as a form of a main word, under `relation`. The main word may be one to create. */
+  /** Files a word of a wordlist as a form of a main word, under `relation`. The main word may be one to create.
+    * `partOfSpeech` is the row's, which the word takes if its own differs; `confirm` answers the warning for doing that
+    * to a dictionary word.
+    */
   def addMainWord(
     tagId: Long,
     wordId: Long,
     mainWord: TagPairWord,
     relation: String,
+    partOfSpeech: PartOfSpeech,
+    confirm: Boolean,
   ): EventStream[Either[ApiError, TagEntryMainWordResponse]] = {
     HttpClient.call[TagEntryMainWordResponse](
       WordPaths.addMainWord(tagId, wordId),
-      Some(TagEntryMainWordRequest(mainWord, relation).toJson),
+      Some(TagEntryMainWordRequest(mainWord, relation, Some(partOfSpeech), confirm).toJson),
     )
   }
 

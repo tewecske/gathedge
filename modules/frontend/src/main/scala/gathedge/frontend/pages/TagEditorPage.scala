@@ -27,7 +27,7 @@ import gathedge.shared.dto.{
   TagResponse,
   TagWordInput,
 }
-import gathedge.shared.i18n.{MessageKeys, UiKeys}
+import gathedge.shared.i18n.{MessageKeys, MessageRef, UiKeys}
 import gathedge.shared.parsing.{ColumnHeading, DelimitedText}
 import org.scalajs.dom
 import zio.json._
@@ -512,6 +512,17 @@ private final class TagEditorPage(
   private val editSourcePos = Var(Option.empty[PartOfSpeech])
   private val editTargetPos = Var(Option.empty[PartOfSpeech])
 
+  /** The row's part of speech while it is edited: the select in the part-of-speech column. Both edit pickers search it,
+    * and Save gives it to both words — see [[posApplyBus]].
+    */
+  private val editPosVar = Var[PartOfSpeech](PartOfSpeech.Other)
+
+  /** A saved row and the part of speech its two words should now have. Emitted after the pair itself is saved. */
+  private val posApplyBus = new EventBus[(TagEntry, PartOfSpeech)]()
+
+  private def setEditPos(pos: PartOfSpeech): Unit =
+    Var.set(editPosVar -> pos, editSourcePos -> Some(pos), editTargetPos -> Some(pos))
+
   // Each edit box, like the add boxes, is held to the *other* box's committed part of speech and offers that word's
   // translations — so editing one side keeps searching in step with the side that is staying.
   private lazy val editSourcePicker: WordPicker = new WordPicker(
@@ -610,10 +621,10 @@ private final class TagEditorPage(
     val (left, right) = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
     editSourceVar.set(left.map(s => TagPairWord.Existing(s.word.id)))
     editTargetVar.set(right.map(s => TagPairWord.Existing(s.word.id)))
-    // A pair shares one part of speech; a lone word carries its own. Seed both sides so each picker's search is held to
-    // the other box from the first keystroke, even when only one side has a word.
-    editSourcePos.set(left.orElse(right).map(_.word.partOfSpeech))
-    editTargetPos.set(right.orElse(left).map(_.word.partOfSpeech))
+    // A pair shares one part of speech: the row's, which is the source word's. Both pickers search it from the first
+    // keystroke. The answer's own may differ — an imported Hungarian word is `other` beside a German noun — and Save
+    // brings it into line.
+    setEditPos(entry.source.partOfSpeech)
     editSourcePicker.setText(left.map(s => Word.display(s.word)).getOrElse(""))
     editTargetPicker.setText(right.map(s => Word.display(s.word)).getOrElse(""))
     // The two cells become pickers on the next render; focus the first once it is mounted.
@@ -968,17 +979,57 @@ private final class TagEditorPage(
         Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]](onEntryAdded),
       replaceBus.events
         .sample(editingVar.signal, editSourceVar.signal, editTargetVar.signal)
-        .collect { case (Some((oldSource, oldTarget)), Some(src), Some(tgt)) => (oldSource, oldTarget, src, tgt) }
-        .flatMapSwitch { case (oldSource, oldTarget, src, tgt) =>
-          WordApiClient.replacePair(tagId, oldSource, oldTarget, TagPairInput(src, tgt))
-        } --> Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]] {
-        case Right(response) =>
-          warningVar.set(response.warning.map(I18n.resolve))
+        .collect { case (Some(key), src, tgt) if src.isDefined || tgt.isDefined => (key, src, tgt) }
+        .flatMapSwitch {
+          case ((oldSource, oldTarget), Some(src), Some(tgt)) =>
+            WordApiClient
+              .replacePair(tagId, oldSource, oldTarget, TagPairInput(src, tgt))
+              .map(_.map(response => (response.warning, Some(response.entry))))
+          case (key, _, _)                                    =>
+            // A lone word has no pair to replace, so its Save sets the part of speech only.
+            EventStream.fromValue(Right((None, entriesVar.now().find(entry => TagEditorPage.rowKey(entry) == key))))
+        } --> Observer[Either[ApiError, (Option[MessageRef], Option[TagEntry])]] {
+        case Right((warning, saved)) =>
+          warningVar.set(warning.map(I18n.resolve))
+          val pos = editPosVar.now()
           cancelEdit()
-          entriesBus.emit(())
-        case Left(err)       =>
+          saved match {
+            case Some(entry) => posApplyBus.emit((entry, pos))
+            case None        => entriesBus.emit(())
+          }
+        case Left(err)               =>
           errorVar.set(Some(err.message))
       },
+      // The saved row's two words take the part of speech the select says. Worked out before anything is sent
+      // (`TagEditorPage.posChanges`): a word that is not the reader's to change refuses the whole change rather than
+      // leaving the pair half-changed, and an administrator confirms one warning for dictionary data. The server applies
+      // the same rule to each word. Every way out re-reads the page, since the pair itself was saved either way.
+      posApplyBus.events
+        .withCurrentValueOf(AppState.isGlobalAdminSignal)
+        .map { case (entry, pos, admin) => (pos, TagEditorPage.posChanges(entry, pos, admin)) }
+        .filter {
+          case (_, None)        =>
+            errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
+            entriesBus.emit(())
+            false
+          case (_, Some(sides)) =>
+            if (sides.isEmpty) entriesBus.emit(())
+            sides.nonEmpty
+        }
+        .collect { case (pos, Some(sides)) => (pos, sides, sides.exists(_.fromDictionary)) }
+        .filter { case (_, _, dictionary) =>
+          val go = !dictionary || dom.window.confirm(I18n.t(UiKeys.tagsEditorDictionaryWarn))
+          if (!go) entriesBus.emit(())
+          go
+        }
+        .flatMapSwitch { case (pos, sides, dictionary) => changeAll(sides, pos, confirm = dictionary) } -->
+        Observer[Either[ApiError, List[Word]]] {
+          case Right(_)  =>
+            entriesBus.emit(())
+          case Left(err) =>
+            errorVar.set(Some(err.message))
+            entriesBus.emit(())
+        },
       // `flatMapMerge`, not `flatMapSwitch`: deletes of different rows run to completion side by side rather than the
       // newer one cancelling the older. A repeat of the *same* row cannot reach here — `requestRowDelete` gates it.
       deleteRowBus.events.flatMapMerge { case key @ (sourceWordId, targetWordId) =>
@@ -1448,9 +1499,8 @@ private final class TagEditorPage(
     }
   }
 
-  /** The row under a row that holds its note-and-forms panel: the pair's part of speech, then one [[TagEntryDetails]]
-    * per word, in the columns' order. Always in the table so the row count stays even, but hidden, and with nothing
-    * mounted, until it is opened.
+  /** The row under a row that holds its note-and-forms panel: one [[TagEntryDetails]] per word, in the columns' order.
+    * Always in the table so the row count stays even, but hidden, and with nothing mounted, until it is opened.
     */
   private def renderDetailsRow(entry: TagEntry): HtmlElement = {
     val rowKey = TagEditorPage.rowKey(entry)
@@ -1466,19 +1516,18 @@ private final class TagEditorPage(
             val (first, second) = TagEditorPage.orient(entry, left, right)
             Some(
               div(
-                cls := "flex flex-col gap-3 py-2",
-                renderRowPartOfSpeech(entry),
-                div(
-                  cls := "grid grid-cols-1 sm:grid-cols-2 gap-4",
-                  List(first, second).flatten.map(side => {
-                    new TagEntryDetails(
-                      tagId,
-                      side.word,
-                      side.comment,
-                      Observer[Option[String]](note => applyNote(side.word.id, note)),
-                    ).render()
-                  }),
-                ),
+                cls := "grid grid-cols-1 sm:grid-cols-2 gap-4 py-2",
+                List(first, second).flatten.map(side => {
+                  new TagEntryDetails(
+                    tagId,
+                    side.word,
+                    // The row's part of speech, which both words' main words share.
+                    entry.source.partOfSpeech,
+                    side.comment,
+                    Observer[Option[String]](note => applyNote(side.word.id, note)),
+                    Observer[Word](word => entriesVar.update(TagEditorPage.withWord(_, word))),
+                  ).render()
+                }),
               )
             )
         },
@@ -1486,76 +1535,21 @@ private final class TagEditorPage(
     )
   }
 
-  /** The pair's part of speech: one select for the row, setting both words, so the two can never drift apart. Both
-    * words' main-word pickers are held to it.
-    *
-    * The whole change is worked out before anything is sent ([[TagEditorPage.posChanges]]). A word not the reader's to
-    * change refuses it outright rather than leaving the pair half-changed. An administrator confirms one warning when
-    * either word is dictionary data. The server applies the same rule to each word.
-    */
-  private def renderRowPartOfSpeech(entry: TagEntry): HtmlElement = {
-    val errorVar  = Var(Option.empty[String])
-    val busyVar   = Var(false)
-    val changeBus = new EventBus[PartOfSpeech]()
-
-    // One word after another, so a failure stops the rest and says which answer came back.
-    def changeAll(
-      sides: List[TagEditorPage.PosSide],
-      pos: PartOfSpeech,
-      confirm: Boolean,
-    ): EventStream[Either[ApiError, List[Word]]] = {
-      sides match {
-        case Nil          =>
-          EventStream.fromValue(Right(Nil))
-        case side :: rest =>
-          WordApiClient.setPartOfSpeech(side.word.id, pos, confirm).flatMapSwitch {
-            case Left(err)     => EventStream.fromValue(Left(err))
-            case Right(detail) => changeAll(rest, pos, confirm).map(_.map(detail.word :: _))
-          }
-      }
+  /** Gives each word `pos`, one after another, so a failure stops the rest and says which answer came back. */
+  private def changeAll(
+    sides: List[TagEditorPage.PosSide],
+    pos: PartOfSpeech,
+    confirm: Boolean,
+  ): EventStream[Either[ApiError, List[Word]]] = {
+    sides match {
+      case Nil          =>
+        EventStream.fromValue(Right(Nil))
+      case side :: rest =>
+        WordApiClient.setPartOfSpeech(side.word.id, pos, confirm).flatMapSwitch {
+          case Left(err)     => EventStream.fromValue(Left(err))
+          case Right(detail) => changeAll(rest, pos, confirm).map(_.map(detail.word :: _))
+        }
     }
-
-    div(
-      cls := "flex flex-col gap-1",
-      span(cls     := "label-text text-xs", I18n.t(UiKeys.tagsEditorPartOfSpeech)),
-      select(
-        cls        := "select select-sm w-full sm:w-48",
-        aria.label := I18n.t(UiKeys.tagsEditorPartOfSpeech),
-        disabled <-- busyVar.signal,
-        PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
-        // The select follows the row; a refused or declined change leaves it where it was.
-        controlled(
-          value <-- Val(PartOfSpeech.code(entry.source.partOfSpeech)),
-          onChange.mapToValue.map(PartOfSpeech.fromString).collect { case Some(pos) => pos } --> changeBus.writer,
-        ),
-      ),
-      child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
-      changeBus.events
-        .withCurrentValueOf(AppState.isGlobalAdminSignal)
-        .map { case (pos, admin) => (pos, TagEditorPage.posChanges(entry, pos, admin)) }
-        .filter {
-          case (_, None)        =>
-            errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
-            false
-          case (_, Some(sides)) =>
-            sides.nonEmpty
-        }
-        .collect { case (pos, Some(sides)) => (pos, sides, sides.exists(_.fromDictionary)) }
-        .filter { case (_, _, dictionary) =>
-          !dictionary || dom.window.confirm(I18n.t(UiKeys.tagsEditorDictionaryWarn))
-        }
-        .flatMapSwitch { case (pos, sides, dictionary) =>
-          Var.set(busyVar -> true, errorVar -> None)
-          changeAll(sides, pos, confirm = dictionary)
-        } --> Observer[Either[ApiError, List[Word]]] {
-        case Right(words) =>
-          busyVar.set(false)
-          // The row redraws with the new words, and the open panels under it with them.
-          entriesVar.update(entries => words.foldLeft(entries)(TagEditorPage.withWord))
-        case Left(err)    =>
-          Var.set(busyVar -> false, errorVar -> Some(err.message))
-      },
-    )
   }
 
   private def renderRow(entry: TagEntry): HtmlElement = {
@@ -1592,12 +1586,24 @@ private final class TagEditorPage(
           case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._2)
         }
       ),
-      // One part of speech per row — a pair's two words share it. Hidden while the row is being edited, where the
-      // pickers own it.
+      // One part of speech per row — a pair's two words share it. While the row is edited it is a select, which both
+      // pickers search and Save gives to both words.
       td(
         child <-- isEditing.map {
-          case true  => span()
-          case false => span(cls := "opacity-70 text-xs", Labels.partOfSpeech(entry.source.partOfSpeech))
+          case true  =>
+            select(
+              cls        := "select select-xs w-28",
+              aria.label := I18n.t(UiKeys.tagsEditorPartOfSpeech),
+              PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
+              controlled(
+                value <-- editPosVar.signal.map(PartOfSpeech.code),
+                onChange.mapToValue.map(PartOfSpeech.fromString) --> Observer[Option[PartOfSpeech]](
+                  _.foreach(setEditPos)
+                ),
+              ),
+            )
+          case false =>
+            span(cls := "opacity-70 text-xs", Labels.partOfSpeech(entry.source.partOfSpeech))
         }
       ),
       td(
@@ -1625,7 +1631,7 @@ private final class TagEditorPage(
                 typ := "button",
                 cls := "btn btn-primary btn-xs",
                 disabled <-- editSourceVar.signal.combineWith(editTargetVar.signal).map { case (s, t) =>
-                  s.isEmpty || t.isEmpty
+                  s.isEmpty && t.isEmpty
                 },
                 I18n.t(UiKeys.tagsEditorSaveRow),
                 onClick.mapToUnit --> Observer[Unit](_ => replaceBus.emit(())),

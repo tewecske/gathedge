@@ -335,8 +335,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               // The editor's per-word note and main-word writes: 404 is the tag or a word it does not hold.
               ("PUT", "/api/tags/{tagId}/words/{wordId}/note")                            ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
+              // Linking may give the form word the row's part of speech, under the same rule as setting it.
               ("POST", "/api/tags/{tagId}/words/{wordId}/main-words")                     ->
-                Set(Created, BadRequest, Unauthorized, NotFound),
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               // Removing a link the caller did not make is an administrator's (403); a dictionary link needs the
               // warning confirmed (409).
               ("DELETE", "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}")      ->
@@ -566,7 +567,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 351,
+          declared == 353,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -600,6 +601,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("DELETE", "/api/groups/{groupId}"),
               // `WordService.guardSharedEdit`: dictionary data, or another reader's, is an administrator's to change.
               ("PUT", "/api/words/{id}/part-of-speech"),
+              ("POST", "/api/tags/{tagId}/words/{wordId}/main-words"),
               ("DELETE", "/api/tags/{tagId}/words/{wordId}/main-words/{mainWordId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
