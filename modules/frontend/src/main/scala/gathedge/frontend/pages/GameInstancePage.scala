@@ -16,12 +16,12 @@ import scala.concurrent.Future
 /** The variant picker for one quiz, from its shared link (`/g/{slug}`) — the play loop itself lives at `Page.GamePlay`,
   * reached only right after `startPlay` succeeds (see [[Page.GamePlay]]'s doc comment).
   *
-  * The initial `GET /api/games/{slug}` mints nobody — see `Page.GameInstance`'s doc comment — a visitor can read the
-  * quiz's name and tags with no session at all. Neither does the play-variant picker's preview fetch
-  * (`GameApiClient.playSetup`, wired through [[previewTriggerStream]]/[[reversePreviewTriggerBus]] below): it is an
-  * `optionalUser` read too, so merely opening a shared link and looking at the picker mints no guest. Starting a play
-  * IS the first write the page makes, so it is where the guest detour sits ([[asReader]], copied in spirit from
-  * `GameSetupPage`'s) — the only call this page ever makes to `startPlay`.
+  * The page makes one read: `GET /api/games/{slug}`. Its answer carries everything the picker needs — both directions'
+  * eligible pools and the reader's last settings for this game (see `GameDetail`) — so changing a control never
+  * fetches. The read mints nobody — see `Page.GameInstance`'s doc comment — so a visitor can open a shared link and
+  * look at the picker with no session at all. Starting a play IS the first write the page makes, so it is where the
+  * guest detour sits ([[asReader]], copied in spirit from `GameSetupPage`'s) — the only call this page ever makes to
+  * `startPlay`.
   */
 object GameInstancePage {
 
@@ -130,67 +130,47 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
 
-  private val previewWordsVar   = Var(List.empty[GameSetupWord])
-  private val previewLoadingVar = Var(false)
-
-  /** The eligible pool size for the currently-shown direction — the same count [[renderPreviewList]] displays, and the
-    * number a fixed word limit must stay below. Lags a direction/preference change by one preview fetch
-    * ([[previewLoadingVar]]).
+  /** The eligible words for the chosen direction, read from the loaded game: `GameDetail` carries both directions'
+    * pools, so a swap only picks the other list.
     */
-  private val totalAvailableSignal: Signal[Int] = previewWordsVar.signal.map(_.size)
+  private val previewWordsSignal: Signal[List[GameSetupWord]] = {
+    gameVar.signal.combineWith(swapDirectionVar.signal).map {
+      case (Some(game), swapped) => if (swapped) game.reversePool else game.pool
+      case (None, _)             => Nil
+    }
+  }
+
+  /** The eligible pool size for the chosen direction — the same count [[renderPreviewList]] displays, and the number a
+    * fixed word limit must stay below.
+    */
+  private val totalAvailableSignal: Signal[Int] = previewWordsSignal.map(_.size)
 
   /** Whether the `Custom` entry is unusable: no number, a non-positive one, or one that is not below the eligible pool.
-    * The pool comparison only bites once the preview has actually settled with words in it — before that the count is
-    * unknown, and the backend re-checks the limit against the real pool anyway.
+    * The pool comparison only bites for a pool with words in it; the backend re-checks the limit anyway.
     */
   private val customInvalidSignal: Signal[Boolean] = {
     wordLimitChoiceVar.signal
-      .combineWith(customLimitTextVar.signal, totalAvailableSignal, previewLoadingVar.signal)
-      .map { case (choice, text, total, loading) =>
+      .combineWith(customLimitTextVar.signal, totalAvailableSignal)
+      .map { case (choice, text, total) =>
         choice == WordLimitChoice.Custom && {
           WordLimitChoice.toLimit(choice, text) match {
             case None    => true
-            case Some(n) => !loading && total > 0 && n >= total
+            case Some(n) => total > 0 && n >= total
           }
         }
       }
   }
 
-  /** Fires once, right after the game successfully loads — see `render`'s `loadBus` wiring. Merged into
-    * [[previewTriggerStream]] below so the preview populates on first entering the Play screen, not only after the
-    * reader touches a control: `Signal.updates` (relied on for the reactive refetch-on-change half) excludes a signal's
-    * starting value, so relying on it alone left `renderPreviewList` showing the "no eligible words" message on entry
-    * even when eligible words existed. Same `EventStream.merge(signal.updates, bus.events.sample(signal))` shape as
-    * `GameSetupPage.formRequests`/`AdminUsersPage.listRequests`, just triggered by the load succeeding instead of an
-    * explicit reload button.
-    */
-  private val gameLoadedBus = new EventBus[Unit]()
-
-  /** Refetches the play-setup preview whenever direction or preference changes, once the game itself has loaded —
-    * mirrors `GameSetupPage.wordsQuerySignal`'s reasoning, one screen over.
-    */
-  private val previewQuerySignal: Signal[(Boolean, WordPreference)] = {
-    swapDirectionVar.signal.combineWith(wordPreferenceVar.signal).distinct
-  }
-
-  private val previewTriggerStream: EventStream[(Boolean, WordPreference)] = {
-    EventStream.merge(previewQuerySignal.updates, gameLoadedBus.events.sample(previewQuerySignal))
-  }
-
   /** Whether the *reverse* direction's pool is empty — the swap arrow (`renderDirectionSwap`) disables on this, per the
     * design doc: swapping into an empty pool would make `startPlay` fail its unreachable-from-the-UI `badRequest` case.
-    * Fetched right after each current-direction preview settles ([[reversePreviewTriggerBus]]), rather than on its own
-    * independent `gameLoadedBus`-merged trigger like [[previewTriggerStream]] — sequencing it after the primary fetch
-    * is simply so both previews don't fire in the same tick; neither call mints a guest (both go through
-    * `GameApiClient.playSetup` directly, an `optionalUser` read), so there is no session race to avoid here any more.
     */
-  private val reversePoolEmptyVar = Var(false)
-
-  private val reversePreviewQuerySignal: Signal[(Boolean, WordPreference)] = {
-    swapDirectionVar.signal.map(!_).combineWith(wordPreferenceVar.signal).distinct
+  private val reversePoolEmptySignal: Signal[Boolean] = {
+    gameVar.signal.combineWith(swapDirectionVar.signal).map {
+      case (Some(game), swapped) => (if (swapped) game.pool else game.reversePool).isEmpty
+      // Fail open, the same as the button's default before the game loads.
+      case (None, _)             => false
+    }
   }
-
-  private val reversePreviewTriggerBus = new EventBus[Unit]()
 
   private val startingVar = Var(false)
 
@@ -282,11 +262,8 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
         Observer[Either[ApiError, GameDetail]] {
           case Right(detail) =>
-            // Before `gameVar`: while it is empty, the preview ignores these writes, so the first fetch below
-            // already uses the restored direction and preference.
             detail.lastVariant.foreach(restore(detail, _))
             Var.set(gameVar -> Some(detail), nameVar -> detail.name, missingVar -> false, errorVar -> None)
-            gameLoadedBus.emit(())
           case Left(err)     =>
             // A quiz that is not there is a different thing from a request that failed, and reads differently.
             if (err.status == 404)
@@ -323,39 +300,15 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
       // A direction swap can shrink the eligible pool under a preset the player already picked (say "20" with only 8
-      // words left the other way). Rather than leave a disabled radio selected, fall back to "All".
+      // words left the other way), and so can a restored setting from a play when the pool was larger. Rather than
+      // leave a disabled radio selected, fall back to "All".
       totalAvailableSignal.updates --> Observer[Int] { total =>
-        if (!previewLoadingVar.now() && total > 0) {
+        if (total > 0) {
           val selected = wordLimitChoiceVar.now()
           if (WordLimitChoice.presets.exists { case (choice, n) => choice == selected && n >= total })
             wordLimitChoiceVar.set(WordLimitChoice.All)
         }
       },
-      previewTriggerStream --> Observer[(Boolean, WordPreference)](_ => previewLoadingVar.set(true)),
-      previewTriggerStream
-        .filterWith(gameVar.signal.map(_.isDefined))
-        .flatMapSwitch { case (swap, preference) => GameApiClient.playSetup(slug, swap, preference) } -->
-        Observer[Either[ApiError, List[GameSetupWord]]] {
-          case Right(words) =>
-            Var.set(previewWordsVar -> words, previewLoadingVar -> false)
-            reversePreviewTriggerBus.emit(())
-          case Left(err)    =>
-            Var.set(previewLoadingVar -> false, errorVar -> Some(err.message))
-            reversePreviewTriggerBus.emit(())
-        },
-      // The swap arrow's own `disabled` source — see [[reversePoolEmptyVar]]'s doc comment for why this is
-      // sequenced off the primary preview settling rather than given its own `gameLoadedBus`-merged trigger.
-      reversePreviewTriggerBus.events
-        .sample(reversePreviewQuerySignal)
-        .filterWith(gameVar.signal.map(_.isDefined))
-        .flatMapSwitch { case (swap, preference) => GameApiClient.playSetup(slug, swap, preference) } -->
-        Observer[Either[ApiError, List[GameSetupWord]]] {
-          case Right(words) =>
-            reversePoolEmptyVar.set(words.isEmpty)
-          case Left(_)      =>
-            // A failed probe should not lock the reader out of swapping — fail open, same as the button's default.
-            reversePoolEmptyVar.set(false)
-        },
       inlineRename.bindings(
         onSaved = Observer[GameDetail](detail => Var.set(nameVar -> detail.name, gameVar -> Some(detail))),
         onError = { err =>
@@ -577,8 +530,8 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
               typ    := "button",
               title  := I18n.t(UiKeys.gameInstanceDirectionSwap),
               // Disabled/no-op if the reverse direction's pool is empty — mirrors `swapDirection`'s `badRequest`
-              // case being unreachable from the UI. See [[reversePoolEmptyVar]].
-              disabled <-- reversePoolEmptyVar.signal,
+              // case being unreachable from the UI. See [[reversePoolEmptySignal]].
+              disabled <-- reversePoolEmptySignal,
               "⇄",
               onClick.mapToUnit --> Observer[Unit](_ => swapDirectionVar.update(!_)),
             ),
@@ -607,9 +560,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             groupName,
             choice,
             n.toString,
-            totalAvailableSignal.combineWith(previewLoadingVar.signal).map { case (total, loading) =>
-              !loading && total > 0 && n >= total
-            },
+            totalAvailableSignal.map(total => total > 0 && n >= total),
           )
         },
         wordLimitRadio(groupName, WordLimitChoice.Custom, I18n.t(UiKeys.gameInstanceWordLimitCustom), Val(false)),
@@ -730,11 +681,11 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  /** The chosen direction/preference's eligible pool preview — same `TagWordsList` the setup screen uses, one screen
-    * over. Collapsed by default here (unlike the setup screen): the player is about to be quizzed on these words, so
-    * showing the list open by default would hand them the answers.
+  /** The chosen direction's eligible pool preview — same `TagWordsList` the setup screen uses, one screen over.
+    * Collapsed by default here (unlike the setup screen): the player is about to be quizzed on these words, so showing
+    * the list open by default would hand them the answers.
     */
   private def renderPreviewList(): HtmlElement = {
-    TagWordsList.render(previewWordsVar.signal, previewLoadingVar.signal, collapsed = true)
+    TagWordsList.render(previewWordsSignal, Val(false), collapsed = true)
   }
 }

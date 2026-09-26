@@ -14,7 +14,7 @@ import { test, expect, type Page } from '@playwright/test';
 // it. `startPlay` is the first write GameInstancePage makes, so it is where a signed-out visitor is minted a
 // guest account (see GameInstancePage's doc comment on `asReader`) — that only happens through a real request
 // with a real cookie jar, which is why it belongs here rather than in a frontend spec. Opening the shared link
-// and previewing the play-variant picker (GameApiClient.playSetup, an `optionalUser` read like `get`) must NOT
+// and previewing the play-variant picker (both carried by `GET /api/games/{slug}`, an `optionalUser` read) must NOT
 // mint a guest — this suite asserts no session cookie exists until "Start" is actually clicked.
 //
 // Rewritten for the play-time variant picker (game-variants-redesign): word-count/randomize/articles controls
@@ -171,14 +171,14 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.locator('select option', { hasText: 'Words I played the least' })).toHaveCount(1);
   await expect(guestPage.locator('select option', { hasText: "Words I've made the most mistakes with" })).toHaveCount(1);
 
-  // Preview list reflects the full pool before any play — GameApiClient.playSetup fetched right on load.
+  // Preview list reflects the full pool before any play — `GET /api/games/{slug}` carries it.
   // The list is collapsed by default here (it lists the quiz answers), so open "Show words" first.
   await guestPage.getByText('Show words').click();
   await expect(guestPage.getByText('Eligible words')).toBeVisible();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
   // The point of this fix: merely opening the link and having the preview load must mint no guest account.
-  // `GET /api/games/{slug}` and `GET /api/games/{slug}/plays/setup` are both `optionalUser` reads.
+  // `GET /api/games/{slug}` is an `optionalUser` read, and the page makes no other read.
   const cookiesBeforeStart = await guestContext.cookies();
   expect(cookiesBeforeStart.some((c) => c.name === 'session')).toBe(false);
 
@@ -265,7 +265,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.getByText('How many words')).toBeVisible();
   await expect(guestPage.getByText('Which words')).toBeVisible();
 
-  // `GET /api/games/{slug}/plays/setup` answers the whole eligible pool re-ordered by preference (priority
+  // The preview is the whole eligible pool whatever the preference (priority
   // sampling, not a hard filter — see the design doc), so the preview's own count stays at the pool size (4)
   // regardless of which preference is picked; `renderPreviewList` never lists individual words, only the count.
   // The one place the least-played narrowing is actually observable is the sampled prompt itself, below.

@@ -26,10 +26,10 @@ import HttpClient.query
 
 /** The game catalog's calls, over [[HttpClient]] the same way [[WordApiClient]] is.
   *
-  * [[create]] requires a session — the wordlist pages' guest detour sits in front of it. [[get]] and [[playSetup]] do
-  * not — both are `optionalUser` reads a shared game link is opened through: the variant picker's preview must be
-  * viewable before any guest is minted, same as the link itself. [[startPlay]] is the first call in the play loop that
-  * needs a session, and the only one that mints a guest.
+  * [[create]] requires a session — the wordlist pages' guest detour sits in front of it. [[get]] does not — it is the
+  * `optionalUser` read a shared game link is opened through, and it carries the variant picker's preview too, so the
+  * picker is viewable before any guest is minted. [[startPlay]] is the first call in the play loop that needs a
+  * session, and the only one that mints a guest.
   */
 object GameApiClient {
 
@@ -119,23 +119,6 @@ object GameApiClient {
     HttpClient.call[PlayStarted](
       GamePaths.startPlay(slug),
       Some(StartPlayRequest(swapDirection, wordLimit, includeDefiniteArticles, wordPreference, mode).toJson),
-    )
-  }
-
-  /** The play-variant picker's preview: the resolved-direction eligible pool, in the order [[startPlay]] would sample
-    * from for the same `swapDirection`/`wordPreference`.
-    */
-  def playSetup(
-    slug: String,
-    swapDirection: Boolean,
-    wordPreference: WordPreference,
-  ): EventStream[Either[ApiError, List[GameSetupWord]]] = {
-    HttpClient.call[List[GameSetupWord]](
-      GamePaths
-        .playSetup(slug)
-        .withQuery(
-          query("swapDirection" -> Some(swapDirection), "wordPreference" -> Some(WordPreference.code(wordPreference)))
-        )
     )
   }
 

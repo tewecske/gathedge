@@ -63,9 +63,14 @@ final case class GameSetupWord(
   * `likeCount` are the same public aggregates [[AllGameSummary]] carries — `0` for a game nobody has played or
   * favorited yet, never absent — surfaced here so the game page can warn its owner before a delete removes them.
   *
-  * `lastVariant` is the reader's own most recent play of this game, so the start page can offer the same settings
-  * again. It is the only per-reader field here. `GET /api/games/{slug}` fills it for a signed-in reader who has played
-  * the game. Every other answer leaves it `None`.
+  * The last three fields are everything the start page needs, so it makes no other read. Only `GET /api/games/{slug}`
+  * fills them; every other answer leaves them empty.
+  *
+  *   - `lastVariant` is the reader's own most recent play of this game, so the page can offer the same settings again.
+  *     It is `None` for an anonymous reader or one who has not played the game.
+  *   - `pool` and `reversePool` are the eligible words in the game's stored direction and in the swapped one. Both are
+  *     in alphabetical order (`WordPreference.All`'s order): a preference changes which words a play draws first, not
+  *     which words are eligible.
   */
 final case class GameDetail(
   slug: String,
@@ -76,6 +81,8 @@ final case class GameDetail(
   playCount: Long = 0L,
   likeCount: Long = 0L,
   lastVariant: Option[GameVariantDto] = None,
+  pool: List[GameSetupWord] = Nil,
+  reversePool: List[GameSetupWord] = Nil,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design
