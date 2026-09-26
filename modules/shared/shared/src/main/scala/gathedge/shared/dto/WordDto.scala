@@ -328,12 +328,14 @@ final case class MainWordUnlink(mainWordId: Long, relation: String) derives Json
   * reads off the cell. It belongs to the membership, not to the shared word. On an add, `None` keeps a note the word
   * already has. An edit sends the whole row, so there `None` or a blank note clears it.
   *
-  * `addMainWords` files the word as a form of each main word. `removeMainWords` removes links the word already has.
+  * `mainWord` files the word as a form of a main word. A word is a form of one main word at most, so it is refused
+  * while the word keeps a link to another. `removeMainWords` removes links the word already has, which is how one is
+  * replaced in the same request.
   */
 final case class TagEntryWord(
   word: TagPairWord,
   note: Option[String] = None,
-  addMainWords: List[MainWordLink] = Nil,
+  mainWord: Option[MainWordLink] = None,
   removeMainWords: List[MainWordUnlink] = Nil,
 ) derives JsonCodec
 
