@@ -6,7 +6,7 @@ import org.scalajs.dom
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry, WordFormRef}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -37,6 +37,27 @@ object TagEditorPageSpec extends ZIOSpecDefault {
       rootNode.unmount()
       dom.document.body.removeChild(container)
     }
+  }
+
+  /** A [[TagEntryEditor]] mounted on its own, German beside Hungarian. */
+  private def withEditor[A](seed: Option[TagEntryEditor.Seed])(use: dom.Element => A): A = {
+    val container = dom.document.createElement("div")
+    dom.document.body.appendChild(container)
+    val editor    = new TagEntryEditor(Val(WordLanguage.De), Val(WordLanguage.Hu), seed, Observer.empty)
+    val rootNode  = L.render(container, editor.render())
+    try use(container)
+    finally {
+      rootNode.unmount()
+      dom.document.body.removeChild(container)
+    }
+  }
+
+  private def placeholders(container: dom.Element): List[String] = {
+    container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input].placeholder)
+  }
+
+  private def buttonNamed(container: dom.Element, name: String): Option[dom.html.Button] = {
+    container.querySelectorAll("button").toList.map(_.asInstanceOf[dom.html.Button]).find(_.textContent == name)
   }
 
   private def entry(
@@ -223,89 +244,85 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
-      suite("withNote")(
-        test("a saved note reaches every row that shows the word, on whichever side it is") {
-          val rows    = List(entry(1, Some(2)), entry(1, Some(3)), entry(2, Some(4)), entry(5, None))
-          val updated = TagEditorPage.withNote(rows, 2L, Some("n"))
+      suite("TagEntryEditor.gate")(
+        test("a save that changes no word's part of speech goes, whoever makes it") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Noun, fromDictionary = true, mine = false))
           assertTrue(
-            updated.map(r => (r.comment, r.targetComment)) == List(
-              (None, Some("n")),
-              (None, None),
-              (Some("n"), None),
-              (None, None),
-            )
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Go,
+            // No part of speech chosen: every word keeps its own.
+            TagEntryEditor.gate(words, Nil, None, admin = false) == TagEntryEditor.Gate.Go,
           )
         },
-        test("clearing a note clears it everywhere the word is shown") {
-          val rows = List(entry(1, Some(2), comment = Some("a")), entry(1, None, comment = Some("a")))
-          assertTrue(TagEditorPage.withNote(rows, 1L, None).forall(_.comment.isEmpty))
+        test("the reader's own word takes the row's part of speech without a warning") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = false, mine = true))
+          assertTrue(TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Go)
         },
-      ),
-      suite("posChanges")(
-        test("a change touches only the words not already at that part of speech") {
-          val row = entry(1, Some(2), createdByMe = true, targetCreatedByMe = true)
-            .copy(target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+        test("a dictionary word is refused to a reader and asks an administrator to confirm") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = true, mine = false))
           assertTrue(
-            TagEditorPage.posChanges(row, PartOfSpeech.Noun, admin = false).map(_.map(_.word.id)).contains(List(2L))
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Refused,
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Confirm,
           )
         },
-        test("a word the reader may not change refuses the whole change, unless they are an administrator") {
-          val dictionary = entry(1, Some(2), targetCreatedByMe = true)
-            .copy(fromDictionary = true, target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+        test(
+          "another reader's word is an administrator's to change, with no warning since it is not the dictionary's"
+        ) {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = false, mine = false))
           assertTrue(
-            TagEditorPage.posChanges(dictionary, PartOfSpeech.Verb, admin = false).isEmpty,
-            TagEditorPage.posChanges(dictionary, PartOfSpeech.Verb, admin = true).map(_.size).contains(2),
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Refused,
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Go,
           )
         },
-        test("a dictionary word already at the chosen part of speech needs no permission") {
-          val row = entry(1, Some(2), targetCreatedByMe = true)
-            .copy(fromDictionary = true, target = Some(Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Other, None)))
+        test("removing a dictionary link asks an administrator to confirm") {
+          val main = Word(9L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
+          val link = WordFormRef(main, "plural", fromDictionary = true)
           assertTrue(
-            TagEditorPage.posChanges(row, PartOfSpeech.Noun, admin = false).map(_.map(_.word.id)).contains(List(2L))
+            TagEntryEditor.gate(Nil, List(link), Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Confirm
           )
         },
       ),
-      suite("withWord")(
-        test("a changed word replaces itself on every row that shows it, on whichever side") {
-          val rows    = List(entry(1, Some(2)), entry(2, Some(3)), entry(4, None))
-          val changed = Word(2L, WordLanguage.Hu, "t2", PartOfSpeech.Verb, None)
-          val updated = TagEditorPage.withWord(rows, changed)
-          assertTrue(
-            updated(0).target.contains(changed),
-            updated(1).source == changed,
-            updated(2) == rows(2),
-          )
-        }
-      ),
-      suite("TagEntryDetails")(
-        test("opens on the word's current note, with a main-word search and no select until a main word is picked") {
-          val container = dom.document.createElement("div")
-          dom.document.body.appendChild(container)
-          val word      = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
-          val rootNode  = {
-            L.render(
-              container,
-              new TagEntryDetails(1L, word, PartOfSpeech.Noun, Some("Gebäude"), Observer.empty).render(),
-            )
-          }
-          try {
-            // Read before `assertTrue`, which evaluates lazily — after `finally` has unmounted the panel.
-            val inputs  = container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input])
-            val selects = container.querySelectorAll("select").toList.map(_.asInstanceOf[dom.html.Select])
-            val text    = container.textContent
+      suite("TagEntryEditor")(
+        test("the add row starts with no part of speech, so it offers no form yet and cannot be added") {
+          withEditor(None) { container =>
+            // Read before `assertTrue`, which evaluates lazily — after the editor has been unmounted.
+            val boxes    = placeholders(container)
+            val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val text     = container.textContent
+            val disabled = buttonNamed(container, UiKeys.commonAdd).exists(_.disabled)
             assertTrue(
-              inputs.headOption.map(_.value).contains("Gebäude"),
-              inputs.exists(_.placeholder == UiKeys.tagsEditorMainWordSearch),
-              // The part of speech is the row's, and the form types wait for a main word.
-              selects.isEmpty,
-              text.contains(UiKeys.tagsEditorNoteLabel),
-              text.contains(UiKeys.tagsEditorFormOfLabel),
+              boxes.count(_ == UiKeys.tagsSourcePlaceholder) == 1,
+              boxes.count(_ == UiKeys.tagsTargetPlaceholder) == 1,
+              select.value == TagEntryEditor.anyPartOfSpeech,
+              text.contains(UiKeys.tagsEditorFormNeedsPartOfSpeech),
+              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
+              disabled,
             )
-          } finally {
-            rootNode.unmount()
-            dom.document.body.removeChild(container)
           }
-        }
+        },
+        test("an edit opens on the row's words, notes and part of speech, with a main-word search per word") {
+          val seed = TagEntryEditor.Seed(
+            Some(TagEntryEditor.SeedSide(Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None), Some("Gebäude"))),
+            Some(TagEntryEditor.SeedSide(Word(2L, WordLanguage.Hu, "ház", PartOfSpeech.Other, None), None)),
+            PartOfSpeech.Noun,
+          )
+          withEditor(Some(seed)) { container =>
+            val inputs = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
+            val select = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val values = inputs.map(_.value)
+            val boxes  = placeholders(container)
+            val save   = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
+            val cancel = buttonNamed(container, UiKeys.commonCancel).isDefined
+            assertTrue(
+              values.contains("Haus"),
+              values.contains("ház"),
+              values.contains("Gebäude"),
+              select.value == PartOfSpeech.code(PartOfSpeech.Noun),
+              boxes.count(_ == UiKeys.tagsEditorMainWordSearch) == 2,
+              save,
+              cancel,
+            )
+          }
+        },
       ),
       suite("orient")(
         test("a pair sits with each word under its own language's column") {

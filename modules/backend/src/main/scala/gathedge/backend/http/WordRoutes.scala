@@ -18,17 +18,13 @@ import gathedge.shared.dto.{
   LanguageCheckRequest,
   Paging,
   RenameTagRequest,
-  ReplacePairRequest,
   SetGenderRequest,
-  SetPartOfSpeechRequest,
   SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
-  TagEntryMainWordRequest,
-  TagEntryNoteRequest,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagImportRequest,
-  TagPairInput,
-  TagWordInput,
 }
 import zio.*
 import zio.http.*
@@ -326,54 +322,18 @@ object WordRoutes {
     )
   }
 
-  private val addPairRoute = {
-    WordEndpoints.addPair.implementHandler(
-      handler { (tagId: Long, body: TagPairInput) =>
-        userId.flatMap(id => WordService.addPair(tagId, body, id).mapError(ApiFailures.word))
+  private val addEntryRoute = {
+    WordEndpoints.addEntry.implementHandler(
+      handler { (tagId: Long, body: TagEntryInput) =>
+        userId.flatMap(id => WordService.addEntry(tagId, body, id).mapError(ApiFailures.wordEdit))
       }
     )
   }
 
-  private val attachWordRoute = {
-    WordEndpoints.attachWord.implementHandler(
-      handler { (tagId: Long, body: TagWordInput) =>
-        userId.flatMap(id => WordService.attachWord(tagId, body, id).mapError(ApiFailures.word))
-      }
-    )
-  }
-
-  private val setEntryNoteRoute = {
-    WordEndpoints.setEntryNote.implementHandler(
-      handler { (tagId: Long, wordId: Long, body: TagEntryNoteRequest) =>
-        userId.flatMap(id => WordService.setEntryNote(tagId, wordId, body, id).mapError(ApiFailures.word))
-      }
-    )
-  }
-
-  private val setPartOfSpeechRoute = {
-    WordEndpoints.setPartOfSpeech.implementHandler(
-      handler { (wordId: Long, body: SetPartOfSpeechRequest) =>
-        userId.flatMap(id => WordService.setPartOfSpeech(wordId, body, id).mapError(ApiFailures.wordEdit))
-      }
-    )
-  }
-
-  private val addMainWordRoute = {
-    WordEndpoints.addMainWord.implementHandler(
-      handler { (tagId: Long, wordId: Long, body: TagEntryMainWordRequest) =>
-        userId.flatMap(id => WordService.addMainWord(tagId, wordId, body, id).mapError(ApiFailures.wordEdit))
-      }
-    )
-  }
-
-  private val removeMainWordRoute = {
-    WordEndpoints.removeMainWord.implementHandler(
-      handler { (tagId: Long, wordId: Long, mainWordId: Long, relation: String, confirm: Option[Boolean]) =>
-        userId.flatMap(id => {
-          WordService
-            .removeMainWord(tagId, wordId, mainWordId, relation, confirm.contains(true), id)
-            .mapError(ApiFailures.wordEdit)
-        })
+  private val editEntryRoute = {
+    WordEndpoints.editEntry.implementHandler(
+      handler { (tagId: Long, body: TagEntryEditRequest) =>
+        userId.flatMap(id => WordService.editEntry(tagId, body, id).mapError(ApiFailures.wordEdit))
       }
     )
   }
@@ -388,14 +348,6 @@ object WordRoutes {
           case (Some(language), Some(partOfSpeech)) => WordService.formRelations(language, partOfSpeech)
           case _                                    => ZIO.succeed(List.empty[String])
         }
-      }
-    )
-  }
-
-  private val replacePairRoute = {
-    WordEndpoints.replacePair.implementHandler(
-      handler { (tagId: Long, body: ReplacePairRequest) =>
-        userId.flatMap(id => WordService.replacePair(tagId, body, id).mapError(ApiFailures.word))
       }
     )
   }
@@ -532,14 +484,9 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
-      addPairRoute,
-      attachWordRoute,
-      setEntryNoteRoute,
-      setPartOfSpeechRoute,
-      addMainWordRoute,
-      removeMainWordRoute,
+      addEntryRoute,
+      editEntryRoute,
       formRelationsRoute,
-      replacePairRoute,
       deletePairRoute,
       bulkDeletePairsRoute,
       bulkDeleteWordsRoute,

@@ -3,13 +3,13 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination, WordPicker}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagEntryQuery}
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.frontend.state.{AppState, GameOwnership}
 import gathedge.frontend.util.Download
-import gathedge.shared.domain.{EntryBucket, PairMatch, PartOfSpeech, Tag, User, Word, WordLanguage}
+import gathedge.shared.domain.{EntryBucket, PairMatch, Tag, User, Word, WordLanguage}
 import gathedge.shared.dto.{
   BulkImportResponse,
   ColumnLanguageCheckResponse,
@@ -22,12 +22,10 @@ import gathedge.shared.dto.{
   TagEntry,
   TagEntryPage,
   TagExportFile,
-  TagPairInput,
-  TagPairWord,
+  TagEntryInput,
   TagResponse,
-  TagWordInput,
 }
-import gathedge.shared.i18n.{MessageKeys, MessageRef, UiKeys}
+import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import gathedge.shared.parsing.{ColumnHeading, DelimitedText}
 import org.scalajs.dom
 import zio.json._
@@ -40,10 +38,10 @@ import scala.util.{Failure, Success}
   * arriving here from `/tags/new`.
   *
   * Rows are shown the plain way `TagWordsList` showed them, with an edit icon beside the delete icon. Editing a row
-  * swaps its two cells for the same [[WordPicker]] the add-a-row control uses; committing it calls `replacePair`. The
-  * four filters (verified / paired / other / unmatched) narrow the list by each row's import provenance; with none
-  * selected every row shows. The bulk-import panel feeds straight into this list — it writes every token as a row, in
-  * the pasted order, and the reader sorts them out here.
+  * swaps it for the same [[TagEntryEditor]] the add-a-row control is: the two words, the row's part of speech, and each
+  * word's note and form-of links, saved in one call. The four filters (verified / paired / other / unmatched) narrow
+  * the list by each row's import provenance; with none selected every row shows. The bulk-import panel feeds straight
+  * into this list — it writes every token as a row, in the pasted order, and the reader sorts them out here.
   */
 object TagEditorPage {
 
@@ -74,46 +72,6 @@ object TagEditorPage {
 
   private[pages] def targetIsNew(entry: TagEntry): Boolean =
     entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
-
-  /** Puts a saved note on every row that shows the word. The note is on the word's membership of the wordlist, not on
-    * one row, so a word with two marked answers carries it on both, and a word that is the answer of one row and the
-    * source of another carries it on both sides.
-    */
-  private[pages] def withNote(entries: List[TagEntry], wordId: Long, note: Option[String]): List[TagEntry] = {
-    entries.map(entry => {
-      entry.copy(
-        comment = if (entry.source.id == wordId) note else entry.comment,
-        targetComment = if (entry.target.exists(_.id == wordId)) note else entry.targetComment,
-      )
-    })
-  }
-
-  /** One word of a row, with what decides whether the reader may change its part of speech. */
-  private[pages] final case class PosSide(word: Word, fromDictionary: Boolean, mine: Boolean)
-
-  private[pages] def posSides(entry: TagEntry): List[PosSide] = {
-    PosSide(entry.source, entry.fromDictionary, entry.createdByMe) ::
-      entry.target.map(word => PosSide(word, entry.targetFromDictionary, entry.targetCreatedByMe)).toList
-  }
-
-  /** The words a change of the row's part of speech to `pos` must touch, or `None` when one of them is not the reader's
-    * to change. All or nothing: a pair left half-changed is the mismatch this control exists to fix. A word already at
-    * `pos` is not touched, so it needs no permission.
-    */
-  private[pages] def posChanges(entry: TagEntry, pos: PartOfSpeech, admin: Boolean): Option[List[PosSide]] = {
-    val needed = posSides(entry).filter(_.word.partOfSpeech != pos)
-    Option.when(admin || needed.forall(side => side.mine && !side.fromDictionary))(needed)
-  }
-
-  /** Puts a changed word — a new part of speech — on every row that shows it, on whichever side. */
-  private[pages] def withWord(entries: List[TagEntry], word: Word): List[TagEntry] = {
-    entries.map(entry => {
-      entry.copy(
-        source = if (entry.source.id == word.id) word else entry.source,
-        target = entry.target.map(target => if (target.id == word.id) word else target),
-      )
-    })
-  }
 
   /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
   private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
@@ -349,8 +307,7 @@ private final class TagEditorPage(
           flashRow(TagEditorPage.rowKey(entry))
         } else {
           warningVar.set(response.warning.map(I18n.resolve))
-          Var.set(addSourceVar -> None, addTargetVar -> None, addSourcePos -> None, addTargetPos -> None)
-          addSourcePicker.clear(); addTargetPicker.clear(); addSourcePicker.focus()
+          addEditor.reset()
           // One more word than the count the page was drawn from — enough to know which page the new row is on
           // without asking twice.
           reloadRows(query => Pagination.lastPage(totalVar.now() + 1, query.pageSize))
@@ -446,110 +403,18 @@ private final class TagEditorPage(
 
   // -- Add-a-row control --------------------------------------------------------------------
 
-  // Either box may be filled first. When both hold a word the pair is submitted; Enter on an empty box, with the other
-  // one filled, adds that one word alone — on whichever side it was typed, so its language is the side's language.
-  // Each box's search is held to the *other* box's committed part of speech and offers that word's translations.
-  private val addSourceVar = Var(Option.empty[TagPairWord])
-  private val addTargetVar = Var(Option.empty[TagPairWord])
-  private val addSourcePos = Var(Option.empty[PartOfSpeech])
-  private val addTargetPos = Var(Option.empty[PartOfSpeech])
+  // Either box may be filled first. When both hold a word the row is added; Enter on an empty box, with the other one
+  // filled, adds that one word alone — on whichever side it was typed, so its language is the side's language.
+  private val addBus = new EventBus[TagEntryInput]()
 
-  /** The id of a committed word, when it is a dictionary word — what the opposite picker offers translations of. */
-  private def existingId(ref: Option[TagPairWord]): Option[Long] = ref match {
-    case Some(TagPairWord.Existing(id)) => Some(id)
-    case _                              => None
-  }
-
-  private lazy val addSourcePicker: WordPicker = new WordPicker(
-    language = sourceLangVar.signal,
-    partOfSpeech = addTargetPos.signal,
-    onCommit = Observer[TagPairWord] { ref =>
-      addSourceVar.set(Some(ref))
-      addSourcePos.set(posOf(ref))
-      addTargetVar.now() match {
-        case Some(target) => submitAdd(ref, target)
-        case None         => dom.window.setTimeout(() => addTargetPicker.focus(), 0)
-      }
-    },
-    // A dictionary pick settles the pair's part of speech; the other box's search is then held to it.
-    onCommitWord = Observer[Option[Word]](_.foreach(w => addSourcePos.set(Some(w.partOfSpeech)))),
-    // Enter on the empty word box, with an answer already committed: add that answer on its own.
-    onEmptyCommit = Observer[Unit](_ => addTargetVar.now().foreach(target => addWordBus.emit(target))),
-    placeholderSignal = sourceLangVar.signal.map(l => I18n.t(UiKeys.tagsSourcePlaceholder, Labels.language(l))),
-    translateFrom = addTargetVar.signal.map(existingId),
-  )
-
-  private lazy val addTargetPicker: WordPicker = new WordPicker(
-    language = targetLangVar.signal,
-    partOfSpeech = addSourcePos.signal,
-    onCommit = Observer[TagPairWord] { ref =>
-      addTargetVar.set(Some(ref))
-      addTargetPos.set(posOf(ref))
-      addSourceVar.now() match {
-        case Some(source) => submitAdd(source, ref)
-        case None         => addSourcePicker.focus()
-      }
-    },
-    onCommitWord = Observer[Option[Word]](_.foreach(w => addTargetPos.set(Some(w.partOfSpeech)))),
-    // Enter on the empty answer box, with a word already committed: add that word on its own.
-    onEmptyCommit = Observer[Unit](_ => addSourceVar.now().foreach(source => addWordBus.emit(source))),
-    placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
-    translateFrom = addSourceVar.signal.map(existingId),
-  )
-
-  private def submitAdd(source: TagPairWord, target: TagPairWord): Unit = {
-    addRowBus.emit(TagPairInput(source, target))
-  }
-  private val addRowBus                                                 = new EventBus[TagPairInput]()
-  private val addWordBus                                                = new EventBus[TagPairWord]()
+  private lazy val addEditor: TagEntryEditor =
+    new TagEntryEditor(sourceLangVar.signal, targetLangVar.signal, None, addBus.writer)
 
   // -- Row editing -------------------------------------------------------------------------
 
-  /** `(sourceWordId, oldTargetWordId)` of the row being edited, or `None`. */
-  private val editingVar    = Var(Option.empty[(Long, Option[Long])])
-  private val editSourceVar = Var(Option.empty[TagPairWord])
-  private val editTargetVar = Var(Option.empty[TagPairWord])
-  private val editSourcePos = Var(Option.empty[PartOfSpeech])
-  private val editTargetPos = Var(Option.empty[PartOfSpeech])
-
-  /** The row's part of speech while it is edited: the select in the part-of-speech column. Both edit pickers search it,
-    * and Save gives it to both words — see [[posApplyBus]].
-    */
-  private val editPosVar = Var[PartOfSpeech](PartOfSpeech.Other)
-
-  /** A saved row and the part of speech its two words should now have. Emitted after the pair itself is saved. */
-  private val posApplyBus = new EventBus[(TagEntry, PartOfSpeech)]()
-
-  private def setEditPos(pos: PartOfSpeech): Unit =
-    Var.set(editPosVar -> pos, editSourcePos -> Some(pos), editTargetPos -> Some(pos))
-
-  // Each edit box, like the add boxes, is held to the *other* box's committed part of speech and offers that word's
-  // translations — so editing one side keeps searching in step with the side that is staying.
-  private lazy val editSourcePicker: WordPicker = new WordPicker(
-    language = sourceLangVar.signal,
-    partOfSpeech = editTargetPos.signal,
-    onCommit = Observer[TagPairWord] { ref =>
-      editSourceVar.set(Some(ref)); editSourcePos.set(posOf(ref)); editTargetPicker.focus()
-    },
-    onCommitWord = Observer[Option[Word]](_.foreach(w => editSourcePos.set(Some(w.partOfSpeech)))),
-    placeholderSignal = sourceLangVar.signal.map(l => I18n.t(UiKeys.tagsSourcePlaceholder, Labels.language(l))),
-    translateFrom = editTargetVar.signal.map(existingId),
-  )
-
-  private lazy val editTargetPicker: WordPicker = new WordPicker(
-    language = targetLangVar.signal,
-    partOfSpeech = editSourcePos.signal,
-    // Committing the answer is the whole edit: save it and leave edit mode, the same way Enter on the add row's target
-    // adds the pair. The explicit Save button stays for a mouse-only edit and does the same thing.
-    onCommit = Observer[TagPairWord] { ref =>
-      editTargetVar.set(Some(ref)); editTargetPos.set(posOf(ref)); replaceBus.emit(())
-    },
-    onCommitWord = Observer[Option[Word]](_.foreach(w => editTargetPos.set(Some(w.partOfSpeech)))),
-    placeholderSignal = targetLangVar.signal.map(l => I18n.t(UiKeys.tagsTargetPlaceholder, Labels.language(l))),
-    translateFrom = editSourceVar.signal.map(existingId),
-  )
-
-  private val replaceBus   = new EventBus[Unit]()
+  /** The row being edited and its editor, or `None`. One at a time: starting another edit drops this one. */
+  private val editingVar   = Var(Option.empty[((Long, Option[Long]), HtmlElement)])
+  private val editBus      = new EventBus[((Long, Option[Long]), TagEntryInput)]()
   private val deleteRowBus = new EventBus[(Long, Option[Long])]()
 
   // -- Multiselect ---------------------------------------------------------------------------
@@ -606,36 +471,27 @@ private final class TagEditorPage(
   private def toggleSelected(key: (Long, Option[Long])): Unit =
     selectedVar.update(s => if (s.contains(key)) s - key else s + key)
 
-  /** The row whose note-and-forms panel is open under it, if any. One at a time, like the inline edit. */
-  private val detailsOpenVar = Var(Option.empty[(Long, Option[Long])])
-
-  private def toggleDetails(key: (Long, Option[Long])): Unit =
-    detailsOpenVar.update(open => if (open.contains(key)) None else Some(key))
-
-  private def applyNote(wordId: Long, note: Option[String]): Unit =
-    entriesVar.update(TagEditorPage.withNote(_, wordId, note))
-
   private def startEdit(entry: TagEntry): Unit = {
-    editingVar.set(Some(TagEditorPage.rowKey(entry)))
-    // Load the two boxes in the order the row is shown, so each word sits in a box searching its own language.
+    val key           = TagEditorPage.rowKey(entry)
+    // The two boxes in the order the row is shown, so each word sits in a box searching its own language. A pair shares
+    // one part of speech: the row's, which is the source word's.
     val (left, right) = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
-    editSourceVar.set(left.map(s => TagPairWord.Existing(s.word.id)))
-    editTargetVar.set(right.map(s => TagPairWord.Existing(s.word.id)))
-    // A pair shares one part of speech: the row's, which is the source word's. Both pickers search it from the first
-    // keystroke. The answer's own may differ — an imported Hungarian word is `other` beside a German noun — and Save
-    // brings it into line.
-    setEditPos(entry.source.partOfSpeech)
-    editSourcePicker.setText(left.map(s => Word.display(s.word)).getOrElse(""))
-    editTargetPicker.setText(right.map(s => Word.display(s.word)).getOrElse(""))
-    // The two cells become pickers on the next render; focus the first once it is mounted.
-    dom.window.setTimeout(() => editSourcePicker.focus(), 0)
+    val seed          = TagEntryEditor.Seed(
+      left.map(side => TagEntryEditor.SeedSide(side.word, side.comment)),
+      right.map(side => TagEntryEditor.SeedSide(side.word, side.comment)),
+      entry.source.partOfSpeech,
+    )
+    val editor        = new TagEntryEditor(
+      sourceLangVar.signal,
+      targetLangVar.signal,
+      Some(seed),
+      Observer[TagEntryInput](input => editBus.emit((key, input))),
+      Observer[Unit](_ => cancelEdit()),
+    )
+    editingVar.set(Some((key, editor.render())))
   }
 
-  private def cancelEdit(): Unit = {
-    editingVar.set(None)
-    editSourceVar.set(None); editTargetVar.set(None); editSourcePos.set(None); editTargetPos.set(None)
-    editSourcePicker.clear(); editTargetPicker.clear()
-  }
+  private def cancelEdit(): Unit = editingVar.set(None)
 
   // -- Bulk import -----------------------------------------------------------------------
 
@@ -829,11 +685,6 @@ private final class TagEditorPage(
     }
   }
 
-  private def posOf(ref: TagPairWord): Option[PartOfSpeech] = ref match {
-    case TagPairWord.New(_, _, pos, _) => Some(pos)
-    case _                             => None
-  }
-
   /** A write with the guest detour in front of it — copied from `TagsPage.asReader`/`GameSetupPage.asReader`.
     * `POST /api/games` needs a session and this page is readable signed out, so a guest is minted first and the call is
     * retried against the session that creates. Signed in, the mint is skipped entirely.
@@ -970,66 +821,21 @@ private final class TagEditorPage(
           case Left(err)   =>
             errorVar.set(Some(err.message))
         },
-      // `addPair` is idempotent, so an exact repeat comes back as a row already on the list; `onEntryAdded` refuses it
-      // with a toast and a flash on the row that is already there.
-      addRowBus.events.flatMapSwitch(input => WordApiClient.addPair(tagId, input)) -->
+      // An add is idempotent, so an exact repeat comes back as a row already on the list; `onEntryAdded` refuses it with
+      // a toast and a flash on the row that is already there.
+      addBus.events.flatMapSwitch(input => WordApiClient.addEntry(tagId, input)) -->
         Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]](onEntryAdded),
-      // Enter on the empty answer box: add the committed source word on its own, no answer marked.
-      addWordBus.events.flatMapSwitch(word => WordApiClient.attachWord(tagId, TagWordInput(word))) -->
-        Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]](onEntryAdded),
-      replaceBus.events
-        .sample(editingVar.signal, editSourceVar.signal, editTargetVar.signal)
-        .collect { case (Some(key), src, tgt) if src.isDefined || tgt.isDefined => (key, src, tgt) }
-        .flatMapSwitch {
-          case ((oldSource, oldTarget), Some(src), Some(tgt)) =>
-            WordApiClient
-              .replacePair(tagId, oldSource, oldTarget, TagPairInput(src, tgt))
-              .map(_.map(response => (response.warning, Some(response.entry))))
-          case (key, _, _)                                    =>
-            // A lone word has no pair to replace, so its Save sets the part of speech only.
-            EventStream.fromValue(Right((None, entriesVar.now().find(entry => TagEditorPage.rowKey(entry) == key))))
-        } --> Observer[Either[ApiError, (Option[MessageRef], Option[TagEntry])]] {
-        case Right((warning, saved)) =>
-          warningVar.set(warning.map(I18n.resolve))
-          val pos = editPosVar.now()
+      // A saved edit can change the words, their part of speech, their notes and their links, so the page is read again.
+      editBus.events.flatMapSwitch { case ((oldSource, oldTarget), input) =>
+        WordApiClient.editEntry(tagId, oldSource, oldTarget, input)
+      } --> Observer[Either[ApiError, gathedge.shared.dto.TagEntryResponse]] {
+        case Right(response) =>
+          warningVar.set(response.warning.map(I18n.resolve))
           cancelEdit()
-          saved match {
-            case Some(entry) => posApplyBus.emit((entry, pos))
-            case None        => entriesBus.emit(())
-          }
-        case Left(err)               =>
+          entriesBus.emit(())
+        case Left(err)       =>
           errorVar.set(Some(err.message))
       },
-      // The saved row's two words take the part of speech the select says. Worked out before anything is sent
-      // (`TagEditorPage.posChanges`): a word that is not the reader's to change refuses the whole change rather than
-      // leaving the pair half-changed, and an administrator confirms one warning for dictionary data. The server applies
-      // the same rule to each word. Every way out re-reads the page, since the pair itself was saved either way.
-      posApplyBus.events
-        .withCurrentValueOf(AppState.isGlobalAdminSignal)
-        .map { case (entry, pos, admin) => (pos, TagEditorPage.posChanges(entry, pos, admin)) }
-        .filter {
-          case (_, None)        =>
-            errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
-            entriesBus.emit(())
-            false
-          case (_, Some(sides)) =>
-            if (sides.isEmpty) entriesBus.emit(())
-            sides.nonEmpty
-        }
-        .collect { case (pos, Some(sides)) => (pos, sides, sides.exists(_.fromDictionary)) }
-        .filter { case (_, _, dictionary) =>
-          val go = !dictionary || dom.window.confirm(I18n.t(UiKeys.tagsEditorDictionaryWarn))
-          if (!go) entriesBus.emit(())
-          go
-        }
-        .flatMapSwitch { case (pos, sides, dictionary) => changeAll(sides, pos, confirm = dictionary) } -->
-        Observer[Either[ApiError, List[Word]]] {
-          case Right(_)  =>
-            entriesBus.emit(())
-          case Left(err) =>
-            errorVar.set(Some(err.message))
-            entriesBus.emit(())
-        },
       // `flatMapMerge`, not `flatMapSwitch`: deletes of different rows run to completion side by side rather than the
       // newer one cancelling the older. A repeat of the *same* row cannot reach here — `requestRowDelete` gates it.
       deleteRowBus.events.flatMapMerge { case key @ (sourceWordId, targetWordId) =>
@@ -1436,7 +1242,7 @@ private final class TagEditorPage(
               )
             ),
             tbody(
-              rows.flatMap(entry => List(renderRow(entry), renderDetailsRow(entry)))
+              rows.map(renderRow)
             ),
           )
         }
@@ -1499,68 +1305,12 @@ private final class TagEditorPage(
     }
   }
 
-  /** The row under a row that holds its note-and-forms panel: one [[TagEntryDetails]] per word, in the columns' order.
-    * Always in the table so the row count stays even, but hidden, and with nothing mounted, until it is opened.
-    */
-  private def renderDetailsRow(entry: TagEntry): HtmlElement = {
-    val rowKey = TagEditorPage.rowKey(entry)
-    val isOpen = detailsOpenVar.signal.map(_.contains(rowKey)).distinct
-    tr(
-      cls("hidden") <-- isOpen.map(!_),
-      cls := "bg-base-200",
-      td(
-        colSpan := 6,
-        child.maybe <-- Signal.combine(isOpen, sourceLangVar.signal, targetLangVar.signal).map {
-          case (false, _, _)       => None
-          case (true, left, right) =>
-            val (first, second) = TagEditorPage.orient(entry, left, right)
-            Some(
-              div(
-                cls := "grid grid-cols-1 sm:grid-cols-2 gap-4 py-2",
-                List(first, second).flatten.map(side => {
-                  new TagEntryDetails(
-                    tagId,
-                    side.word,
-                    // The row's part of speech, which both words' main words share.
-                    entry.source.partOfSpeech,
-                    side.comment,
-                    Observer[Option[String]](note => applyNote(side.word.id, note)),
-                    Observer[Word](word => entriesVar.update(TagEditorPage.withWord(_, word))),
-                  ).render()
-                }),
-              )
-            )
-        },
-      ),
-    )
-  }
-
-  /** Gives each word `pos`, one after another, so a failure stops the rest and says which answer came back. */
-  private def changeAll(
-    sides: List[TagEditorPage.PosSide],
-    pos: PartOfSpeech,
-    confirm: Boolean,
-  ): EventStream[Either[ApiError, List[Word]]] = {
-    sides match {
-      case Nil          =>
-        EventStream.fromValue(Right(Nil))
-      case side :: rest =>
-        WordApiClient.setPartOfSpeech(side.word.id, pos, confirm).flatMapSwitch {
-          case Left(err)     => EventStream.fromValue(Left(err))
-          case Right(detail) => changeAll(rest, pos, confirm).map(_.map(detail.word :: _))
-        }
-    }
-  }
-
+  /** One row of the table. While it is edited the whole row is its [[TagEntryEditor]], across every column. */
   private def renderRow(entry: TagEntry): HtmlElement = {
     val rowKey     = TagEditorPage.rowKey(entry)
-    val isEditing  = editingVar.signal.map(_.contains(rowKey)).distinct
+    val editor     = editingVar.signal.map(_.collect { case (key, element) if key == rowKey => element }).distinct
     val isDeleting = deletingRowsVar.signal.map(_.contains(rowKey)).distinct
-    tr(
-      cls("bg-base-200") <-- isEditing,
-      cls("bg-warning/30 transition-colors duration-500") <-- flashRowVar.signal.map(_.contains(rowKey)),
-      // While a delete is in flight the whole row is greyed out and stops taking clicks.
-      cls("opacity-50 pointer-events-none") <-- isDeleting,
+    val cells      = List(
       td(
         cls := "w-4",
         child.maybe <-- canEditSignal.map(
@@ -1575,45 +1325,25 @@ private final class TagEditorPage(
         ),
       ),
       td(
-        child <-- Signal.combine(isEditing, sourceLangVar.signal, targetLangVar.signal).map {
-          case (true, _, _)         => editSourcePicker.render()
-          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._1, pairBadges(entry))
+        child <-- Signal.combine(sourceLangVar.signal, targetLangVar.signal).map { case (left, right) =>
+          renderWordCell(TagEditorPage.orient(entry, left, right)._1, pairBadges(entry))
         }
       ),
       td(
-        child <-- Signal.combine(isEditing, sourceLangVar.signal, targetLangVar.signal).map {
-          case (true, _, _)         => editTargetPicker.render()
-          case (false, left, right) => renderWordCell(TagEditorPage.orient(entry, left, right)._2)
+        child <-- Signal.combine(sourceLangVar.signal, targetLangVar.signal).map { case (left, right) =>
+          renderWordCell(TagEditorPage.orient(entry, left, right)._2)
         }
       ),
-      // One part of speech per row — a pair's two words share it. While the row is edited it is a select, which both
-      // pickers search and Save gives to both words.
-      td(
-        child <-- isEditing.map {
-          case true  =>
-            select(
-              cls        := "select select-xs w-28",
-              aria.label := I18n.t(UiKeys.tagsEditorPartOfSpeech),
-              PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
-              controlled(
-                value <-- editPosVar.signal.map(PartOfSpeech.code),
-                onChange.mapToValue.map(PartOfSpeech.fromString) --> Observer[Option[PartOfSpeech]](
-                  _.foreach(setEditPos)
-                ),
-              ),
-            )
-          case false =>
-            span(cls := "opacity-70 text-xs", Labels.partOfSpeech(entry.source.partOfSpeech))
-        }
-      ),
+      // One part of speech per row — a pair's two words share it. The row's edit sets it.
+      td(span(cls := "opacity-70 text-xs", Labels.partOfSpeech(entry.source.partOfSpeech))),
       td(
         cls := "hidden sm:table-cell",
         div(cls := "flex gap-1", pairBadges(entry)),
       ),
       td(
-        child <-- Signal.combine(isEditing, canEditSignal, isDeleting).map {
-          case (_, false, _)        => span()
-          case (false, true, true)  =>
+        child <-- Signal.combine(canEditSignal, isDeleting).map {
+          case (false, _)    => span()
+          case (true, true)  =>
             // Button-shaped wrapper so the row keeps the exact height it has with the edit/delete buttons.
             div(
               cls := "flex gap-1",
@@ -1624,33 +1354,9 @@ private final class TagEditorPage(
                 span(cls := "loading loading-spinner loading-xs", role := "status"),
               ),
             )
-          case (true, true, _)      =>
+          case (true, false) =>
             div(
               cls := "flex gap-1",
-              button(
-                typ := "button",
-                cls := "btn btn-primary btn-xs",
-                disabled <-- editSourceVar.signal.combineWith(editTargetVar.signal).map { case (s, t) =>
-                  s.isEmpty && t.isEmpty
-                },
-                I18n.t(UiKeys.tagsEditorSaveRow),
-                onClick.mapToUnit --> Observer[Unit](_ => replaceBus.emit(())),
-              ),
-              button(
-                typ := "button",
-                cls := "btn btn-ghost btn-xs",
-                I18n.t(UiKeys.commonCancel),
-                onClick.mapToUnit --> Observer[Unit](_ => cancelEdit()),
-              ),
-            )
-          case (false, true, false) =>
-            div(
-              cls := "flex gap-1",
-              InlineRename.iconButton(
-                I18n.t(UiKeys.tagsEditorDetails),
-                noteMark(),
-                onClick.mapToUnit --> Observer[Unit](_ => toggleDetails(rowKey)),
-              ),
               InlineRename.iconButton(
                 I18n.t(UiKeys.tagsEditorEditRow),
                 pencilMark(),
@@ -1665,22 +1371,23 @@ private final class TagEditorPage(
         }
       ),
     )
+    tr(
+      cls("bg-base-200") <-- editor.map(_.isDefined),
+      cls("bg-warning/30 transition-colors duration-500") <-- flashRowVar.signal.map(_.contains(rowKey)),
+      // While a delete is in flight the whole row is greyed out and stops taking clicks.
+      cls("opacity-50 pointer-events-none") <-- isDeleting,
+      children <-- editor.map {
+        case Some(element) => List(td(colSpan := 6, element))
+        case None          => cells
+      },
+    )
   }
 
   private def renderAddRow(): HtmlElement = {
     div(
       cls := "mt-6 flex flex-col gap-2",
-      h2(cls               := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
-      div(
-        // One column below `sm`: side by side, the two boxes are too narrow to type a word in on a phone. `items-end`
-        // is what keeps the two fields on one line side by side — only a gendered side carries article buttons above
-        // its input, so aligning on the top would leave the other side's field a row higher.
-        cls                := "grid grid-cols-1 sm:grid-cols-2 gap-4 items-end",
-        dataAttr("testid") := "tag-add-row",
-        addSourcePicker.render(),
-        addTargetPicker.render(),
-      ),
-      p(cls                := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint)),
+      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
+      addEditor.render(),
     )
   }
 
@@ -2037,19 +1744,6 @@ private final class TagEditorPage(
   )
 
   /** A page with lines on it — the row's note and forms. */
-  private def noteMark(): SvgElement = svg.svg(
-    svg.cls            := "h-4 w-4",
-    svg.viewBox        := "0 0 24 24",
-    svg.fill           := "none",
-    svg.stroke         := "currentColor",
-    svg.strokeWidth    := "1.5",
-    svg.strokeLineCap  := "round",
-    svg.strokeLineJoin := "round",
-    svg.path(
-      svg.d := "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
-    ),
-  )
-
   private def pencilMark(): SvgElement = svg.svg(
     svg.cls            := "h-4 w-4",
     svg.viewBox        := "0 0 24 24",

@@ -1030,29 +1030,28 @@ object UiKeys {
     */
   val tagsEditorNewBadge: String = key("ui.tags.editor.newBadge")
 
-  /** A row's "note and forms" button, and the panel it opens under the row. Per word it holds the reader's note and the
-    * main words this word is a form of. The reader can set the note and file the word as a form of another word by
-    * hand, which an import otherwise does from a cell's note and an extra column. `{0}` in `formExists` is the main
-    * word.
+  /** The wordlist row editor (`TagEntryEditor`), on the add row and in a row's edit mode. Per word it holds the
+    * reader's note and the main words this word is a form of, which an import otherwise writes from a cell's note and
+    * an extra column. `addForm` puts the main word just picked on the list, so another can be picked after it.
     */
-  val tagsEditorDetails: String         = key("ui.tags.editor.details")
   val tagsEditorNoteLabel: String       = key("ui.tags.editor.noteLabel")
   val tagsEditorNotePlaceholder: String = key("ui.tags.editor.notePlaceholder")
-  val tagsEditorSaveNote: String        = key("ui.tags.editor.saveNote")
   val tagsEditorFormOfLabel: String     = key("ui.tags.editor.formOfLabel")
   val tagsEditorNotAForm: String        = key("ui.tags.editor.notAForm")
   val tagsEditorMainWordSearch: String  = key("ui.tags.editor.mainWordSearch")
   val tagsEditorFormRelation: String    = key("ui.tags.editor.formRelation")
   val tagsEditorNoRelations: String     = key("ui.tags.editor.noRelations")
-  val tagsEditorSaveForm: String        = key("ui.tags.editor.saveForm")
+  val tagsEditorAddForm: String         = key("ui.tags.editor.addForm")
   val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
-  val tagsEditorFormExists: String      = key("ui.tags.editor.formExists")
 
-  /** The panel's part-of-speech select, and the warning an administrator confirms before changing or removing
-    * dictionary data.
+  /** The row's part-of-speech select. The add row starts at `anyPartOfSpeech`, and a form can be added only once a part
+    * of speech is chosen. `dictionaryWarning` is what an administrator confirms before changing or removing dictionary
+    * data.
     */
-  val tagsEditorPartOfSpeech: String   = key("ui.tags.editor.partOfSpeech")
-  val tagsEditorDictionaryWarn: String = key("ui.tags.editor.dictionaryWarning")
+  val tagsEditorPartOfSpeech: String          = key("ui.tags.editor.partOfSpeech")
+  val tagsEditorAnyPartOfSpeech: String       = key("ui.tags.editor.anyPartOfSpeech")
+  val tagsEditorFormNeedsPartOfSpeech: String = key("ui.tags.editor.formNeedsPartOfSpeech")
+  val tagsEditorDictionaryWarn: String        = key("ui.tags.editor.dictionaryWarning")
 
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only

@@ -165,11 +165,6 @@ final case class AddTranslationRequest(translation: NewTranslation) derives Json
   */
 final case class SetGenderRequest(gender: Gender) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.setPartOfSpeech]]'s body. `confirm` is the reader's answer to the warning the
-  * editor shows before changing a dictionary word; the server refuses a dictionary word without it.
-  */
-final case class SetPartOfSpeechRequest(partOfSpeech: PartOfSpeech, confirm: Boolean = false) derives JsonCodec
-
 /** [[gathedge.shared.api.WordEndpoints.createTag]]'s body: a tag name and its mandatory language pair. The pair is
   * fixed here and stays editable only while the tag has no `word_tag_pairs` row (see [[SetTagLanguagesRequest]]);
   * `source` and `target` must differ.
@@ -197,10 +192,10 @@ enum TagPairWord derives JsonCodec {
   */
 final case class TagPairInput(source: TagPairWord, target: TagPairWord) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.attachWord]]'s body: one word to put into a tag on its own, with no answer yet —
-  * the unified editor's "commit a source word, then press Enter on the empty answer box" action. `word` reuses
-  * [[TagPairWord]], so it may be an existing dictionary word or one to create. It must be in one of the tag's two
-  * languages.
+/** What `WordService.attachWord` takes: one word to put into a tag on its own, with no answer yet — the add row's
+  * "commit a source word, then press Enter on the empty answer box" action, which reaches it through
+  * [[gathedge.shared.api.WordEndpoints.addEntry]]. `word` reuses [[TagPairWord]], so it may be an existing dictionary
+  * word or one to create. It must be in one of the tag's two languages.
   */
 final case class TagWordInput(word: TagPairWord) derives JsonCodec
 
@@ -305,7 +300,7 @@ final case class TagEntry(
   */
 final case class TagEntryPage(items: List[TagEntry], total: Long, hasPairs: Boolean) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addPair]]/`.replacePair`'s answer: the row as it now stands, plus the same
+/** [[gathedge.shared.api.WordEndpoints.addEntry]]/`.editEntry`'s answer: the row as it now stands, plus the same
   * soft-quota warning [[PairSelectionResponse]] carries when the write crossed the pair quota's soft threshold.
   *
   * `alreadyPresent` says the write named a row the wordlist already held — every one of these endpoints is idempotent,
@@ -318,41 +313,60 @@ final case class TagEntryResponse(
   alreadyPresent: Boolean = false,
 ) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.setEntryNote]]'s body: the reader's note beside one word of one wordlist — the
-  * `(növény)` of `levél (növény)`, which an import reads off the cell. `None` or a blank note clears it.
+/** A main word to file one word of an editor row under, and which form of it the word is: `Häuser` is the `plural` of
+  * `Haus`. `mainWord` may be a dictionary word or one to create, as on the add row. `relation` must be one of the
+  * relations [[gathedge.shared.api.WordEndpoints.formRelations]] offers for the word's language and part of speech.
   */
-final case class TagEntryNoteRequest(note: Option[String]) derives JsonCodec
+final case class MainWordLink(mainWord: TagPairWord, relation: String) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s body: the main word that a word of the wordlist is a form of,
-  * and which form it is — `Häuser` is the `plural` of `Haus`. `mainWord` may be a dictionary word or one to create, as
-  * on the add row. `relation` must be one of the relations [[gathedge.shared.api.WordEndpoints.formRelations]] offers
-  * for that language and part of speech.
+/** A form-of link to remove from one word of an editor row: the main word, and the relation it is filed under. */
+final case class MainWordUnlink(mainWordId: Long, relation: String) derives JsonCodec
+
+/** One word of an editor row, with what the reader writes beside it.
   *
-  * `partOfSpeech` is the row's, which the main word must have. The form word takes it too when its own differs, under
-  * the rule [[gathedge.shared.api.WordEndpoints.setPartOfSpeech]] follows; `confirm` is that rule's answer to the
-  * warning for dictionary data. With no `partOfSpeech` the form word's own is used and nothing is changed.
+  * `note` is the reader's note beside the word in this wordlist: the `(növény)` of `levél (növény)`, which an import
+  * reads off the cell. It belongs to the membership, not to the shared word. On an add, `None` keeps a note the word
+  * already has. An edit sends the whole row, so there `None` or a blank note clears it.
+  *
+  * `addMainWords` files the word as a form of each main word. `removeMainWords` removes links the word already has.
   */
-final case class TagEntryMainWordRequest(
-  mainWord: TagPairWord,
-  relation: String,
+final case class TagEntryWord(
+  word: TagPairWord,
+  note: Option[String] = None,
+  addMainWords: List[MainWordLink] = Nil,
+  removeMainWords: List[MainWordUnlink] = Nil,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addEntry]]'s body, and the row an edit makes: one word or a pair, and everything
+  * the editor writes with them.
+  *
+  * `source` and `target` are the two cells of the row. At least one must be there; with only one, the row is that word
+  * alone, in either of the tag's two languages.
+  *
+  * `partOfSpeech` is the row's, which its words and their main words share. A word with another part of speech is given
+  * it. That is a change to shared data, so a word that is not the reader's own is an administrator's to change, and a
+  * dictionary word also needs `confirm`: the answer to the editor's warning. Removing a link the reader did not make
+  * follows the same rule. With no `partOfSpeech` each word keeps its own.
+  */
+final case class TagEntryInput(
+  source: Option[TagEntryWord],
+  target: Option[TagEntryWord],
   partOfSpeech: Option[PartOfSpeech] = None,
   confirm: Boolean = false,
 ) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addMainWord]]'s answer: the main word the form is now filed under, and the form
-  * word as it now stands, with the part of speech it may have been given. `alreadyPresent` says the link was already
-  * there, under that relation, so no link was written.
+/** [[gathedge.shared.api.WordEndpoints.editEntry]]'s body: which row is edited (its old source word id, and its old
+  * answer word id when it had one), and the row it becomes.
   */
-final case class TagEntryMainWordResponse(
-  mainWord: Word,
-  relation: String,
-  alreadyPresent: Boolean,
-  form: Word,
+final case class TagEntryEditRequest(
+  oldSourceWordId: Long,
+  oldTargetWordId: Option[Long],
+  entry: TagEntryInput,
 ) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
-  * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may
-  * be an existing word or one to create.
+/** What `WordService.replacePair` takes: which row is being edited (its old source word id, and its old answer word id
+  * when it had one), and the pair it should become. [[TagEntryEditRequest]] is what the API takes. `next` reuses
+  * [[TagPairInput]] — either side may be an existing word or one to create.
   */
 final case class ReplacePairRequest(
   oldSourceWordId: Long,

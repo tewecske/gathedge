@@ -22,8 +22,11 @@ const U = Date.now().toString(36);
 let page: Page;
 
 const addRow = () => page.getByTestId('tag-add-row');
-const srcInput = () => addRow().getByRole('textbox').first();
-const tgtInput = () => addRow().getByRole('textbox').last();
+// The two word boxes. The add row also holds a note box and a main-word search per word, so the boxes are found by
+// their placeholder rather than by position.
+const wordBoxes = () => addRow().getByPlaceholder(/^Type a /);
+const srcInput = () => wordBoxes().first();
+const tgtInput = () => wordBoxes().last();
 const rowFor = (text: string) => page.locator('tbody tr').filter({ hasText: text });
 // The picker's own autocomplete list — `menu menu-sm ... absolute`, distinct from the nav's `menu w-52` dropdowns.
 const menu = () => addRow().locator('ul.menu-sm');
