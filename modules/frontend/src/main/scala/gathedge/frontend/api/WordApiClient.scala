@@ -30,15 +30,12 @@ import gathedge.shared.dto.{
   PairRef,
   PairSelectionResponse,
   RenameTagRequest,
-  ReplacePairRequest,
   SetGenderRequest,
-  SetPartOfSpeechRequest,
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryPage,
-  TagEntryMainWordRequest,
-  TagEntryMainWordResponse,
-  TagEntryNoteRequest,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagEntryResponse,
   TagExportFile,
   TagImportChoice,
@@ -48,7 +45,6 @@ import gathedge.shared.dto.{
   TagPairInput,
   TagPairWord,
   TagResponse,
-  TagWordInput,
   WordDetail,
   WordPage,
 }
@@ -272,65 +268,23 @@ object WordApiClient {
     )
   }
 
-  /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */
-  def addPair(tagId: Long, pair: TagPairInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.call[TagEntryResponse](WordPaths.addPair(tagId), Some(pair.toJson))
-  }
-
-  /** Adds one word to a tag on its own, no answer yet. The word may be one to create (`TagPairWord.New`). */
-  def attachWord(tagId: Long, word: TagWordInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.call[TagEntryResponse](WordPaths.attachWord(tagId), Some(word.toJson))
-  }
-
-  /** Sets or clears the reader's note beside one word of a wordlist. `None` or a blank note clears it. */
-  def setEntryNote(tagId: Long, wordId: Long, note: Option[String]): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.callUnit(WordPaths.setEntryNote(tagId, wordId), Some(TagEntryNoteRequest(note).toJson))
-  }
-
-  /** Files a word of a wordlist as a form of a main word, under `relation`. The main word may be one to create.
-    * `partOfSpeech` is the row's, which the word takes if its own differs; `confirm` answers the warning for doing that
-    * to a dictionary word.
+  /** Adds one row to a wordlist, saved at once: a pair or one word alone, with its part of speech, notes and form-of
+    * links. Either word may be one to create (`TagPairWord.New`).
     */
-  def addMainWord(
-    tagId: Long,
-    wordId: Long,
-    mainWord: TagPairWord,
-    relation: String,
-    partOfSpeech: PartOfSpeech,
-    confirm: Boolean,
-  ): EventStream[Either[ApiError, TagEntryMainWordResponse]] = {
-    HttpClient.call[TagEntryMainWordResponse](
-      WordPaths.addMainWord(tagId, wordId),
-      Some(TagEntryMainWordRequest(mainWord, relation, Some(partOfSpeech), confirm).toJson),
-    )
+  def addEntry(tagId: Long, entry: TagEntryInput): EventStream[Either[ApiError, TagEntryResponse]] = {
+    HttpClient.call[TagEntryResponse](WordPaths.addEntry(tagId), Some(entry.toJson))
   }
 
-  /** Undoes [[addMainWord]]: the word is no longer that form of that main word. `confirm` answers the warning an
-    * administrator is shown before removing a dictionary link; the server refuses one without it.
-    */
-  def removeMainWord(
+  /** Replaces one editor row in place with `entry`. `oldTargetWordId` is `None` for a row that had no answer. */
+  def editEntry(
     tagId: Long,
-    wordId: Long,
-    mainWordId: Long,
-    relation: String,
-    confirm: Boolean,
-  ): EventStream[Either[ApiError, Unit]] = {
-    HttpClient.callUnit(
-      WordPaths
-        .removeMainWord(tagId, wordId, mainWordId)
-        .withQuery(HttpClient.query("relation" -> Some(relation), "confirm" -> Option.when(confirm)(true)))
-    )
-  }
-
-  /** Changes a word's part of speech. `confirm` answers the warning shown before changing a dictionary word. */
-  def setPartOfSpeech(
-    wordId: Long,
-    partOfSpeech: PartOfSpeech,
-    confirm: Boolean,
-  ): EventStream[Either[ApiError, WordDetail]] = {
-    HttpClient.call[WordDetail](
-      WordPaths.setPartOfSpeech(wordId),
-      Some(SetPartOfSpeechRequest(partOfSpeech, confirm).toJson),
+    oldSourceWordId: Long,
+    oldTargetWordId: Option[Long],
+    entry: TagEntryInput,
+  ): EventStream[Either[ApiError, TagEntryResponse]] = {
+    HttpClient.call[TagEntryResponse](
+      WordPaths.editEntry(tagId),
+      Some(TagEntryEditRequest(oldSourceWordId, oldTargetWordId, entry).toJson),
     )
   }
 
@@ -342,19 +296,6 @@ object WordApiClient {
         .withQuery(
           HttpClient.query("lang" -> Some(WordLanguage.code(language)), "pos" -> Some(PartOfSpeech.code(partOfSpeech)))
         )
-    )
-  }
-
-  /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */
-  def replacePair(
-    tagId: Long,
-    oldSourceWordId: Long,
-    oldTargetWordId: Option[Long],
-    next: TagPairInput,
-  ): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.call[TagEntryResponse](
-      WordPaths.replacePair(tagId),
-      Some(ReplacePairRequest(oldSourceWordId, oldTargetWordId, next).toJson),
     )
   }
 

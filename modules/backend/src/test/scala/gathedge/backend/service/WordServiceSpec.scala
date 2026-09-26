@@ -44,9 +44,11 @@ import gathedge.shared.dto.{
   TagPairWord,
   TagSort,
   TagWordInput,
-  SetPartOfSpeechRequest,
-  TagEntryMainWordRequest,
-  TagEntryNoteRequest,
+  MainWordLink,
+  MainWordUnlink,
+  TagEntryEditRequest,
+  TagEntryInput,
+  TagEntryWord,
   TaggedPair,
   WordSort,
 }
@@ -182,8 +184,33 @@ object WordServiceSpec extends ZIOSpecDefault {
   ): ZIO[WordService, WordFailure, Tag] =
     WordService.createTagWithPairs(name, source, target, pairs, userId).map(_.tag)
 
-  private def mainRequest(mainWordId: Long, relation: String): TagEntryMainWordRequest =
-    TagEntryMainWordRequest(TagPairWord.Existing(mainWordId), relation)
+  /** One word of an editor row, with its note. */
+  private def side(word: TagPairWord, note: Option[String] = None): TagEntryWord = TagEntryWord(word, note)
+
+  /** A row of one word alone. */
+  private def single(word: TagEntryWord, pos: Option[PartOfSpeech] = None): TagEntryInput =
+    TagEntryInput(Some(word), None, pos)
+
+  /** The edit of a row of one word alone that stays that word. */
+  private def alone(
+    wordId: Long,
+    word: TagEntryWord,
+    pos: Option[PartOfSpeech] = None,
+    confirm: Boolean = false,
+  ): TagEntryEditRequest =
+    TagEntryEditRequest(wordId, None, TagEntryInput(Some(word), None, pos, confirm))
+
+  /** A dictionary word of the row, filed as a form of `mainWordId`. */
+  private def link(formId: Long, mainWordId: Long, relation: String): TagEntryWord = {
+    TagEntryWord(
+      TagPairWord.Existing(formId),
+      addMainWords = List(MainWordLink(TagPairWord.Existing(mainWordId), relation)),
+    )
+  }
+
+  /** A dictionary word of the row, with its link to `mainWordId` removed. */
+  private def unlink(formId: Long, mainWordId: Long, relation: String): TagEntryWord =
+    TagEntryWord(TagPairWord.Existing(formId), removeMainWords = List(MainWordUnlink(mainWordId, relation)))
 
   /** Whether a result is a validation failure naming `field`, from either failure enum. */
   private def invalidField(result: Either[Any, ?], field: String): Boolean = result.left.exists {
@@ -2210,36 +2237,112 @@ object WordServiceSpec extends ZIOSpecDefault {
           alien <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 2L).either
         } yield assertTrue(rows.length == 1, alien == Left(WordFailure.TagNotFound))
       },
-      test("setEntryNote writes, replaces and clears the reader's note on one word of the wordlist") {
+      test(
+        "addEntry writes each word's note with the pair, keeps them on a repeat, and editEntry sets and clears them"
+      ) {
         for {
-          haus    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          tag     <- createTag("noteb7", 1L, WordLanguage.De, WordLanguage.Hu)
-          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
-          _       <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("  Gebäude ")), 1L)
-          written <- WordService.tagEntries(tag.id, Some(1L))
-          _       <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("   ")), 1L)
-          cleared <- WordService.tagEntries(tag.id, Some(1L))
+          tag    <- createTag("noteb7", 1L, WordLanguage.De, WordLanguage.Hu)
+          added  <- WordService.addEntry(
+                      tag.id,
+                      TagEntryInput(
+                        Some(
+                          side(
+                            TagPairWord.New(WordLanguage.De, "Hausnb7", PartOfSpeech.Noun, Some(Gender.Neuter)),
+                            Some("  Gebäude "),
+                          )
+                        ),
+                        Some(side(TagPairWord.New(WordLanguage.Hu, "háznb7", PartOfSpeech.Noun, None), Some("épület"))),
+                        Some(PartOfSpeech.Noun),
+                      ),
+                      1L,
+                    )
+          source  = added.entry.source.id
+          target  = added.entry.target.map(_.id)
+          again  <- WordService.addEntry(
+                      tag.id,
+                      TagEntryInput(
+                        Some(side(TagPairWord.Existing(source))),
+                        target.map(id => side(TagPairWord.Existing(id))),
+                      ),
+                      1L,
+                    )
+          kept   <- WordService.tagEntries(tag.id, Some(1L))
+          edited <- WordService.editEntry(
+                      tag.id,
+                      TagEntryEditRequest(
+                        source,
+                        target,
+                        TagEntryInput(
+                          Some(side(TagPairWord.Existing(source))),
+                          target.map(id => side(TagPairWord.Existing(id), Some("otthon"))),
+                        ),
+                      ),
+                      1L,
+                    )
         } yield assertTrue(
-          written.map(_.comment) == List(Some("Gebäude")),
-          cleared.map(_.comment) == List(None),
+          added.entry.comment.contains("Gebäude"),
+          added.entry.targetComment.contains("épület"),
+          again.alreadyPresent,
+          kept.map(entry => (entry.comment, entry.targetComment)) == List((Some("Gebäude"), Some("épület"))),
+          edited.entry.comment.isEmpty,
+          edited.entry.targetComment.contains("otthon"),
         )
       },
-      test("setEntryNote refuses a word outside the wordlist, somebody else's tag, and an over-long note") {
+      test("addEntry refuses a body with no word and an over-long note, and writes nothing") {
         for {
-          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
-          baum   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baum", gender = Some(Gender.Masculine)))
-          tag    <- createTag("noteb8", 1L, WordLanguage.De, WordLanguage.Hu)
-          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(haus.id)), 1L)
-          absent <- WordService.setEntryNote(tag.id, baum.id, TagEntryNoteRequest(Some("x")), 1L).either
-          alien  <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("x")), 2L).either
-          long   <- WordService.setEntryNote(tag.id, haus.id, TagEntryNoteRequest(Some("x" * 256)), 1L).either
+          tag   <- createTag("noteb8", 1L, WordLanguage.De, WordLanguage.Hu)
+          empty <- WordService.addEntry(tag.id, TagEntryInput(None, None), 1L).either
+          long  <-
+            WordService
+              .addEntry(
+                tag.id,
+                single(side(TagPairWord.New(WordLanguage.De, "Fensternb8", PartOfSpeech.Noun, None), Some("x" * 256))),
+                1L,
+              )
+              .either
+          alien <-
+            WordService
+              .addEntry(tag.id, single(side(TagPairWord.New(WordLanguage.De, "Türnb8", PartOfSpeech.Noun, None))), 2L)
+              .either
+          rows  <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(
-          absent == Left(WordFailure.NotFound),
-          alien == Left(WordFailure.TagNotFound),
-          long.left.exists {
-            case WordFailure.ValidationError(fields) => fields.contains("note")
-            case _                                   => false
-          },
+          invalidField(empty, "word"),
+          invalidField(long, "note"),
+          alien == Left(WordEditFailure.Failed(WordFailure.TagNotFound)),
+          rows.isEmpty,
+        )
+      },
+      test("editEntry turns a pair into one word alone, and that word into another") {
+        for {
+          tag   <- createTag("loneb17", 1L, WordLanguage.De, WordLanguage.Hu)
+          added <- WordService.addEntry(
+                     tag.id,
+                     TagEntryInput(
+                       Some(side(TagPairWord.New(WordLanguage.De, "Hundlb17", PartOfSpeech.Noun, None))),
+                       Some(side(TagPairWord.New(WordLanguage.Hu, "kutyalb17", PartOfSpeech.Noun, None))),
+                     ),
+                     1L,
+                   )
+          source = added.entry.source.id
+          _     <- WordService.editEntry(
+                     tag.id,
+                     TagEntryEditRequest(source, added.entry.target.map(_.id), single(side(TagPairWord.Existing(source)))),
+                     1L,
+                   )
+          alone <- WordService.tagEntries(tag.id, Some(1L))
+          _     <- WordService.editEntry(
+                     tag.id,
+                     TagEntryEditRequest(
+                       source,
+                       None,
+                       single(side(TagPairWord.New(WordLanguage.Hu, "macskalb17", PartOfSpeech.Noun, None))),
+                     ),
+                     1L,
+                   )
+          other <- WordService.tagEntries(tag.id, Some(1L))
+        } yield assertTrue(
+          alone.map(entry => (entry.source.text, entry.target)) == List(("Hundlb17", None)),
+          other.map(entry => (entry.source.text, entry.target)) == List(("macskalb17", None)),
         )
       },
       // The spec's schema is shared by every test in it, and other tests file forms too, so each test here seeds
@@ -2278,25 +2381,21 @@ object WordServiceSpec extends ZIOSpecDefault {
           !hungarian.contains("fr2borrowed"),
         )
       },
-      test("addMainWord files the word as a form of the main word, once per relation, and its author removes it") {
+      test("a row files its word as a form of a main word, once per relation, and its author removes the link") {
         for {
           _      <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr3plural", 5)
           main   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hausfr3", gender = Some(Gender.Neuter)))
           form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuserfr3"))
           tag    <- createTag("mainb9", 1L, WordLanguage.De, WordLanguage.Hu)
-          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
-          first  <- WordService.addMainWord(tag.id, form.id, mainRequest(main.id, "fr3plural"), 1L)
-          again  <- WordService.addMainWord(tag.id, form.id, mainRequest(main.id, "fr3plural"), 1L)
+          _      <- WordService.addEntry(tag.id, single(link(form.id, main.id, "fr3plural")), 1L)
+          _      <- WordService.editEntry(tag.id, alone(form.id, link(form.id, main.id, "fr3plural")), 1L)
           forms  <- WordRepository.formsOf(main.id)
           linked <- WordRepository.findWordById(form.id)
           detail <- WordService.detail(form.id, Some(1L))
-          _      <- WordService.removeMainWord(tag.id, form.id, main.id, "fr3plural", confirm = false, 1L)
+          _      <- WordService.editEntry(tag.id, alone(form.id, unlink(form.id, main.id, "fr3plural")), 1L)
           after  <- WordRepository.formsOf(main.id)
           freed  <- WordRepository.findWordById(form.id)
         } yield assertTrue(
-          first.mainWord.id == main.id,
-          !first.alreadyPresent,
-          again.alreadyPresent,
           forms.map(row => (row.formWordId, row.relation, row.origin, row.createdBy)) ==
             List((form.id, "fr3plural", WordService.userSource, Some(1L))),
           detail.mainWords.map(ref => (ref.fromDictionary, ref.createdByMe)) == List((false, true)),
@@ -2305,7 +2404,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           freed.exists(!_.isForm),
         )
       },
-      test("addMainWord refuses a relation the main word's kind has not got, itself, and a main word that cannot be") {
+      test("a link is refused for a relation the kind has not got, the word itself, and a main word that cannot be") {
         for {
           _       <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr4plural", 5)
           _       <- seedForms(WordLanguage.De, PartOfSpeech.Verb, "fr4past", 5)
@@ -2316,16 +2415,21 @@ object WordServiceSpec extends ZIOSpecDefault {
           other   <-
             WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Baumfr4", gender = Some(Gender.Masculine)))
           tag     <- createTag("mainb10", 1L, WordLanguage.De, WordLanguage.Hu)
-          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
-          _       <- WordService.addMainWord(tag.id, form.id, mainRequest(main.id, "fr4plural"), 1L)
-          _       <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(other.id)), 1L)
-          past    <- WordService.addMainWord(tag.id, other.id, mainRequest(main.id, "fr4past"), 1L).either
-          self    <- WordService.addMainWord(tag.id, other.id, mainRequest(other.id, "fr4plural"), 1L).either
-          abroad  <- WordService.addMainWord(tag.id, other.id, mainRequest(foreign.id, "fr4plural"), 1L).either
-          ofForm  <- WordService.addMainWord(tag.id, other.id, mainRequest(form.id, "fr4plural"), 1L).either
-          ofVerb  <- WordService.addMainWord(tag.id, other.id, mainRequest(verb.id, "fr4plural"), 1L).either
-          absent  <- WordService.addMainWord(tag.id, main.id, mainRequest(other.id, "fr4plural"), 1L).either
-          alien   <- WordService.addMainWord(tag.id, other.id, mainRequest(main.id, "fr4plural"), 2L).either
+          _       <- WordService.addEntry(tag.id, single(link(form.id, main.id, "fr4plural")), 1L)
+          _       <- WordService.addEntry(tag.id, single(side(TagPairWord.Existing(other.id), Some("kept"))), 1L)
+          refused  = (mainId: Long, relation: String) => {
+                       val body = link(other.id, mainId, relation).copy(note = Some("changed"))
+                       WordService.editEntry(tag.id, alone(other.id, body), 1L).either
+                     }
+          past    <- refused(main.id, "fr4past")
+          self    <- refused(other.id, "fr4plural")
+          abroad  <- refused(foreign.id, "fr4plural")
+          ofForm  <- refused(form.id, "fr4plural")
+          ofVerb  <- refused(verb.id, "fr4plural")
+          absent  <- refused(Long.MaxValue, "fr4plural")
+          alien   <- WordService.editEntry(tag.id, alone(other.id, link(other.id, main.id, "fr4plural")), 2L).either
+          rows    <- WordService.tagEntries(tag.id, Some(1L))
+          forms   <- WordRepository.formsOf(main.id)
         } yield assertTrue(
           invalidField(past, "relation"),
           invalidField(self, "mainWord"),
@@ -2335,85 +2439,100 @@ object WordServiceSpec extends ZIOSpecDefault {
           invalidField(ofVerb, "mainWord"),
           absent == Left(WordEditFailure.Failed(WordFailure.NotFound)),
           alien == Left(WordEditFailure.Failed(WordFailure.TagNotFound)),
+          // A refused body writes nothing, the note with it included.
+          rows.find(_.source.id == other.id).flatMap(_.comment).contains("kept"),
+          forms.map(_.formWordId) == List(form.id),
         )
       },
-      test("addMainWord mints a main word the dictionary lacks, with the form's language and part of speech") {
+      test("a link mints a main word the dictionary lacks, with the form's language and part of speech") {
         for {
           _      <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr5plural", 5)
           form   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuserfr5"))
           tag    <- createTag("mainb11", 1L, WordLanguage.De, WordLanguage.Hu)
-          _      <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
-          minted <- WordService.addMainWord(
-                      tag.id,
-                      form.id,
-                      TagEntryMainWordRequest(
-                        TagPairWord.New(WordLanguage.De, "Hausfr5", PartOfSpeech.Noun, Some(Gender.Neuter)),
-                        "fr5plural",
-                      ),
-                      1L,
-                    )
-          wrong  <- WordService
-                      .addMainWord(
-                        tag.id,
-                        form.id,
-                        TagEntryMainWordRequest(
-                          TagPairWord.New(WordLanguage.De, "hausenfr5", PartOfSpeech.Verb, None),
-                          "fr5plural",
-                        ),
-                        1L,
-                      )
-                      .either
+          minted  = TagPairWord.New(WordLanguage.De, "Hausfr5", PartOfSpeech.Noun, Some(Gender.Neuter))
+          wrong   = TagPairWord.New(WordLanguage.De, "hausenfr5", PartOfSpeech.Verb, None)
+          _      <-
+            WordService.addEntry(
+              tag.id,
+              single(side(TagPairWord.Existing(form.id)).copy(addMainWords = List(MainWordLink(minted, "fr5plural")))),
+              1L,
+            )
+          main   <- WordRepository.findWord("de", "hausfr5", "noun", "neuter")
+          forms  <- ZIO.foreach(main.toList)(row => WordRepository.formsOf(row.id))
+          refuse <-
+            WordService
+              .editEntry(
+                tag.id,
+                alone(
+                  form.id,
+                  side(TagPairWord.Existing(form.id)).copy(addMainWords = List(MainWordLink(wrong, "fr5plural"))),
+                ),
+                1L,
+              )
+              .either
         } yield assertTrue(
-          minted.mainWord.text == "Hausfr5",
-          minted.mainWord.partOfSpeech == PartOfSpeech.Noun,
-          invalidField(wrong, "mainWord"),
+          main.exists(_.createdBy.contains(1L)),
+          forms.flatten.map(_.formWordId) == List(form.id),
+          invalidField(refuse, "mainWord"),
         )
       },
-      test("addMainWord gives the reader's own form word the row's part of speech before linking it") {
+      test("the row's part of speech is given to the reader's own word, and its links follow it") {
         for {
           _      <- seedForms(WordLanguage.Hu, PartOfSpeech.Noun, "fr15plural", 5)
           main   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házfr15"))
           tag    <- createTag("mainb15", 1L, WordLanguage.De, WordLanguage.Hu)
           // What a tabular import makes of a Hungarian cell: no article, so no noun.
-          added  <- WordService.attachWord(
+          added  <- WordService.addEntry(
                       tag.id,
-                      TagWordInput(TagPairWord.New(WordLanguage.Hu, "házakfr15", PartOfSpeech.Other, None)),
+                      single(side(TagPairWord.New(WordLanguage.Hu, "házakfr15", PartOfSpeech.Other, None))),
                       1L,
                     )
           formId  = added.entry.source.id
-          linked <- WordService.addMainWord(
+          edited <- WordService.editEntry(
                       tag.id,
-                      formId,
-                      TagEntryMainWordRequest(TagPairWord.Existing(main.id), "fr15plural", Some(PartOfSpeech.Noun)),
+                      alone(formId, link(formId, main.id, "fr15plural"), Some(PartOfSpeech.Noun)),
                       1L,
                     )
-          stored <- WordRepository.findWordById(formId)
           forms  <- WordRepository.formsOf(main.id)
         } yield assertTrue(
-          linked.form.partOfSpeech == PartOfSpeech.Noun,
-          stored.exists(_.partOfSpeech == PartOfSpeech.code(PartOfSpeech.Noun)),
+          added.entry.source.partOfSpeech == PartOfSpeech.Other,
+          edited.entry.source.partOfSpeech == PartOfSpeech.Noun,
           forms.map(_.formWordId) == List(formId),
         )
       },
-      test("addMainWord will not change a dictionary form word's part of speech for a reader, or unconfirmed") {
+      test("a new word is created with the row's part of speech") {
+        for {
+          tag   <- createTag("posb18", 1L, WordLanguage.De, WordLanguage.Hu)
+          added <- WordService.addEntry(
+                     tag.id,
+                     single(
+                       side(TagPairWord.New(WordLanguage.Hu, "futnipb18", PartOfSpeech.Other, None)),
+                       Some(PartOfSpeech.Verb),
+                     ),
+                     1L,
+                   )
+        } yield assertTrue(added.entry.source.partOfSpeech == PartOfSpeech.Verb)
+      },
+      test("a dictionary word's part of speech is not a reader's to change, nor an administrator's unconfirmed") {
         for {
           _         <- seedForms(WordLanguage.Hu, PartOfSpeech.Noun, "fr16plural", 5)
           main      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házfr16"))
           form      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házakfr16", PartOfSpeech.Other))
           tag       <- createTag("mainb16", 1L, WordLanguage.De, WordLanguage.Hu)
-          _         <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
+          _         <- WordService.addEntry(tag.id, single(side(TagPairWord.Existing(form.id))), 1L)
           admin     <- adminUserId("admin-align@example.com")
-          request    = TagEntryMainWordRequest(TagPairWord.Existing(main.id), "fr16plural", Some(PartOfSpeech.Noun))
-          reader    <- WordService.addMainWord(tag.id, form.id, request, 1L).either
-          unwarned  <- WordService.addMainWord(tag.id, form.id, request, admin).either
+          request    = alone(form.id, link(form.id, main.id, "fr16plural"), Some(PartOfSpeech.Noun))
+          confirmed  = request.copy(entry = request.entry.copy(confirm = true))
+          reader    <- WordService.editEntry(tag.id, confirmed, 1L).either
+          unwarned  <- WordService.editEntry(tag.id, request, admin).either
           untouched <- WordRepository.formsOf(main.id)
-          linked    <- WordService.addMainWord(tag.id, form.id, request.copy(confirm = true), admin)
+          linked    <- WordService.editEntry(tag.id, confirmed, admin)
         } yield assertTrue(
           reader == Left(WordEditFailure.Protected),
           unwarned == Left(WordEditFailure.ConfirmRequired),
           // Refused before anything was written: no link without the part of speech that goes with it.
           untouched.isEmpty,
-          linked.form.partOfSpeech == PartOfSpeech.Noun,
+          linked.entry.source.partOfSpeech == PartOfSpeech.Noun,
         )
       },
       test("a dictionary link is only an administrator's to remove, and only once the warning is confirmed") {
@@ -2424,13 +2543,15 @@ object WordServiceSpec extends ZIOSpecDefault {
           // Written the way the import writes it: no author, so a dictionary row.
           _        <- WordRepository.insertForms(List(WordFormRow(0L, main.id, form.id, "fr6plural", 0L)))
           tag      <- createTag("mainb12", 1L, WordLanguage.De, WordLanguage.Hu)
-          _        <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
+          _        <- WordService.addEntry(tag.id, single(side(TagPairWord.Existing(form.id))), 1L)
           admin    <- adminUserId("admin-forms@example.com")
           detail   <- WordService.detail(form.id, Some(1L))
-          reader   <- WordService.removeMainWord(tag.id, form.id, main.id, "fr6plural", confirm = true, 1L).either
-          unwarned <- WordService.removeMainWord(tag.id, form.id, main.id, "fr6plural", confirm = false, admin).either
+          request   = alone(form.id, unlink(form.id, main.id, "fr6plural"))
+          confirmed = request.copy(entry = request.entry.copy(confirm = true))
+          reader   <- WordService.editEntry(tag.id, confirmed, 1L).either
+          unwarned <- WordService.editEntry(tag.id, request, admin).either
           kept     <- WordRepository.formsOf(main.id)
-          _        <- WordService.removeMainWord(tag.id, form.id, main.id, "fr6plural", confirm = true, admin)
+          _        <- WordService.editEntry(tag.id, confirmed, admin)
           gone     <- WordRepository.formsOf(main.id)
         } yield assertTrue(
           detail.mainWords.map(ref => (ref.fromDictionary, ref.createdByMe)) == List((true, false)),
@@ -2447,54 +2568,64 @@ object WordServiceSpec extends ZIOSpecDefault {
           form  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Häuserfr7"))
           mine  <- createTag("mainb13", 1L, WordLanguage.De, WordLanguage.Hu)
           yours <- createTag("mainb13", 3L, WordLanguage.De, WordLanguage.Hu)
-          _     <- WordService.attachWord(mine.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
-          _     <- WordService.attachWord(yours.id, TagWordInput(TagPairWord.Existing(form.id)), 3L)
-          _     <- WordService.addMainWord(mine.id, form.id, mainRequest(main.id, "fr7plural"), 1L)
-          taken <- WordService.removeMainWord(yours.id, form.id, main.id, "fr7plural", confirm = true, 3L).either
+          _     <- WordService.addEntry(mine.id, single(link(form.id, main.id, "fr7plural")), 1L)
+          _     <- WordService.addEntry(yours.id, single(side(TagPairWord.Existing(form.id))), 3L)
+          taken <- WordService
+                     .editEntry(yours.id, alone(form.id, unlink(form.id, main.id, "fr7plural"), confirm = true), 3L)
+                     .either
           kept  <- WordRepository.formsOf(main.id)
         } yield assertTrue(taken == Left(WordEditFailure.Protected), kept.size == 1)
       },
-      test("setPartOfSpeech changes the author's own word, drops a gender that no longer applies, and no one else's") {
+      test(
+        "the row's part of speech changes the author's own word, drops a gender that no longer applies, and no one else's"
+      ) {
         for {
           tag     <- createTag("posb14", 1L, WordLanguage.De, WordLanguage.Hu)
+          theirs  <- createTag("posb14", 2L, WordLanguage.De, WordLanguage.Hu)
           added   <-
-            WordService.attachWord(
+            WordService.addEntry(
               tag.id,
-              TagWordInput(TagPairWord.New(WordLanguage.De, "Fensterfr8", PartOfSpeech.Noun, Some(Gender.Neuter))),
+              single(side(TagPairWord.New(WordLanguage.De, "Fensterfr8", PartOfSpeech.Noun, Some(Gender.Neuter)))),
               1L,
             )
           id       = added.entry.source.id
+          _       <- WordService.addEntry(theirs.id, single(side(TagPairWord.Existing(id))), 2L)
           before  <- WordService.detail(id, Some(1L))
-          other   <- WordService.setPartOfSpeech(id, SetPartOfSpeechRequest(PartOfSpeech.Verb), 2L).either
-          changed <- WordService.setPartOfSpeech(id, SetPartOfSpeechRequest(PartOfSpeech.Verb), 1L)
+          other   <- WordService
+                       .editEntry(theirs.id, alone(id, side(TagPairWord.Existing(id)), Some(PartOfSpeech.Verb)), 2L)
+                       .either
+          changed <-
+            WordService.editEntry(tag.id, alone(id, side(TagPairWord.Existing(id)), Some(PartOfSpeech.Verb)), 1L)
         } yield assertTrue(
           before.createdByMe,
           !before.fromDictionary,
           other == Left(WordEditFailure.Protected),
-          changed.word.partOfSpeech == PartOfSpeech.Verb,
-          changed.word.gender.isEmpty,
+          changed.entry.source.partOfSpeech == PartOfSpeech.Verb,
+          changed.entry.source.gender.isEmpty,
         )
       },
-      test("setPartOfSpeech on a dictionary word is an administrator's, once confirmed, and refuses a duplicate") {
+      test(
+        "a dictionary word's part of speech is an administrator's to change, once confirmed, but not into a duplicate"
+      ) {
         for {
           tisch    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Tischfr9"))
           _        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Stuhlfr9"))
           stuhl    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Stuhlfr9", PartOfSpeech.Verb))
+          tag      <- createTag("posb19", 1L, WordLanguage.De, WordLanguage.Hu)
+          _        <- WordService.addEntry(tag.id, single(side(TagPairWord.Existing(tisch.id))), 1L)
+          _        <- WordService.addEntry(tag.id, single(side(TagPairWord.Existing(stuhl.id))), 1L)
           admin    <- adminUserId("admin-pos@example.com")
-          reader   <-
-            WordService.setPartOfSpeech(tisch.id, SetPartOfSpeechRequest(PartOfSpeech.Verb, confirm = true), 1L).either
-          unwarned <- WordService.setPartOfSpeech(tisch.id, SetPartOfSpeechRequest(PartOfSpeech.Verb), admin).either
-          changed  <-
-            WordService.setPartOfSpeech(tisch.id, SetPartOfSpeechRequest(PartOfSpeech.Adjective, confirm = true), admin)
-          clash    <-
-            WordService
-              .setPartOfSpeech(stuhl.id, SetPartOfSpeechRequest(PartOfSpeech.Noun, confirm = true), admin)
-              .either
+          retype    = (id: Long, pos: PartOfSpeech, confirm: Boolean) =>
+                        alone(id, side(TagPairWord.Existing(id)), Some(pos), confirm)
+          reader   <- WordService.editEntry(tag.id, retype(tisch.id, PartOfSpeech.Verb, true), 1L).either
+          unwarned <- WordService.editEntry(tag.id, retype(tisch.id, PartOfSpeech.Verb, false), admin).either
+          changed  <- WordService.editEntry(tag.id, retype(tisch.id, PartOfSpeech.Adjective, true), admin)
+          clash    <- WordService.editEntry(tag.id, retype(stuhl.id, PartOfSpeech.Noun, true), admin).either
         } yield assertTrue(
-          changed.fromDictionary,
           reader == Left(WordEditFailure.Protected),
           unwarned == Left(WordEditFailure.ConfirmRequired),
-          changed.word.partOfSpeech == PartOfSpeech.Adjective,
+          changed.entry.source.partOfSpeech == PartOfSpeech.Adjective,
+          changed.entry.fromDictionary,
           clash == Left(WordEditFailure.Failed(WordFailure.PartOfSpeechConflict)),
         )
       },

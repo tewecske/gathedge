@@ -39,6 +39,7 @@ import gathedge.shared.dto.{
   ColumnLanguageGuess,
   ColumnSample,
   LanguageCheckResponse,
+  MainWordLink,
   LanguageHit,
   TabularImportResponse,
   TabularRow,
@@ -53,12 +54,11 @@ import gathedge.shared.dto.{
   PairRef,
   ReplacePairRequest,
   TagEntry,
-  SetPartOfSpeechRequest,
-  TagEntryMainWordRequest,
-  TagEntryMainWordResponse,
-  TagEntryNoteRequest,
   TagEntryPage,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagEntryResponse,
+  TagEntryWord,
   TagExportEntry,
   TagExportFile,
   TagExportTag,
@@ -379,53 +379,33 @@ trait WordService {
     filter: TagEntryFilter,
   ): IO[WordFailure, TagEntryPage]
 
-  /** Adds one bilingual pair to a tag, written straight away. Either side may be a brand-new word, created on the fly.
-    * Charges the pair quota exactly as [[selectPair]] does — the tag owner's, not the caller's, and never for a pair
-    * already marked. On the first row it also fixes the tag's language pair, which locks from then on.
+  /** Adds one bilingual pair to a tag, written straight away — [[addEntry]]'s write for a pair. Either side may be a
+    * brand-new word, created on the fly. Charges the pair quota exactly as [[selectPair]] does — the tag owner's, not
+    * the caller's, and never for a pair already marked. On the first row it also fixes the tag's language pair, which
+    * locks from then on.
     */
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse]
 
-  /** Adds one word to a tag on its own, with no answer marked — the editor's "commit a source word, press Enter on the
-    * empty answer box". The word may be brand-new, created on the fly, and must be in one of the tag's two languages.
-    * Writes only the membership, so it is never quota-gated. Idempotent: a word already in the tag comes back as its
-    * existing row.
+  /** Adds one word to a tag on its own, with no answer marked — [[addEntry]]'s write for one word. The word may be
+    * brand-new, created on the fly, and must be in one of the tag's two languages. Writes only the membership, so it is
+    * never quota-gated. Idempotent: a word already in the tag comes back as its existing row.
     */
   def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse]
 
-  /** Sets or clears the reader's note beside one word of the wordlist. `TagNotFound` for a tag the caller may not edit,
-    * `NotFound` for a word the wordlist does not hold.
-    */
-  def setEntryNote(tagId: Long, wordId: Long, request: TagEntryNoteRequest, userId: Long): IO[WordFailure, Unit]
-
-  /** Files a word of the wordlist as a form of a main word, under a relation [[formRelations]] offers for that main
-    * word. Idempotent per `(main word, word, relation)`.
+  /** Adds one row to a wordlist — a pair, or one word alone — with everything the editor writes beside it: the row's
+    * part of speech, each word's note, and the main words each word is a form of. [[addPair]] or [[attachWord]] writes
+    * the row, then the rest follows.
     *
-    * `request.partOfSpeech` is the row's. A form word whose own part of speech differs is set to it first, under the
-    * [[setPartOfSpeech]] rule, so the pair and the link agree.
+    * Every check runs before the first write, so a refused body writes nothing. Changing shared data follows
+    * [[WordServiceLive.guardSharedEdit]]: a word's part of speech and a form-of link are the reader's own to change
+    * only when the reader made them.
     */
-  def addMainWord(
-    tagId: Long,
-    wordId: Long,
-    request: TagEntryMainWordRequest,
-    userId: Long,
-  ): IO[WordEditFailure, TagEntryMainWordResponse]
+  def addEntry(tagId: Long, input: TagEntryInput, userId: Long): IO[WordEditFailure, TagEntryResponse]
 
-  /** Undoes one form-of link. Idempotent. A reader removes only a link they made; anything else is a global
-    * administrator's, and a dictionary link needs `confirm` too — see [[WordServiceLive.guardSharedEdit]].
+  /** [[addEntry]] for a row already in the wordlist: [[replacePair]] rewrites a pair, and a row left with one word
+    * becomes that word alone. Each word's note becomes what the body says, so an absent note clears it.
     */
-  def removeMainWord(
-    tagId: Long,
-    wordId: Long,
-    mainWordId: Long,
-    relation: String,
-    confirm: Boolean,
-    userId: Long,
-  ): IO[WordEditFailure, Unit]
-
-  /** Changes a word's part of speech, dropping its gender when it stops being a noun. Same permission rule as
-    * [[removeMainWord]], read off the word: its author may, and anything else is a global administrator's.
-    */
-  def setPartOfSpeech(wordId: Long, request: SetPartOfSpeechRequest, userId: Long): IO[WordEditFailure, WordDetail]
+  def editEntry(tagId: Long, request: TagEntryEditRequest, userId: Long): IO[WordEditFailure, TagEntryResponse]
 
   /** The relations a form may have to a main word of this language and part of speech, simplest and commonest first,
     * read from the dictionary's own `word_forms` rows. Falls back to every language's rows for the part of speech when
@@ -433,9 +413,10 @@ trait WordService {
     */
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]]
 
-  /** Replaces one editor row's pair in place. `request.oldTargetWordId` is `None` for an unmatched row that had no pair
-    * yet — filling that in is charged the pair quota; a genuine swap is net-zero and is not. The new pair is
-    * [[gathedge.shared.domain.PairMatch.Manual]]: a hand-edited pair carries no import's claim.
+  /** Replaces one editor row's pair in place — [[editEntry]]'s write for a pair. `request.oldTargetWordId` is `None`
+    * for an unmatched row that had no pair yet — filling that in is charged the pair quota; a genuine swap is net-zero
+    * and is not. The new pair is [[gathedge.shared.domain.PairMatch.Manual]]: a hand-edited pair carries no import's
+    * claim.
     */
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse]
 
@@ -745,38 +726,15 @@ object WordService {
   ): ZIO[WordService, WordFailure, TagEntryResponse] =
     ZIO.serviceWithZIO[WordService](_.attachWord(tagId, input, userId))
 
-  def setEntryNote(
-    tagId: Long,
-    wordId: Long,
-    request: TagEntryNoteRequest,
-    userId: Long,
-  ): ZIO[WordService, WordFailure, Unit] =
-    ZIO.serviceWithZIO[WordService](_.setEntryNote(tagId, wordId, request, userId))
+  def addEntry(tagId: Long, input: TagEntryInput, userId: Long): ZIO[WordService, WordEditFailure, TagEntryResponse] =
+    ZIO.serviceWithZIO[WordService](_.addEntry(tagId, input, userId))
 
-  def addMainWord(
+  def editEntry(
     tagId: Long,
-    wordId: Long,
-    request: TagEntryMainWordRequest,
+    request: TagEntryEditRequest,
     userId: Long,
-  ): ZIO[WordService, WordEditFailure, TagEntryMainWordResponse] =
-    ZIO.serviceWithZIO[WordService](_.addMainWord(tagId, wordId, request, userId))
-
-  def removeMainWord(
-    tagId: Long,
-    wordId: Long,
-    mainWordId: Long,
-    relation: String,
-    confirm: Boolean,
-    userId: Long,
-  ): ZIO[WordService, WordEditFailure, Unit] =
-    ZIO.serviceWithZIO[WordService](_.removeMainWord(tagId, wordId, mainWordId, relation, confirm, userId))
-
-  def setPartOfSpeech(
-    wordId: Long,
-    request: SetPartOfSpeechRequest,
-    userId: Long,
-  ): ZIO[WordService, WordEditFailure, WordDetail] =
-    ZIO.serviceWithZIO[WordService](_.setPartOfSpeech(wordId, request, userId))
+  ): ZIO[WordService, WordEditFailure, TagEntryResponse] =
+    ZIO.serviceWithZIO[WordService](_.editEntry(tagId, request, userId))
 
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): URIO[WordService, List[String]] =
     ZIO.serviceWithZIO[WordService](_.formRelations(language, partOfSpeech))
@@ -2242,113 +2200,285 @@ final case class WordServiceLive(
 
   def addPair(tagId: Long, pair: TagPairInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
-      tag                 <- requireEditableTag(tagId, userId)
-      (source, target)     = tagLanguages(tag)
+      tag     <- requireEditableTag(tagId, userId)
+      written <- writePair(tag, pair, userId)
+      entry   <- entryAfterWrite(tag, written.sourceId, written.targetId, userId)
+    } yield TagEntryResponse(entry, written.warning, alreadyPresent = written.alreadyPresent)
+  }
+
+  /** What a row write left behind: the row's word ids, a soft-quota warning, and whether the wordlist held the row. */
+  private final case class Written(
+    sourceId: Long,
+    targetId: Option[Long],
+    warning: Option[MessageRef],
+    alreadyPresent: Boolean,
+  )
+
+  private def writePair(tag: TagRow, pair: TagPairInput, userId: Long): IO[WordFailure, Written] = {
+    val (source, target) = tagLanguages(tag)
+    for {
       checked             <- checkPair(pair, source, target)
       resolved            <- createPair(checked, userId)
       (sourceId, targetId) = resolved
-      already             <- pairAlreadyMarked(userId, sourceId, tagId, targetId)
+      already             <- pairAlreadyMarked(userId, sourceId, tag.id, targetId)
       warning             <- if (already) ZIO.succeed(None)
                              else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
-      _                   <- pairInTag(sourceId, tagId, targetId)
-      entry               <- entryAfterWrite(tag, sourceId, Some(targetId), userId)
+      _                   <- pairInTag(sourceId, tag.id, targetId)
       // `already` was read before the write, so it says the wordlist held this row when the reader asked for it —
       // which is what the editor tells them instead of drawing the row a second time.
-    } yield TagEntryResponse(entry, warning, alreadyPresent = already)
+    } yield Written(sourceId, Some(targetId), warning, already)
   }
 
   def attachWord(tagId: Long, input: TagWordInput, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
-      tag             <- requireEditableTag(tagId, userId)
-      (source, target) = tagLanguages(tag)
-      // `checkWord` proves the word (or its text) is real and is one of the tag's two languages — the same gate the
-      // pair path runs per side. No language-pair cross-check, since there is only one word.
-      checked         <- checkWord(input.word, Set(source, target))
-      wordId          <- createWord(checked._1, userId)
-      now             <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      // Membership only — no `word_tag_pairs` row, so no quota is charged. Idempotent, like `repo.tagWord` everywhere;
-      // `added` is false when the word was already in the wordlist, which is the editor's "already there" answer.
-      added           <- repo.tagWord(wordId, tagId, now).orDie
-      entry           <- entryAfterWrite(tag, wordId, None, userId)
-    } yield TagEntryResponse(entry, warning = None, alreadyPresent = !added)
+      tag     <- requireEditableTag(tagId, userId)
+      written <- writeWord(tag, input.word, userId)
+      entry   <- entryAfterWrite(tag, written.sourceId, None, userId)
+    } yield TagEntryResponse(entry, warning = None, alreadyPresent = written.alreadyPresent)
   }
 
-  def setEntryNote(tagId: Long, wordId: Long, request: TagEntryNoteRequest, userId: Long): IO[WordFailure, Unit] = {
+  private def writeWord(tag: TagRow, word: TagPairWord, userId: Long): IO[WordFailure, Written] = {
+    val (source, target) = tagLanguages(tag)
     for {
-      _    <- requireEditableTag(tagId, userId)
-      note <- ZIO
-                .fromEither(Validation.validateNote(request.note))
-                .mapError(error => WordFailure.ValidationError(Map("note" -> error)))
-      rows <- repo.setTagComment(wordId, tagId, note).orDie
-      _    <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.NotFound))
+      // `checkWord` proves the word (or its text) is real and is one of the tag's two languages — the same gate the
+      // pair path runs per side. No language-pair cross-check, since there is only one word.
+      checked <- checkWord(word, Set(source, target))
+      wordId  <- createWord(checked._1, userId)
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      // Membership only — no `word_tag_pairs` row, so no quota is charged. Idempotent, like `repo.tagWord` everywhere;
+      // `added` is false when the word was already in the wordlist, which is the editor's "already there" answer.
+      added   <- repo.tagWord(wordId, tag.id, now).orDie
+    } yield Written(wordId, None, None, alreadyPresent = !added)
+  }
+
+  def addEntry(tagId: Long, input: TagEntryInput, userId: Long): IO[WordEditFailure, TagEntryResponse] = {
+    for {
+      tag     <- requireEditableTag(tagId, userId).mapError(WordEditFailure.Failed(_))
+      plan    <- planEntry(input, userId)
+      written <- (plan.source, plan.target) match {
+                   case (Some(s), Some(t)) =>
+                     writePair(tag, TagPairInput(s.word, t.word), userId).mapError(WordEditFailure.Failed(_))
+                   case (single, other)    =>
+                     val word = single.orElse(other).map(_.word).getOrElse(plan.missing)
+                     writeWord(tag, word, userId).mapError(WordEditFailure.Failed(_))
+                 }
+      entry   <- applyEntry(tag, plan, written, userId, edit = false)
+    } yield TagEntryResponse(entry, written.warning, alreadyPresent = written.alreadyPresent)
+  }
+
+  def editEntry(tagId: Long, request: TagEntryEditRequest, userId: Long): IO[WordEditFailure, TagEntryResponse] = {
+    val oldSource = request.oldSourceWordId
+    val oldTarget = request.oldTargetWordId
+    for {
+      tag     <- requireEditableTag(tagId, userId).mapError(WordEditFailure.Failed(_))
+      plan    <- planEntry(request.entry, userId)
+      written <- (plan.source, plan.target) match {
+                   case (Some(s), Some(t)) =>
+                     writeReplacePair(
+                       tag,
+                       ReplacePairRequest(oldSource, oldTarget, TagPairInput(s.word, t.word)),
+                       userId,
+                     )
+                       .mapError(WordEditFailure.Failed(_))
+                   case (single, other)    =>
+                     val word = single.orElse(other).map(_.word).getOrElse(plan.missing)
+                     writeReplaceWord(tag, oldSource, oldTarget, word, userId).mapError(WordEditFailure.Failed(_))
+                 }
+      entry   <- applyEntry(tag, plan, written, userId, edit = true)
+    } yield TagEntryResponse(entry, written.warning, alreadyPresent = written.alreadyPresent)
+  }
+
+  /** One word of an [[addEntry]]/[[editEntry]] body, checked and not yet written.
+    *
+    * @param word
+    *   the word, a new one carrying the row's part of speech so it is created with it
+    * @param existing
+    *   the dictionary row an `Existing` word names
+    * @param retype
+    *   `existing` takes `partOfSpeech`, which the reader was found allowed to do
+    * @param unlink
+    *   the form-of links to remove, each one the reader was found allowed to remove
+    */
+  private final case class SidePlan(
+    word: TagPairWord,
+    existing: Option[WordRow],
+    partOfSpeech: PartOfSpeech,
+    retype: Boolean,
+    note: Option[String],
+    unlink: List[WordFormRow],
+    link: List[MainWordLink],
+  )
+
+  /** Both words of a body. `missing` is never reached: a plan has at least one word. */
+  private final case class EntryPlan(source: Option[SidePlan], target: Option[SidePlan]) {
+    def missing: TagPairWord = TagPairWord.Existing(0L)
+  }
+
+  private def invalidField(field: String, key: String): WordEditFailure =
+    WordEditFailure.Failed(WordFailure.ValidationError(Map(field -> MessageRef(key))))
+
+  /** Every check an entry write makes, before anything is written: a refusal leaves the wordlist as it was. */
+  private def planEntry(input: TagEntryInput, userId: Long): IO[WordEditFailure, EntryPlan] = {
+    for {
+      _      <- ZIO.when(input.source.isEmpty && input.target.isEmpty)(
+                  ZIO.fail(
+                    WordEditFailure.Failed(
+                      WordFailure.ValidationError(
+                        Map("word" -> MessageRef(MessageKeys.fieldRequired, List(MessageRef.keyArg(MessageKeys.fieldWord))))
+                      )
+                    )
+                  )
+                )
+      source <- ZIO.foreach(input.source)(planSide(_, input.partOfSpeech, userId, input.confirm))
+      target <- ZIO.foreach(input.target)(planSide(_, input.partOfSpeech, userId, input.confirm))
+    } yield EntryPlan(source, target)
+  }
+
+  private def planSide(
+    side: TagEntryWord,
+    rowPos: Option[PartOfSpeech],
+    userId: Long,
+    confirm: Boolean,
+  ): IO[WordEditFailure, SidePlan] = {
+    for {
+      known                    <- side.word match {
+                                    case TagPairWord.Existing(id) =>
+                                      repo
+                                        .findWordById(id)
+                                        .orDie
+                                        .someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
+                                        .map(row => (Some(row), languageOf(row), decode(row.partOfSpeech)))
+                                    case word: TagPairWord.New    =>
+                                      ZIO.succeed((None, word.language, word.partOfSpeech))
+                                  }
+      (existing, language, own) = known
+      // The row's part of speech, which a word with another takes: an imported Hungarian word is `other` beside a
+      // German noun, since no article told the import what it was.
+      pos                       = rowPos.getOrElse(own)
+      word                      = side.word match {
+                                    case fresh: TagPairWord.New => fresh.copy(partOfSpeech = pos)
+                                    case other                  => other
+                                  }
+      retype                   <- existing match {
+                                    case Some(row) if decode(row.partOfSpeech) != pos =>
+                                      checkPartOfSpeech(row, pos, userId, confirm).as(true)
+                                    case _                                            =>
+                                      ZIO.succeed(false)
+                                  }
+      note                     <- ZIO
+                                    .fromEither(Validation.validateNote(side.note))
+                                    .mapError(error => WordEditFailure.Failed(WordFailure.ValidationError(Map("note" -> error))))
+      // A new word has no links yet; a remove that names no link is already done.
+      unlink                   <- ZIO
+                                    .foreach(existing.toList.flatMap(row => side.removeMainWords.map(row -> _))) { case (row, gone) =>
+                                      repo.findWordForm(gone.mainWordId, row.id, gone.relation).orDie
+                                    }
+                                    .map(_.flatten)
+      _                        <- ZIO.foreachDiscard(unlink)(link => {
+                                    guardSharedEdit(link.origin != WordSource.user, link.createdBy, userId, confirm)
+                                  })
+      offered                  <- if (side.addMainWords.isEmpty) ZIO.succeed(Nil) else formRelations(language, pos)
+      link                     <- ZIO.foreach(side.addMainWords)(checkLink(_, language, pos, existing.map(_.id), offered))
+    } yield SidePlan(word, existing, pos, retype, note, unlink, link)
+  }
+
+  /** A main word has the form's language and part of speech: `Häuser` is a form of the noun `Haus`, never of a verb. It
+    * is not the word itself, and not a form either, since `word_forms` is one level deep. The relation must be one the
+    * dictionary's own forms of that kind carry.
+    */
+  private def checkLink(
+    link: MainWordLink,
+    language: WordLanguage,
+    pos: PartOfSpeech,
+    formId: Option[Long],
+    offered: List[String],
+  ): IO[WordEditFailure, MainWordLink] = {
+    val wrongMain = invalidField("mainWord", MessageKeys.wordMainWordInvalid)
+    for {
+      _ <- ZIO.unless(offered.contains(link.relation))(
+             ZIO.fail(invalidField("relation", MessageKeys.wordFormRelationInvalid))
+           )
+      _ <- link.mainWord match {
+             case TagPairWord.Existing(id) =>
+               for {
+                 main <- repo.findWordById(id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
+                 _    <- ZIO.when(formId.contains(main.id))(
+                           ZIO.fail(invalidField("mainWord", MessageKeys.wordFormIsLemma))
+                         )
+                 _    <- ZIO.when(languageOf(main) != language || decode(main.partOfSpeech) != pos || main.isForm)(
+                           ZIO.fail(wrongMain)
+                         )
+               } yield ()
+             case word: TagPairWord.New    =>
+               ZIO.when(word.language != language || word.partOfSpeech != pos)(ZIO.fail(wrongMain)).unit
+           }
+    } yield link
+  }
+
+  /** The writes after the row itself: each word's part of speech, note and form-of links. `written` names the word ids
+    * the row write settled on, a new word's included.
+    */
+  private def applyEntry(
+    tag: TagRow,
+    plan: EntryPlan,
+    written: Written,
+    userId: Long,
+    edit: Boolean,
+  ): IO[WordEditFailure, TagEntry] = {
+    val sides = (plan.source, plan.target) match {
+      case (Some(s), Some(t)) => (s -> written.sourceId) :: written.targetId.map(t -> _).toList
+      case (single, other)    => single.orElse(other).map(_ -> written.sourceId).toList
+    }
+    for {
+      _     <- ZIO.foreachDiscard(sides) { case (side, wordId) => applySide(tag, side, wordId, userId, edit) }
+      entry <- entryAfterWrite(tag, written.sourceId, written.targetId, userId)
+    } yield entry
+  }
+
+  private def applySide(
+    tag: TagRow,
+    side: SidePlan,
+    wordId: Long,
+    userId: Long,
+    edit: Boolean,
+  ): IO[WordEditFailure, Unit] = {
+    for {
+      _ <- ZIO.foreachDiscard(side.existing.filter(_ => side.retype))(writePartOfSpeech(_, side.partOfSpeech, userId))
+      // An add keeps a note the word already has when the body brings none; an edit sends the whole row.
+      _ <- ZIO.when(edit || side.note.isDefined)(repo.setTagComment(wordId, tag.id, side.note).orDie)
+      _ <- ZIO.foreachDiscard(side.unlink)(link => {
+             repo.deleteWordForm(link.lemmaWordId, link.formWordId, link.relation).orDie
+           })
+      _ <- ZIO.foreachDiscard(side.link)(writeLink(_, wordId, userId))
     } yield ()
   }
 
-  /** The word must be in the wordlist and the caller must be able to edit it — the gate every editor write passes. */
-  private def requireEntry(tagId: Long, wordId: Long, userId: Long): IO[WordFailure, WordRow] = {
+  /** One form-of link, the reader's own. A new main word is created with the form's language and part of speech. */
+  private def writeLink(link: MainWordLink, formId: Long, userId: Long): IO[WordEditFailure, Unit] = {
     for {
-      _      <- requireEditableTag(tagId, userId)
-      member <- repo.isInTag(wordId, tagId).orDie
-      _      <- ZIO.unless(member)(ZIO.fail(WordFailure.NotFound))
-      word   <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
-    } yield word
+      main  <- link.mainWord match {
+                 case TagPairWord.Existing(id) =>
+                   repo.findWordById(id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
+                 case word: TagPairWord.New    =>
+                   ensure(word.language, word.text, word.partOfSpeech, word.gender, userId)
+                     .mapError(WordEditFailure.Failed(_))
+               }
+      // A new main word may turn out to be the form itself, or a word the dictionary files as a form.
+      _     <- ZIO.when(main.id == formId)(ZIO.fail(invalidField("mainWord", MessageKeys.wordFormIsLemma)))
+      _     <- ZIO.when(main.isForm)(ZIO.fail(invalidField("mainWord", MessageKeys.wordMainWordInvalid)))
+      known <- repo.existingFormRelations(List(main.id)).orDie
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _     <- ZIO.unless(known.contains((main.id, formId, link.relation)))(
+                 repo
+                   .insertForms(
+                     List(WordFormRow(0L, main.id, formId, link.relation, now, WordSource.user, Some(userId)))
+                   )
+                   .orDie
+               )
+    } yield ()
   }
 
-  def addMainWord(
-    tagId: Long,
-    wordId: Long,
-    request: TagEntryMainWordRequest,
-    userId: Long,
-  ): IO[WordEditFailure, TagEntryMainWordResponse] = {
-    def invalid(field: String, key: String) =
-      WordEditFailure.Failed(WordFailure.ValidationError(Map(field -> MessageRef(key))))
-    val wrongMain                           = invalid("mainWord", MessageKeys.wordMainWordInvalid)
-    for {
-      form    <- requireEntry(tagId, wordId, userId).mapError(WordEditFailure.Failed(_))
-      language = WordLanguage.fromString(form.language).getOrElse(WordLanguage.En)
-      // The row's part of speech, which the form takes if it has another: an imported Hungarian word is `other` beside
-      // a German noun, since no article told the import what it was.
-      pos      = request.partOfSpeech.getOrElse(decode(form.partOfSpeech))
-      // A main word has the form's language and part of speech: `Häuser` is a form of the noun `Haus`, never of a verb.
-      // A new one is minted with them, so the check below only ever refuses a dictionary pick made past the editor.
-      main    <- request.mainWord match {
-                   case TagPairWord.Existing(id) =>
-                     repo.findWordById(id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
-                   case word: TagPairWord.New    =>
-                     if (word.language != language || word.partOfSpeech != pos) ZIO.fail(wrongMain)
-                     else {
-                       ensure(word.language, word.text, word.partOfSpeech, word.gender, userId)
-                         .mapError(WordEditFailure.Failed(_))
-                  }
-                 }
-      _       <- ZIO.when(main.id == form.id)(ZIO.fail(invalid("mainWord", MessageKeys.wordFormIsLemma)))
-      // Not itself a form either: `word_forms` is one level deep.
-      _       <- ZIO.when(main.language != form.language || decode(main.partOfSpeech) != pos || main.isForm)(
-                   ZIO.fail(wrongMain)
-                 )
-      offered <- formRelations(language, pos)
-      _       <- ZIO.unless(offered.contains(request.relation))(
-                   ZIO.fail(invalid("relation", MessageKeys.wordFormRelationInvalid))
-                 )
-      _       <- changePartOfSpeech(form, pos, userId, request.confirm)
-      aligned <- repo.findWordById(form.id).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
-      known   <- repo.existingFormRelations(List(main.id)).orDie
-      already  = known.contains((main.id, form.id, request.relation))
-      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _       <- ZIO.unless(already)(
-                   repo
-                     .insertForms(
-                       List(WordFormRow(0L, main.id, form.id, request.relation, now, WordSource.user, Some(userId)))
-                     )
-                     .orDie
-                 )
-    } yield TagEntryMainWordResponse(
-      toDomain(main),
-      request.relation,
-      alreadyPresent = already,
-      form = toDomain(aligned),
-    )
-  }
+  private def languageOf(row: WordRow): WordLanguage = WordLanguage.fromString(row.language).getOrElse(WordLanguage.En)
 
   /** The one permission rule for changing data other readers share — a word, or a form-of link.
     *
@@ -2376,61 +2506,40 @@ final case class WordServiceLive(
     }
   }
 
-  def removeMainWord(
-    tagId: Long,
-    wordId: Long,
-    mainWordId: Long,
-    relation: String,
-    confirm: Boolean,
-    userId: Long,
-  ): IO[WordEditFailure, Unit] = {
-    for {
-      _     <- requireEntry(tagId, wordId, userId).mapError(WordEditFailure.Failed(_))
-      found <- repo.findWordForm(mainWordId, wordId, relation).orDie
-      _     <- found match {
-                 case None      =>
-                   ZIO.unit
-                 case Some(row) =>
-                   guardSharedEdit(row.origin != WordSource.user, row.createdBy, userId, confirm) *>
-                     repo.deleteWordForm(mainWordId, wordId, relation).orDie.unit
-               }
-    } yield ()
-  }
-
-  def setPartOfSpeech(wordId: Long, request: SetPartOfSpeechRequest, userId: Long): IO[WordEditFailure, WordDetail] = {
-    for {
-      row    <- repo.findWordById(wordId).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
-      _      <- changePartOfSpeech(row, request.partOfSpeech, userId, request.confirm)
-      filled <- repo.findWordById(wordId).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
-      detail <- detailOf(filled, Some(userId))
-    } yield detail
-  }
-
-  /** Sets `row`'s part of speech under [[guardSharedEdit]]'s rule. Nothing to do, and so nothing to be allowed, when it
-    * already has it. The gender is kept only on a noun of a gendered language, the rule `ensure` applies to a new word.
+  /** The gender `row` keeps with `partOfSpeech`: only a noun of a gendered language has one, the rule `ensure` applies
+    * to a new word.
     */
-  private def changePartOfSpeech(
+  private def genderWith(row: WordRow, partOfSpeech: PartOfSpeech): String = {
+    val gendered = LanguageProfile.of(languageOf(row)).hasGenders
+    if (partOfSpeech == PartOfSpeech.Noun && gendered) row.gender else ""
+  }
+
+  /** Whether `row` may take `partOfSpeech`: [[guardSharedEdit]]'s rule, and no other row already is the word it would
+    * become.
+    */
+  private def checkPartOfSpeech(
     row: WordRow,
     partOfSpeech: PartOfSpeech,
     userId: Long,
     confirm: Boolean,
   ): IO[WordEditFailure, Unit] = {
-    val pos      = PartOfSpeech.code(partOfSpeech)
-    val conflict = WordEditFailure.Failed(WordFailure.PartOfSpeechConflict)
-    ZIO
-      .unless(row.partOfSpeech == pos)(
-        for {
-          _       <- guardSharedEdit(row.source != WordSource.user, row.createdBy, userId, confirm)
-          language = WordLanguage.fromString(row.language).getOrElse(WordLanguage.En)
-          gender   = if (partOfSpeech == PartOfSpeech.Noun && LanguageProfile.of(language).hasGenders) row.gender else ""
-          taken   <- repo.findWord(row.language, row.textNorm, pos, gender).orDie
-          _       <- ZIO.when(taken.isDefined)(ZIO.fail(conflict))
-          // A race past the lookup meets the unique index; it is the same conflict.
-          _       <- repo.setWordPartOfSpeech(row.id, pos, gender).mapError(_ => conflict)
-          _       <- ZIO.logInfo(s"words.setPartOfSpeech id=${row.id} pos=$pos user=$userId")
-        } yield ()
-      )
-      .unit
+    val pos = PartOfSpeech.code(partOfSpeech)
+    for {
+      _     <- guardSharedEdit(row.source != WordSource.user, row.createdBy, userId, confirm)
+      taken <- repo.findWord(row.language, row.textNorm, pos, genderWith(row, partOfSpeech)).orDie
+      _     <- ZIO.when(taken.isDefined)(ZIO.fail(WordEditFailure.Failed(WordFailure.PartOfSpeechConflict)))
+    } yield ()
+  }
+
+  private def writePartOfSpeech(row: WordRow, partOfSpeech: PartOfSpeech, userId: Long): IO[WordEditFailure, Unit] = {
+    val pos = PartOfSpeech.code(partOfSpeech)
+    for {
+      // A race past `checkPartOfSpeech`'s lookup meets the unique index; it is the same conflict.
+      _ <- repo
+             .setWordPartOfSpeech(row.id, pos, genderWith(row, partOfSpeech))
+             .mapError(_ => WordEditFailure.Failed(WordFailure.PartOfSpeechConflict))
+      _ <- ZIO.logInfo(s"words.setPartOfSpeech id=${row.id} pos=$pos user=$userId")
+    } yield ()
   }
 
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]] = {
@@ -2459,21 +2568,51 @@ final case class WordServiceLive(
 
   def replacePair(tagId: Long, request: ReplacePairRequest, userId: Long): IO[WordFailure, TagEntryResponse] = {
     for {
-      tag                       <- requireEditableTag(tagId, userId)
-      (source, target)           = tagLanguages(tag)
-      checked                   <- checkPair(TagPairInput(request.next.source, request.next.target), source, target)
+      tag     <- requireEditableTag(tagId, userId)
+      written <- writeReplacePair(tag, request, userId)
+      entry   <- entryAfterWrite(tag, written.sourceId, written.targetId, userId)
+    } yield TagEntryResponse(entry, written.warning)
+  }
+
+  private def writeReplacePair(tag: TagRow, request: ReplacePairRequest, userId: Long): IO[WordFailure, Written] = {
+    val (source, target) = tagLanguages(tag)
+    for {
+      checked                   <- checkPair(request.next, source, target)
       resolved                  <- createPair(checked, userId)
       (newSourceId, newTargetId) = resolved
-      already                   <- pairAlreadyMarked(userId, newSourceId, tagId, newTargetId)
+      already                   <- pairAlreadyMarked(userId, newSourceId, tag.id, newTargetId)
       // A genuine swap is net-zero on `word_tag_pairs`; only filling in a row that had no pair is a new charge.
       warning                   <- if (already || request.oldTargetWordId.isDefined) ZIO.succeed(None)
                                    else repo.countPairsOwnedBy(tag.userId).orDie.flatMap(pairQuota(_, 2))
       now                       <- Clock.currentTime(TimeUnit.MILLISECONDS)
       _                         <- repo
-                                     .replacePair(tagId, request.oldSourceWordId, request.oldTargetWordId, newSourceId, newTargetId, now)
+                                     .replacePair(tag.id, request.oldSourceWordId, request.oldTargetWordId, newSourceId, newTargetId, now)
                                      .orDie
-      entry                     <- entryAfterWrite(tag, newSourceId, Some(newTargetId), userId)
-    } yield TagEntryResponse(entry, warning)
+    } yield Written(newSourceId, Some(newTargetId), warning, alreadyPresent = false)
+  }
+
+  /** An edited row left with one word becomes that word alone. The old row goes the way a deleted row goes, unless it
+    * already was this word alone.
+    */
+  private def writeReplaceWord(
+    tag: TagRow,
+    oldSourceId: Long,
+    oldTargetId: Option[Long],
+    word: TagPairWord,
+    userId: Long,
+  ): IO[WordFailure, Written] = {
+    val (source, target) = tagLanguages(tag)
+    for {
+      checked <- checkWord(word, Set(source, target))
+      wordId  <- createWord(checked._1, userId)
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _       <- ZIO.unless(oldTargetId.isEmpty && wordId == oldSourceId)(
+                   (oldTargetId match {
+                     case Some(oldTarget) => repo.removePair(tag.id, oldSourceId, oldTarget, force = true)
+                     case None            => repo.removeEntry(tag.id, oldSourceId)
+                   }).orDie *> repo.tagWord(wordId, tag.id, now).orDie
+                 )
+    } yield Written(wordId, None, None, alreadyPresent = false)
   }
 
   def removeEntry(
