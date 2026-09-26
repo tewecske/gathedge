@@ -185,10 +185,11 @@ object WordServiceSpec extends ZIOSpecDefault {
   private def mainRequest(mainWordId: Long, relation: String): TagEntryMainWordRequest =
     TagEntryMainWordRequest(TagPairWord.Existing(mainWordId), relation)
 
-  /** Whether a result is a validation failure naming `field`. */
-  private def invalidField(result: Either[WordFailure, ?], field: String): Boolean = result.left.exists {
-    case WordFailure.ValidationError(fields) => fields.contains(field)
-    case _                                   => false
+  /** Whether a result is a validation failure naming `field`, from either failure enum. */
+  private def invalidField(result: Either[Any, ?], field: String): Boolean = result.left.exists {
+    case WordFailure.ValidationError(fields)                         => fields.contains(field)
+    case WordEditFailure.Failed(WordFailure.ValidationError(fields)) => fields.contains(field)
+    case _                                                           => false
   }
 
   /** `count` dictionary lemmas of one language and part of speech, each with one form under `relation` — the rows the
@@ -2332,8 +2333,8 @@ object WordServiceSpec extends ZIOSpecDefault {
           invalidField(ofForm, "mainWord"),
           // A form and its main word share a part of speech: a noun's plural is never filed under a verb.
           invalidField(ofVerb, "mainWord"),
-          absent == Left(WordFailure.NotFound),
-          alien == Left(WordFailure.TagNotFound),
+          absent == Left(WordEditFailure.Failed(WordFailure.NotFound)),
+          alien == Left(WordEditFailure.Failed(WordFailure.TagNotFound)),
         )
       },
       test("addMainWord mints a main word the dictionary lacks, with the form's language and part of speech") {
@@ -2366,6 +2367,53 @@ object WordServiceSpec extends ZIOSpecDefault {
           minted.mainWord.text == "Hausfr5",
           minted.mainWord.partOfSpeech == PartOfSpeech.Noun,
           invalidField(wrong, "mainWord"),
+        )
+      },
+      test("addMainWord gives the reader's own form word the row's part of speech before linking it") {
+        for {
+          _      <- seedForms(WordLanguage.Hu, PartOfSpeech.Noun, "fr15plural", 5)
+          main   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házfr15"))
+          tag    <- createTag("mainb15", 1L, WordLanguage.De, WordLanguage.Hu)
+          // What a tabular import makes of a Hungarian cell: no article, so no noun.
+          added  <- WordService.attachWord(
+                      tag.id,
+                      TagWordInput(TagPairWord.New(WordLanguage.Hu, "házakfr15", PartOfSpeech.Other, None)),
+                      1L,
+                    )
+          formId  = added.entry.source.id
+          linked <- WordService.addMainWord(
+                      tag.id,
+                      formId,
+                      TagEntryMainWordRequest(TagPairWord.Existing(main.id), "fr15plural", Some(PartOfSpeech.Noun)),
+                      1L,
+                    )
+          stored <- WordRepository.findWordById(formId)
+          forms  <- WordRepository.formsOf(main.id)
+        } yield assertTrue(
+          linked.form.partOfSpeech == PartOfSpeech.Noun,
+          stored.exists(_.partOfSpeech == PartOfSpeech.code(PartOfSpeech.Noun)),
+          forms.map(_.formWordId) == List(formId),
+        )
+      },
+      test("addMainWord will not change a dictionary form word's part of speech for a reader, or unconfirmed") {
+        for {
+          _         <- seedForms(WordLanguage.Hu, PartOfSpeech.Noun, "fr16plural", 5)
+          main      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házfr16"))
+          form      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "házakfr16", PartOfSpeech.Other))
+          tag       <- createTag("mainb16", 1L, WordLanguage.De, WordLanguage.Hu)
+          _         <- WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(form.id)), 1L)
+          admin     <- adminUserId("admin-align@example.com")
+          request    = TagEntryMainWordRequest(TagPairWord.Existing(main.id), "fr16plural", Some(PartOfSpeech.Noun))
+          reader    <- WordService.addMainWord(tag.id, form.id, request, 1L).either
+          unwarned  <- WordService.addMainWord(tag.id, form.id, request, admin).either
+          untouched <- WordRepository.formsOf(main.id)
+          linked    <- WordService.addMainWord(tag.id, form.id, request.copy(confirm = true), admin)
+        } yield assertTrue(
+          reader == Left(WordEditFailure.Protected),
+          unwarned == Left(WordEditFailure.ConfirmRequired),
+          // Refused before anything was written: no link without the part of speech that goes with it.
+          untouched.isEmpty,
+          linked.form.partOfSpeech == PartOfSpeech.Noun,
         )
       },
       test("a dictionary link is only an administrator's to remove, and only once the warning is confirmed") {

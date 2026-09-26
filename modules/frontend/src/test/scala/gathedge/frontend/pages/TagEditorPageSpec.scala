@@ -282,8 +282,12 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           val container = dom.document.createElement("div")
           dom.document.body.appendChild(container)
           val word      = Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
-          val rootNode  =
-            L.render(container, new TagEntryDetails(1L, word, Some("Gebäude"), Observer.empty).render())
+          val rootNode  = {
+            L.render(
+              container,
+              new TagEntryDetails(1L, word, PartOfSpeech.Noun, Some("Gebäude"), Observer.empty).render(),
+            )
+          }
           try {
             // Read before `assertTrue`, which evaluates lazily — after `finally` has unmounted the panel.
             val inputs  = container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input])

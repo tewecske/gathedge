@@ -5,14 +5,14 @@ import gathedge.frontend.api.{ApiError, WordApiClient}
 import gathedge.frontend.components.{Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.Word
+import gathedge.shared.domain.{PartOfSpeech, Word}
 import gathedge.shared.dto.{TagEntryMainWordResponse, TagPairWord, WordDetail, WordFormRef}
-import gathedge.shared.i18n.UiKeys
+import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import org.scalajs.dom
 
 /** The panel a wordlist row opens under itself, for one of its words: the reader's note beside the word, and the main
-  * words it is a form of. The pair's part of speech is the row's, set above the two panels — see
-  * `TagEditorPage.renderRowPartOfSpeech`.
+  * words it is a form of. The pair's part of speech is the row's, set in the row's edit mode, and handed in as
+  * `partOfSpeech`.
   *
   * An import writes both from the file. This is the same writes by hand, so a word the reader typed in can carry them
   * too.
@@ -32,8 +32,10 @@ import org.scalajs.dom
 private[pages] final class TagEntryDetails(
   tagId: Long,
   word: Word,
+  partOfSpeech: PartOfSpeech,
   comment: Option[String],
   onNoteSaved: Observer[Option[String]],
+  onWordChanged: Observer[Word] = Observer.empty,
 ) {
 
   private val noteVar      = Var(comment.getOrElse(""))
@@ -52,7 +54,7 @@ private[pages] final class TagEntryDetails(
 
   private val mainPicker = new WordPicker(
     language = Val(word.language),
-    partOfSpeech = Val(Some(word.partOfSpeech)),
+    partOfSpeech = Val(Some(partOfSpeech)),
     onCommit = Observer[TagPairWord](ref => Var.set(mainRefVar -> Some(ref), statusVar -> None)),
     placeholderSignal = Val(I18n.t(UiKeys.tagsEditorMainWordSearch)),
     mainOnly = true,
@@ -89,19 +91,31 @@ private[pages] final class TagEntryDetails(
           fail(err)
       },
       // The form types follow the word's part of speech, which a main word shares.
-      WordApiClient.formRelations(word.language, word.partOfSpeech) -->
+      WordApiClient.formRelations(word.language, partOfSpeech) -->
         Observer[Either[ApiError, List[String]]] {
           case Right(relations) =>
             Var.set(relationsVar -> Some(relations), relationVar -> relations.headOption.getOrElse(""))
           case Left(err)        =>
             fail(err)
         },
+      // A word whose own part of speech is not the row's takes the row's with the link, under the rule the row's edit
+      // follows: the reader's own word, or an administrator after the warning for dictionary data.
       saveFormBus.events
-        .sample(mainRefVar.signal, relationVar.signal)
-        .collect { case (Some(main), relation) if relation.nonEmpty => (main, relation) }
-        .flatMapSwitch { case (main, relation) =>
+        .sample(mainRefVar.signal, relationVar.signal, detailVar.signal, AppState.isGlobalAdminSignal)
+        .collect {
+          case (Some(main), relation, Some(detail), admin) if relation.nonEmpty =>
+            (main, relation, detail, admin)
+        }
+        .filter { case (_, _, detail, admin) =>
+          val aligned = word.partOfSpeech == partOfSpeech
+          val mine    = detail.createdByMe && !detail.fromDictionary
+          if (!aligned && !mine && !admin) errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
+          aligned || mine || (admin && confirmed(detail.fromDictionary))
+        }
+        .flatMapSwitch { case (main, relation, detail, _) =>
           Var.set(busyVar -> true, errorVar -> None, statusVar -> None)
-          WordApiClient.addMainWord(tagId, word.id, main, relation)
+          val confirm = word.partOfSpeech != partOfSpeech && detail.fromDictionary
+          WordApiClient.addMainWord(tagId, word.id, main, relation, partOfSpeech, confirm)
         } --> Observer[Either[ApiError, TagEntryMainWordResponse]] {
         case Right(response) =>
           Var.set(busyVar -> false, mainRefVar -> None)
@@ -109,6 +123,8 @@ private[pages] final class TagEntryDetails(
           if (response.alreadyPresent)
             statusVar.set(Some(I18n.t(UiKeys.tagsEditorFormExists, Word.display(response.mainWord))))
           loadFormsBus.emit(())
+          // The row shows the word's new part of speech; the page redraws it, and this panel with it.
+          if (response.form != word) onWordChanged.onNext(response.form)
         case Left(err)       =>
           fail(err)
       },
