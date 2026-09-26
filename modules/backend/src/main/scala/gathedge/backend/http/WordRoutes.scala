@@ -18,14 +18,13 @@ import gathedge.shared.dto.{
   LanguageCheckRequest,
   Paging,
   RenameTagRequest,
-  ReplacePairRequest,
   SetGenderRequest,
   SetTagLanguagesRequest,
   SortDirection,
   TabularImportRequest,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagImportRequest,
-  TagPairInput,
-  TagWordInput,
 }
 import zio.*
 import zio.http.*
@@ -323,26 +322,32 @@ object WordRoutes {
     )
   }
 
-  private val addPairRoute = {
-    WordEndpoints.addPair.implementHandler(
-      handler { (tagId: Long, body: TagPairInput) =>
-        userId.flatMap(id => WordService.addPair(tagId, body, id).mapError(ApiFailures.word))
+  private val addEntryRoute = {
+    WordEndpoints.addEntry.implementHandler(
+      handler { (tagId: Long, body: TagEntryInput) =>
+        userId.flatMap(id => WordService.addEntry(tagId, body, id).mapError(ApiFailures.wordEdit))
       }
     )
   }
 
-  private val attachWordRoute = {
-    WordEndpoints.attachWord.implementHandler(
-      handler { (tagId: Long, body: TagWordInput) =>
-        userId.flatMap(id => WordService.attachWord(tagId, body, id).mapError(ApiFailures.word))
+  private val editEntryRoute = {
+    WordEndpoints.editEntry.implementHandler(
+      handler { (tagId: Long, body: TagEntryEditRequest) =>
+        userId.flatMap(id => WordService.editEntry(tagId, body, id).mapError(ApiFailures.wordEdit))
       }
     )
   }
 
-  private val replacePairRoute = {
-    WordEndpoints.replacePair.implementHandler(
-      handler { (tagId: Long, body: ReplacePairRequest) =>
-        userId.flatMap(id => WordService.replacePair(tagId, body, id).mapError(ApiFailures.word))
+  /** An unrecognised `lang` or `pos` answers an empty list rather than failing — the lenient treatment [[listRoute]]
+    * gives the same two parameters. A missing one is still the codec's 400.
+    */
+  private val formRelationsRoute = {
+    WordEndpoints.formRelations.implementHandler(
+      handler { (lang: String, pos: String) =>
+        (WordLanguage.fromString(lang), PartOfSpeech.fromString(pos)) match {
+          case (Some(language), Some(partOfSpeech)) => WordService.formRelations(language, partOfSpeech)
+          case _                                    => ZIO.succeed(List.empty[String])
+        }
       }
     )
   }
@@ -479,9 +484,9 @@ object WordRoutes {
       untagWordRoute,
       selectPairRoute,
       deselectPairRoute,
-      addPairRoute,
-      attachWordRoute,
-      replacePairRoute,
+      addEntryRoute,
+      editEntryRoute,
+      formRelationsRoute,
       deletePairRoute,
       bulkDeletePairsRoute,
       bulkDeleteWordsRoute,

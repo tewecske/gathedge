@@ -148,6 +148,20 @@ object Validation {
     validateNonBlank(text, MessageKeys.fieldWord, maxNameLength)
   }
 
+  /** The reader's note beside a word in a wordlist, bounded by `word_tags.comment VARCHAR(255)`. A blank note is no
+    * note: it clears the column rather than failing, since emptying the box is how a reader removes one.
+    */
+  def validateNote(note: Option[String]): Either[MessageRef, Option[String]] = {
+    note.map(_.trim).filter(_.nonEmpty) match {
+      case None                                      => Right(None)
+      case Some(text) if text.length > maxNameLength =>
+        Left(
+          MessageRef(MessageKeys.fieldTooLong, List(MessageRef.keyArg(MessageKeys.fieldNote), maxNameLength.toString))
+        )
+      case Some(text)                                => Right(Some(text))
+    }
+  }
+
   /** A tag name, which is bounded by `tags.name` and additionally may not be one of the names the practice screen will
     * compute for itself (`ALL`, `ALL_UNKNOWN`, …). Refusing them now is what stops a reader creating a tag today that
     * collides with a built-in set later; the check is case-insensitive, since tag names are matched that way.

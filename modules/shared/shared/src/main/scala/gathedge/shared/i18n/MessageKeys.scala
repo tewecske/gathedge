@@ -58,6 +58,7 @@ object MessageKeys {
   val fieldPassword: String  = key("field.password")
   val fieldWord: String      = key("field.word")
   val fieldTag: String       = key("field.tag")
+  val fieldNote: String      = key("field.note")
   val fieldGameName: String  = key("field.gameName")
   val fieldGroupName: String = key("field.groupName")
 
@@ -132,6 +133,33 @@ object MessageKeys {
     * so repeating either in the sentence would only give Hungarian an article to decline.
     */
   val wordGenderConflict: String = key("words.genderConflict")
+
+  /** A word was filed as a form under a relation the dictionary does not offer for its main word — a `past` of a noun.
+    * Takes no argument: the editor offers only the relations that fit, so a caller reached this past the picker.
+    */
+  val wordFormRelationInvalid: String = key("words.formRelationInvalid")
+
+  /** A word was filed as a form of itself. A `word_forms` self-edge would set `is_form` on the word and drop it out of
+    * the listing.
+    */
+  val wordFormIsLemma: String = key("words.formIsLemma")
+
+  /** A word was filed as a form of a main word it cannot belong to: one in another language, or one that is itself a
+    * form. Takes no argument: the editor's picker offers only main words of the word's own language.
+    */
+  val wordMainWordInvalid: String = key("words.mainWordInvalid")
+  val wordFormHasMainWord: String = key("words.formHasMainWord")
+
+  /** A reader tried to change or remove data that is not theirs: a dictionary word or link, or another reader's. Only a
+    * global administrator may.
+    */
+  val wordDictionaryProtected: String = key("words.dictionaryProtected")
+
+  /** An administrator tried to change or remove dictionary data without confirming the editor's warning. */
+  val wordDictionaryConfirmRequired: String = key("words.dictionaryConfirmRequired")
+
+  /** Changing a word's part of speech would collide with the row that already holds that identity. */
+  val wordPartOfSpeechConflict: String = key("words.partOfSpeechConflict")
 
   /** The bulk-upload file itself failed validation — empty, or over `WordService.maxBulkUploadBytes` — as opposed to
     * anything about the words found inside it, which never fails the request.

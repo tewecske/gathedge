@@ -6,7 +6,7 @@ import org.scalajs.dom
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry}
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry, WordFormRef}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -37,6 +37,44 @@ object TagEditorPageSpec extends ZIOSpecDefault {
       rootNode.unmount()
       dom.document.body.removeChild(container)
     }
+  }
+
+  /** A [[TagEntryEditor]] mounted on its own, German beside Hungarian. */
+  private def withEditor[A](seed: Option[TagEntryEditor.Seed])(use: dom.Element => A): A = {
+    val container = dom.document.createElement("div")
+    dom.document.body.appendChild(container)
+    val editor    = new TagEntryEditor(Val(WordLanguage.De), Val(WordLanguage.Hu), seed, Observer.empty)
+    val rootNode  = L.render(container, editor.render())
+    try use(container)
+    finally {
+      rootNode.unmount()
+      dom.document.body.removeChild(container)
+    }
+  }
+
+  /** A German noun with a note beside a Hungarian word; `fromDictionary` says whether the import wrote the German one.
+    */
+  private def seed(fromDictionary: Boolean): TagEntryEditor.Seed = {
+    TagEntryEditor.Seed(
+      Some(
+        TagEntryEditor.SeedSide(
+          Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None),
+          Some("Gebäude"),
+          fromDictionary = fromDictionary,
+          mine = !fromDictionary,
+        )
+      ),
+      Some(TagEntryEditor.SeedSide(Word(2L, WordLanguage.Hu, "ház", PartOfSpeech.Other, None), None)),
+      PartOfSpeech.Noun,
+    )
+  }
+
+  private def placeholders(container: dom.Element): List[String] = {
+    container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input].placeholder)
+  }
+
+  private def buttonNamed(container: dom.Element, name: String): Option[dom.html.Button] = {
+    container.querySelectorAll("button").toList.map(_.asInstanceOf[dom.html.Button]).find(_.textContent == name)
   }
 
   private def entry(
@@ -221,6 +259,91 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             TagEditorPage.rowsFor(grid, Map(0 -> TagEditorPage.ColumnRole.Source)).isEmpty,
             TagEditorPage.rowsFor(grid, Map.empty).isEmpty,
           )
+        },
+      ),
+      suite("TagEntryEditor.gate")(
+        test("a save that changes no word's part of speech goes, whoever makes it") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Noun, fromDictionary = true, mine = false))
+          assertTrue(
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Go,
+            // No part of speech chosen: every word keeps its own.
+            TagEntryEditor.gate(words, Nil, None, admin = false) == TagEntryEditor.Gate.Go,
+          )
+        },
+        test("the reader's own word takes the row's part of speech without a warning") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = false, mine = true))
+          assertTrue(TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Go)
+        },
+        test("a dictionary word is refused to a reader and asks an administrator to confirm") {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = true, mine = false))
+          assertTrue(
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Refused,
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Confirm,
+          )
+        },
+        test(
+          "another reader's word is an administrator's to change, with no warning since it is not the dictionary's"
+        ) {
+          val words = List(TagEntryEditor.WordGate(PartOfSpeech.Other, fromDictionary = false, mine = false))
+          assertTrue(
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = false) == TagEntryEditor.Gate.Refused,
+            TagEntryEditor.gate(words, Nil, Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Go,
+          )
+        },
+        test("removing a dictionary link asks an administrator to confirm") {
+          val main = Word(9L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None)
+          val link = WordFormRef(main, "plural", fromDictionary = true)
+          assertTrue(
+            TagEntryEditor.gate(Nil, List(link), Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Confirm
+          )
+        },
+      ),
+      suite("TagEntryEditor")(
+        test("the add row starts with no part of speech, so it offers no form yet and cannot be added") {
+          withEditor(None) { container =>
+            // Read before `assertTrue`, which evaluates lazily — after the editor has been unmounted.
+            val boxes    = placeholders(container)
+            val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val text     = container.textContent
+            val disabled = buttonNamed(container, UiKeys.commonAdd).exists(_.disabled)
+            assertTrue(
+              boxes.count(_ == UiKeys.tagsSourcePlaceholder) == 1,
+              boxes.count(_ == UiKeys.tagsTargetPlaceholder) == 1,
+              select.value == TagEntryEditor.anyPartOfSpeech,
+              text.contains(UiKeys.tagsEditorFormNeedsPartOfSpeech),
+              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
+              disabled,
+            )
+          }
+        },
+        test("an edit opens on the row's words, notes and part of speech, and reads each word before its form") {
+          withEditor(Some(seed(fromDictionary = false))) { container =>
+            val inputs   = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
+            val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val values   = inputs.map(_.value)
+            val boxes    = placeholders(container)
+            val spinners = container.querySelectorAll(".loading").length
+            val save     = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
+            val cancel   = buttonNamed(container, UiKeys.commonCancel).isDefined
+            assertTrue(
+              values.contains("Haus"),
+              values.contains("ház"),
+              values.contains("Gebäude"),
+              select.value == PartOfSpeech.code(PartOfSpeech.Noun),
+              !select.disabled,
+              // No backend here, so each word's links never arrive: a spinner, not a main-word box.
+              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
+              spinners == 2,
+              save,
+              cancel,
+            )
+          }
+        },
+        test("a dictionary word in the row locks the part of speech") {
+          withEditor(Some(seed(fromDictionary = true))) { container =>
+            val locked = container.querySelector("select").asInstanceOf[dom.html.Select].disabled
+            assertTrue(locked)
+          }
         },
       ),
       suite("orient")(

@@ -30,11 +30,12 @@ import gathedge.shared.dto.{
   PairRef,
   PairSelectionResponse,
   RenameTagRequest,
-  ReplacePairRequest,
   SetGenderRequest,
   SetTagLanguagesRequest,
   TagEntry,
   TagEntryPage,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagEntryResponse,
   TagExportFile,
   TagImportChoice,
@@ -42,8 +43,8 @@ import gathedge.shared.dto.{
   TagImportResponse,
   TagPage,
   TagPairInput,
+  TagPairWord,
   TagResponse,
-  TagWordInput,
   WordDetail,
   WordPage,
 }
@@ -267,26 +268,34 @@ object WordApiClient {
     )
   }
 
-  /** Adds one bilingual pair to a tag, saved immediately. Either side may be a word to create (`TagPairWord.New`). */
-  def addPair(tagId: Long, pair: TagPairInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.call[TagEntryResponse](WordPaths.addPair(tagId), Some(pair.toJson))
+  /** Adds one row to a wordlist, saved at once: a pair or one word alone, with its part of speech, notes and form-of
+    * links. Either word may be one to create (`TagPairWord.New`).
+    */
+  def addEntry(tagId: Long, entry: TagEntryInput): EventStream[Either[ApiError, TagEntryResponse]] = {
+    HttpClient.call[TagEntryResponse](WordPaths.addEntry(tagId), Some(entry.toJson))
   }
 
-  /** Adds one word to a tag on its own, no answer yet. The word may be one to create (`TagPairWord.New`). */
-  def attachWord(tagId: Long, word: TagWordInput): EventStream[Either[ApiError, TagEntryResponse]] = {
-    HttpClient.call[TagEntryResponse](WordPaths.attachWord(tagId), Some(word.toJson))
-  }
-
-  /** Replaces one editor row's pair in place. `oldTargetWordId` is `None` for a row that had no answer yet. */
-  def replacePair(
+  /** Replaces one editor row in place with `entry`. `oldTargetWordId` is `None` for a row that had no answer. */
+  def editEntry(
     tagId: Long,
     oldSourceWordId: Long,
     oldTargetWordId: Option[Long],
-    next: TagPairInput,
+    entry: TagEntryInput,
   ): EventStream[Either[ApiError, TagEntryResponse]] = {
     HttpClient.call[TagEntryResponse](
-      WordPaths.replacePair(tagId),
-      Some(ReplacePairRequest(oldSourceWordId, oldTargetWordId, next).toJson),
+      WordPaths.editEntry(tagId),
+      Some(TagEntryEditRequest(oldSourceWordId, oldTargetWordId, entry).toJson),
+    )
+  }
+
+  /** The form types a main word of this language and part of speech can have, commonest first. */
+  def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): EventStream[Either[ApiError, List[String]]] = {
+    HttpClient.call[List[String]](
+      WordPaths
+        .formRelations()
+        .withQuery(
+          HttpClient.query("lang" -> Some(WordLanguage.code(language)), "pos" -> Some(PartOfSpeech.code(partOfSpeech)))
+        )
     )
   }
 

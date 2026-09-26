@@ -62,8 +62,12 @@ import gathedge.shared.dto.{
   CreateTagWithPairsRequest,
   CreateUserRequest,
   TagPairInput,
+  MainWordLink,
+  MainWordUnlink,
+  TagEntryWord,
+  TagEntryInput,
+  TagEntryEditRequest,
   TagPairWord,
-  TagWordInput,
   CreateWordRequest,
   DbStats,
   DeleteWordFormRequest,
@@ -129,7 +133,6 @@ import gathedge.shared.dto.{
   PairRef,
   BulkDeletePairsRequest,
   BulkDeleteWordsRequest,
-  ReplacePairRequest,
   SharedViewer,
   SharedWithMe,
   ShareCodeResponse,
@@ -237,7 +240,11 @@ object ApiSchemas {
   given Schema[CreateTagRequest]              = DeriveSchema.gen[CreateTagRequest]
   given Schema[TagPairWord]                   = DeriveSchema.gen[TagPairWord]
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]
-  given Schema[TagWordInput]                  = DeriveSchema.gen[TagWordInput]
+  given Schema[MainWordLink]                  = DeriveSchema.gen[MainWordLink]
+  given Schema[MainWordUnlink]                = DeriveSchema.gen[MainWordUnlink]
+  given Schema[TagEntryWord]                  = DeriveSchema.gen[TagEntryWord]
+  given Schema[TagEntryInput]                 = DeriveSchema.gen[TagEntryInput]
+  given Schema[TagEntryEditRequest]           = DeriveSchema.gen[TagEntryEditRequest]
   given Schema[CreateTagWithPairsRequest]     = DeriveSchema.gen[CreateTagWithPairsRequest]
   given Schema[RenameTagRequest]              = DeriveSchema.gen[RenameTagRequest]
   given Schema[SetTagLanguagesRequest]        = DeriveSchema.gen[SetTagLanguagesRequest]
@@ -246,7 +253,6 @@ object ApiSchemas {
   given Schema[TagEntry]                      = DeriveSchema.gen[TagEntry]
   given Schema[TagEntryPage]                  = DeriveSchema.gen[TagEntryPage]
   given Schema[TagEntryResponse]              = DeriveSchema.gen[TagEntryResponse]
-  given Schema[ReplacePairRequest]            = DeriveSchema.gen[ReplacePairRequest]
   given Schema[PairRef]                       = DeriveSchema.gen[PairRef]
   given Schema[BulkDeletePairsRequest]        = DeriveSchema.gen[BulkDeletePairsRequest]
   given Schema[BulkDeleteWordsRequest]        = DeriveSchema.gen[BulkDeleteWordsRequest]

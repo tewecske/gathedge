@@ -20,10 +20,11 @@ import gathedge.shared.dto.{
   LanguageCheckResponse,
   PairSelectionResponse,
   RenameTagRequest,
-  ReplacePairRequest,
   SetGenderRequest,
   SetTagLanguagesRequest,
   TagEntry,
+  TagEntryEditRequest,
+  TagEntryInput,
   TagEntryResponse,
   TagExportFile,
   TagImportRequest,
@@ -34,7 +35,6 @@ import gathedge.shared.dto.{
   TagPage,
   TagPairInput,
   TagResponse,
-  TagWordInput,
   WordDetail,
   WordPage,
 }
@@ -76,9 +76,9 @@ object WordPaths {
   val deselectPair        = ApiPath3[Long, Long, Long](DELETE, "/api/words/{id}/tags/{tagId}/translations/{translationWordId}")
   val tagEntries          = ApiPath1[Long](GET, "/api/tags/{tagId}/entries")
   val tagEntriesPage      = ApiPath1[Long](GET, "/api/tags/{tagId}/entries/page")
-  val addPair             = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs")
-  val attachWord          = ApiPath1[Long](POST, "/api/tags/{tagId}/words")
-  val replacePair         = ApiPath1[Long](PUT, "/api/tags/{tagId}/pairs")
+  val addEntry            = ApiPath1[Long](POST, "/api/tags/{tagId}/entries")
+  val editEntry           = ApiPath1[Long](PUT, "/api/tags/{tagId}/entries")
+  val formRelations       = ApiPath0(GET, "/api/words/form-relations")
   val deletePair          = ApiPath2[Long, Long](DELETE, "/api/tags/{tagId}/pairs/{sourceWordId}")
   val bulkDeletePairs     = ApiPath1[Long](POST, "/api/tags/{tagId}/pairs/bulk-delete")
   val bulkDeleteWords     = ApiPath1[Long](POST, "/api/tags/{tagId}/words/bulk-delete")
@@ -114,9 +114,9 @@ object WordPaths {
     deselectPair,
     tagEntries,
     tagEntriesPage,
-    addPair,
-    attachWord,
-    replacePair,
+    addEntry,
+    editEntry,
+    formRelations,
     deletePair,
     bulkDeletePairs,
     bulkDeleteWords,
@@ -175,6 +175,10 @@ object WordEndpoints {
   private val uniqueQuery = HttpCodec.query[Boolean]("unique").optional
 
   private val targetWordIdQuery = HttpCodec.query[Long]("targetWordId").optional
+
+  /** [[formRelations]] needs both, so unlike the listing's `lang`/`pos` they are required. */
+  private val requiredLangQuery = HttpCodec.query[String]("lang")
+  private val requiredPosQuery  = HttpCodec.query[String]("pos")
 
   /** The browse-and-tag listing, paged and counted by the database.
     *
@@ -511,44 +515,54 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.notFound)
   }
 
-  /** Adds one bilingual pair to a tag, saved immediately — the unified editor's add-row action. Either side may be a
-    * brand-new word (`TagPairWord.New`), created on the fly, exactly as [[createTagWithPairs]] allows. 404 is a tag
-    * that is not the caller's (or their group's) or a `TagPairWord.Existing` naming no word; 409 is the pair quota's
-    * hard limit, with a soft-threshold crossing carried as a warning on the answer instead.
+  /** Adds one row to a wordlist, saved at once: a pair, or one word alone — the editor's add row. Either word may be a
+    * brand-new word (`TagPairWord.New`), created on the fly, as [[createTagWithPairs]] allows. The same call writes the
+    * row's part of speech, the reader's note beside each word, and the main words each word is a form of (see
+    * [[gathedge.shared.dto.TagEntryInput]]). Idempotent: a row the wordlist already holds answers `alreadyPresent`, and
+    * what the body adds to it is still written.
+    *
+    * 400 is a body with no word, a word outside the tag's two languages, or a form-of link [[formRelations]] does not
+    * offer. 403 is shared data the caller may not change: another reader's word or link, or a dictionary one, for
+    * anyone but a global administrator. 404 is a tag the caller may not edit, or a word that does not exist. 409 is the
+    * pair quota's hard limit, a dictionary change without `confirm`, or a part of speech that makes the word the same
+    * as another. Nothing is written for a 400, 403 or a missing `confirm`. A soft-quota crossing is a warning on the
+    * answer.
     */
-  val addPair = {
-    Endpoint(ApiRoutes.route1(paths.addPair, PathCodec.long))
-      .in[TagPairInput]
+  val addEntry = {
+    Endpoint(ApiRoutes.route1(paths.addEntry, PathCodec.long))
+      .in[TagEntryInput]
       .withCodecError
       .out[TagEntryResponse](Status.Created)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
-  /** Adds one word to a tag on its own, no answer yet — the unified editor's "commit a source word, then press Enter on
-    * the empty answer box" action. `word` may be a brand-new word (`TagPairWord.New`), created on the fly, and must be
-    * in one of the tag's two languages (400 otherwise). Idempotent like [[tagWord]]: a word already in the tag comes
-    * back as the row already there. Writes only the membership — no `word_tag_pairs` row — so it is never quota-gated,
-    * which is why there is no 409. 404 is a tag that is not the caller's (or their group's), or a
-    * `TagPairWord.Existing` naming no word.
+  /** Replaces one editor row in place — the row's edit. The body names the row (its old source word id, and its old
+    * answer word id when it had one) and the whole row it becomes, with the same parts [[addEntry]] writes. The note of
+    * each word is set to what the body says, so an absent note clears it. A pair edited by hand is no longer an
+    * import's claim. With only one word the row becomes that word alone. Same statuses as [[addEntry]].
     */
-  val attachWord = {
-    Endpoint(ApiRoutes.route1(paths.attachWord, PathCodec.long))
-      .in[TagWordInput]
-      .withCodecError
-      .out[TagEntryResponse](Status.Created)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
-  }
-
-  /** Replaces one editor row's pair in place — the row's inline edit. The body names the row (its old source word id,
-    * and its old answer word id when it had one) and the pair it should become. The pair's `exact` flag is cleared: a
-    * hand-edited pair is no longer an exact import match. Same 404/409 rules as [[addPair]].
-    */
-  val replacePair = {
-    Endpoint(ApiRoutes.route1(paths.replacePair, PathCodec.long))
-      .in[ReplacePairRequest]
+  val editEntry = {
+    Endpoint(ApiRoutes.route1(paths.editEntry, PathCodec.long))
+      .in[TagEntryEditRequest]
       .withCodecError
       .out[TagEntryResponse]
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
+  }
+
+  /** The relations a form may have to a main word of this language and part of speech, the fewest tags first and the
+    * commonest first among equals — what the editor's form-type picker offers.
+    *
+    * Read from the dictionary's own `word_forms` rows, not from a list in code, so a language added later brings its
+    * own grammar with its import. A relation that only a handful of rows carry is left out as noise. A language with no
+    * such rows gets the relations its part of speech has in the other languages. '''Writes nothing'''.
+    */
+  val formRelations = {
+    Endpoint(ApiRoutes.route0(paths.formRelations))
+      .query(requiredLangQuery)
+      .query(requiredPosQuery)
+      .withCodecError
+      .out[List[String]]
+      .outErrors(failure.badRequest, failure.unauthorized)
   }
 
   /** Removes one editor row. `targetWordId` names the row's answer half: with it, only that one practice pair goes
@@ -717,9 +731,9 @@ object WordEndpoints {
       deselectPair,
       tagEntries,
       tagEntriesPage,
-      addPair,
-      attachWord,
-      replacePair,
+      addEntry,
+      editEntry,
+      formRelations,
       deletePair,
       bulkDeletePairs,
       bulkDeleteWords,

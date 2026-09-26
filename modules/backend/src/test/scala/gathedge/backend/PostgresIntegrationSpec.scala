@@ -283,6 +283,10 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
                            WordRow(0L, "hu", "kanál", "kanál", "noun", "", 1, "user", None, 0L, TextSearch.fold("kanál"))
                          )
           _           <- WordRepository.insertTranslationPair(word.id, spoon.id, "user", Some(target.id), 0L)
+          // `word_forms.created_by` is SET NULL too: a form-of link the account made outlives it.
+          _           <- WordRepository.insertForms(
+                           List(WordFormRow(0L, spoon.id, word.id, "plural", 0L, "user", Some(target.id)))
+                         )
           _           <- WordRepository.tagWord(word.id, tag.id, 0L)
           // `word_tag_pairs` reaches `users` only through `tags`, but that is the path that breaks: declared without an
           // ON DELETE action, the cascade *into* `tags` would raise a violation and `deleteUser` would answer 500.
@@ -314,6 +318,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // The word itself is the SET NULL case: somebody else may well have tagged it, so it outlives its author.
           stillThere  <- WordRepository.findWordById(word.id)
           links       <- WordRepository.allTranslationsOf(word.id)
+          formLinks   <- WordRepository.formsOf(spoon.id)
         } yield assertTrue(
           gone == Left(gathedge.backend.service.AdminFailure.NotFound),
           sessions.isEmpty,
@@ -330,6 +335,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           stillThere.flatMap(_.createdBy).isEmpty,
           links.map(_._2.text) == List("kanál"),
           links.forall(_._1.createdBy.isEmpty),
+          formLinks.map(row => (row.formWordId, row.origin, row.createdBy)) == List((word.id, "user", None)),
         )
       },
       // `tags.group_id` is declared `ON DELETE SET NULL`, the same choice `words.created_by` makes above: a tag

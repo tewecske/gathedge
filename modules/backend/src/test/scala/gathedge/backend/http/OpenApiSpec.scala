@@ -103,11 +103,10 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/tags/with-pairs",
               "/api/tags/{tagId}/entries",
               "/api/tags/{tagId}/entries/page",
-              "/api/tags/{tagId}/pairs",
               "/api/tags/{tagId}/pairs/{sourceWordId}",
               "/api/tags/{tagId}/pairs/bulk-delete",
-              "/api/tags/{tagId}/words",
               "/api/tags/{tagId}/words/bulk-delete",
+              "/api/words/form-relations",
               "/api/tags/{tagId}/bulk-import",
               "/api/tags/{tagId}/tabular-import",
               "/api/words/column-language-check",
@@ -317,14 +316,16 @@ object OpenApiSpec extends ZIOSpecDefault {
               // matches nothing is an empty page, not an error.
               ("GET", "/api/tags/{tagId}/entries/page")                                   ->
                 Set(Ok, BadRequest, NotFound),
-              ("POST", "/api/tags/{tagId}/pairs")                                         ->
-                Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
-              // Adding a lone word writes only a membership, never a `word_tag_pairs` row, so it has no quota to hit
-              // and no 409 — otherwise the same 400/404 shape as adding a pair.
-              ("POST", "/api/tags/{tagId}/words")                                         ->
-                Set(Created, BadRequest, Unauthorized, NotFound),
-              ("PUT", "/api/tags/{tagId}/pairs")                                          ->
-                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              // The editor's two row writes, each carrying the row's part of speech, notes and form-of links. 403 is
+              // shared data only an administrator may change (`WordService.guardSharedEdit`); 409 is the pair quota,
+              // an unconfirmed dictionary change, or a part of speech that duplicates another word.
+              ("POST", "/api/tags/{tagId}/entries")                                       ->
+                Set(Created, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              ("PUT", "/api/tags/{tagId}/entries")                                        ->
+                Set(Ok, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
+              // A read of the dictionary's grammar: an unknown language or part of speech is an empty list, not a 404.
+              ("GET", "/api/words/form-relations")                                        ->
+                Set(Ok, BadRequest, Unauthorized),
               ("DELETE", "/api/tags/{tagId}/pairs/{sourceWordId}")                        ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("POST", "/api/tags/{tagId}/pairs/bulk-delete")                             ->
@@ -545,7 +546,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 333,
+          declared == 334,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -577,6 +578,9 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("PUT", "/api/groups/{groupId}/tags/{tagId}"),
               ("DELETE", "/api/groups/{groupId}/tags/{tagId}"),
               ("DELETE", "/api/groups/{groupId}"),
+              // `WordService.guardSharedEdit`: dictionary data, or another reader's, is an administrator's to change.
+              ("POST", "/api/tags/{tagId}/entries"),
+              ("PUT", "/api/tags/{tagId}/entries"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,

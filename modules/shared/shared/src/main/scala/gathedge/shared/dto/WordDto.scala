@@ -25,8 +25,17 @@ final case class TaggedPair(tagId: Long, translationWordId: Long) derives JsonCo
   * type label. Used where the direction is shown but not interacted with: [[WordSummary.mainWord]] and
   * [[WordDetail.mainWords]]. `relation` is the raw canonical tag string (e.g. `"dative,definite,plural"`); rendering it
   * into words is `Labels.grammarRelation` on the client, so it follows the reader's own locale.
+  *
+  * `fromDictionary` says the import wrote the link; `createdByMe` says this reader made it. Filled on
+  * [[WordDetail.mainWords]], where the wordlist editor offers to remove a link, and read there to decide whether it
+  * may: a reader removes their own, and only an administrator removes the rest, after a warning for dictionary data.
   */
-final case class WordFormRef(word: Word, relation: String) derives JsonCodec
+final case class WordFormRef(
+  word: Word,
+  relation: String,
+  fromDictionary: Boolean = false,
+  createdByMe: Boolean = false,
+) derives JsonCodec
 
 /** One entry of a lemma's [[WordSummary.variants]] column: the form, its relation, and whether it is the row a search
   * landed on directly — the ★ marker the listing shows when this exact word id is also present as its own row on the
@@ -88,6 +97,9 @@ final case class TranslationEntry(
   *
   * `mainWords` names every lemma this word is a form of — ordinarily zero or one. `forms` lists every form of this
   * word, uncapped (unlike [[WordSummary.variants]]'s listing-row cap): the detail screen is where the whole set lives.
+  *
+  * `fromDictionary` says the import wrote the word; `createdByMe` says this reader minted it. Together they decide who
+  * may change the word's part of speech: its author, and otherwise only an administrator.
   */
 final case class WordDetail(
   word: Word,
@@ -96,6 +108,8 @@ final case class WordDetail(
   pairs: List[TaggedPair],
   mainWords: List[WordFormRef],
   forms: List[WordFormEntry],
+  fromDictionary: Boolean = false,
+  createdByMe: Boolean = false,
 ) derives JsonCodec
 
 /** One page of the vocabulary, counted the way [[UserPage]] is: `total` counts what the filter matches, not what the
@@ -178,10 +192,10 @@ enum TagPairWord derives JsonCodec {
   */
 final case class TagPairInput(source: TagPairWord, target: TagPairWord) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.attachWord]]'s body: one word to put into a tag on its own, with no answer yet —
-  * the unified editor's "commit a source word, then press Enter on the empty answer box" action. `word` reuses
-  * [[TagPairWord]], so it may be an existing dictionary word or one to create. It must be in one of the tag's two
-  * languages.
+/** What `WordService.attachWord` takes: one word to put into a tag on its own, with no answer yet — the add row's
+  * "commit a source word, then press Enter on the empty answer box" action, which reaches it through
+  * [[gathedge.shared.api.WordEndpoints.addEntry]]. `word` reuses [[TagPairWord]], so it may be an existing dictionary
+  * word or one to create. It must be in one of the tag's two languages.
   */
 final case class TagWordInput(word: TagPairWord) derives JsonCodec
 
@@ -253,6 +267,9 @@ final case class PairSelectionResponse(warning: Option[MessageRef]) derives Json
   * `comment`/`targetComment` are the notes the reader wrote beside each side — the `(növény)` of `levél (növény)`. One
   * per side because either cell of an imported line may have carried one and they say different things. They are the
   * reader's own, held on `word_tags`, and never a property of the shared word.
+  *
+  * `fromDictionary`/`targetFromDictionary` say the import wrote that side's word. With `createdByMe` they tell the
+  * editor who may change the pair's part of speech before it asks the server, which applies the same rule.
   */
 final case class TagEntry(
   source: Word,
@@ -266,6 +283,8 @@ final case class TagEntry(
   otherTranslations: List[TranslationOption],
   comment: Option[String] = None,
   targetComment: Option[String] = None,
+  fromDictionary: Boolean = false,
+  targetFromDictionary: Boolean = false,
 ) derives JsonCodec
 
 /** One page of one wordlist's rows — what `GET /api/tags/{tagId}/entries/page` answers, unlike the unpaged
@@ -281,7 +300,7 @@ final case class TagEntry(
   */
 final case class TagEntryPage(items: List[TagEntry], total: Long, hasPairs: Boolean) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.addPair]]/`.replacePair`'s answer: the row as it now stands, plus the same
+/** [[gathedge.shared.api.WordEndpoints.addEntry]]/`.editEntry`'s answer: the row as it now stands, plus the same
   * soft-quota warning [[PairSelectionResponse]] carries when the write crossed the pair quota's soft threshold.
   *
   * `alreadyPresent` says the write named a row the wordlist already held — every one of these endpoints is idempotent,
@@ -294,9 +313,62 @@ final case class TagEntryResponse(
   alreadyPresent: Boolean = false,
 ) derives JsonCodec
 
-/** [[gathedge.shared.api.WordEndpoints.replacePair]]'s body: which row is being edited (its old source word id, and its
-  * old answer word id when it had one), and the pair it should become. `next` reuses [[TagPairInput]] — either side may
-  * be an existing word or one to create.
+/** A main word to file one word of an editor row under, and which form of it the word is: `Häuser` is the `plural` of
+  * `Haus`. `mainWord` may be a dictionary word or one to create, as on the add row. `relation` must be one of the
+  * relations [[gathedge.shared.api.WordEndpoints.formRelations]] offers for the word's language and part of speech.
+  */
+final case class MainWordLink(mainWord: TagPairWord, relation: String) derives JsonCodec
+
+/** A form-of link to remove from one word of an editor row: the main word, and the relation it is filed under. */
+final case class MainWordUnlink(mainWordId: Long, relation: String) derives JsonCodec
+
+/** One word of an editor row, with what the reader writes beside it.
+  *
+  * `note` is the reader's note beside the word in this wordlist: the `(növény)` of `levél (növény)`, which an import
+  * reads off the cell. It belongs to the membership, not to the shared word. On an add, `None` keeps a note the word
+  * already has. An edit sends the whole row, so there `None` or a blank note clears it.
+  *
+  * `mainWord` files the word as a form of a main word. A word is a form of one main word at most, so it is refused
+  * while the word keeps a link to another. `removeMainWords` removes links the word already has, which is how one is
+  * replaced in the same request.
+  */
+final case class TagEntryWord(
+  word: TagPairWord,
+  note: Option[String] = None,
+  mainWord: Option[MainWordLink] = None,
+  removeMainWords: List[MainWordUnlink] = Nil,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addEntry]]'s body, and the row an edit makes: one word or a pair, and everything
+  * the editor writes with them.
+  *
+  * `source` and `target` are the two cells of the row. At least one must be there; with only one, the row is that word
+  * alone, in either of the tag's two languages.
+  *
+  * `partOfSpeech` is the row's, which its words and their main words share. A word with another part of speech is given
+  * it. That is a change to shared data, so a word that is not the reader's own is an administrator's to change, and a
+  * dictionary word also needs `confirm`: the answer to the editor's warning. Removing a link the reader did not make
+  * follows the same rule. With no `partOfSpeech` each word keeps its own.
+  */
+final case class TagEntryInput(
+  source: Option[TagEntryWord],
+  target: Option[TagEntryWord],
+  partOfSpeech: Option[PartOfSpeech] = None,
+  confirm: Boolean = false,
+) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.editEntry]]'s body: which row is edited (its old source word id, and its old
+  * answer word id when it had one), and the row it becomes.
+  */
+final case class TagEntryEditRequest(
+  oldSourceWordId: Long,
+  oldTargetWordId: Option[Long],
+  entry: TagEntryInput,
+) derives JsonCodec
+
+/** What `WordService.replacePair` takes: which row is being edited (its old source word id, and its old answer word id
+  * when it had one), and the pair it should become. [[TagEntryEditRequest]] is what the API takes. `next` reuses
+  * [[TagPairInput]] — either side may be an existing word or one to create.
   */
 final case class ReplacePairRequest(
   oldSourceWordId: Long,

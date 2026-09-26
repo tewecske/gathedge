@@ -17,9 +17,10 @@ import org.scalajs.dom
   * and blur just leave the field — a reader who clicks away or tabs past has not chosen anything, so nothing is added
   * and they can still go back and fix the other side.
   *
-  * '''`translateFrom`''' is the other half of the create page's behaviour: give it the id of the word on the opposite
-  * side and, with nothing typed, the dropdown offers that word's known translations in this language — so the reader
-  * can pick the answer straight away instead of typing it.
+  * '''`translateFrom`''' is the other half of the create page's behaviour: give it the detail of the word on the
+  * opposite side and, with nothing typed, the dropdown offers that word's known translations in this language — so the
+  * reader can pick the answer straight away instead of typing it. The parent reads the detail, since it reads it anyway
+  * for the word's own box; fetching it here as well asked for the same word twice.
   *
   * '''On commit it emits exactly the word the reader chose''' — a [[TagPairWord.Existing]] for a dictionary row, a
   * [[TagPairWord.New]] carrying the language/text/part-of-speech/gender for one to create — the same contract the
@@ -33,10 +34,14 @@ final class WordPicker(
   partOfSpeech: Signal[Option[PartOfSpeech]],
   onCommit: Observer[TagPairWord],
   placeholderSignal: Signal[String],
-  translateFrom: Signal[Option[Long]] = Val(None),
+  translateFrom: Signal[Option[WordDetail]] = Val(None),
   onCommitWord: Observer[Option[Word]] = Observer.empty[Option[Word]],
   // Enter pressed while the field is empty and offers nothing. The add row uses it to add the source word alone.
   onEmptyCommit: Observer[Unit] = Observer.empty[Unit],
+  // Offer only main words, never a word that is itself a form — the "form of" picker's rule.
+  mainOnly: Boolean = false,
+  // Offer the typed text as a word to create. Off where the pick must be a word the dictionary already has.
+  allowNew: Boolean = true,
 ) {
 
   private val queryVar                         = Var("")
@@ -48,6 +53,10 @@ final class WordPicker(
   private val langMirror                       = Var(WordLanguage.En)
   private val suggestionsVar                   = Var(List.empty[Word])
   private var inputRef: Option[dom.html.Input] = None
+
+  // A radio group is page-wide by name, so each picker's article buttons need a name of their own: the wordlist editor
+  // shows a German word box and a German main-word box side by side.
+  private val articleGroup = WordPicker.nextArticleGroup()
 
   def setText(text: String): Unit = queryVar.set(text)
   def clear(): Unit               = { queryVar.set(""); resultsVar.set(Nil); highlightVar.set(-1); openVar.set(false) }
@@ -73,7 +82,7 @@ final class WordPicker(
       .map(_._1)
       .take(maxRows)
     val exact  = ranked.exists(_.text.equalsIgnoreCase(search))
-    val newRow = if (search.nonEmpty && !exact) List[Completion](NewCompletion(search)) else Nil
+    val newRow = if (allowNew && search.nonEmpty && !exact) List[Completion](NewCompletion(search)) else Nil
     ranked.map(DictionaryCompletion.apply) ++ newRow
   }
 
@@ -120,7 +129,7 @@ final class WordPicker(
     val list = currentOptions()
     val h    = highlightVar.now()
     if (list.nonEmpty) commit(list(if (h >= 0 && h < list.size) h else 0))
-    else if (bare(langMirror.now(), queryVar.now()).nonEmpty)
+    else if (allowNew && bare(langMirror.now(), queryVar.now()).nonEmpty)
       commit(NewCompletion(bare(langMirror.now(), queryVar.now())))
     else onEmptyCommit.onNext(())
   }
@@ -175,11 +184,8 @@ final class WordPicker(
       partOfSpeech --> posMirror.writer,
       // The opposite word's known translations in this language, offered as the no-typing dropdown. Driven off the
       // signal itself, not its `.updates`, so a value already present when the field mounts (an edit, a re-render)
-      // still fetches rather than waiting for the next change.
-      translateFrom.flatMapSwitch {
-        case Some(id) => WordApiClient.get(id).map(_.toOption).startWith(None)
-        case None     => Val(Option.empty[WordDetail])
-      } --> Observer[Option[WordDetail]] { detail =>
+      // still shows rather than waiting for the next change.
+      translateFrom --> Observer[Option[WordDetail]] { detail =>
         val lang        = langMirror.now()
         val suggestions =
           detail.map(_.translations.filter(_.word.language == lang).map(_.word).take(maxRows)).getOrElse(Nil)
@@ -194,7 +200,7 @@ final class WordPicker(
       child.maybe <-- language.map { lang =>
         Option.when(LanguageProfile.of(lang).hasGenders)(
           ArticlePicker
-            .render(s"wp-${lang}-article", LanguageProfile.of(lang), queryVar, () => focus())
+            .render(s"$articleGroup-$lang", LanguageProfile.of(lang), queryVar, () => focus())
             .amend(cls := "self-start")
         )
       },
@@ -208,7 +214,13 @@ final class WordPicker(
           if (search.isEmpty) EventStream.fromValue(List.empty[Word])
           else {
             WordApiClient
-              .list(pageSize = Some(12), search = Some(search), language = Some(lang), partOfSpeech = pos)
+              .list(
+                pageSize = Some(12),
+                search = Some(search),
+                language = Some(lang),
+                partOfSpeech = pos,
+                mainOnly = Option.when(mainOnly)(true),
+              )
               .map(_.getOrElse(WordPage(Nil, 0L)).items.map(_.word))
           }
         } --> Observer[List[Word]] { items =>
@@ -248,5 +260,15 @@ final class WordPicker(
         )
       )
     }
+  }
+}
+
+object WordPicker {
+
+  private var articleGroups = 0
+
+  private def nextArticleGroup(): String = {
+    articleGroups += 1
+    s"wp-$articleGroups-article"
   }
 }

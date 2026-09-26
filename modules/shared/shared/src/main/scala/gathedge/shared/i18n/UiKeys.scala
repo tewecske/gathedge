@@ -1035,6 +1035,27 @@ object UiKeys {
     */
   val tagsEditorNewBadge: String = key("ui.tags.editor.newBadge")
 
+  /** The wordlist row editor (`TagEntryEditor`), on the add row and in a row's edit mode. Per word it holds the
+    * reader's note and the main words this word is a form of, which an import otherwise writes from a cell's note and
+    * an extra column.
+    */
+  val tagsEditorNoteLabel: String       = key("ui.tags.editor.noteLabel")
+  val tagsEditorNotePlaceholder: String = key("ui.tags.editor.notePlaceholder")
+  val tagsEditorFormOfLabel: String     = key("ui.tags.editor.formOfLabel")
+  val tagsEditorMainWordSearch: String  = key("ui.tags.editor.mainWordSearch")
+  val tagsEditorFormRelation: String    = key("ui.tags.editor.formRelation")
+  val tagsEditorNoRelations: String     = key("ui.tags.editor.noRelations")
+  val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
+
+  /** The row's part-of-speech select. The add row starts at `anyPartOfSpeech`, and a form can be added only once a part
+    * of speech is chosen. `dictionaryWarning` is what an administrator confirms before changing or removing dictionary
+    * data.
+    */
+  val tagsEditorPartOfSpeech: String          = key("ui.tags.editor.partOfSpeech")
+  val tagsEditorAnyPartOfSpeech: String       = key("ui.tags.editor.anyPartOfSpeech")
+  val tagsEditorFormNeedsPartOfSpeech: String = key("ui.tags.editor.formNeedsPartOfSpeech")
+  val tagsEditorDictionaryWarn: String        = key("ui.tags.editor.dictionaryWarning")
+
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only
     * in this tag" is a word in none of the reader's other tags.
