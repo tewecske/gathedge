@@ -62,6 +62,10 @@ final case class GameSetupWord(
 /** A game as a caller may see it: no owner-only data, no id — `slug` is what a reader addresses it by. `playCount` and
   * `likeCount` are the same public aggregates [[AllGameSummary]] carries — `0` for a game nobody has played or
   * favorited yet, never absent — surfaced here so the game page can warn its owner before a delete removes them.
+  *
+  * `lastVariant` is the reader's own most recent play of this game, so the start page can offer the same settings
+  * again. It is the only per-reader field here. `GET /api/games/{slug}` fills it for a signed-in reader who has played
+  * the game. Every other answer leaves it `None`.
   */
 final case class GameDetail(
   slug: String,
@@ -71,6 +75,7 @@ final case class GameDetail(
   tags: List[GameTagRef],
   playCount: Long = 0L,
   likeCount: Long = 0L,
+  lastVariant: Option[GameVariantDto] = None,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design

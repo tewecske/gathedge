@@ -116,6 +116,9 @@ trait GameRepository {
 
   def findPlay(id: Long): Task[Option[GamePlayRow]]
 
+  /** `playerUserId`'s most recently started play of `gameId`, finished or not. */
+  def latestPlayOf(gameId: Long, playerUserId: Long): Task[Option[GamePlayRow]]
+
   /** Raw `(word_id, translation_word_id)` pairs for `gameId`'s tags, scoped to `sourceLanguage` -> `targetLanguage` —
     * the same join shape as [[eligibleTags]], through `game_tags` instead of a bare tag id list. Not deduped: a word
     * can sit under more than one of the game's tags. Deduping to one row per source word (lowest translation id on a
@@ -309,6 +312,9 @@ object GameRepository {
 
   def findPlay(id: Long): RIO[GameRepository, Option[GamePlayRow]] =
     ZIO.serviceWithZIO[GameRepository](_.findPlay(id))
+
+  def latestPlayOf(gameId: Long, playerUserId: Long): RIO[GameRepository, Option[GamePlayRow]] =
+    ZIO.serviceWithZIO[GameRepository](_.latestPlayOf(gameId, playerUserId))
 
   def eligibleWordPairs(
     gameId: Long,
@@ -557,6 +563,19 @@ final class GameRepositoryLive(dataSource: DataSource)
   def findPlay(id: Long): Task[Option[GamePlayRow]] = {
     logged(run(ctx.run(quote(gamePlays.filter(_.id == lift(id))))).map(_.headOption)) { found =>
       s"games.findPlay found=${found.isDefined}"
+    }
+  }
+
+  def latestPlayOf(gameId: Long, playerUserId: Long): Task[Option[GamePlayRow]] = {
+    // The id breaks a tie between two plays started in the same millisecond.
+    val q = quote {
+      gamePlays
+        .filter(play => play.gameId == lift(gameId) && play.playerUserId == lift(playerUserId))
+        .sortBy(play => (play.startedAt, play.id))(using Ord(Ord.desc, Ord.desc))
+        .take(1)
+    }
+    logged(run(ctx.run(q)).map(_.headOption)) { found =>
+      s"games.latestPlayOf game=$gameId player=$playerUserId found=${found.isDefined}"
     }
   }
 
