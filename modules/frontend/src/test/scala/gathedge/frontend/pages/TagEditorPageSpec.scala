@@ -52,6 +52,23 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     }
   }
 
+  /** A German noun with a note beside a Hungarian word; `fromDictionary` says whether the import wrote the German one.
+    */
+  private def seed(fromDictionary: Boolean): TagEntryEditor.Seed = {
+    TagEntryEditor.Seed(
+      Some(
+        TagEntryEditor.SeedSide(
+          Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None),
+          Some("Gebäude"),
+          fromDictionary = fromDictionary,
+          mine = !fromDictionary,
+        )
+      ),
+      Some(TagEntryEditor.SeedSide(Word(2L, WordLanguage.Hu, "ház", PartOfSpeech.Other, None), None)),
+      PartOfSpeech.Noun,
+    )
+  }
+
   private def placeholders(container: dom.Element): List[String] = {
     container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input].placeholder)
   }
@@ -299,28 +316,33 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             )
           }
         },
-        test("an edit opens on the row's words, notes and part of speech, with a main-word search per word") {
-          val seed = TagEntryEditor.Seed(
-            Some(TagEntryEditor.SeedSide(Word(1L, WordLanguage.De, "Haus", PartOfSpeech.Noun, None), Some("Gebäude"))),
-            Some(TagEntryEditor.SeedSide(Word(2L, WordLanguage.Hu, "ház", PartOfSpeech.Other, None), None)),
-            PartOfSpeech.Noun,
-          )
-          withEditor(Some(seed)) { container =>
-            val inputs = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
-            val select = container.querySelector("select").asInstanceOf[dom.html.Select]
-            val values = inputs.map(_.value)
-            val boxes  = placeholders(container)
-            val save   = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
-            val cancel = buttonNamed(container, UiKeys.commonCancel).isDefined
+        test("an edit opens on the row's words, notes and part of speech, and reads each word before its form") {
+          withEditor(Some(seed(fromDictionary = false))) { container =>
+            val inputs   = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
+            val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val values   = inputs.map(_.value)
+            val boxes    = placeholders(container)
+            val spinners = container.querySelectorAll(".loading").length
+            val save     = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
+            val cancel   = buttonNamed(container, UiKeys.commonCancel).isDefined
             assertTrue(
               values.contains("Haus"),
               values.contains("ház"),
               values.contains("Gebäude"),
               select.value == PartOfSpeech.code(PartOfSpeech.Noun),
-              boxes.count(_ == UiKeys.tagsEditorMainWordSearch) == 2,
+              !select.disabled,
+              // No backend here, so each word's links never arrive: a spinner, not a main-word box.
+              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
+              spinners == 2,
               save,
               cancel,
             )
+          }
+        },
+        test("a dictionary word in the row locks the part of speech") {
+          withEditor(Some(seed(fromDictionary = true))) { container =>
+            val locked = container.querySelector("select").asInstanceOf[dom.html.Select].disabled
+            assertTrue(locked)
           }
         },
       ),
