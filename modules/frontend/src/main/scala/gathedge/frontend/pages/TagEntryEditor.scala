@@ -102,7 +102,7 @@ private[pages] final class TagEntryEditor(
       })),
       onEmptyCommit = Observer[Unit](_ => if (other.wordVar.now().isDefined) submitBus.emit(())),
       placeholderSignal = side.language.map(language => I18n.t(placeholderKey, Labels.language(language))),
-      translateFrom = other.wordVar.signal.map(_.flatMap(TagEntryEditor.idOf)),
+      translateFrom = other.detailSignal,
     )
   }
 
@@ -263,6 +263,11 @@ private[pages] final class TagEntryEditor(
     }
 
     def gate: Option[WordGate] = gateOf(wordVar.now(), detailVar.now())
+
+    /** The detail of the word in the box, once read — also what the other box offers this word's translations from. */
+    val detailSignal: Signal[Option[WordDetail]] = {
+      wordVar.signal.combineWith(detailVar.signal).map { case (word, detail) => detailOf(word, detail) }.distinct
+    }
 
     /** The word in the box is not the reader's to change. A new word is theirs; a word not yet read is not locked, and
       * the server still decides.
