@@ -361,7 +361,7 @@ object WordRoutes {
   private val addMainWordRoute = {
     WordEndpoints.addMainWord.implementHandler(
       handler { (tagId: Long, wordId: Long, body: TagEntryMainWordRequest) =>
-        userId.flatMap(id => WordService.addMainWord(tagId, wordId, body, id).mapError(ApiFailures.word))
+        userId.flatMap(id => WordService.addMainWord(tagId, wordId, body, id).mapError(ApiFailures.wordEdit))
       }
     )
   }
