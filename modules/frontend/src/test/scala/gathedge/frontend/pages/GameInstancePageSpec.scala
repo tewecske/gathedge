@@ -47,6 +47,16 @@ object GameInstancePageSpec extends ZIOSpecDefault {
           WordLimitChoice.toLimit(WordLimitChoice.Custom, "x") == None,
         )
       },
+      test("WordLimitChoice.fromLimit gives back the radio and text toLimit reads") {
+        val limits = List(None, Some(10), Some(20), Some(7))
+        assertTrue(
+          WordLimitChoice.fromLimit(None) == (WordLimitChoice.All, ""),
+          WordLimitChoice.fromLimit(Some(10)) == (WordLimitChoice.Ten, ""),
+          WordLimitChoice.fromLimit(Some(20)) == (WordLimitChoice.Twenty, ""),
+          WordLimitChoice.fromLimit(Some(7)) == (WordLimitChoice.Custom, "7"),
+          limits.forall(limit => (WordLimitChoice.toLimit.tupled)(WordLimitChoice.fromLimit(limit)) == limit),
+        )
+      },
     )
   }
 }

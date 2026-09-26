@@ -134,7 +134,8 @@ trait GameService {
   /** Every wordlist set more than one game was built from — the administrator's duplicate report. */
   def duplicateTagGames: UIO[List[DuplicateGameGroup]]
 
-  def getBySlug(slug: String): IO[GameFailure, GameDetail]
+  /** `readerId`, when given, fills [[GameDetail.lastVariant]] from that reader's own latest play of the game. */
+  def getBySlug(slug: String, readerId: Option[Long] = None): IO[GameFailure, GameDetail]
 
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
   def rename(slug: String, newName: String, requesterUserId: Long): IO[GameFailure, GameDetail]
@@ -311,8 +312,8 @@ object GameService {
   def duplicateTagGames: URIO[GameService, List[DuplicateGameGroup]] =
     ZIO.serviceWithZIO[GameService](_.duplicateTagGames)
 
-  def getBySlug(slug: String): ZIO[GameService, GameFailure, GameDetail] =
-    ZIO.serviceWithZIO[GameService](_.getBySlug(slug))
+  def getBySlug(slug: String, readerId: Option[Long] = None): ZIO[GameService, GameFailure, GameDetail] =
+    ZIO.serviceWithZIO[GameService](_.getBySlug(slug, readerId))
 
   def rename(slug: String, newName: String, requesterUserId: Long): ZIO[GameService, GameFailure, GameDetail] =
     ZIO.serviceWithZIO[GameService](_.rename(slug, newName, requesterUserId))
@@ -752,11 +753,12 @@ final case class GameServiceLive(
       .sortBy(group => group.tags.map(_.name.toLowerCase).mkString(", "))
   }
 
-  def getBySlug(slug: String): IO[GameFailure, GameDetail] = {
+  def getBySlug(slug: String, readerId: Option[Long] = None): IO[GameFailure, GameDetail] = {
     for {
       row    <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
       detail <- detailOf(row)
-    } yield detail
+      last   <- ZIO.foreach(readerId)(id => repo.latestPlayOf(row.id, id).orDie).map(_.flatten)
+    } yield detail.copy(lastVariant = last.map(variantOf))
   }
 
   /** Loads `slug` and checks it belongs to `requesterUserId` — the ownership check every owner-only game action needs,

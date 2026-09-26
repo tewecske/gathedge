@@ -20,11 +20,10 @@ import zio.http.*
   *
   * `getRoute`, `playSetupRoute` and `allGamesRoute` are wrapped in `optionalUser` rather than `authenticated`, the same
   * reasoning `WordRoutes` applies to the dictionary reads: a shared game link, the play-variant picker's preview it
-  * leads to, and the catalog of every account's games must all be viewable before any guest is minted. `getRoute`'s
-  * handler does not consume `Option[User]` — `GameDetail` carries no owner-only data — but `playSetupRoute` and
-  * `allGamesRoute` do, the same as `WordRoutes.listRoute`/`.getRoute`: a signed-in caller's own play history still
-  * shapes the `LeastPlayed`/`MostMistakes` ordering and their favorite marks, while an anonymous caller simply has
-  * none.
+  * leads to, and the catalog of every account's games must all be viewable before any guest is minted. All three
+  * consume `Option[User]`, the same as `WordRoutes.listRoute`/`.getRoute`: a signed-in caller's own play history fills
+  * `GameDetail.lastVariant`, shapes the `LeastPlayed`/`MostMistakes` ordering, and marks their favorites, while an
+  * anonymous caller simply has none. `GameDetail` still carries no owner-only data.
   *
   * The aspects are on the `Routes` values, never on an individual `handler`: `getRoute`/`renameRoute`/`playSetupRoute`
   * take a path parameter, and attaching a context-providing aspect to one of those compiles and then throws
@@ -191,7 +190,7 @@ object GameRoutes {
 
   private val getRoute = {
     GameEndpoints.get.implementHandler(
-      handler((slug: String) => GameService.getBySlug(slug).mapError(ApiFailures.game))
+      handler((slug: String) => reader.flatMap(id => GameService.getBySlug(slug, id).mapError(ApiFailures.game)))
     )
   }
 

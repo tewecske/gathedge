@@ -11,7 +11,7 @@ import gathedge.backend.db.{
   WordRow,
 }
 import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, WordLanguage, WordPreference}
-import gathedge.shared.dto.AllGameSort
+import gathedge.shared.dto.{AllGameSort, GameVariantDto}
 import zio._
 import zio.test._
 
@@ -268,6 +268,42 @@ object GameServiceSpec extends ZIOSpecDefault {
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           found   <- GameService.getBySlug(created.slug)
         } yield assertTrue(found == created)
+      },
+      test("a reader's latest play of the game comes back as lastVariant, and only for that reader") {
+        for {
+          owner     <- newUser()
+          other     <- newUser()
+          tagId     <- eligibleTagWithPairs(owner, "lastVariant", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          unplayed  <- GameService.getBySlug(created.slug, Some(owner))
+          _         <- GameService.startPlay(created.slug, owner)
+          _         <- GameService.startPlay(
+                         created.slug,
+                         owner,
+                         swapDirection = true,
+                         wordLimit = Some(2),
+                         includeDefiniteArticles = false,
+                         wordPreference = WordPreference.MostMistakes,
+                         mode = GameMode.MultipleChoice,
+                       )
+          mine      <- GameService.getBySlug(created.slug, Some(owner))
+          theirs    <- GameService.getBySlug(created.slug, Some(other))
+          anonymous <- GameService.getBySlug(created.slug)
+        } yield assertTrue(
+          unplayed.lastVariant.isEmpty,
+          mine.lastVariant.contains(
+            GameVariantDto(
+              WordLanguage.Hu,
+              WordLanguage.De,
+              Some(2),
+              includeDefiniteArticles = false,
+              WordPreference.MostMistakes,
+              GameMode.MultipleChoice,
+            )
+          ),
+          theirs.lastVariant.isEmpty,
+          anonymous.lastVariant.isEmpty,
+        )
       },
       test("allGames answers every account's games, with tag names and play counts") {
         // The listing is no longer owner-scoped, so other tests' games share the DB. Both games here carry a unique

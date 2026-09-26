@@ -67,6 +67,20 @@ private object WordLimitChoice {
       case WordLimitChoice.Custom => customText.trim.toIntOption.filter(_ > 0)
     }
   }
+
+  /** The reverse of [[toLimit]]: the choice and custom text that give back `limit`. A preset number selects its preset
+    * radio; any other number is a custom entry.
+    */
+  def fromLimit(limit: Option[Int]): (WordLimitChoice, String) = {
+    limit match {
+      case None    => (WordLimitChoice.All, "")
+      case Some(n) =>
+        presets.collectFirst { case (choice, `n`) => choice } match {
+          case Some(choice) => (choice, "")
+          case None         => (WordLimitChoice.Custom, n.toString)
+        }
+    }
+  }
 }
 
 private class GameInstancePage(slug: String, generateQr: String => Future[String]) {
@@ -238,6 +252,21 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     }
   }
 
+  /** Sets every control to the reader's last play of this game (`GameDetail.lastVariant`). The swap is worked out the
+    * same way `GameReplay.start` does it: against the game's own stored direction.
+    */
+  private def restore(detail: GameDetail, variant: GameVariantDto): Unit = {
+    val (choice, customText)   = WordLimitChoice.fromLimit(variant.wordLimit)
+    Var.set(
+      swapDirectionVar   -> (variant.sourceLanguage != detail.sourceLanguage),
+      gameModeVar        -> variant.mode,
+      wordLimitChoiceVar -> choice,
+      customLimitTextVar -> customText,
+      includeArticlesVar -> variant.includeDefiniteArticles,
+      wordPreferenceVar  -> variant.wordPreference,
+    )
+  }
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-xl mx-auto",
@@ -253,6 +282,9 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
         Observer[Either[ApiError, GameDetail]] {
           case Right(detail) =>
+            // Before `gameVar`: while it is empty, the preview ignores these writes, so the first fetch below
+            // already uses the restored direction and preference.
+            detail.lastVariant.foreach(restore(detail, _))
             Var.set(gameVar -> Some(detail), nameVar -> detail.name, missingVar -> false, errorVar -> None)
             gameLoadedBus.emit(())
           case Left(err)     =>
