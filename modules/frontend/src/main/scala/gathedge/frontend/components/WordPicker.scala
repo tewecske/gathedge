@@ -17,9 +17,10 @@ import org.scalajs.dom
   * and blur just leave the field — a reader who clicks away or tabs past has not chosen anything, so nothing is added
   * and they can still go back and fix the other side.
   *
-  * '''`translateFrom`''' is the other half of the create page's behaviour: give it the id of the word on the opposite
-  * side and, with nothing typed, the dropdown offers that word's known translations in this language — so the reader
-  * can pick the answer straight away instead of typing it.
+  * '''`translateFrom`''' is the other half of the create page's behaviour: give it the detail of the word on the
+  * opposite side and, with nothing typed, the dropdown offers that word's known translations in this language — so the
+  * reader can pick the answer straight away instead of typing it. The parent reads the detail, since it reads it anyway
+  * for the word's own box; fetching it here as well asked for the same word twice.
   *
   * '''On commit it emits exactly the word the reader chose''' — a [[TagPairWord.Existing]] for a dictionary row, a
   * [[TagPairWord.New]] carrying the language/text/part-of-speech/gender for one to create — the same contract the
@@ -33,7 +34,7 @@ final class WordPicker(
   partOfSpeech: Signal[Option[PartOfSpeech]],
   onCommit: Observer[TagPairWord],
   placeholderSignal: Signal[String],
-  translateFrom: Signal[Option[Long]] = Val(None),
+  translateFrom: Signal[Option[WordDetail]] = Val(None),
   onCommitWord: Observer[Option[Word]] = Observer.empty[Option[Word]],
   // Enter pressed while the field is empty and offers nothing. The add row uses it to add the source word alone.
   onEmptyCommit: Observer[Unit] = Observer.empty[Unit],
@@ -183,11 +184,8 @@ final class WordPicker(
       partOfSpeech --> posMirror.writer,
       // The opposite word's known translations in this language, offered as the no-typing dropdown. Driven off the
       // signal itself, not its `.updates`, so a value already present when the field mounts (an edit, a re-render)
-      // still fetches rather than waiting for the next change.
-      translateFrom.flatMapSwitch {
-        case Some(id) => WordApiClient.get(id).map(_.toOption).startWith(None)
-        case None     => Val(Option.empty[WordDetail])
-      } --> Observer[Option[WordDetail]] { detail =>
+      // still shows rather than waiting for the next change.
+      translateFrom --> Observer[Option[WordDetail]] { detail =>
         val lang        = langMirror.now()
         val suggestions =
           detail.map(_.translations.filter(_.word.language == lang).map(_.word).take(maxRows)).getOrElse(Nil)
