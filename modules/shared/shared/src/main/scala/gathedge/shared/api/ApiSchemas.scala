@@ -62,11 +62,12 @@ import gathedge.shared.dto.{
   CreateTagWithPairsRequest,
   CreateUserRequest,
   TagPairInput,
+  MainWordLink,
+  MainWordUnlink,
+  TagEntryWord,
+  TagEntryInput,
+  TagEntryEditRequest,
   TagPairWord,
-  TagWordInput,
-  TagEntryNoteRequest,
-  TagEntryMainWordRequest,
-  TagEntryMainWordResponse,
   CreateWordRequest,
   DbStats,
   DeleteWordFormRequest,
@@ -116,7 +117,6 @@ import gathedge.shared.dto.{
   RouteUsage,
   RuntimeInfo,
   SetGenderRequest,
-  SetPartOfSpeechRequest,
   SetMemberRoleRequest,
   SetPasswordRequest,
   TagExportEntry,
@@ -133,7 +133,6 @@ import gathedge.shared.dto.{
   PairRef,
   BulkDeletePairsRequest,
   BulkDeleteWordsRequest,
-  ReplacePairRequest,
   SharedViewer,
   SharedWithMe,
   ShareCodeResponse,
@@ -238,14 +237,14 @@ object ApiSchemas {
   given Schema[CreateWordRequest]             = DeriveSchema.gen[CreateWordRequest]
   given Schema[AddTranslationRequest]         = DeriveSchema.gen[AddTranslationRequest]
   given Schema[SetGenderRequest]              = DeriveSchema.gen[SetGenderRequest]
-  given Schema[SetPartOfSpeechRequest]        = DeriveSchema.gen[SetPartOfSpeechRequest]
   given Schema[CreateTagRequest]              = DeriveSchema.gen[CreateTagRequest]
   given Schema[TagPairWord]                   = DeriveSchema.gen[TagPairWord]
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]
-  given Schema[TagWordInput]                  = DeriveSchema.gen[TagWordInput]
-  given Schema[TagEntryNoteRequest]           = DeriveSchema.gen[TagEntryNoteRequest]
-  given Schema[TagEntryMainWordRequest]       = DeriveSchema.gen[TagEntryMainWordRequest]
-  given Schema[TagEntryMainWordResponse]      = DeriveSchema.gen[TagEntryMainWordResponse]
+  given Schema[MainWordLink]                  = DeriveSchema.gen[MainWordLink]
+  given Schema[MainWordUnlink]                = DeriveSchema.gen[MainWordUnlink]
+  given Schema[TagEntryWord]                  = DeriveSchema.gen[TagEntryWord]
+  given Schema[TagEntryInput]                 = DeriveSchema.gen[TagEntryInput]
+  given Schema[TagEntryEditRequest]           = DeriveSchema.gen[TagEntryEditRequest]
   given Schema[CreateTagWithPairsRequest]     = DeriveSchema.gen[CreateTagWithPairsRequest]
   given Schema[RenameTagRequest]              = DeriveSchema.gen[RenameTagRequest]
   given Schema[SetTagLanguagesRequest]        = DeriveSchema.gen[SetTagLanguagesRequest]
@@ -254,7 +253,6 @@ object ApiSchemas {
   given Schema[TagEntry]                      = DeriveSchema.gen[TagEntry]
   given Schema[TagEntryPage]                  = DeriveSchema.gen[TagEntryPage]
   given Schema[TagEntryResponse]              = DeriveSchema.gen[TagEntryResponse]
-  given Schema[ReplacePairRequest]            = DeriveSchema.gen[ReplacePairRequest]
   given Schema[PairRef]                       = DeriveSchema.gen[PairRef]
   given Schema[BulkDeletePairsRequest]        = DeriveSchema.gen[BulkDeletePairsRequest]
   given Schema[BulkDeleteWordsRequest]        = DeriveSchema.gen[BulkDeleteWordsRequest]

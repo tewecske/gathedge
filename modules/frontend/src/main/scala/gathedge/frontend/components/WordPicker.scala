@@ -53,6 +53,10 @@ final class WordPicker(
   private val suggestionsVar                   = Var(List.empty[Word])
   private var inputRef: Option[dom.html.Input] = None
 
+  // A radio group is page-wide by name, so each picker's article buttons need a name of their own: the wordlist editor
+  // shows a German word box and a German main-word box side by side.
+  private val articleGroup = WordPicker.nextArticleGroup()
+
   def setText(text: String): Unit = queryVar.set(text)
   def clear(): Unit               = { queryVar.set(""); resultsVar.set(Nil); highlightVar.set(-1); openVar.set(false) }
   def focus(): Unit               = inputRef.foreach(_.focus())
@@ -198,7 +202,7 @@ final class WordPicker(
       child.maybe <-- language.map { lang =>
         Option.when(LanguageProfile.of(lang).hasGenders)(
           ArticlePicker
-            .render(s"wp-${lang}-article", LanguageProfile.of(lang), queryVar, () => focus())
+            .render(s"$articleGroup-$lang", LanguageProfile.of(lang), queryVar, () => focus())
             .amend(cls := "self-start")
         )
       },
@@ -258,5 +262,15 @@ final class WordPicker(
         )
       )
     }
+  }
+}
+
+object WordPicker {
+
+  private var articleGroups = 0
+
+  private def nextArticleGroup(): String = {
+    articleGroups += 1
+    s"wp-$articleGroups-article"
   }
 }
