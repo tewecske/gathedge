@@ -267,7 +267,21 @@ object GameServiceSpec extends ZIOSpecDefault {
           tagId   <- eligibleTag(owner, "lesson1", WordLanguage.De, WordLanguage.Hu)
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           found   <- GameService.getBySlug(created.slug)
-        } yield assertTrue(found == created)
+        } yield assertTrue(found.copy(pool = Nil, reversePool = Nil) == created)
+      },
+      test("a known slug carries both directions' eligible pools, the same words the setup preview answers") {
+        for {
+          owner   <- newUser()
+          tagId   <- eligibleTagWithPairs(owner, "pools", WordLanguage.De, WordLanguage.Hu, count = 3)
+          created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          found   <- GameService.getBySlug(created.slug, Some(owner))
+          forward <- GameService.playSetupPreview(created.slug, Some(owner), swapDirection = false, WordPreference.All)
+          reverse <- GameService.playSetupPreview(created.slug, Some(owner), swapDirection = true, WordPreference.All)
+        } yield assertTrue(
+          found.pool.size == 3,
+          found.pool == forward,
+          found.reversePool == reverse,
+        )
       },
       test("a reader's latest play of the game comes back as lastVariant, and only for that reader") {
         for {

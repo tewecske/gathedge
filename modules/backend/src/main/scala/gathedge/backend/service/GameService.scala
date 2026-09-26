@@ -758,7 +758,9 @@ final case class GameServiceLive(
       row    <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
       detail <- detailOf(row)
       last   <- ZIO.foreach(readerId)(id => repo.latestPlayOf(row.id, id).orDie).map(_.flatten)
-    } yield detail.copy(lastVariant = last.map(variantOf))
+      pool   <- previewOf(row, readerId, swapDirection = false, WordPreference.All)
+      back   <- previewOf(row, readerId, swapDirection = true, WordPreference.All)
+    } yield detail.copy(lastVariant = last.map(variantOf), pool = pool, reversePool = back)
   }
 
   /** Loads `slug` and checks it belongs to `requesterUserId` — the ownership check every owner-only game action needs,
@@ -1030,20 +1032,32 @@ final case class GameServiceLive(
     swapDirection: Boolean,
     wordPreference: WordPreference,
   ): IO[GameFailure, List[GameSetupWord]] = {
+    repo
+      .findBySlug(slug)
+      .orDie
+      .someOrFail(GameFailure.NotFound)
+      .flatMap(game => previewOf(game, playerUserId, swapDirection, wordPreference))
+  }
+
+  /** [[playSetupPreview]] for a game already loaded — also what [[getBySlug]] fills both directions' pools from. */
+  private def previewOf(
+    game: GameRow,
+    playerUserId: Option[Long],
+    swapDirection: Boolean,
+    wordPreference: WordPreference,
+  ): UIO[List[GameSetupWord]] = {
+    val (resolvedSource, resolvedTarget) =
+      if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
     for {
-      game                            <- repo.findBySlug(slug).orDie.someOrFail(GameFailure.NotFound)
-      resolved                         =
-        if (swapDirection) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
-      (resolvedSource, resolvedTarget) = resolved
-      rawPairs                        <- repo.eligibleWordPairs(game.id, resolvedSource, resolvedTarget).orDie
-      pool                             = dedupeToOnePerWord(rawPairs)
-      stats                           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
-      words                           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
-      textById                         = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
-      posById                          = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
-      sortedPool                       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
-      ordered                          = preferenceOrderedStable(sortedPool, stats, wordPreference)
-      translationsById                 =
+      rawPairs        <- repo.eligibleWordPairs(game.id, resolvedSource, resolvedTarget).orDie
+      pool             = dedupeToOnePerWord(rawPairs)
+      stats           <- wordStats(game.id, playerUserId, resolvedSource, resolvedTarget)
+      words           <- repo.wordsByIds((rawPairs.map(_._1) ++ rawPairs.map(_._2)).distinct).orDie
+      textById         = words.map(w => w.id -> Word.displayText(w.language, w.text, w.gender)).toMap
+      posById          = words.flatMap(w => posOf(w).map(w.id -> _)).toMap
+      sortedPool       = pool.sortBy(pair => textById.getOrElse(pair._1, ""))
+      ordered          = preferenceOrderedStable(sortedPool, stats, wordPreference)
+      translationsById =
         rawPairs.groupBy(_._1).view.mapValues(_.map(_._2).distinct.flatMap(textById.get).sorted).toMap
     } yield ordered.flatMap { case (wordId, _) =>
       textById
