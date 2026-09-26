@@ -1032,16 +1032,14 @@ object UiKeys {
 
   /** The wordlist row editor (`TagEntryEditor`), on the add row and in a row's edit mode. Per word it holds the
     * reader's note and the main words this word is a form of, which an import otherwise writes from a cell's note and
-    * an extra column. `addForm` puts the main word just picked on the list, so another can be picked after it.
+    * an extra column.
     */
   val tagsEditorNoteLabel: String       = key("ui.tags.editor.noteLabel")
   val tagsEditorNotePlaceholder: String = key("ui.tags.editor.notePlaceholder")
   val tagsEditorFormOfLabel: String     = key("ui.tags.editor.formOfLabel")
-  val tagsEditorNotAForm: String        = key("ui.tags.editor.notAForm")
   val tagsEditorMainWordSearch: String  = key("ui.tags.editor.mainWordSearch")
   val tagsEditorFormRelation: String    = key("ui.tags.editor.formRelation")
   val tagsEditorNoRelations: String     = key("ui.tags.editor.noRelations")
-  val tagsEditorAddForm: String         = key("ui.tags.editor.addForm")
   val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
 
   /** The row's part-of-speech select. The add row starts at `anyPartOfSpeech`, and a form can be added only once a part

@@ -2306,7 +2306,7 @@ final case class WordServiceLive(
     retype: Boolean,
     note: Option[String],
     unlink: List[WordFormRow],
-    link: List[MainWordLink],
+    link: Option[MainWordLink],
   )
 
   /** Both words of a body. `missing` is never reached: a plan has at least one word. */
@@ -2377,9 +2377,21 @@ final case class WordServiceLive(
       _                        <- ZIO.foreachDiscard(unlink)(link => {
                                     guardSharedEdit(link.origin != WordSource.user, link.createdBy, userId, confirm)
                                   })
-      offered                  <- if (side.addMainWords.isEmpty) ZIO.succeed(Nil) else formRelations(language, pos)
-      link                     <- ZIO.foreach(side.addMainWords)(checkLink(_, language, pos, existing.map(_.id), offered))
+      offered                  <- if (side.mainWord.isEmpty) ZIO.succeed(Nil) else formRelations(language, pos)
+      link                     <- ZIO.foreach(side.mainWord)(checkLink(_, language, pos, existing.map(_.id), offered))
+      // One main word per word: a link to another one goes in the same request, or the new one is refused.
+      kept                     <- ZIO
+                                    .foreach(existing.filter(_ => link.isDefined))(row => repo.lemmaContextOf(List(row.id)).orDie)
+                                    .map(_.toList.flatten.map { case (form, _) => form })
+      _                        <- ZIO.when(kept.exists(form => !unlink.contains(form) && !sameLink(link, form)))(
+                                    ZIO.fail(invalidField("mainWord", MessageKeys.wordFormHasMainWord))
+                                  )
     } yield SidePlan(word, existing, pos, retype, note, unlink, link)
+  }
+
+  /** Whether `form` is the link a body asks for, which is then already there rather than a second main word. */
+  private def sameLink(link: Option[MainWordLink], form: WordFormRow): Boolean = {
+    link.exists(l => l.mainWord == TagPairWord.Existing(form.lemmaWordId) && l.relation == form.relation)
   }
 
   /** A main word has the form's language and part of speech: `Häuser` is a form of the noun `Haus`, never of a verb. It

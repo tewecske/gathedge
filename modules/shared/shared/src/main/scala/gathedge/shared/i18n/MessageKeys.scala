@@ -148,6 +148,7 @@ object MessageKeys {
     * form. Takes no argument: the editor's picker offers only main words of the word's own language.
     */
   val wordMainWordInvalid: String = key("words.mainWordInvalid")
+  val wordFormHasMainWord: String = key("words.formHasMainWord")
 
   /** A reader tried to change or remove data that is not theirs: a dictionary word or link, or another reader's. Only a
     * global administrator may.

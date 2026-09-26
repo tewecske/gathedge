@@ -472,16 +472,19 @@ private final class TagEditorPage(
     selectedVar.update(s => if (s.contains(key)) s - key else s + key)
 
   private def startEdit(entry: TagEntry): Unit = {
-    val key           = TagEditorPage.rowKey(entry)
+    val key                                                       = TagEditorPage.rowKey(entry)
     // The two boxes in the order the row is shown, so each word sits in a box searching its own language. A pair shares
     // one part of speech: the row's, which is the source word's.
-    val (left, right) = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
-    val seed          = TagEntryEditor.Seed(
-      left.map(side => TagEntryEditor.SeedSide(side.word, side.comment)),
-      right.map(side => TagEntryEditor.SeedSide(side.word, side.comment)),
-      entry.source.partOfSpeech,
-    )
-    val editor        = new TagEntryEditor(
+    val (left, right)                                             = TagEditorPage.orient(entry, sourceLangVar.now(), targetLangVar.now())
+    // Whether each word is the reader's to change comes with the row, so the editor locks what it must with no request.
+    def seedOf(side: TagEditorPage.Side): TagEntryEditor.SeedSide = {
+      val isSource   = side.word.id == entry.source.id
+      val dictionary = if (isSource) entry.fromDictionary else entry.targetFromDictionary
+      val minted     = if (isSource) entry.createdByMe else entry.targetCreatedByMe
+      TagEntryEditor.SeedSide(side.word, side.comment, dictionary, minted && !dictionary)
+    }
+    val seed                                                      = TagEntryEditor.Seed(left.map(seedOf), right.map(seedOf), entry.source.partOfSpeech)
+    val editor                                                    = new TagEntryEditor(
       sourceLangVar.signal,
       targetLangVar.signal,
       Some(seed),

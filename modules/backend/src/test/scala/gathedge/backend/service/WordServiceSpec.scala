@@ -204,7 +204,7 @@ object WordServiceSpec extends ZIOSpecDefault {
   private def link(formId: Long, mainWordId: Long, relation: String): TagEntryWord = {
     TagEntryWord(
       TagPairWord.Existing(formId),
-      addMainWords = List(MainWordLink(TagPairWord.Existing(mainWordId), relation)),
+      mainWord = Some(MainWordLink(TagPairWord.Existing(mainWordId), relation)),
     )
   }
 
@@ -2444,6 +2444,28 @@ object WordServiceSpec extends ZIOSpecDefault {
           forms.map(_.formWordId) == List(form.id),
         )
       },
+      test("a word is a form of one main word: a second is refused, and replacing the first in one request works") {
+        for {
+          _        <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr20plural", 5)
+          first    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bankfr20"))
+          second   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bänkchenfr20"))
+          form     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Bänkefr20"))
+          tag      <- createTag("mainb20", 1L, WordLanguage.De, WordLanguage.Hu)
+          _        <- WordService.addEntry(tag.id, single(link(form.id, first.id, "fr20plural")), 1L)
+          // The same link again is already there, not a second main word.
+          _        <- WordService.editEntry(tag.id, alone(form.id, link(form.id, first.id, "fr20plural")), 1L)
+          refused  <- WordService.editEntry(tag.id, alone(form.id, link(form.id, second.id, "fr20plural")), 1L).either
+          replaced  = link(form.id, second.id, "fr20plural")
+                        .copy(removeMainWords = List(MainWordUnlink(first.id, "fr20plural")))
+          _        <- WordService.editEntry(tag.id, alone(form.id, replaced), 1L)
+          toFirst  <- WordRepository.formsOf(first.id)
+          toSecond <- WordRepository.formsOf(second.id)
+        } yield assertTrue(
+          invalidField(refused, "mainWord"),
+          toFirst.isEmpty,
+          toSecond.map(_.formWordId) == List(form.id),
+        )
+      },
       test("a link mints a main word the dictionary lacks, with the form's language and part of speech") {
         for {
           _      <- seedForms(WordLanguage.De, PartOfSpeech.Noun, "fr5plural", 5)
@@ -2454,7 +2476,7 @@ object WordServiceSpec extends ZIOSpecDefault {
           _      <-
             WordService.addEntry(
               tag.id,
-              single(side(TagPairWord.Existing(form.id)).copy(addMainWords = List(MainWordLink(minted, "fr5plural")))),
+              single(side(TagPairWord.Existing(form.id)).copy(mainWord = Some(MainWordLink(minted, "fr5plural")))),
               1L,
             )
           main   <- WordRepository.findWord("de", "hausfr5", "noun", "neuter")
@@ -2465,7 +2487,7 @@ object WordServiceSpec extends ZIOSpecDefault {
                 tag.id,
                 alone(
                   form.id,
-                  side(TagPairWord.Existing(form.id)).copy(addMainWords = List(MainWordLink(wrong, "fr5plural"))),
+                  side(TagPairWord.Existing(form.id)).copy(mainWord = Some(MainWordLink(wrong, "fr5plural"))),
                 ),
                 1L,
               )

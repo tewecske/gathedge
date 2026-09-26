@@ -20,7 +20,7 @@ import org.scalajs.dom
 
 /** The one editor for a wordlist row. The add row and a row's edit mode are both this editor.
   *
-  * It holds the two words of the row, the row's part of speech, the reader's note beside each word, and the main words
+  * It holds the two words of the row, the row's part of speech, the reader's note beside each word, and the main word
   * each word is a form of. An import writes the notes and the forms from the file. Here the reader writes them by hand,
   * so a word typed in can carry them too. Save sends all of it in one request: `onSubmit` gets the body, and the page
   * sends it to the add or the edit endpoint.
@@ -28,14 +28,18 @@ import org.scalajs.dom
   * '''The part of speech is the row's.''' Both word boxes and both main-word boxes search it, a new word is created
   * with it, and the form types on offer are the ones the dictionary's own forms carry for it, so a noun is never
   * offered `past`. A word that has another part of speech is given it on save. On the add row it starts empty and the
-  * first dictionary word picked sets it.
+  * first dictionary word picked sets it. The form types are per word, since each language's forms have their own types.
+  *
+  * '''A word is a form of one main word at most.''' A word that already has one shows it, with a remove button, and the
+  * main-word box appears once it is removed. The form type is mandatory, so its select shows with the box.
   *
   * '''Shared data is guarded.''' A word the reader did not make is an administrator's to change, and so is a link the
-  * reader did not make. An administrator confirms a warning before changing dictionary data. The server applies the
-  * same rule, so the page is not what enforces it; the page only asks first.
+  * reader did not make, so the editor offers no control for them: the part of speech is locked and a link has no remove
+  * button. An administrator confirms a warning before changing dictionary data. The server applies the same rule.
   *
   * The grid keeps the two word boxes on one line on a wide screen: a German box has its article buttons above it, so
-  * the boxes sit at the bottom of their shared row, and the notes and the forms follow in rows of their own.
+  * the boxes sit at the bottom of their shared row. The notes, the part of speech and the forms follow in rows of their
+  * own. On a phone each word keeps its note and form together, under the part of speech.
   */
 private[pages] final class TagEntryEditor(
   leftLanguage: Signal[WordLanguage],
@@ -45,7 +49,7 @@ private[pages] final class TagEntryEditor(
   onCancel: Observer[Unit] = Observer.empty,
 ) {
 
-  import TagEntryEditor.{Gate, PendingLink, SeedSide, WordGate}
+  import TagEntryEditor.{Gate, SeedSide, WordGate}
 
   private val editing = seed.isDefined
 
@@ -127,23 +131,24 @@ private[pages] final class TagEntryEditor(
   def render(): HtmlElement = {
     div(
       cls := "flex flex-col gap-3",
+      // Placed by hand from `sm` up, so the part of speech can span both columns between the notes and the forms. Below
+      // `sm` the source order holds: the part of speech first, then each word with its note and form.
       div(
-        cls                := "grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2 sm:grid-flow-col sm:grid-rows-[auto_auto_auto]",
+        cls                := "grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2",
         dataAttr("testid") := (if (editing) "tag-edit-row" else "tag-add-row"),
-        left.pickerCell(leftPicker),
-        left.noteCell(),
-        left.formsCell(),
-        right.pickerCell(rightPicker).amend(cls := "mt-2 sm:mt-0"),
-        right.noteCell(),
-        right.formsCell(),
+        renderPartOfSpeech().amend(cls          := "sm:col-span-2 sm:row-start-3"),
+        left.pickerCell(leftPicker).amend(cls   := "sm:col-start-1 sm:row-start-1"),
+        left.noteCell().amend(cls               := "sm:col-start-1 sm:row-start-2"),
+        left.formsCell().amend(cls              := "sm:col-start-1 sm:row-start-4"),
+        right.pickerCell(rightPicker).amend(cls := "mt-2 sm:mt-0 sm:col-start-2 sm:row-start-1"),
+        right.noteCell().amend(cls              := "sm:col-start-2 sm:row-start-2"),
+        right.formsCell().amend(cls             := "sm:col-start-2 sm:row-start-4"),
       ),
       div(
-        cls                := "flex flex-wrap items-center gap-2",
-        renderPartOfSpeech(),
-        div(cls := "grow"),
+        cls                := "flex flex-wrap items-center justify-end gap-2",
         button(
-          typ   := "button",
-          cls   := "btn btn-primary btn-sm",
+          typ := "button",
+          cls := "btn btn-primary btn-sm",
           disabled <-- left.wordVar.signal.combineWith(right.wordVar.signal).map { case (l, r) =>
             l.isEmpty && r.isEmpty
           },
@@ -173,13 +178,20 @@ private[pages] final class TagEntryEditor(
     )
   }
 
-  /** The row's part of speech. Changing it drops the forms not yet saved, since their main words have the old one. */
+  /** The row's part of speech. It is locked when a word of the row is not the reader's to change, since the change
+    * would be refused; an administrator may change any, after the warning. Changing it drops a main word picked and not
+    * saved, since that main word has the old one.
+    */
   private def renderPartOfSpeech(): HtmlElement = {
+    val locked = Signal
+      .combine(left.lockedSignal, right.lockedSignal, AppState.isGlobalAdminSignal)
+      .map { case (l, r, admin) => (l || r) && !admin }
     label(
       cls := "flex items-center gap-2 text-sm",
       span(I18n.t(UiKeys.tagsEditorPartOfSpeech)),
       select(
         cls := "select select-sm w-36",
+        disabled <-- locked,
         Option.when(!editing)(
           option(value := TagEntryEditor.anyPartOfSpeech, I18n.t(UiKeys.tagsEditorAnyPartOfSpeech))
         ),
@@ -188,7 +200,7 @@ private[pages] final class TagEntryEditor(
           value <-- posVar.signal.map(_.map(PartOfSpeech.code).getOrElse(TagEntryEditor.anyPartOfSpeech)),
           onChange.mapToValue --> Observer[String] { code =>
             posVar.set(PartOfSpeech.fromString(code))
-            left.dropPending(); right.dropPending()
+            left.clearMainWord(); right.clearMainWord()
           },
         ),
       ),
@@ -203,26 +215,20 @@ private[pages] final class TagEntryEditor(
     private val noteVar      = Var(seed.flatMap(_.note).getOrElse(""))
     private val detailVar    = Var(Option.empty[WordDetail])
     private val removedVar   = Var(Set.empty[(Long, String)])
-    private val pendingVar   = Var(List.empty[PendingLink])
     private val mainRefVar   = Var(Option.empty[TagPairWord])
-    private val mainLabelVar = Var("")
     private val relationsVar = Var(Option.empty[List[String]])
     private val relationVar  = Var("")
 
     private val mainPicker = new WordPicker(
       language = language,
       partOfSpeech = posVar.signal,
-      onCommit = Observer[TagPairWord] { ref =>
-        mainRefVar.set(Some(ref))
-        ref match {
-          case TagPairWord.New(_, text, _, _) => mainLabelVar.set(text)
-          case TagPairWord.Existing(_)        => ()
-        }
-      },
-      onCommitWord = Observer[Option[Word]](_.foreach(word => mainLabelVar.set(Word.display(word)))),
+      onCommit = Observer[TagPairWord](ref => mainRefVar.set(Some(ref))),
       placeholderSignal = Val(I18n.t(UiKeys.tagsEditorMainWordSearch)),
       mainOnly = true,
     )
+
+    /** Built once, so the box keeps what is typed in it while the block around it is redrawn. */
+    private lazy val mainBox: HtmlElement = div(cls := "flex flex-col gap-1", mainPicker.render(), renderRelation())
 
     def reset(): Unit = {
       Var.set(
@@ -231,39 +237,57 @@ private[pages] final class TagEntryEditor(
         detailVar  -> None,
         removedVar -> Set.empty[(Long, String)],
       )
-      dropPending()
+      clearMainWord()
     }
 
-    def dropPending(): Unit = {
-      Var.set(pendingVar -> Nil, mainRefVar -> None, mainLabelVar -> "")
+    def clearMainWord(): Unit = {
+      mainRefVar.set(None)
       mainPicker.clear()
     }
 
     /** The detail of the dictionary word in the box, when it is loaded and still the one in the box. */
-    private def detail: Option[WordDetail] = {
-      detailVar.now().filter(d => wordVar.now().flatMap(TagEntryEditor.idOf).contains(d.word.id))
+    private def detailOf(word: Option[TagPairWord], detail: Option[WordDetail]): Option[WordDetail] = {
+      detail.filter(d => word.flatMap(TagEntryEditor.idOf).contains(d.word.id))
     }
 
-    def gate: Option[WordGate] = detail.map(d => WordGate(d.word.partOfSpeech, d.fromDictionary, d.createdByMe))
+    /** What decides whether the reader may change the word in the box: the row's own flags for the word it opened with,
+      * and the word's detail for one picked since.
+      */
+    private def gateOf(word: Option[TagPairWord], detail: Option[WordDetail]): Option[WordGate] = {
+      word.flatMap(TagEntryEditor.idOf).flatMap { id =>
+        seed
+          .filter(_.word.id == id)
+          .map(s => WordGate(s.word.partOfSpeech, s.fromDictionary, s.mine))
+          .orElse(detailOf(word, detail).map(d => WordGate(d.word.partOfSpeech, d.fromDictionary, d.createdByMe)))
+      }
+    }
+
+    def gate: Option[WordGate] = gateOf(wordVar.now(), detailVar.now())
+
+    /** The word in the box is not the reader's to change. A new word is theirs; a word not yet read is not locked, and
+      * the server still decides.
+      */
+    val lockedSignal: Signal[Boolean] = {
+      wordVar.signal.combineWith(detailVar.signal).map { case (word, detail) =>
+        gateOf(word, detail).exists(g => g.fromDictionary || !g.mine)
+      }
+    }
 
     def unlinked: List[WordFormRef] = {
-      detail.toList.flatMap(_.mainWords.filter(ref => removedVar.now().contains((ref.word.id, ref.relation))))
-    }
-
-    /** A main word picked and given a form type counts even before its Add is pressed: Save should not drop it. */
-    private def links: List[PendingLink] = {
-      val picked = mainRefVar.now().filter(_ => relationVar.now().nonEmpty).map { ref =>
-        PendingLink(ref, mainLabelVar.now(), relationVar.now())
-      }
-      pendingVar.now() ++ picked
+      detailOf(wordVar.now(), detailVar.now()).toList.flatMap(
+        _.mainWords.filter(ref => removedVar.now().contains((ref.word.id, ref.relation)))
+      )
     }
 
     def entry(pos: Option[PartOfSpeech]): Option[TagEntryWord] = {
+      val link = mainRefVar.now().filter(_ => relationVar.now().nonEmpty).map { ref =>
+        MainWordLink(TagEntryEditor.withPartOfSpeech(ref, pos), relationVar.now())
+      }
       wordVar.now().map { ref =>
         TagEntryWord(
           TagEntryEditor.withPartOfSpeech(ref, pos),
           Option(noteVar.now().trim).filter(_.nonEmpty),
-          links.map(link => MainWordLink(TagEntryEditor.withPartOfSpeech(link.mainWord, pos), link.relation)),
+          link,
           unlinked.map(ref => MainWordUnlink(ref.word.id, ref.relation)),
         )
       }
@@ -308,50 +332,45 @@ private[pages] final class TagEntryEditor(
       )
     }
 
-    /** The main words this word is a form of, and the box that adds one: a main word first, then a form type. A saved
-      * link offers its remove button only to whoever may remove it; a link not yet saved can always be dropped.
+    /** The main word this word is a form of. A saved one is listed, with a remove button only for whoever may remove
+      * it; while one is kept there is no box, since a word is a form of one main word. Otherwise the main-word box and
+      * the form type, which is mandatory. A dictionary word is read before any of it shows.
       */
     def formsCell(): HtmlElement = {
       div(
         cls := "flex flex-col gap-1 min-w-0",
         span(cls := "label-text text-xs opacity-70", I18n.t(UiKeys.tagsEditorFormOfLabel)),
         child <-- Signal
-          .combine(detailVar.signal, removedVar.signal, pendingVar.signal, AppState.isGlobalAdminSignal)
-          .map { case (detail, removed, pending, admin) =>
-            val saved =
-              detail.toList.flatMap(_.mainWords).filterNot(ref => removed.contains((ref.word.id, ref.relation)))
-            if (saved.isEmpty && pending.isEmpty)
-              p(cls := "text-xs opacity-60", if (detail.isDefined) I18n.t(UiKeys.tagsEditorNotAForm) else "")
-            else {
+          .combine(wordVar.signal, detailVar.signal, removedVar.signal, posVar.signal, AppState.isGlobalAdminSignal)
+          .map { case (word, detail, removed, pos, admin) =>
+            val loading = word.flatMap(TagEntryEditor.idOf).isDefined && detailOf(word, detail).isEmpty
+            val kept    = detailOf(word, detail).toList
+              .flatMap(_.mainWords)
+              .filterNot(ref => removed.contains((ref.word.id, ref.relation)))
+            if (pos.isEmpty) p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorFormNeedsPartOfSpeech))
+            else if (loading) span(cls := "loading loading-spinner loading-xs", role := "status")
+            else if (kept.nonEmpty) {
               ul(
                 cls := "flex flex-col gap-0.5 text-sm",
-                saved.map(ref => {
+                kept.map(ref => {
                   linkItem(
-                    Word.display(ref.word),
-                    ref.relation,
+                    ref,
                     Option.when((ref.createdByMe && !ref.fromDictionary) || admin)(() =>
                       removedVar.update(_ + ((ref.word.id, ref.relation)))
                     ),
                   )
                 }),
-                pending.map(link => {
-                  linkItem(link.label, link.relation, Some(() => pendingVar.update(_.filterNot(_ == link))))
-                }),
               )
-            }
+            } else mainBox
           },
-        child <-- posVar.signal.map(_.isDefined).distinct.map {
-          case false => p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorFormNeedsPartOfSpeech))
-          case true  => div(cls := "flex flex-col gap-1", mainPicker.render(), child.maybe <-- renderRelation())
-        },
       )
     }
 
-    private def linkItem(label: String, relation: String, remove: Option[() => Unit]): HtmlElement = {
+    private def linkItem(ref: WordFormRef, remove: Option[() => Unit]): HtmlElement = {
       li(
         cls := "flex flex-wrap items-center gap-2",
-        span(label),
-        span(cls := "text-xs opacity-60", Labels.grammarRelation(relation)),
+        span(Word.display(ref.word)),
+        span(cls := "text-xs opacity-60", Labels.grammarRelation(ref.relation)),
         remove.map(action => {
           button(
             typ := "button",
@@ -363,47 +382,32 @@ private[pages] final class TagEntryEditor(
       )
     }
 
-    /** The form type of the main word just picked, and Add to put another main word after it. */
-    private def renderRelation(): Signal[Option[HtmlElement]] = {
-      mainRefVar.signal.combineWith(relationsVar.signal).map {
-        case (None, _)                                       =>
-          None
-        case (Some(_), None)                                 =>
-          Some(span(cls := "loading loading-spinner loading-xs", role := "status"))
-        case (Some(_), Some(relations)) if relations.isEmpty =>
-          Some(p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorNoRelations)))
-        case (Some(ref), Some(relations))                    =>
-          Some(
-            div(
-              cls := "flex flex-wrap gap-2",
-              select(
-                cls        := "select select-sm flex-1 min-w-0",
-                aria.label := I18n.t(UiKeys.tagsEditorFormRelation),
-                relations.map(relation => option(value := relation, Labels.grammarRelation(relation))),
-                controlled(value <-- relationVar.signal, onChange.mapToValue --> relationVar.writer),
-              ),
-              button(
-                typ        := "button",
-                cls        := "btn btn-sm",
-                I18n.t(UiKeys.tagsEditorAddForm),
-                onClick.mapToUnit --> Observer[Unit] { _ =>
-                  val link = PendingLink(ref, mainLabelVar.now(), relationVar.now())
-                  pendingVar.update(links => if (links.contains(link)) links else links :+ link)
-                  Var.set(mainRefVar -> None, mainLabelVar -> "")
-                  mainPicker.clear()
-                },
-              ),
+    /** The form type: always shown beside the main-word box, since a link needs one. */
+    private def renderRelation(): HtmlElement = {
+      div(
+        child <-- relationsVar.signal.map {
+          case None                                 => span(cls := "loading loading-spinner loading-xs", role := "status")
+          case Some(relations) if relations.isEmpty =>
+            p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorNoRelations))
+          case Some(relations)                      =>
+            select(
+              cls        := "select select-sm w-full",
+              aria.label := I18n.t(UiKeys.tagsEditorFormRelation),
+              relations.map(relation => option(value := relation, Labels.grammarRelation(relation))),
+              controlled(value <-- relationVar.signal, onChange.mapToValue --> relationVar.writer),
             )
-          )
-      }
+        }
+      )
     }
   }
 }
 
 private[pages] object TagEntryEditor {
 
-  /** A word of a row that is being edited, with the note beside it. */
-  final case class SeedSide(word: Word, note: Option[String])
+  /** A word of a row that is being edited, with the note beside it, and whether the import wrote it and whether it is
+    * the reader's own — what locks its part of speech, read off the row with no request.
+    */
+  final case class SeedSide(word: Word, note: Option[String], fromDictionary: Boolean = false, mine: Boolean = true)
 
   /** The row an edit starts from: its words in the columns' order, and its part of speech. */
   final case class Seed(left: Option[SeedSide], right: Option[SeedSide], partOfSpeech: PartOfSpeech)
@@ -431,9 +435,6 @@ private[pages] object TagEntryEditor {
     * which no part of speech's code is.
     */
   val anyPartOfSpeech = "any"
-
-  /** A main word picked for a form, with what the list shows for it before it is saved. */
-  private final case class PendingLink(mainWord: TagPairWord, label: String, relation: String)
 
   private def idOf(ref: TagPairWord): Option[Long] = ref match {
     case TagPairWord.Existing(id)    => Some(id)
