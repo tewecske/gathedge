@@ -195,6 +195,8 @@ test('multiselect: Select all then Delete selected clears the visible rows in on
   await addPair(a, `${a}hu`);
   await addPair(b, `${b}hu`);
 
+  // Multiselect is off until it is turned on.
+  await page.getByRole('button', { name: 'Select rows', exact: true }).click();
   await page.getByRole('button', { name: 'Select all', exact: true }).click();
   await page.getByRole('button', { name: /^Delete selected rows|^Delete selected \(/ }).click();
   // The confirm dialog's own Delete-selected button.
@@ -220,6 +222,8 @@ test('multiselect: Delete selected words hard-deletes my own words and its dialo
   await finishRow();
   await expect(rowFor(src)).toBeVisible();
 
+  // Multiselect is off until it is turned on.
+  await page.getByRole('button', { name: 'Select rows', exact: true }).click();
   await page.getByRole('button', { name: 'Select all', exact: true }).click();
   await page.getByRole('button', { name: /^Delete selected words \(/ }).click();
 

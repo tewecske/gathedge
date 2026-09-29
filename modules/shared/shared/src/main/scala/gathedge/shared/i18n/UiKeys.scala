@@ -1080,6 +1080,10 @@ object UiKeys {
   /** The row multiselect: select/deselect every visible row, and delete the ticked ones — `{0}` is how many are ticked.
     * The confirm dialog's title, and its body with the same `{0}` count.
     */
+  /** The multiselect's on and off: "Select rows" shows the tick boxes in place of each row's icons, "Done" hides them.
+    */
+  val tagsEditorSelectRows: String        = key("ui.tags.editor.selectRows")
+  val tagsEditorSelectDone: String        = key("ui.tags.editor.selectDone")
   val tagsEditorSelectAll: String         = key("ui.tags.editor.selectAll")
   val tagsEditorDeselectAll: String       = key("ui.tags.editor.deselectAll")
   val tagsEditorDeleteSelected: String    = key("ui.tags.editor.deleteSelected")
