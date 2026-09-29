@@ -197,8 +197,9 @@ test.describe('administrator flows', () => {
     await row.getByRole('link', { name: email }).click();
     await expect(page.getByRole('button', { name: 'Delete user' })).toBeVisible();
 
-    page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: 'Delete user' }).click();
+    // The confirm modal's own Delete-user button, not the page's.
+    await page.locator('.modal-open .modal-box').getByRole('button', { name: 'Delete user' }).click();
     await expect(page).toHaveURL(/\/en\/admin\/users$/);
     await expect(page.getByText(email)).not.toBeVisible();
   });

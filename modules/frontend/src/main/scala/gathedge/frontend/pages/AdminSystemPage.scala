@@ -1,9 +1,8 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, Formats}
+import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, ConfirmDialog, Formats}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.Page
 import gathedge.shared.domain.OAuthProvider
@@ -22,6 +21,8 @@ object AdminSystemPage {
 
 private class AdminSystemPage {
 
+  private val confirmDialog = new ConfirmDialog()
+
   private val overviewVar: Var[Option[SystemOverview]] = Var(None)
   private val overviewSignal                           = overviewVar.signal
 
@@ -38,6 +39,7 @@ private class AdminSystemPage {
     div(
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminSystemTitle)),
       AdminSubmenu.render(Page.AdminSystem),
+      confirmDialog.render(),
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(infoVar.signal),
       child.maybe <-- overviewSignal.map(_.map(_.config).flatMap(renderIssues)),
@@ -349,8 +351,11 @@ private class AdminSystemPage {
             I18n.t(UiKeys.adminSystemMaintenanceClear),
             onClick.mapToUnit -->
               Observer[Unit] { _ =>
-                if (dom.window.confirm(I18n.t(UiKeys.adminSystemMaintenanceClearConfirm)))
-                  clearLocksBus.emit(())
+                confirmDialog.ask(
+                  I18n.t(UiKeys.adminSystemMaintenanceClear),
+                  I18n.t(UiKeys.adminSystemMaintenanceClearConfirm),
+                  danger = true,
+                )(clearLocksBus.emit(()))
               },
           ),
         ),

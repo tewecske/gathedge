@@ -1,9 +1,8 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell}
+import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, ConfirmDialog}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.Page
 import gathedge.shared.dto.WordFormAnomaly
@@ -20,6 +19,8 @@ object AdminWordFormsPage {
 
 private class AdminWordFormsPage {
 
+  private val confirmDialog = new ConfirmDialog()
+
   private val anomaliesVar: Var[Option[List[WordFormAnomaly]]] = Var(None)
 
   private val errorVar: Var[Option[String]] = Var(None)
@@ -34,6 +35,7 @@ private class AdminWordFormsPage {
     div(
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminWordFormsTitle)),
       AdminSubmenu.render(Page.AdminWordForms),
+      confirmDialog.render(),
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(infoVar.signal),
       p(cls  := "text-sm opacity-60 mb-4", I18n.t(UiKeys.adminWordFormsHint)),
@@ -106,8 +108,11 @@ private class AdminWordFormsPage {
           I18n.t(UiKeys.adminWordFormsDelete),
           onClick.mapToUnit -->
             Observer[Unit] { _ =>
-              if (dom.window.confirm(I18n.t(UiKeys.adminWordFormsDeleteConfirm)))
-                deleteBus.emit(anomaly)
+              confirmDialog.ask(
+                I18n.t(UiKeys.adminWordFormsDelete),
+                I18n.t(UiKeys.adminWordFormsDeleteConfirm),
+                danger = true,
+              )(deleteBus.emit(anomaly))
             },
         ),
       ),
