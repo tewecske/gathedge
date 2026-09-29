@@ -672,6 +672,8 @@
   "ui.tags.editor.filterUnmatched": "Nincs találat",
   "ui.tags.editor.filterImportedByMe": "Általam importált",
   "ui.tags.editor.filterUniqueToTag": "Csak ebben a szógyűjteményben",
+  "ui.tags.editor.selectRows": "Sorok kijelölése",
+  "ui.tags.editor.selectDone": "Kész",
   "ui.tags.editor.selectAll": "Összes kijelölése",
   "ui.tags.editor.deselectAll": "Kijelölés törlése",
   "ui.tags.editor.deleteSelected": "Kijelöltek törlése ({0})",

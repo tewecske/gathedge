@@ -672,6 +672,8 @@
   "ui.tags.editor.filterUnmatched": "Unmatched",
   "ui.tags.editor.filterImportedByMe": "Imported by me",
   "ui.tags.editor.filterUniqueToTag": "Only in this wordlist",
+  "ui.tags.editor.selectRows": "Select rows",
+  "ui.tags.editor.selectDone": "Done",
   "ui.tags.editor.selectAll": "Select all",
   "ui.tags.editor.deselectAll": "Deselect all",
   "ui.tags.editor.deleteSelected": "Delete selected ({0})",

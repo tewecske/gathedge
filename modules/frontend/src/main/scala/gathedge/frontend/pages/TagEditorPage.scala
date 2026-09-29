@@ -427,7 +427,10 @@ private final class TagEditorPage(
   /** Rows the reader has ticked, keyed by [[TagEditorPage.rowKey]]. Pruned to the visible set whenever a filter
     * changes, so "Select all" stays scoped to what the filters show and a hidden row can never be bulk-deleted.
     */
-  private val selectedVar    = Var(Set.empty[(Long, Option[Long])])
+  private val selectedVar = Var(Set.empty[(Long, Option[Long])])
+
+  /** Whether multiselect is on: tick boxes instead of each row's edit and delete icons. */
+  private val selectingVar   = Var(false)
   private val bulkDeleteOpen = Var(false)
   private val bulkDeleteBus  = new EventBus[Unit]()
 
@@ -1158,9 +1161,29 @@ private final class TagEditorPage(
   }
 
   /** Select all / deselect all over the visible rows, and the bulk-delete trigger. Shown only to an editor. */
+  /** Multiselect is off until the reader turns it on: the tick boxes and the bulk buttons then take the place of each
+    * row's edit and delete icons, and "Done" brings the icons back and drops the selection.
+    */
   private def renderSelectionBar(): HtmlElement = {
     div(
-      cls := "flex flex-wrap items-center gap-2 mt-3",
+      cls := "mt-3",
+      child <-- selectingVar.signal.map {
+        case false =>
+          button(
+            typ := "button",
+            cls := "btn btn-xs",
+            I18n.t(UiKeys.tagsEditorSelectRows),
+            onClick.mapToUnit --> Observer[Unit](_ => selectingVar.set(true)),
+          )
+        case true  =>
+          renderSelectionButtons()
+      },
+    )
+  }
+
+  private def renderSelectionButtons(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-center gap-2",
       button(
         typ := "button",
         cls := "btn btn-xs",
@@ -1187,6 +1210,12 @@ private final class TagEditorPage(
         disabled <-- eligibleWordIds.map(_.isEmpty),
         child.text <-- eligibleWordIds.map(ids => I18n.t(UiKeys.tagsEditorDeleteWords, ids.size.toString)),
         onClick.mapToUnit --> Observer[Unit](_ => deleteWordsOpen.set(true)),
+      ),
+      button(
+        typ := "button",
+        cls := "btn btn-xs btn-ghost",
+        I18n.t(UiKeys.tagsEditorSelectDone),
+        onClick.mapToUnit --> Observer[Unit](_ => Var.set(selectingVar -> false, selectedVar -> Set.empty)),
       ),
     )
   }
@@ -1235,6 +1264,7 @@ private final class TagEditorPage(
               tr(
                 th(
                   cls  := "w-4",
+                  cls("hidden") <-- selectingVar.signal.map(!_),
                   child.maybe <-- canEditSignal.map(
                     Option.when(_)(
                       input(
@@ -1251,9 +1281,9 @@ private final class TagEditorPage(
                 th(child.text <-- sourceLangVar.signal.map(Labels.language)),
                 th(child.text <-- targetLangVar.signal.map(Labels.language)),
                 th(I18n.t(UiKeys.wordsColPos)),
-                // The pair's badges have their own column only from `sm` up; below it they sit under the word.
+                // The pair's badges have a column only from `sm` up; a phone has no room for them.
                 th(cls := "hidden sm:table-cell", ""),
-                th(""),
+                th(cls("hidden") <-- selectingVar.signal, ""),
               )
             ),
             tbody(
@@ -1275,7 +1305,7 @@ private final class TagEditorPage(
   /** The "New word" badge, shown beside a source or answer word this reader minted that no other tag of theirs holds.
     */
   private def newBadge(): HtmlElement =
-    span(cls := "badge badge-accent badge-xs sm:ml-1", I18n.t(UiKeys.tagsEditorNewBadge))
+    span(cls := "badge badge-accent badge-xs hidden sm:ml-1 sm:inline-flex", I18n.t(UiKeys.tagsEditorNewBadge))
 
   /** The badges that say who made a row's pair: an import that found it in the dictionary, one that put it on a line,
     * or an import that left the row unpaired.
@@ -1295,13 +1325,10 @@ private final class TagEditorPage(
   }
 
   /** One word column of a row: the word with its note and badge, or the "no answer" placeholder when the row has
-    * nothing on this side.
-    *
-    * Below `sm` the note and the badges stack under the word, since a phone has no width to put them beside it. `below`
-    * is what else goes under the word only there — the pair's badges, which have a column of their own from `sm` up.
+    * nothing on this side. Below `sm` the note goes under the word and the badges are not shown: a phone has no room
+    * for them, and the badge column is hidden there too.
     */
-  private def renderWordCell(side: Option[TagEditorPage.Side], below: List[HtmlElement] = Nil): HtmlElement = {
-    val phoneOnly = Option.when(below.nonEmpty)(div(cls := "flex flex-wrap gap-1 sm:hidden", below))
+  private def renderWordCell(side: Option[TagEditorPage.Side]): HtmlElement = {
     side match {
       case Some(s) =>
         div(
@@ -1309,14 +1336,9 @@ private final class TagEditorPage(
           span(Word.display(s.word)),
           renderComment(s.comment),
           Option.when(s.isNew)(newBadge()),
-          phoneOnly,
         )
       case None    =>
-        div(
-          cls := "flex flex-col items-start gap-0.5",
-          span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer)),
-          phoneOnly,
-        )
+        span(cls := "opacity-40", I18n.t(UiKeys.tagsEditorNoAnswer))
     }
   }
 
@@ -1328,6 +1350,7 @@ private final class TagEditorPage(
     val cells      = List(
       td(
         cls := "w-4",
+        cls("hidden") <-- selectingVar.signal.map(!_),
         child.maybe <-- canEditSignal.map(
           Option.when(_)(
             input(
@@ -1341,7 +1364,7 @@ private final class TagEditorPage(
       ),
       td(
         child <-- Signal.combine(sourceLangVar.signal, targetLangVar.signal).map { case (left, right) =>
-          renderWordCell(TagEditorPage.orient(entry, left, right)._1, pairBadges(entry))
+          renderWordCell(TagEditorPage.orient(entry, left, right)._1)
         }
       ),
       td(
@@ -1356,6 +1379,8 @@ private final class TagEditorPage(
         div(cls := "flex gap-1", pairBadges(entry)),
       ),
       td(
+        // Multiselect puts the tick boxes where the icons were, so one row never offers both.
+        cls("hidden") <-- selectingVar.signal,
         child <-- Signal.combine(canEditSignal, isDeleting).map {
           case (false, _)    => span()
           case (true, true)  =>
@@ -1383,7 +1408,7 @@ private final class TagEditorPage(
                 onClick.mapToUnit --> Observer[Unit](_ => rowDeleteVar.set(Some(entry))),
               ),
             )
-        }
+        },
       ),
     )
     tr(
