@@ -69,8 +69,14 @@ object TagEditorPageSpec extends ZIOSpecDefault {
     )
   }
 
-  private def placeholders(container: dom.Element): List[String] = {
-    container.querySelectorAll("input").toList.map(_.asInstanceOf[dom.html.Input].placeholder)
+  /** The placeholders of the text boxes on show: a box inside a `hidden` row is left out. */
+  private def visiblePlaceholders(container: dom.Element): List[String] = {
+    container
+      .querySelectorAll("input[type=text]")
+      .toList
+      .map(_.asInstanceOf[dom.html.Input])
+      .filterNot(input => input.closest(".hidden") != null)
+      .map(_.placeholder)
   }
 
   private def buttonNamed(container: dom.Element, name: String): Option[dom.html.Button] = {
@@ -143,7 +149,6 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         assertTrue(
           !text.contains(UiKeys.tagsEditorBulkButton),
           !text.contains(UiKeys.tagsEditorAddHeading),
-          !text.contains(UiKeys.tagsEditorAddWordOnlyHint),
         )
       },
       suite("rowKey")(
@@ -307,43 +312,61 @@ object TagEditorPageSpec extends ZIOSpecDefault {
         },
       ),
       suite("TagEntryEditor")(
-        test("the add row starts with no part of speech, so it offers no form yet and cannot be added") {
+        test("the add row starts with the part of speech and the two word boxes, and the other rows hidden") {
           withEditor(None) { container =>
             // Read before `assertTrue`, which evaluates lazily — after the editor has been unmounted.
-            val boxes    = placeholders(container)
+            val shown    = visiblePlaceholders(container)
             val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
-            val text     = container.textContent
             val disabled = buttonNamed(container, UiKeys.commonAdd).exists(_.disabled)
+            val buttons  = List(UiKeys.tagsEditorAddNote, UiKeys.tagsEditorAddFormOf).map(buttonNamed(container, _))
+            val headed   = container.textContent.contains(UiKeys.tagsEditorAddHeading)
             assertTrue(
-              boxes.count(_ == UiKeys.tagsSourcePlaceholder) == 1,
-              boxes.count(_ == UiKeys.tagsTargetPlaceholder) == 1,
+              shown == List(UiKeys.tagsSourcePlaceholder, UiKeys.tagsTargetPlaceholder),
               select.value == TagEntryEditor.anyPartOfSpeech,
-              text.contains(UiKeys.tagsEditorFormNeedsPartOfSpeech),
-              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
+              buttons.forall(_.isDefined),
               disabled,
+              headed,
             )
           }
         },
-        test("an edit opens on the row's words, notes and part of speech, and reads each word before its form") {
+        test("Add note opens the note row under the words, and its button goes") {
+          withEditor(None) { container =>
+            buttonNamed(container, UiKeys.tagsEditorAddNote).foreach(_.click())
+            val shown  = visiblePlaceholders(container)
+            val button = buttonNamed(container, UiKeys.tagsEditorAddNote)
+            val formOf = buttonNamed(container, UiKeys.tagsEditorAddFormOf)
+            assertTrue(
+              shown.count(_ == UiKeys.tagsEditorNotePlaceholder) == 2,
+              button.isEmpty,
+              formOf.isDefined,
+            )
+          }
+        },
+        test("an edit opens on the row's words, part of speech and its note, with the form row still closed") {
           withEditor(Some(seed(fromDictionary = false))) { container =>
-            val inputs   = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
-            val select   = container.querySelector("select").asInstanceOf[dom.html.Select]
-            val values   = inputs.map(_.value)
-            val boxes    = placeholders(container)
-            val spinners = container.querySelectorAll(".loading").length
-            val save     = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
-            val cancel   = buttonNamed(container, UiKeys.commonCancel).isDefined
+            val inputs = container.querySelectorAll("input[type=text]").toList.map(_.asInstanceOf[dom.html.Input])
+            val select = container.querySelector("select").asInstanceOf[dom.html.Select]
+            val values = inputs.map(_.value)
+            val shown  = visiblePlaceholders(container)
+            val note   = buttonNamed(container, UiKeys.tagsEditorAddNote)
+            val formOf = buttonNamed(container, UiKeys.tagsEditorAddFormOf)
+            val save   = buttonNamed(container, UiKeys.tagsEditorSaveRow).exists(!_.disabled)
+            val cancel = buttonNamed(container, UiKeys.commonCancel).isDefined
+            val headed = container.textContent.contains(UiKeys.tagsEditorEditHeading)
             assertTrue(
               values.contains("Haus"),
               values.contains("ház"),
               values.contains("Gebäude"),
               select.value == PartOfSpeech.code(PartOfSpeech.Noun),
               !select.disabled,
-              // No backend here, so each word's links never arrive: a spinner, not a main-word box.
-              !boxes.contains(UiKeys.tagsEditorMainWordSearch),
-              spinners == 2,
+              // The row has a note, so its note row is open; no word has a main word, so the form row waits.
+              shown.contains(UiKeys.tagsEditorNotePlaceholder),
+              !shown.contains(UiKeys.tagsEditorMainWordSearch),
+              note.isEmpty,
+              formOf.isDefined,
               save,
               cancel,
+              headed,
             )
           }
         },

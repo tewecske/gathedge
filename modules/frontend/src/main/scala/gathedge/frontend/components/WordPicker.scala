@@ -42,6 +42,8 @@ final class WordPicker(
   mainOnly: Boolean = false,
   // Offer the typed text as a word to create. Off where the pick must be a word the dictionary already has.
   allowNew: Boolean = true,
+  // A label drawn inside the field, before the text, the way daisyUI's `label.input` draws one.
+  inlineLabel: Option[String] = None,
 ) {
 
   private val queryVar                         = Var("")
@@ -160,7 +162,8 @@ final class WordPicker(
 
   def render(): HtmlElement = {
     val field = input(
-      cls := "input input-sm w-full",
+      // Inside a labelled `label.input` the label is the styled box, so the field itself carries no box of its own.
+      cls := (if (inlineLabel.isDefined) "grow min-w-0" else "input input-sm w-full"),
       typ := "text",
       placeholder <-- placeholderSignal,
       controlled(
@@ -204,7 +207,14 @@ final class WordPicker(
             .amend(cls := "self-start")
         )
       },
-      div(cls := "relative", field, child.maybe <-- dropdown()),
+      div(
+        cls := "relative",
+        inlineLabel match {
+          case Some(text) => label(cls := "input input-sm w-full", span(cls := "label", text), field)
+          case None       => field
+        },
+        child.maybe <-- dropdown(),
+      ),
       // Debounced live prefix search in the given language, narrowed to the part of speech when one is known.
       typedBus.events
         .debounce(250)

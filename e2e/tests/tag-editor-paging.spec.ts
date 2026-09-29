@@ -12,6 +12,15 @@ import { test, expect, type Page } from '@playwright/test';
 // Requires the real stack (see playwright.config.ts). The 120 rows go in through `tabular-import` rather than through
 // the add row: this spec is about paging, and typing 120 pairs would test the autocomplete instead.
 
+
+// A row with a word the dictionary does not have is not added on the last Enter: the focus moves to Add (Save while
+// editing), so a note or a form can go with it. One more Enter adds it.
+const finishRow = async (name: 'Add' | 'Save' = 'Add') => {
+  const button = page.getByRole('button', { name, exact: true });
+  await expect(button).toBeFocused();
+  await page.keyboard.press('Enter');
+};
+
 test.describe.configure({ mode: 'serial' });
 
 const unique = Date.now();
@@ -124,6 +133,7 @@ test('a chip is part of the address, and an added row is on the page shown', asy
   await addSourceInput().press('Enter');
   await addTargetInput().fill(`pgadd${unique}`);
   await addTargetInput().press('Enter');
+  await finishRow();
 
   // Appended, so it is on the last page — and the editor turns to it rather than leaving the reader on page one.
   await expect(page).toHaveURL(new RegExp(`/en/tags/${tagId}\\?page=3$`));
