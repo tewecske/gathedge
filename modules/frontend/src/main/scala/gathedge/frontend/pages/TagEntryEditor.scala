@@ -143,6 +143,8 @@ private[pages] final class TagEntryEditor(
       onEmptyCommit = Observer[Unit](_ => if (other.wordVar.now().isDefined) settle()),
       placeholderSignal = side.language.map(language => I18n.t(placeholderKey, Labels.language(language))),
       translateFrom = other.detailSignal,
+      // An article picked while the part of speech is unset says the row is a noun.
+      onArticle = Observer[Unit](_ => if (posVar.now().isEmpty) posVar.set(Some(PartOfSpeech.Noun))),
     )
   }
 

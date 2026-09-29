@@ -370,6 +370,22 @@ object TagEditorPageSpec extends ZIOSpecDefault {
             )
           }
         },
+        test("the German box offers articles while the part of speech is unset, and picking one makes it a noun") {
+          withEditor(None) { container =>
+            val radios = container.querySelectorAll("input[type=radio]").toList.map(_.asInstanceOf[dom.html.Input])
+            radios.headOption.foreach(_.click())
+            val select = container.querySelector("select").asInstanceOf[dom.html.Select].value
+            // The German word box and nothing else: the main-word box shows once a form is asked for.
+            assertTrue(radios.nonEmpty, select == PartOfSpeech.code(PartOfSpeech.Noun))
+          }
+        },
+        test("a row that is not a noun offers no articles") {
+          val verb = seed(fromDictionary = false).copy(partOfSpeech = PartOfSpeech.Verb)
+          withEditor(Some(verb)) { container =>
+            val radios = container.querySelectorAll("input[type=radio]").length
+            assertTrue(radios == 0)
+          }
+        },
         test("a dictionary word in the row locks the part of speech") {
           withEditor(Some(seed(fromDictionary = true))) { container =>
             val locked = container.querySelector("select").asInstanceOf[dom.html.Select].disabled

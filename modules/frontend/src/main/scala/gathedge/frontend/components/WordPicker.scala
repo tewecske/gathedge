@@ -44,6 +44,8 @@ final class WordPicker(
   allowNew: Boolean = true,
   // A label drawn inside the field, before the text, the way daisyUI's `label.input` draws one.
   inlineLabel: Option[String] = None,
+  // An article button was clicked: the word is a noun. The row editor turns an unset part of speech into one.
+  onArticle: Observer[Unit] = Observer.empty[Unit],
 ) {
 
   private val queryVar                         = Var("")
@@ -200,13 +202,24 @@ final class WordPicker(
       // The article buttons sit *above* the field, the way the game play page shows them, not beside it: on a narrow
       // screen a row of buttons in front of the input leaves too little of the line to type a word on. `self-start`
       // keeps the `join` at its own width — a flex column stretches its items across otherwise.
-      child.maybe <-- language.map { lang =>
-        Option.when(LanguageProfile.of(lang).hasGenders)(
-          ArticlePicker
-            .render(s"$articleGroup-$lang", LanguageProfile.of(lang), queryVar, () => focus())
-            .amend(cls := "self-start")
-        )
-      },
+      //
+      // Only a noun takes an article, so the buttons show while the part of speech is a noun or not set yet, and go when
+      // it is anything else.
+      child.maybe <-- language
+        .combineWith(partOfSpeech.map(_.forall(_ == PartOfSpeech.Noun)))
+        .distinct
+        .map { case (lang, nounOrUnset) =>
+          Option.when(LanguageProfile.of(lang).hasGenders && nounOrUnset)(
+            ArticlePicker
+              .render(
+                s"$articleGroup-$lang",
+                LanguageProfile.of(lang),
+                queryVar,
+                () => { onArticle.onNext(()); focus() },
+              )
+              .amend(cls := "self-start")
+          )
+        },
       div(
         cls := "relative",
         inlineLabel match {
