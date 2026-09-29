@@ -355,11 +355,7 @@ private[pages] final class TagEntryEditor(
 
     /** Built once, so the box keeps what is typed in it while the block around it is redrawn. */
     private lazy val mainBox: HtmlElement = {
-      div(
-        cls := "flex items-end gap-2",
-        div(cls := "grow min-w-0", mainPicker.render()),
-        renderRelation(),
-      )
+      div(cls := "flex flex-col gap-2", mainPicker.render(), renderRelation())
     }
 
     def reset(): Unit = {
@@ -538,22 +534,24 @@ private[pages] final class TagEntryEditor(
       )
     }
 
-    /** The form type, beside the main-word box, since a link needs one. */
+    /** The form type, on a line of its own under the main-word box, since its names are long. A link needs one. */
     private def renderRelation(): HtmlElement = {
       div(
-        cls := "shrink-0",
         child <-- relationsVar.signal.map {
           case None                                 => span(cls := "loading loading-spinner loading-xs", role := "status")
           case Some(relations) if relations.isEmpty =>
             p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorNoRelations))
           case Some(relations)                      =>
-            select(
-              cls        := "select select-sm w-40",
-              aria.label := I18n.t(UiKeys.tagsEditorFormRelation),
-              relations.map(relation => option(value := relation, Labels.grammarRelation(relation))),
-              controlled(value <-- relationVar.signal, onChange.mapToValue --> relationVar.writer),
+            // The label inside the box, as the main-word box and the note have theirs.
+            label(
+              cls := "select select-sm w-full",
+              span(cls := "label", I18n.t(UiKeys.tagsEditorFormRelation)),
+              select(
+                relations.map(relation => option(value := relation, Labels.grammarRelation(relation))),
+                controlled(value <-- relationVar.signal, onChange.mapToValue --> relationVar.writer),
+              ),
             )
-        },
+        }
       )
     }
   }
