@@ -35,7 +35,8 @@ import org.scalajs.dom
   *
   * '''Shared data is guarded.''' A word the reader did not make is an administrator's to change, and so is a link the
   * reader did not make, so the editor offers no control for them: the part of speech is locked and a link has no remove
-  * button. An administrator confirms a warning before changing dictionary data. The server applies the same rule.
+  * button. An administrator confirms a warning, a daisyUI dialog, before changing dictionary data. The server applies
+  * the same rule.
   *
   * The grid keeps the two word boxes on one line on a wide screen: a German box has its article buttons above it, so
   * the boxes sit at the bottom of their shared row. The notes, the part of speech and the forms follow in rows of their
@@ -58,6 +59,9 @@ private[pages] final class TagEntryEditor(
     */
   private val posVar   = Var(seed.map(_.partOfSpeech))
   private val errorVar = Var(Option.empty[String])
+
+  /** A body that changes dictionary data, held until an administrator confirms the warning. */
+  private val warningVar = Var(Option.empty[TagEntryInput])
 
   private val submitBus = new EventBus[Unit]()
 
@@ -106,7 +110,9 @@ private[pages] final class TagEntryEditor(
     )
   }
 
-  /** The body to send, or `None` when there is nothing to send or the reader said no to the warning. */
+  /** The body to send, or `None` when there is nothing to send, the reader may not send it, or it waits for the warning
+    * in [[renderWarning]].
+    */
   private def build(admin: Boolean): Option[TagEntryInput] = {
     val pos   = posVar.now()
     val words = (left.entry(pos), right.entry(pos))
@@ -119,9 +125,8 @@ private[pages] final class TagEntryEditor(
           errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
           None
         case Gate.Confirm =>
-          Option.when(dom.window.confirm(I18n.t(UiKeys.tagsEditorDictionaryWarn)))(
-            TagEntryInput(words._1, words._2, pos, confirm = true)
-          )
+          warningVar.set(Some(TagEntryInput(words._1, words._2, pos, confirm = true)))
+          None
         case Gate.Go      =>
           Some(TagEntryInput(words._1, words._2, pos))
       }
@@ -165,6 +170,7 @@ private[pages] final class TagEntryEditor(
         ),
       ),
       child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
+      renderWarning(),
       Option.when(!editing)(p(cls := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint))),
       submitBus.events.sample(AppState.isGlobalAdminSignal) --> Observer[Boolean] { admin =>
         errorVar.set(None)
@@ -175,6 +181,38 @@ private[pages] final class TagEntryEditor(
       right.detailLoader(),
       right.relationLoader(),
       onMountCallback(_ => if (editing) dom.window.setTimeout(() => focus(), 0)),
+    )
+  }
+
+  /** The warning an administrator confirms before a save changes dictionary data, as a daisyUI dialog. */
+  private def renderWarning(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- warningVar.signal.map(_.isDefined),
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.tagsEditorDictionaryWarnTitle)),
+        p(cls  := "py-4", I18n.t(UiKeys.tagsEditorDictionaryWarn)),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => warningVar.set(None)),
+          ),
+          button(
+            cls := "btn btn-sm btn-warning",
+            typ := "button",
+            I18n.t(UiKeys.tagsEditorDictionaryWarnConfirm),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              warningVar.now().foreach(onSubmit.onNext)
+              warningVar.set(None)
+            },
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => warningVar.set(None))),
     )
   }
 

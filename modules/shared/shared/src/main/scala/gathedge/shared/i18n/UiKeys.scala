@@ -1055,6 +1055,13 @@ object UiKeys {
   val tagsEditorAnyPartOfSpeech: String       = key("ui.tags.editor.anyPartOfSpeech")
   val tagsEditorFormNeedsPartOfSpeech: String = key("ui.tags.editor.formNeedsPartOfSpeech")
   val tagsEditorDictionaryWarn: String        = key("ui.tags.editor.dictionaryWarning")
+  val tagsEditorDictionaryWarnTitle: String   = key("ui.tags.editor.dictionaryWarningTitle")
+  val tagsEditorDictionaryWarnConfirm: String = key("ui.tags.editor.dictionaryWarningConfirm")
+
+  /** The confirm dialog of a row's trash icon. `{0}` in `removeRowConfirm` is the row: the word, and its answer. */
+  val tagsEditorRemoveRowTitle: String   = key("ui.tags.editor.removeRowTitle")
+  val tagsEditorRemoveRowConfirm: String = key("ui.tags.editor.removeRowConfirm")
+  val tagsEditorRemoveRow: String        = key("ui.tags.editor.removeRow")
 
   /** The multi-select filter above the rows; with none selected every row shows. The first four are mutually-exclusive
     * buckets; the last two AND on top — "imported by me" is a word this reader minted that a bulk import wrote, "only

@@ -88,10 +88,28 @@ test('editing the target and pressing Enter saves it and leaves edit mode', asyn
   await expect(rowFor(src)).toContainText(newTgt);
 });
 
+// The trash icon asks first: a delete is never one click. This confirms in the open dialog.
+const confirmRemove = async () => {
+  await page.locator('.modal-open .modal-box').getByRole('button', { name: 'Remove', exact: true }).click();
+};
+
+test('Remove pair asks first, and Cancel keeps the row', async () => {
+  const src = `Editquelle${unique}`;
+
+  await rowFor(src).getByRole('button', { name: 'Remove pair' }).click();
+  const dialog = page.locator('.modal-open .modal-box');
+  await expect(dialog).toContainText(src);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+  await expect(page.locator('.modal-open')).toHaveCount(0);
+  await expect(rowFor(src)).toHaveCount(1);
+});
+
 test('Remove pair deletes the row and shows no error', async () => {
   const src = `Editquelle${unique}`;
 
   await rowFor(src).getByRole('button', { name: 'Remove pair' }).click();
+  await confirmRemove();
 
   await expect(rowFor(src)).toHaveCount(0);
   await expect(page.locator('.alert-error')).toHaveCount(0);
@@ -128,6 +146,7 @@ test('removing one translation of a word keeps the word\'s other translation', a
 
   // Remove only the first translation's row.
   await rowFor(tgtOne).getByRole('button', { name: 'Remove pair' }).click();
+  await confirmRemove();
 
   await expect(rowFor(tgtOne)).toHaveCount(0);
   await expect(rowFor(tgtTwo)).toBeVisible();

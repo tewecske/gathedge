@@ -73,6 +73,11 @@ object TagEditorPage {
   private[pages] def targetIsNew(entry: TagEntry): Boolean =
     entry.target.isDefined && entry.targetCreatedByMe && !entry.targetInMyOtherTags
 
+  /** A row as its delete dialog names it: the word, and its answer after a dash when it has one. */
+  private[pages] def rowLabel(entry: TagEntry): String = {
+    (Word.display(entry.source) :: entry.target.map(Word.display).toList).mkString(" – ")
+  }
+
   /** One rendered word cell: the word, the reader's note beside it, and whether it earns the "New word" badge. */
   private[pages] final case class Side(word: Word, comment: Option[String], isNew: Boolean)
 
@@ -460,6 +465,11 @@ private final class TagEditorPage(
     */
   private val deletingRowsVar = Var(Set.empty[(Long, Option[Long])])
 
+  /** The row whose trash icon was clicked, waiting for the reader to confirm in [[renderRowDeleteModal]]. A delete is
+    * never one click.
+    */
+  private val rowDeleteVar = Var(Option.empty[TagEntry])
+
   private def requestRowDelete(entry: TagEntry): Unit = {
     val key = TagEditorPage.rowKey(entry)
     if (!deletingRowsVar.now().contains(key)) {
@@ -737,6 +747,7 @@ private final class TagEditorPage(
           child.maybe <-- tagVar.signal.map(_.map(renderActionButtons)),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
+          child.maybe <-- canEditSignal.map(Option.when(_)(renderRowDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
           renderLanguages(),
           renderFilters(),
@@ -1369,7 +1380,7 @@ private final class TagEditorPage(
               InlineRename.iconButton(
                 I18n.t(UiKeys.tagsRemovePair),
                 trashMark(),
-                onClick.mapToUnit --> Observer[Unit](_ => requestRowDelete(entry)),
+                onClick.mapToUnit --> Observer[Unit](_ => rowDeleteVar.set(Some(entry))),
               ),
             )
         }
@@ -1668,6 +1679,43 @@ private final class TagEditorPage(
         ),
       ),
       div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => deleteOpenVar.set(false))),
+    )
+  }
+
+  /** The trash icon's confirm dialog, the same shape as [[renderBulkDeleteModal]] for one row. */
+  private def renderRowDeleteModal(): HtmlElement = {
+    div(
+      cls := "modal",
+      cls("modal-open") <-- rowDeleteVar.signal.map(_.isDefined),
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.tagsEditorRemoveRowTitle)),
+        p(
+          cls  := "py-4",
+          child.text <-- rowDeleteVar.signal.map(
+            _.fold("")(entry => I18n.t(UiKeys.tagsEditorRemoveRowConfirm, TagEditorPage.rowLabel(entry)))
+          ),
+        ),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => rowDeleteVar.set(None)),
+          ),
+          button(
+            cls := "btn btn-sm btn-error",
+            typ := "button",
+            I18n.t(UiKeys.tagsEditorRemoveRow),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              rowDeleteVar.now().foreach(requestRowDelete)
+              rowDeleteVar.set(None)
+            },
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => rowDeleteVar.set(None))),
     )
   }
 

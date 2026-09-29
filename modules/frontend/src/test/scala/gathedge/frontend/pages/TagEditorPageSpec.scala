@@ -261,6 +261,14 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
+      suite("rowLabel")(
+        test("the delete dialog names the word and its answer, or the word alone") {
+          assertTrue(
+            TagEditorPage.rowLabel(entry(1, Some(2))) == "w1 – t2",
+            TagEditorPage.rowLabel(entry(1, None)) == "w1",
+          )
+        }
+      ),
       suite("TagEntryEditor.gate")(
         test("a save that changes no word's part of speech goes, whoever makes it") {
           val words = List(TagEntryEditor.WordGate(PartOfSpeech.Noun, fromDictionary = true, mine = false))
