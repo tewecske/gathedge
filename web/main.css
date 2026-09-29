@@ -3,3 +3,12 @@
 @plugin "daisyui" {
   themes: light --default, dark --prefersdark;
 }
+
+/* On a phone, daisyUI's 1.5rem around a card's body and the page's own gutter leave little of a 390px screen for the
+   content. Below `sm` a card's body keeps 1rem, the padding daisyUI gives `card-sm`. A card that sets its own padding
+   with a utility still wins. */
+@media (width < 40rem) {
+  .card {
+    --card-p: 1rem;
+  }
+}
