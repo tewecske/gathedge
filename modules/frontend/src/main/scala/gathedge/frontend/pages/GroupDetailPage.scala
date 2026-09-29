@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GroupApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, InlineRename, Labels, ShareRow}
+import gathedge.frontend.components.{Alert, AppShell, ConfirmDialog, InlineRename, Labels, ShareRow}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{GroupRole, Tag}
@@ -32,6 +32,8 @@ object GroupDetailPage {
 }
 
 private class GroupDetailPage(groupId: Long, generateQr: String => Future[String]) {
+
+  private val confirmDialog = new ConfirmDialog()
 
   private val detailVar: Var[Option[GroupDetail]] = Var(None)
   private val myTagsVar                           = Var(List.empty[Tag])
@@ -99,6 +101,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   def render(): HtmlElement = {
     div(
       cls := "max-w-3xl mx-auto",
+      confirmDialog.render(),
       Alert.maybeError(errorVar.signal),
       div(
         cls := "card bg-base-100 shadow mt-4",
@@ -217,7 +220,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
           I18n.t(UiKeys.groupDetailDeleteButton),
           trashMark(),
           onClick.mapToUnit --> Observer[Unit] { _ =>
-            if (dom.window.confirm(I18n.t(UiKeys.groupDetailDeleteConfirm))) deleteBus.emit(())
+            confirmDialog.ask(
+              I18n.t(UiKeys.groupDetailDeleteButton),
+              I18n.t(UiKeys.groupDetailDeleteConfirm),
+              danger = true,
+            )(deleteBus.emit(()))
           },
         )
       )
@@ -307,7 +314,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
                 disabled <-- busyVar.signal,
                 I18n.t(UiKeys.groupDetailLeaveButton),
                 onClick.mapToUnit --> Observer[Unit] { _ =>
-                  if (dom.window.confirm(I18n.t(UiKeys.groupDetailLeaveConfirm))) leaveBus.emit(())
+                  confirmDialog.ask(
+                    I18n.t(UiKeys.groupDetailLeaveButton),
+                    I18n.t(UiKeys.groupDetailLeaveConfirm),
+                    danger = true,
+                  )(leaveBus.emit(()))
                 },
               )
             )
@@ -351,7 +362,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
               disabled <-- busyVar.signal,
               I18n.t(UiKeys.groupDetailRemoveButton),
               onClick.mapToUnit --> Observer[Unit] { _ =>
-                if (dom.window.confirm(I18n.t(UiKeys.groupDetailRemoveConfirm))) removeMemberBus.emit(member.userId)
+                confirmDialog.ask(
+                  I18n.t(UiKeys.groupDetailRemoveButton),
+                  I18n.t(UiKeys.groupDetailRemoveConfirm),
+                  danger = true,
+                )(removeMemberBus.emit(member.userId))
               },
             ),
           )
@@ -375,7 +390,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
           disabled <-- busyVar.signal,
           I18n.t(UiKeys.groupDetailInviteCodeRegenerate),
           onClick.mapToUnit --> Observer[Unit] { _ =>
-            if (dom.window.confirm(I18n.t(UiKeys.groupDetailInviteCodeRegenerateConfirm))) regenerateBus.emit(())
+            confirmDialog.ask(
+              I18n.t(UiKeys.groupDetailInviteCodeRegenerate),
+              I18n.t(UiKeys.groupDetailInviteCodeRegenerateConfirm),
+              danger = false,
+            )(regenerateBus.emit(()))
           },
         ),
       ),
@@ -428,7 +447,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
             disabled <-- busyVar.signal,
             I18n.t(UiKeys.groupDetailDetachButton),
             onClick.mapToUnit --> Observer[Unit] { _ =>
-              if (dom.window.confirm(I18n.t(UiKeys.groupDetailDetachConfirm))) detachBus.emit(tag.id)
+              confirmDialog.ask(
+                I18n.t(UiKeys.groupDetailDetachButton),
+                I18n.t(UiKeys.groupDetailDetachConfirm),
+                danger = true,
+              )(detachBus.emit(tag.id))
             },
           )
         )

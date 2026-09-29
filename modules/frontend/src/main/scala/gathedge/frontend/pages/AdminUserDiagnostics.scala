@@ -1,9 +1,8 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{Alert, Formats, Labels}
+import gathedge.frontend.components.{Alert, ConfirmDialog, Formats, Labels}
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.OAuthProvider
 import gathedge.shared.i18n.UiKeys
@@ -32,6 +31,8 @@ import gathedge.shared.dto.{
   *   fires when an action changed the account itself, so the page above can re-read the user it is editing.
   */
 private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
+
+  private val confirmDialog = new ConfirmDialog()
 
   private val detailVar: Var[Option[AdminUserDetail]] = Var(None)
   private val detailSignal                            = detailVar.signal
@@ -70,6 +71,7 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
   def render(): HtmlElement = {
     div(
       cls := "mt-6 flex flex-col gap-4",
+      confirmDialog.render(),
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(infoVar.signal),
       child.maybe <-- detailSignal.map(_.map(renderVerificationCard)),
@@ -121,8 +123,12 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
       label,
       onClick.mapToUnit -->
         Observer[Unit] { _ =>
-          if (confirmation.forall(dom.window.confirm))
-            bus.emit(())
+          confirmation match {
+            case Some(message) =>
+              confirmDialog.ask(label, message, danger = true)(bus.emit(()))
+            case None          =>
+              bus.emit(())
+          }
         },
     )
   }
@@ -330,12 +336,11 @@ private class AdminUserDiagnostics(userId: Long, userChanged: Observer[Unit]) {
           onClick.mapToUnit -->
             Observer[Unit] { _ =>
               // The server refuses to remove an account's last credential (409); this only asks first.
-              if (
-                dom.window.confirm(
-                  I18n.t(UiKeys.adminDiagDetachConfirm, OAuthProvider.displayName(identity.provider))
-                )
-              )
-                unlinkBus.emit(identity.provider)
+              confirmDialog.ask(
+                I18n.t(UiKeys.adminDiagDetach),
+                I18n.t(UiKeys.adminDiagDetachConfirm, OAuthProvider.displayName(identity.provider)),
+                danger = true,
+              )(unlinkBus.emit(identity.provider))
             },
         )
       ),

@@ -1,9 +1,8 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, Formats}
+import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, ConfirmDialog, Formats}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.Page
 import gathedge.shared.dto.RateLimitEntry
@@ -21,6 +20,8 @@ object AdminRateLimitsPage {
 
 private class AdminRateLimitsPage {
 
+  private val confirmDialog = new ConfirmDialog()
+
   private val entriesVar: Var[Option[List[RateLimitEntry]]] = Var(None)
 
   private val errorVar: Var[Option[String]] = Var(None)
@@ -35,6 +36,7 @@ private class AdminRateLimitsPage {
     div(
       h1(cls := "text-2xl font-bold mb-4", I18n.t(UiKeys.adminRateLimitsTitle)),
       AdminSubmenu.render(Page.AdminRateLimits),
+      confirmDialog.render(),
       Alert.maybeError(errorVar.signal),
       Alert.maybeInfo(infoVar.signal),
       p(cls  := "text-sm opacity-60 mb-4", I18n.t(UiKeys.adminRateLimitsHint)),
@@ -47,8 +49,11 @@ private class AdminRateLimitsPage {
           I18n.t(UiKeys.adminRateLimitsClearAll),
           onClick.mapToUnit -->
             Observer[Unit] { _ =>
-              if (dom.window.confirm(I18n.t(UiKeys.adminRateLimitsClearAllConfirm)))
-                clearBus.emit(None)
+              confirmDialog.ask(
+                I18n.t(UiKeys.adminRateLimitsClearAll),
+                I18n.t(UiKeys.adminRateLimitsClearAllConfirm),
+                danger = true,
+              )(clearBus.emit(None))
             },
         ),
       ),
@@ -177,8 +182,11 @@ private class AdminRateLimitsPage {
           I18n.t(UiKeys.adminRateLimitsClear),
           onClick.mapToUnit -->
             Observer[Unit] { _ =>
-              if (dom.window.confirm(I18n.t(UiKeys.adminRateLimitsClearConfirm)))
-                clearBus.emit(Some(entry.key))
+              confirmDialog.ask(
+                I18n.t(UiKeys.adminRateLimitsClear),
+                I18n.t(UiKeys.adminRateLimitsClearConfirm),
+                danger = true,
+              )(clearBus.emit(Some(entry.key)))
             },
         ),
       ),

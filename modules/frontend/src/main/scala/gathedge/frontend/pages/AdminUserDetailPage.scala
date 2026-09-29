@@ -1,9 +1,8 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
-import org.scalajs.dom
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, FormField}
+import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, ConfirmDialog, FormField}
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.domain.User
 import gathedge.shared.dto.UpdateUserRequest
@@ -60,6 +59,8 @@ private case class EditUserForm(
 }
 
 private class AdminUserDetailPage(userId: Long) {
+  private val confirmDialog = new ConfirmDialog()
+
   private val userVar: Var[Option[User]] = Var(None)
   private val userSignal                 = userVar.signal
   private val notFoundVar                = Var(false)
@@ -95,6 +96,7 @@ private class AdminUserDetailPage(userId: Long) {
   def render(): HtmlElement = {
     div(
       AdminSubmenu.render(Page.AdminUserDetail(userId)),
+      confirmDialog.render(),
       // Back to the unfiltered list: this screen is not told which listing the reader came from, so it cannot restore
       // one. Carrying it would mean this page holding a `UserQuery` of its own.
       div(cls := "mb-4", a(cls := "link", AppRouter.router.navigateTo(Page.Admin()), I18n.t(UiKeys.adminUserBack))),
@@ -226,8 +228,11 @@ private class AdminUserDetailPage(userId: Long) {
             I18n.t(UiKeys.adminUserDelete),
             onClick.mapToUnit -->
               Observer[Unit] { _ =>
-                if (dom.window.confirm(I18n.t(UiKeys.adminUserDeleteConfirm)))
-                  deleteBus.emit(())
+                confirmDialog.ask(
+                  I18n.t(UiKeys.adminUserDelete),
+                  I18n.t(UiKeys.adminUserDeleteConfirm),
+                  danger = true,
+                )(deleteBus.emit(()))
               },
           ),
           button(cls := "btn btn-primary", typ := "submit", disabled <-- inFlightSignal, I18n.t(UiKeys.commonSave)),
