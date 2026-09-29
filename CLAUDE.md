@@ -322,6 +322,8 @@ Pages render through `components/AppShell`. `AppShell.render` is authenticated; 
 
 **Laminar note**: `.split` is deprecated in favor of `.splitSeq`.
 
+**A delete is never one click.** Every control that deletes or removes something opens a confirm dialog first: a daisyUI `modal` with Cancel and a `btn-error` button, the shape of `TagEditorPage`'s delete dialogs. The same goes for a warning before changing shared data. Don't add a `dom.window.confirm`; the older pages that still use one are to be moved over.
+
 ### Vocabulary
 
 The first feature: shared dictionary of English, German, Hungarian words, plus tags. `words`, `word_translations`, `tags`, `word_tags`, `word_tag_pairs` are owned by one `WordRepository`.
