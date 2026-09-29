@@ -149,10 +149,11 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     * the navbar the way a page of content is.
     */
   private def renderContent(): HtmlElement = {
+    // A phone keeps its narrow width for the content: half the gutter below `sm` (see `.card` in `web/main.css`).
     if (isAuthenticated) {
-      div(cls := "p-4 lg:p-8", content)
+      div(cls := "p-2 sm:p-4 lg:p-8", content)
     } else {
-      div(cls := "flex-1 flex items-center justify-center p-4", content)
+      div(cls := "flex-1 flex items-center justify-center p-2 sm:p-4", content)
     }
   }
 
