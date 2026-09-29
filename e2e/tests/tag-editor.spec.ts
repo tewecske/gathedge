@@ -12,6 +12,15 @@ import { test, expect, type Page } from '@playwright/test';
 //   - a source word with two marked translations loses only the row whose "Remove pair" was clicked (it used to
 //     take both, because the delete was addressed by the source word alone).
 
+
+// A row with a word the dictionary does not have is not added on the last Enter: the focus moves to Add (Save while
+// editing), so a note or a form can go with it. One more Enter adds it.
+const finishRow = async (name: 'Add' | 'Save' = 'Add') => {
+  const button = page.getByRole('button', { name, exact: true });
+  await expect(button).toBeFocused();
+  await page.keyboard.press('Enter');
+};
+
 test.describe.configure({ mode: 'serial' });
 
 const unique = Date.now();
@@ -54,6 +63,7 @@ test('a pair typed into the add row is saved immediately as a row', async () => 
   await addSourceInput().press('Enter');
   await addTargetInput().fill(tgt);
   await addTargetInput().press('Enter');
+  await finishRow();
 
   await expect(rowFor(src)).toBeVisible();
   await expect(rowFor(src)).toContainText(tgt);
@@ -77,6 +87,7 @@ test('editing the target and pressing Enter saves it and leaves edit mode', asyn
   const editTarget = editingRow.locator('input[placeholder="Type a Hungarian word"]');
   await editTarget.fill(newTgt);
   await editTarget.press('Enter');
+  await finishRow('Save');
 
   // Left edit mode: Save gone, Edit back.
   await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0);
@@ -137,6 +148,7 @@ test('removing one translation of a word keeps the word\'s other translation', a
     await expect(addTargetInput()).toHaveValue(target);
     await searched;
     await addTargetInput().press('Enter');
+    await finishRow();
     await expect(rowFor(target)).toBeVisible();
   };
 
@@ -176,6 +188,7 @@ test('multiselect: Select all then Delete selected clears the visible rows in on
     await expect(addTargetInput()).toHaveValue(target);
     await searched;
     await addTargetInput().press('Enter');
+    await finishRow();
     await expect(rowFor(target)).toBeVisible();
   };
 
@@ -204,6 +217,7 @@ test('multiselect: Delete selected words hard-deletes my own words and its dialo
   await addSourceInput().press('Enter');
   await addTargetInput().fill(tgt);
   await addTargetInput().press('Enter');
+  await finishRow();
   await expect(rowFor(src)).toBeVisible();
 
   await page.getByRole('button', { name: 'Select all', exact: true }).click();

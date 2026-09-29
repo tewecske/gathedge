@@ -1401,7 +1401,6 @@ private final class TagEditorPage(
   private def renderAddRow(): HtmlElement = {
     div(
       cls := "mt-6 flex flex-col gap-2",
-      h2(cls := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
       addEditor.render(),
     )
   }

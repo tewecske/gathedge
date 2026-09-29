@@ -2,7 +2,7 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.WordApiClient
-import gathedge.frontend.components.{Labels, WordPicker}
+import gathedge.frontend.components.{HelpIcon, Labels, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{PartOfSpeech, Word, WordLanguage}
@@ -20,10 +20,19 @@ import org.scalajs.dom
 
 /** The one editor for a wordlist row. The add row and a row's edit mode are both this editor.
   *
-  * It holds the two words of the row, the row's part of speech, the reader's note beside each word, and the main word
-  * each word is a form of. An import writes the notes and the forms from the file. Here the reader writes them by hand,
-  * so a word typed in can carry them too. Save sends all of it in one request: `onSubmit` gets the body, and the page
-  * sends it to the add or the edit endpoint.
+  * It holds the row's part of speech, its two words, the reader's note beside each word, and the main word each word is
+  * a form of — always in that order, top to bottom. An import writes the notes and the forms from the file. Here the
+  * reader writes them by hand, so a word typed in can carry them too. Save sends all of it in one request: `onSubmit`
+  * gets the body, and the page sends it to the add or the edit endpoint.
+  *
+  * '''As few boxes as the row needs.''' The editor opens with the part of speech and the two word boxes. The note row
+  * and the form row show only when the reader asks for them with their buttons, which then go, or when an edited row
+  * already has a note or a main word. Each opened row gets the focus.
+  *
+  * '''A row of dictionary words is added at once.''' When both words were picked from the dictionary and no note or
+  * form row is open, committing the second word saves the row, as before. A word the dictionary does not have yet
+  * waits: the focus goes to the save button instead, so the reader can add a note or a form first, or press Enter to
+  * save.
   *
   * '''The part of speech is the row's.''' Both word boxes and both main-word boxes search it, a new word is created
   * with it, and the form types on offer are the ones the dictionary's own forms carry for it, so a noun is never
@@ -38,9 +47,9 @@ import org.scalajs.dom
   * button. An administrator confirms a warning, a daisyUI dialog, before changing dictionary data. The server applies
   * the same rule.
   *
-  * The grid keeps the two word boxes on one line on a wide screen: a German box has its article buttons above it, so
-  * the boxes sit at the bottom of their shared row. The notes, the part of speech and the forms follow in rows of their
-  * own. On a phone each word keeps its note and form together, under the part of speech.
+  * On a wide screen each row of the editor spans both columns, so the two word boxes sit on one line: a German box has
+  * its article buttons above it, so the boxes sit at the bottom of their shared row. On a phone each word keeps its
+  * note and form together.
   */
 private[pages] final class TagEntryEditor(
   leftLanguage: Signal[WordLanguage],
@@ -63,13 +72,27 @@ private[pages] final class TagEntryEditor(
   /** A body that changes dictionary data, held until an administrator confirms the warning. */
   private val warningVar = Var(Option.empty[TagEntryInput])
 
+  /** Whether the reader opened the note row or the form row. An edited row with a note opens with its note row. */
+  private val noteOpenVar = Var(seed.exists(s => (s.left.toList ++ s.right.toList).exists(_.note.exists(_.nonEmpty))))
+  private val formOpenVar = Var(false)
+
   private val submitBus = new EventBus[Unit]()
 
   private val left  = new Side(leftLanguage, seed.flatMap(_.left))
   private val right = new Side(rightLanguage, seed.flatMap(_.right))
 
-  private lazy val leftPicker: WordPicker  = wordPicker(left, right, () => rightPicker, UiKeys.tagsSourcePlaceholder)
-  private lazy val rightPicker: WordPicker = wordPicker(right, left, () => leftPicker, UiKeys.tagsTargetPlaceholder)
+  /** The form row shows once asked for, or while a word of the row has a main word to show. */
+  private val formShownSignal: Signal[Boolean] = {
+    Signal.combine(formOpenVar.signal, left.hasLinkSignal, right.hasLinkSignal).map { case (open, l, r) =>
+      open || l || r
+    }
+  }
+
+  private lazy val leftPicker: WordPicker  = wordPicker(left, right, UiKeys.tagsSourcePlaceholder)
+  private lazy val rightPicker: WordPicker = wordPicker(right, left, UiKeys.tagsTargetPlaceholder)
+
+  private var submitRef: Option[dom.html.Button] = None
+  private var posRef: Option[dom.html.Select]    = None
 
   seed.foreach(s => {
     s.left.foreach(side => leftPicker.setText(Word.display(side.word)))
@@ -80,31 +103,44 @@ private[pages] final class TagEntryEditor(
 
   /** Back to an empty add row, after a row was added. */
   def reset(): Unit = {
-    Var.set(posVar -> None, errorVar -> None)
+    Var.set(posVar -> None, errorVar -> None, noteOpenVar -> false, formOpenVar -> false)
     left.reset(); right.reset()
     leftPicker.clear(); rightPicker.clear()
     focus()
   }
 
-  /** One word box. Committing a word saves the row once the other box holds one too — on the add row whichever box is
-    * filled last, and in edit mode the answer box, as before. Enter on an empty box saves the other word alone.
+  /** The side to put the focus in when a row opens: the first word the dictionary does not have, as that is the one a
+    * note or a form is for.
     */
-  private def wordPicker(side: Side, other: Side, otherPicker: () => WordPicker, placeholderKey: String): WordPicker = {
-    val answer = side eq right
+  private def focusSide: Side = if (left.known && !right.known) right else left
+
+  private def later(action: () => Unit): Unit = { dom.window.setTimeout(() => action(), 0); () }
+
+  /** Both words are in: save a row of dictionary words at once, and otherwise wait on the save button. */
+  private def settle(): Unit = {
+    val words = List(left, right).filter(_.wordVar.now().isDefined)
+    val quick = words.forall(_.known) && !noteOpenVar.now() && !formOpenVar.now() && !words.exists(_.hasLink)
+    if (quick) submitBus.emit(()) else later(() => submitRef.foreach(_.focus()))
+  }
+
+  /** One word box. Committing a word with the other box still empty moves on to it, and so does committing the first
+    * word of an edited row; Enter on an empty box, with the other one filled, is the row of that word alone.
+    */
+  private def wordPicker(side: Side, other: Side, placeholderKey: String): WordPicker = {
     new WordPicker(
       language = side.language,
       partOfSpeech = posVar.signal,
       onCommit = Observer[TagPairWord] { ref =>
         side.wordVar.set(Some(ref))
-        val complete = if (editing) answer else other.wordVar.now().isDefined
-        if (complete) submitBus.emit(())
-        else dom.window.setTimeout(() => otherPicker().focus(), 0)
+        val next = other.wordVar.now().isEmpty || (editing && (side eq left))
+        if (next) later(() => (if (side eq left) rightPicker else leftPicker).focus())
+        else settle()
       },
       // A dictionary pick settles the row's part of speech when nothing has yet.
       onCommitWord = Observer[Option[Word]](_.foreach(word => {
         if (posVar.now().isEmpty) posVar.set(Some(word.partOfSpeech))
       })),
-      onEmptyCommit = Observer[Unit](_ => if (other.wordVar.now().isDefined) submitBus.emit(())),
+      onEmptyCommit = Observer[Unit](_ => if (other.wordVar.now().isDefined) settle()),
       placeholderSignal = side.language.map(language => I18n.t(placeholderKey, Labels.language(language))),
       translateFrom = other.detailSignal,
     )
@@ -134,44 +170,31 @@ private[pages] final class TagEntryEditor(
   }
 
   def render(): HtmlElement = {
+    val formRowClass = noteOpenVar.signal.map(open => if (open) "sm:row-start-4" else "sm:row-start-3")
     div(
       cls := "flex flex-col gap-3",
-      // Placed by hand from `sm` up, so the part of speech can span both columns between the notes and the forms. Below
-      // `sm` the source order holds: the part of speech first, then each word with its note and form.
+      div(
+        cls                := "flex items-center gap-1",
+        if (editing) h3(cls := "font-semibold", I18n.t(UiKeys.tagsEditorEditHeading))
+        else h2(cls         := "text-lg font-semibold", I18n.t(UiKeys.tagsEditorAddHeading)),
+        HelpIcon.render(I18n.t(if (editing) UiKeys.helpTagsEditPair else UiKeys.helpTagsAddPair)),
+      ),
+      // Placed by hand from `sm` up, so each part of the row spans both columns in the order part of speech, words,
+      // notes, forms. Below `sm` the source order holds: the part of speech, then each word with its note and form.
       div(
         cls                := "grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2",
         dataAttr("testid") := (if (editing) "tag-edit-row" else "tag-add-row"),
-        renderPartOfSpeech().amend(cls          := "sm:col-span-2 sm:row-start-3"),
-        left.pickerCell(leftPicker).amend(cls   := "sm:col-start-1 sm:row-start-1"),
-        left.noteCell().amend(cls               := "sm:col-start-1 sm:row-start-2"),
-        left.formsCell().amend(cls              := "sm:col-start-1 sm:row-start-4"),
-        right.pickerCell(rightPicker).amend(cls := "mt-2 sm:mt-0 sm:col-start-2 sm:row-start-1"),
-        right.noteCell().amend(cls              := "sm:col-start-2 sm:row-start-2"),
-        right.formsCell().amend(cls             := "sm:col-start-2 sm:row-start-4"),
+        renderPartOfSpeech().amend(cls          := "sm:col-span-2 sm:row-start-1"),
+        left.pickerCell(leftPicker).amend(cls   := "sm:col-start-1 sm:row-start-2"),
+        left.noteCell().amend(cls               := "sm:col-start-1 sm:row-start-3"),
+        left.formsCell().amend(cls              := "sm:col-start-1", cls <-- formRowClass),
+        right.pickerCell(rightPicker).amend(cls := "mt-2 sm:mt-0 sm:col-start-2 sm:row-start-2"),
+        right.noteCell().amend(cls              := "sm:col-start-2 sm:row-start-3"),
+        right.formsCell().amend(cls             := "sm:col-start-2", cls <-- formRowClass),
       ),
-      div(
-        cls                := "flex flex-wrap items-center justify-end gap-2",
-        button(
-          typ := "button",
-          cls := "btn btn-primary btn-sm",
-          disabled <-- left.wordVar.signal.combineWith(right.wordVar.signal).map { case (l, r) =>
-            l.isEmpty && r.isEmpty
-          },
-          I18n.t(if (editing) UiKeys.tagsEditorSaveRow else UiKeys.commonAdd),
-          onClick.mapToUnit --> submitBus.writer,
-        ),
-        Option.when(editing)(
-          button(
-            typ := "button",
-            cls := "btn btn-ghost btn-sm",
-            I18n.t(UiKeys.commonCancel),
-            onClick.mapToUnit --> onCancel,
-          )
-        ),
-      ),
+      renderButtons(),
       child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
       renderWarning(),
-      Option.when(!editing)(p(cls := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorAddWordOnlyHint))),
       submitBus.events.sample(AppState.isGlobalAdminSignal) --> Observer[Boolean] { admin =>
         errorVar.set(None)
         build(admin).foreach(onSubmit.onNext)
@@ -180,7 +203,65 @@ private[pages] final class TagEntryEditor(
       left.relationLoader(),
       right.detailLoader(),
       right.relationLoader(),
-      onMountCallback(_ => if (editing) dom.window.setTimeout(() => focus(), 0)),
+      onMountCallback(_ => if (editing) later(() => focus())),
+    )
+  }
+
+  /** Under the rows: a button for each row not yet open, then save. Opening a row puts the focus in it. */
+  private def renderButtons(): HtmlElement = {
+    div(
+      cls := "flex flex-wrap items-center gap-2",
+      child.maybe <-- noteOpenVar.signal.map(open => {
+        Option.unless(open)(
+          button(
+            typ := "button",
+            cls := "btn btn-ghost btn-sm",
+            I18n.t(UiKeys.tagsEditorAddNote),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              noteOpenVar.set(true)
+              val side = focusSide
+              later(() => side.focusNote())
+            },
+          )
+        )
+      }),
+      child.maybe <-- formShownSignal.map(shown => {
+        Option.unless(shown)(
+          button(
+            typ := "button",
+            cls := "btn btn-ghost btn-sm",
+            I18n.t(UiKeys.tagsEditorAddFormOf),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              formOpenVar.set(true)
+              // With no part of speech there are no form types to offer, so the part of speech is asked for first.
+              val side = focusSide
+              later(() => if (posVar.now().isDefined) side.focusMainWord() else posRef.foreach(_.focus()))
+            },
+          )
+        )
+      }),
+      div(cls := "grow"),
+      button(
+        typ   := "button",
+        cls   := "btn btn-primary btn-sm",
+        disabled <-- left.wordVar.signal.combineWith(right.wordVar.signal).map { case (l, r) =>
+          l.isEmpty && r.isEmpty
+        },
+        I18n.t(if (editing) UiKeys.tagsEditorSaveRow else UiKeys.commonAdd),
+        onClick.mapToUnit --> submitBus.writer,
+        onMountUnmountCallback(
+          ctx => submitRef = Some(ctx.thisNode.ref.asInstanceOf[dom.html.Button]),
+          _ => submitRef = None,
+        ),
+      ),
+      Option.when(editing)(
+        button(
+          typ := "button",
+          cls := "btn btn-ghost btn-sm",
+          I18n.t(UiKeys.commonCancel),
+          onClick.mapToUnit --> onCancel,
+        )
+      ),
     )
   }
 
@@ -230,6 +311,10 @@ private[pages] final class TagEntryEditor(
       select(
         cls := "select select-sm w-36",
         disabled <-- locked,
+        onMountUnmountCallback(
+          ctx => posRef = Some(ctx.thisNode.ref.asInstanceOf[dom.html.Select]),
+          _ => posRef = None,
+        ),
         Option.when(!editing)(
           option(value := TagEntryEditor.anyPartOfSpeech, I18n.t(UiKeys.tagsEditorAnyPartOfSpeech))
         ),
@@ -257,16 +342,25 @@ private[pages] final class TagEntryEditor(
     private val relationsVar = Var(Option.empty[List[String]])
     private val relationVar  = Var("")
 
+    private var noteRef: Option[dom.html.Input] = None
+
     private val mainPicker = new WordPicker(
       language = language,
       partOfSpeech = posVar.signal,
       onCommit = Observer[TagPairWord](ref => mainRefVar.set(Some(ref))),
       placeholderSignal = Val(I18n.t(UiKeys.tagsEditorMainWordSearch)),
       mainOnly = true,
+      inlineLabel = Some(I18n.t(UiKeys.tagsEditorFormOfLabel)),
     )
 
     /** Built once, so the box keeps what is typed in it while the block around it is redrawn. */
-    private lazy val mainBox: HtmlElement = div(cls := "flex flex-col gap-1", mainPicker.render(), renderRelation())
+    private lazy val mainBox: HtmlElement = {
+      div(
+        cls := "flex items-end gap-2",
+        div(cls := "grow min-w-0", mainPicker.render()),
+        renderRelation(),
+      )
+    }
 
     def reset(): Unit = {
       Var.set(
@@ -282,6 +376,12 @@ private[pages] final class TagEntryEditor(
       mainRefVar.set(None)
       mainPicker.clear()
     }
+
+    def focusNote(): Unit     = noteRef.foreach(_.focus())
+    def focusMainWord(): Unit = mainPicker.focus()
+
+    /** The word in the box is one the dictionary has: picked from it, not typed in as new. */
+    def known: Boolean = wordVar.now().flatMap(TagEntryEditor.idOf).isDefined
 
     /** The detail of the dictionary word in the box, when it is loaded and still the one in the box. */
     private def detailOf(word: Option[TagPairWord], detail: Option[WordDetail]): Option[WordDetail] = {
@@ -306,6 +406,11 @@ private[pages] final class TagEntryEditor(
     val detailSignal: Signal[Option[WordDetail]] = {
       wordVar.signal.combineWith(detailVar.signal).map { case (word, detail) => detailOf(word, detail) }.distinct
     }
+
+    /** The word in the box has a main word already, which the form row shows. */
+    val hasLinkSignal: Signal[Boolean] = detailSignal.map(_.exists(_.mainWords.nonEmpty))
+
+    def hasLink: Boolean = detailOf(wordVar.now(), detailVar.now()).exists(_.mainWords.nonEmpty)
 
     /** The word in the box is not the reader's to change. A new word is theirs; a word not yet read is not locked, and
       * the server still decides.
@@ -360,9 +465,11 @@ private[pages] final class TagEntryEditor(
 
     def pickerCell(picker: WordPicker): HtmlElement = div(cls := "self-end min-w-0", picker.render())
 
+    /** Always in the page and hidden until the note row opens, so opening it can put the focus straight in. */
     def noteCell(): HtmlElement = {
       label(
         cls := "input input-sm w-full",
+        cls("hidden") <-- noteOpenVar.signal.map(!_),
         span(cls      := "label", I18n.t(UiKeys.tagsEditorNoteLabel)),
         input(
           typ         := "text",
@@ -371,6 +478,10 @@ private[pages] final class TagEntryEditor(
           controlled(value <-- noteVar.signal, onInput.mapToValue --> noteVar.writer),
           // Enter saves the row, as it does in a word box.
           onKeyDown.filter(_.key == "Enter").preventDefault.mapToUnit --> submitBus.writer,
+          onMountUnmountCallback(
+            ctx => noteRef = Some(ctx.thisNode.ref.asInstanceOf[dom.html.Input]),
+            _ => noteRef = None,
+          ),
         ),
       )
     }
@@ -381,8 +492,9 @@ private[pages] final class TagEntryEditor(
       */
     def formsCell(): HtmlElement = {
       div(
-        cls := "flex flex-col gap-1 min-w-0",
-        span(cls := "label-text text-xs opacity-70", I18n.t(UiKeys.tagsEditorFormOfLabel)),
+        // At the bottom of its row, as the word boxes are: a German main-word box has its article buttons above it.
+        cls := "min-w-0 self-end",
+        cls("hidden") <-- formShownSignal.map(!_),
         child <-- Signal
           .combine(wordVar.signal, detailVar.signal, removedVar.signal, posVar.signal, AppState.isGlobalAdminSignal)
           .map { case (word, detail, removed, pos, admin) =>
@@ -412,6 +524,7 @@ private[pages] final class TagEntryEditor(
     private def linkItem(ref: WordFormRef, remove: Option[() => Unit]): HtmlElement = {
       li(
         cls := "flex flex-wrap items-center gap-2",
+        span(cls := "text-xs opacity-70", I18n.t(UiKeys.tagsEditorFormOfLabel)),
         span(Word.display(ref.word)),
         span(cls := "text-xs opacity-60", Labels.grammarRelation(ref.relation)),
         remove.map(action => {
@@ -425,21 +538,22 @@ private[pages] final class TagEntryEditor(
       )
     }
 
-    /** The form type: always shown beside the main-word box, since a link needs one. */
+    /** The form type, beside the main-word box, since a link needs one. */
     private def renderRelation(): HtmlElement = {
       div(
+        cls := "shrink-0",
         child <-- relationsVar.signal.map {
           case None                                 => span(cls := "loading loading-spinner loading-xs", role := "status")
           case Some(relations) if relations.isEmpty =>
             p(cls := "text-xs opacity-60", I18n.t(UiKeys.tagsEditorNoRelations))
           case Some(relations)                      =>
             select(
-              cls        := "select select-sm w-full",
+              cls        := "select select-sm w-40",
               aria.label := I18n.t(UiKeys.tagsEditorFormRelation),
               relations.map(relation => option(value := relation, Labels.grammarRelation(relation))),
               controlled(value <-- relationVar.signal, onChange.mapToValue --> relationVar.writer),
             )
-        }
+        },
       )
     }
   }

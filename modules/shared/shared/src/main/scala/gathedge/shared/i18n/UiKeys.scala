@@ -1000,11 +1000,13 @@ object UiKeys {
     */
   val tagsEditorDefaultName: String = key("ui.tags.editor.defaultName")
 
-  /** Heading above the add-a-row control. */
-  val tagsEditorAddHeading: String = key("ui.tags.editor.addHeading")
+  /** The row editor's headings, above the add row and above a row being edited. */
+  val tagsEditorAddHeading: String  = key("ui.tags.editor.addHeading")
+  val tagsEditorEditHeading: String = key("ui.tags.editor.editHeading")
 
-  /** Hint under the add-a-row control: leave the answer box empty and press Enter to add the word on its own. */
-  val tagsEditorAddWordOnlyHint: String = key("ui.tags.editor.addWordOnlyHint")
+  /** The row editor's buttons that open its note row and its form row. */
+  val tagsEditorAddNote: String   = key("ui.tags.editor.addNote")
+  val tagsEditorAddFormOf: String = key("ui.tags.editor.addFormOf")
 
   /** Shown in place of the rows table while the tag holds none (matching the active filter, if any). */
   val tagsEditorEmpty: String = key("ui.tags.editor.empty")
@@ -1538,6 +1540,8 @@ object UiKeys {
   val helpTags: String            = key("ui.help.tags")
   val helpBulkImport: String      = key("ui.help.bulkImport")
   val helpGameWordlists: String   = key("ui.help.gameWordlists")
+  val helpTagsAddPair: String     = key("ui.help.tagsAddPair")
+  val helpTagsEditPair: String    = key("ui.help.tagsEditPair")
   val helpGameMode: String        = key("ui.help.gameMode")
   val helpShareHistory: String    = key("ui.help.shareHistory")
   val helpGroups: String          = key("ui.help.groups")

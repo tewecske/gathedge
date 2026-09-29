@@ -15,6 +15,15 @@ import { test, expect, type Page } from '@playwright/test';
 //   - the swap button re-orders the boxes with no server call, and a pair added while swapped still
 //     lands in the tag's stored orientation.
 
+
+// A row with a word the dictionary does not have is not added on the last Enter: the focus moves to Add (Save while
+// editing), so a note or a form can go with it. One more Enter adds it.
+const finishRow = async (name: 'Add' | 'Save' = 'Add') => {
+  const button = page.getByRole('button', { name, exact: true });
+  await expect(button).toBeFocused();
+  await page.keyboard.press('Enter');
+};
+
 test.describe.configure({ mode: 'serial' });
 
 const U = Date.now().toString(36);
@@ -91,6 +100,7 @@ test.describe('entering a typed pair or lone word', () => {
     await expect(tgtInput()).toBeFocused();
     await tgtInput().fill(t);
     await tgtInput().press('Enter');
+    await finishRow();
     await expect(rowFor(s)).toContainText(t);
     await page.reload();
     await expect(rowFor(s)).toContainText(t);
@@ -106,6 +116,7 @@ test.describe('entering a typed pair or lone word', () => {
     await expect(srcInput()).toBeFocused();
     await srcInput().fill(s);
     await srcInput().press('Enter');
+    await finishRow();
     await expect(rowFor(s)).toContainText(t);
     await page.reload();
     await expect(rowFor(s)).toContainText(t);
@@ -123,6 +134,7 @@ test.describe('entering a typed pair or lone word', () => {
     await srcInput().press('Enter');
     await tgtInput().fill(right);
     await tgtInput().press('Enter');
+    await finishRow();
     await expect(rowFor(left)).toContainText(right);
     // The swap was a view change only: after a reload the tag is back to de -> hu and the row carries both words.
     await page.reload();
@@ -140,6 +152,7 @@ test.describe('entering a typed pair or lone word', () => {
     await expect(srcInput()).toBeFocused();
     await srcInput().fill(left);
     await srcInput().press('Enter');
+    await finishRow();
     await expect(rowFor(right)).toContainText(left);
     await page.reload();
     await expect(rowFor(right)).toContainText(left);
@@ -153,6 +166,7 @@ test.describe('entering a typed pair or lone word', () => {
     await srcInput().press('Enter');
     await expect(tgtInput()).toBeFocused();
     await tgtInput().press('Enter');
+    await finishRow();
     await expect(rowFor(s)).toContainText('—');
     await page.reload();
     await expect(rowFor(s)).toContainText('—');
@@ -166,6 +180,7 @@ test.describe('entering a typed pair or lone word', () => {
     await tgtInput().press('Enter');
     await expect(srcInput()).toBeFocused();
     await srcInput().press('Enter');
+    await finishRow();
     await expect(rowFor(t)).toContainText('—');
     await page.reload();
     await expect(rowFor(t)).toContainText('—');
