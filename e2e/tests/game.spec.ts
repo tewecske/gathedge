@@ -148,7 +148,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // The play-time variant picker, in full: direction swap, the All/10/20/Custom word-count radios, an articles
   // toggle (both languages of this pair include German, since the pair is German<->Hungarian), and the
   // three-way preference select — none of which appeared on the setup screen above.
-  await expect(guestPage.getByTitle('Swap languages')).toBeVisible();
+  await expect(guestPage.getByRole('button', { name: 'Swap languages', exact: true })).toBeVisible();
   const langSpans = guestPage.locator('span.font-medium');
   await expect(langSpans).toHaveCount(2);
   await expect(langSpans.nth(0)).toHaveText('German');
@@ -184,7 +184,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   // Exercise the swap arrow itself: it flips the displayed pair for this play, and reverts cleanly. Not
   // disabled, since the reverse direction has an eligible pool too (both-directions pairing above).
-  const swapButton = guestPage.getByTitle('Swap languages');
+  const swapButton = guestPage.getByRole('button', { name: 'Swap languages', exact: true });
   await expect(swapButton).toBeEnabled();
   await swapButton.click();
   await expect(langSpans.nth(0)).toHaveText('Hungarian');
@@ -261,7 +261,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await guestPage.goto(gameUrl);
   await expect(guestPage).toHaveURL(new RegExp(`/en/g/${gameSlug}$`));
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
-  await expect(guestPage.getByTitle('Swap languages')).toBeVisible();
+  await expect(guestPage.getByRole('button', { name: 'Swap languages', exact: true })).toBeVisible();
   await expect(guestPage.getByText('How many words')).toBeVisible();
   await expect(guestPage.getByText('Which words')).toBeVisible();
 
@@ -305,7 +305,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage).not.toHaveURL(secondPlayUrl);
   await expect(guestPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
   await expect(guestPage.getByRole('button', { name: 'Start' })).toHaveCount(0);
-  await expect(guestPage.getByTitle('Swap languages')).toHaveCount(0);
+  await expect(guestPage.getByRole('button', { name: 'Swap languages', exact: true })).toHaveCount(0);
 
   const thirdPromptText = (await heading.textContent())?.trim() ?? '';
   const thirdMatch = words.find((w) => w.term === thirdPromptText);
