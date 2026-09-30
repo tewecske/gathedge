@@ -32,6 +32,13 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The checkout whose compose project owns the dev Postgres. In a worktree made by new-worktree.sh that is
+# the main checkout, not this one: compose names a project after its directory, so a bare `docker compose`
+# here would look for a `wt-<n>-…` project and try to start a second Postgres on the same port. The
+# worktree shares the main checkout's Postgres (its own data is a schema in it), so every compose call
+# below goes to that project. In the main checkout this is REPO_ROOT itself.
+readonly COMPOSE_ROOT="$(cd "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+
 readonly SAMPLE_SEED="data/dictionary/seed.tsv"
 readonly SEED_DIR="target/dictionary"
 readonly MAIN_CLASS="gathedge.backend.tools.DictionaryImport"
@@ -55,6 +62,11 @@ die()   { printf '%serror%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; exit 1; }
 
 usage() {
   sed -n '3,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# Compose, run as if from COMPOSE_ROOT: its compose file, its `.env`, and its project name.
+compose() {
+  docker compose --project-directory "$COMPOSE_ROOT" -f "$COMPOSE_ROOT/docker-compose.yml" "$@"
 }
 
 # --- Steps -----------------------------------------------------------------------------------------
@@ -92,13 +104,13 @@ start_database() {
 
   command -v docker >/dev/null || die "docker is not on the PATH (set DEV_DB_URL to skip docker entirely)"
 
-  if ! docker compose ps --status running --services 2>/dev/null | grep -qx postgres; then
+  if ! compose ps --status running --services 2>/dev/null | grep -qx postgres; then
     say "  starting the postgres service"
-    docker compose up -d postgres || die "could not start the postgres service"
+    compose up -d postgres || die "could not start the postgres service"
   fi
 
   local waited=0
-  until docker compose exec -T postgres pg_isready -U "$user" -d "$name" >/dev/null 2>&1; do
+  until compose exec -T postgres pg_isready -U "$user" -d "$name" >/dev/null 2>&1; do
     if [ "$waited" -ge "$DB_WAIT_SECONDS" ]; then
       die "postgres did not become ready within ${DB_WAIT_SECONDS}s"
     fi
@@ -121,7 +133,7 @@ run_import() {
 show_counts() {
   local user="$1" name="$2" schema="$3"
   head1 "Rows now in $schema"
-  docker compose exec -T postgres psql -U "$user" -d "$name" -v ON_ERROR_STOP=1 \
+  compose exec -T postgres psql -U "$user" -d "$name" -v ON_ERROR_STOP=1 \
     -c "select language, count(*) from $schema.words group by 1 order by 1" \
     -c "select origin, count(*) from $schema.word_translations group by 1 order by 1" \
     || warn "could not read the counts back (the import itself reported success)"
