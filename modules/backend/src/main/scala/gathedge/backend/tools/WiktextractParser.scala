@@ -220,9 +220,11 @@ object WiktextractParser {
     * the table (`inflection-template`), a Hungarian vowel-harmony/stem-class label (`class`) that names how the word
     * inflects rather than a form of the word itself, or (`auxiliary`) a German conjugation table's note of which verb
     * (`haben`/`sein`) forms that lemma's Perfekt tense — a fact about the lemma, not a form of it. Left unfiltered,
-    * `auxiliary` rows make `haben`/`sein` a "form" of nearly every German verb.
+    * `auxiliary` rows make `haben`/`sein` a "form" of nearly every German verb. The composed tenses still teach the
+    * auxiliary: `habe gekauft`, `bin gegangen`. `canonical` is the headword again, with an article or a note (`the
+    * pip`).
     */
-  private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class", "auxiliary")
+  private val metaFormTags: Set[String] = Set("table-tags", "inflection-template", "class", "auxiliary", "canonical")
 
   /** A form tagged with one of these is not the standard, current spelling a learner should be taught — a variant form
     * wiktextract records alongside the real one, not a distinct grammatical fact the way `plural`/`dative` are. Dropped
@@ -231,53 +233,127 @@ object WiktextractParser {
     */
   private val nonStandardFormTags: Set[String] = Set("nonstandard", "obsolete", "alternative", "archaic")
 
-  /** `"-"` is the dump's own placeholder for "this word has no such form" (a mass noun with no plural, say), and a
-    * space marks a periphrastic construction or, more often on inspection, a corrupted entry — the same rule [[wordOf]]
-    * and [[pairsOf]] already apply to word text applies here too. The one exception is [[isSeparatedForm]].
-    *
-    * An `error-*` tag (`error-unrecognized-form`, `error-unknown-tag`, ...) is wiktextract's own admission that it
-    * could not classify this table cell — mostly Hungarian conjugation-table cells its template logic failed on. The
-    * whole row is dropped, not just the offending tag: the remaining tags on such a row describe an incomplete,
-    * unreliable grammatical fact (person/number without the tense that made the cell what it was), not a real one.
+  /** Tags that say how wiktextract read the cell, not what the form is. They are left out of the relation. */
+  private val layoutTags: Set[String] = Set("multiword-construction")
+
+  /** The most words a multi-word form may have. German's longest composed tense is three (`würde gekauft haben`), and a
+    * Spanish reflexive adds one (`me habría quejado`). A longer cell is a note.
     */
-  private def isUsableForm(lemma: ParsedWord, form: RawForm): Boolean = {
-    val tags = form.tags.getOrElse(Nil)
-    val text = form.form.trim
-    tags.nonEmpty &&
-    !tags.exists(tag => metaFormTags.contains(tag.toLowerCase)) &&
-    !tags.exists(tag => tag.toLowerCase.startsWith("error-")) &&
-    !tags.exists(tag => nonStandardFormTags.contains(tag.toLowerCase)) &&
-    text.nonEmpty && text != "-" && (!text.contains(" ") || isSeparatedForm(lemma.language, lemma.text, form))
+  private val maxFormWords = 4
+
+  /** Words that appear only in the English notes some tables leave in their cells (`definite forms are not used`,
+    * `intransitive verb`, `older also: der`). No form in the four languages uses one of them.
+    */
+  private val noteWords: Set[String] = {
+    Set(
+      "e.g.",
+      "verb",
+      "verbs",
+      "forms",
+      "used",
+      "not",
+      "are",
+      "intransitive",
+      "transitive",
+      "followed",
+      "expressed",
+      "same",
+      "meaning",
+      "older",
+      "also",
+      "see",
+    )
   }
 
-  /** The moods of a conjugation table's main-clause rows: Wiktionary's "indicative" and "subjunctive" sections, and the
-    * imperative below them.
-    */
-  private val finiteMoodTags: Set[String] = Set("indicative", "subjunctive", "imperative")
+  private val formWord = "[\\p{L}\\p{M}'’-]+".r
 
-  /** A separable verb's main-clause form: `kaufe ein` for `einkaufen`, `setzte über` for `übersetzen`. The particle
-    * splits off and moves to the end, so the form is two words. Its subordinate-clause twin (`einkaufe`) is one word
-    * and passes the ordinary rule.
-    *
-    * The test is narrow on purpose. The language must split its verb particles ([[LanguageProfile]]). The row must be a
-    * cell of the conjugation table, in a finite mood, and not a composed tense (`multiword-construction`:
-    * `habe eingekauft`, `werde einkaufen`). It must be exactly two words, and the lemma must start with the second
-    * word. The language check keeps out Spanish clitics, where the second word is the verb itself and so also starts
-    * the lemma (`se acaba` for `acabar`). The table checks keep out the notes Hungarian tables leave in their cells
-    * (`e.g. nem ad le`).
+  /** One cell can name more than one form: `adva (adván)`, `GUI-jaim (or GUI-im)`, `beleegyezhetve / beleegyezhetvén`,
+    * and a cell that ends or starts with a bare `or` (`lennék or`, `or adnók`). Each alternative becomes a form of its
+    * own, with the cell's tags. A cell with no such shape is its own single alternative.
     */
-  private def isSeparatedForm(language: WordLanguage, lemma: String, form: RawForm): Boolean = {
-    val tags = form.tags.getOrElse(Nil).map(_.toLowerCase)
-    LanguageProfile.of(language).splitsVerbParticles &&
-    form.source.contains("conjugation") &&
-    tags.exists(finiteMoodTags.contains) &&
-    !tags.contains("multiword-construction") &&
-    (form.form.trim.split(' ').toList match {
-      case List(verb, particle) =>
-        verb.nonEmpty && particle.nonEmpty && lemma.toLowerCase.startsWith(particle.toLowerCase)
-      case _                    =>
-        false
-    })
+  def alternativesOf(text: String): List[String] = {
+    val trimmed = text.trim.stripSuffix(" or").stripPrefix("or ").trim
+    val parts   = {
+      if (trimmed.contains(" / "))
+        trimmed.split(" / ").toList
+      else {
+        trimmed match {
+          case s"$first ($second)" if !first.contains("(") =>
+            List(first, second.stripPrefix("or "))
+          case other                                       =>
+            List(other)
+        }
+      }
+    }
+    parts.map(_.trim).filter(_.nonEmpty)
+  }
+
+  /** Whether one alternative is a form to store. `"-"` is the dump's own placeholder for "this word has no such form"
+    * (a mass noun with no plural, say).
+    *
+    * A one-word form passes as it always has: that keeps `dr.-ok` and `1.ª`, which the dump spells with punctuation. A
+    * multi-word form must be words and nothing else, at most [[maxFormWords]] of them, with no word of a note in it.
+    * That keeps the composed tenses (`habe gekauft`), a separable verb's main clause (`kaufe ein`), an adjective with
+    * its article (`der freie`), a periphrastic comparison (`more free`, `am freiesten`) and a reflexive form (`me
+    * quejo`). It keeps out the notes (`e.g. adni fog.`, `Future is expressed with …`).
+    *
+    * A multi-word predicative row is dropped: it is the lemma after a pronoun and a copula (`er ist frei`), which
+    * teaches nothing the lemma does not.
+    */
+  private def isFormText(text: String, tags: List[String]): Boolean = {
+    val words = text.split(' ').toList
+    text.nonEmpty && text != "-" && (
+      words.size == 1 || (
+        words.size <= maxFormWords &&
+          words.forall(word => formWord.matches(word)) &&
+          !words.exists(word => noteWords.contains(word.toLowerCase)) &&
+          !tags.contains("predicative")
+      )
+    )
+  }
+
+  /** A row the dump states cleanly. An `error-*` tag (`error-unrecognized-form`, `error-unknown-tag`, ...) is
+    * wiktextract's own admission that it could not classify this table cell. The whole row is dropped, not just the
+    * offending tag: the remaining tags on such a row describe an incomplete, unreliable grammatical fact. The one place
+    * such rows are still read is [[HungarianTables]], which rebuilds the tags from the cell's position instead.
+    */
+  private def isCleanRow(tags: List[String]): Boolean = {
+    tags.nonEmpty &&
+    !tags.exists(metaFormTags.contains) &&
+    !tags.exists(_.startsWith("error-")) &&
+    !tags.exists(nonStandardFormTags.contains)
+  }
+
+  /** A Spanish reflexive form is written with its pronoun (`me quejo`), and the dump gives it the same tags as the
+    * plain form (`compro`). The `reflexive` tag tells the two apart.
+    */
+  private def withReflexive(language: WordLanguage, text: String, tags: List[String]): List[String] = {
+    val first = text.takeWhile(_ != ' ').toLowerCase
+    if (text.contains(' ') && LanguageProfile.of(language).reflexivePronouns.contains(first)) tags :+ "reflexive"
+    else tags
+  }
+
+  /** Every `(text, tags)` pair one lemma's `forms[]` array states, before either becomes a word. Tags are lower-cased.
+    * A Hungarian table that wiktextract could not read is handed to [[HungarianTables]] whole; every other row is read
+    * on its own.
+    */
+  private def formRowsOf(lemma: ParsedWord, forms: List[RawForm]): List[(String, List[String])] = {
+    val rows =
+      forms.map(raw => (raw, HungarianTables.canonicalTags(lemma.language, raw.tags.getOrElse(Nil).map(_.toLowerCase))))
+    HungarianTables.split(lemma.language, rows).flatMap {
+      case HungarianTables.Chunk.Rebuilt(table, potential) =>
+        HungarianTables.conjugation(table, potential)
+      case HungarianTables.Chunk.Row(raw, tags)            =>
+        HungarianTables
+          .possessor(lemma.language, raw, tags)
+          .orElse(Option.when(isCleanRow(tags))(tags))
+          .toList
+          .flatMap { clean =>
+            alternativesOf(raw.form)
+              .filter(text => isFormText(text, clean))
+              .map(text => (text, withReflexive(lemma.language, text, clean.filterNot(layoutTags.contains))))
+          }
+    }
   }
 
   /** The forms this entry's own `forms[]` array states, keyed to the entry as a lemma. `None` if the entry itself is
@@ -294,10 +370,9 @@ object WiktextractParser {
       case None        =>
         Nil
       case Some(lemma) =>
-        entry.forms.getOrElse(Nil).filter(raw => isUsableForm(lemma, raw)).map { raw =>
-          val tags   = raw.tags.getOrElse(Nil)
+        formRowsOf(lemma, entry.forms.getOrElse(Nil)).map { case (text, tags) =>
           val gender = genderOf(lemma.language, lemma.partOfSpeech, tags)
-          val word   = ParsedWord(lemma.language, raw.form.trim, lemma.partOfSpeech, gender)
+          val word   = ParsedWord(lemma.language, text, lemma.partOfSpeech, gender)
           ParsedForm(lemma, word, ParsedForm.relationOf(tags))
         }
     }
@@ -317,7 +392,7 @@ object WiktextractParser {
   /** A form stated the other way around from [[formsOf]]: instead of the lemma's own `forms[]` naming this spelling,
     * the inflected word has its own page (`hozni`) whose sense names what it is a form of. This is the only path for a
     * form wiktextract's own table logic could not classify -- `hozni` as a row in `hoz`'s conjugation table carries
-    * `error-unrecognized-form` and [[isUsableForm]] drops it, but `hozni`'s own page states the same fact cleanly.
+    * `error-unrecognized-form` and [[isCleanRow]] drops it, but `hozni`'s own page states the same fact cleanly.
     *
     * `includeAltOf` additionally treats `alt-of` (spelling variants, not grammatical forms) as a marker tag and reads
     * `sense.alt_of` alongside `sense.form_of`. Off by default: a spelling variant is a different kind of relation than
@@ -341,7 +416,7 @@ object WiktextractParser {
       sense     <- entry.senses.getOrElse(Nil)
       tags       = sense.tags.getOrElse(Nil)
       if tags.exists(tag => markerTags.contains(tag.toLowerCase))
-      // Same rule as `isUsableForm`: a form-of page tagged nonstandard/obsolete/alternative/archaic is a
+      // Same rule as `isCleanRow`: a form-of page tagged nonstandard/obsolete/alternative/archaic is a
       // spelling variant, not a grammatical fact worth teaching. `error-*` is deliberately not filtered here
       // -- this path is how a form wiktextract's own table logic could not classify still gets imported.
       if !tags.exists(tag => nonStandardFormTags.contains(tag.toLowerCase))

@@ -347,6 +347,11 @@ Four load-bearing columns:
 - **Search is a prefix match on `text_norm`** (`LIKE 'hau%'`), lowercased on write.
 - **`is_form` is derived from `word_forms`, not authoritative.** It is what the listing's "main words only" filter reads, so the predicate is a column rather than a `NOT EXISTS`, and `idx_words_main_rank` (partial, `WHERE is_form = FALSE`) answers the default order. `word_forms` stays the truth: `WordRepository.insertForms`, `.deleteWordForms` and `.deleteWordForm` are the only writers, each updating the flag in its own transaction, and another writer of that table must do the same. Deleting one `(form, relation)` pair frees the word only when no relation is left.
 
+**Every form a course teaches is imported, in every language** (`WiktextractParser.formsOf`). A form may be several words: a composed tense (`habe gekauft`), a separable verb's main clause (`kaufe ein`), an adjective with its article (`der freie`), `more free`, a Spanish reflexive (`me quejo`, tagged `reflexive`). A cell naming two forms (`adva (adván)`, `X / Y`) becomes two. Notes, placeholders, `canonical` rows and archaic/nonstandard forms stay out.
+
+- **Hungarian conjugation tables are rebuilt, not read** (`tools/HungarianTables`). wiktextract tags every cell of the regular templates `error-unrecognized-form`, with the person tags one cell off and no mood. The layout is fixed, so the tags come from each cell's position; a block that fails its check is dropped, never guessed. Only a table with an `error-*` cell goes this way.
+- **A mood, tense or conjugation tag decides a form's `GrammarCategory`** (priority 5), so a plural verb form files under tenses, not cases.
+
 **`LanguageProfile` (`shared/domain/LanguageProfile.scala`) is the only place an article literal may appear.** It maps each `WordLanguage` to the genders it has, the article each takes, the article forms its parser recognises, and whether its nouns capitalize. Every display, strip, or picker goes through it — a fifth language is a profile entry, not a grep for `WordLanguage.De`.
 
 **Translation edges are stored in both directions.** `origin` is `dictionary`, `user`, or `pivot`.

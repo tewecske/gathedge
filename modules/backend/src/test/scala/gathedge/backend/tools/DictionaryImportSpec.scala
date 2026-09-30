@@ -2,6 +2,7 @@ package gathedge.backend.tools
 
 import gathedge.backend.tools.WiktextractParser.{ParsedAudio, ParsedForm, ParsedWord}
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import zio.json._
 import zio.test._
 
 import scala.io.Source
@@ -56,7 +57,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
   }
 
   /** One `forms[]` array exercising every filter `WiktextractParser.formsOf` applies: a real plural, the dump's own "no
-    * such form" placeholder (`"-"`), a periphrastic construction (a space), two flavours of template scaffolding
+    * such form" placeholder (`"-"`), a note left in a cell (`e.g. …`), two flavours of template scaffolding
     * (`table-tags`, `inflection-template`), a Hungarian-style stem-class label (`class`), a German conjugation table's
     * auxiliary-verb note (`auxiliary`), a form spelled identically to its own lemma (real linguistic fact, not noise --
     * excluded at store time instead, see `DictionaryImport.formEdges`), two flavours of wiktextract's own "could not
@@ -70,7 +71,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |"forms":[
       |{"form":"Beispiele","tags":["plural"]},
       |{"form":"-","tags":["genitive"]},
-      |{"form":"zum Beispiel","tags":["idiom"]},
+      |{"form":"e.g. zum Beispiel","tags":["idiom"]},
       |{"form":"Beispiel","tags":["nominative","singular"]},
       |{"form":"strong","tags":["table-tags"],"source":"declension"},
       |{"form":"de-ndecl","tags":["inflection-template"],"source":"declension"},
@@ -85,9 +86,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |]}""".stripMargin.replace("\n", "")
   }
 
-  /** A separable verb's conjugation table, cut down to one row of each kind: main-clause cells in each finite mood (two
-    * words), a subordinate-clause cell (one word), composed tenses, and the head line's untabled summary. The last two
-    * cells are spaced rows the lemma does not start with the second word of — a clitic, a table note.
+  /** A German verb's forms, cut down to one row of each kind the importer meets: a separable verb's main-clause cells
+    * (two words), a subordinate-clause cell (one word), composed tenses (`multiword-construction`), the head line's
+    * untabled summary, and three multi-word rows that are not forms — a predicative row, a canonical row and a note.
     */
   private val einkaufenLine = {
     """{"word":"einkaufen","lang_code":"de","lang":"German","pos":"verb","senses":[{"glosses":["to shop"]}],
@@ -95,20 +96,76 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |{"form":"kauft ein","tags":["present","singular","third-person"]},
       |{"form":"kaufe ein","tags":["first-person","indicative","present","singular"],"source":"conjugation"},
       |{"form":"kaufest ein","tags":["second-person","singular","subjunctive","subjunctive-i"],"source":"conjugation"},
-      |{"form":"kaufte ein","tags":["first-person","formal","rare","singular","subjunctive","subjunctive-ii"],
-      |"source":"conjugation"},
       |{"form":"kauf ein","tags":["imperative","second-person","singular"],"source":"conjugation"},
       |{"form":"einkaufe","tags":["first-person","indicative","present","singular","subordinate-clause"],
       |"source":"conjugation"},
       |{"form":"habe eingekauft","tags":["first-person","indicative","multiword-construction","perfect","singular"],
       |"source":"conjugation"},
-      |{"form":"werde einkaufen","tags":["first-person","future","future-i","indicative","multiword-construction",
-      |"singular"],"source":"conjugation"},
-      |{"form":"einkaufen werden","tags":["future","future-i","infinitive","multiword-construction"],
-      |"source":"conjugation"},
-      |{"form":"me kaufe","tags":["first-person","indicative","present","singular"],"source":"conjugation"},
-      |{"form":"kaufe ein mal","tags":["first-person","indicative","present","singular"],"source":"conjugation"}
+      |{"form":"würde eingekauft haben","tags":["first-person","future","future-ii","multiword-construction",
+      |"singular","subjunctive","subjunctive-ii"],"source":"conjugation"},
+      |{"form":"er ist eingekauft","tags":["masculine","predicative","singular"],"source":"declension"},
+      |{"form":"the einkaufen","tags":["canonical"]},
+      |{"form":"definite forms are not used","tags":["definite","indicative","present"],"source":"conjugation"},
+      |{"form":"one two three four five","tags":["present","plural"],"source":"conjugation"}
       |]}""".stripMargin.replace("\n", "")
+  }
+
+  /** Rows whose cell names two forms, and rows in two other languages that write a form in more than one word. */
+  private val alternativesLine = {
+    """{"word":"GUI","lang_code":"hu","lang":"Hungarian","pos":"noun","senses":[{"glosses":["GUI"]}],
+      |"forms":[
+      |{"form":"GUI-jaim (or GUI-im)","tags":["first-person","possessed-many","possessive","singular"],
+      |"source":"declension"},
+      |{"form":"GUI-k / GUI-ek","tags":["nominative","plural"],"source":"declension"},
+      |{"form":"GUI-é","tags":["error-unrecognized-form","singular"],"source":"declension"},
+      |{"form":"GUI-kéi","tags":["error-unrecognized-form","plural"],"source":"declension"}
+      |]}""".stripMargin.replace("\n", "")
+  }
+
+  private val comprarLine = {
+    """{"word":"comprar","lang_code":"es","lang":"Spanish","pos":"verb","senses":[{"glosses":["to buy"]}],
+      |"forms":[
+      |{"form":"compra","tags":["indicative","present","singular","third-person"],"source":"conjugation"},
+      |{"form":"se compra","tags":["indicative","present","singular","third-person"],"source":"conjugation"},
+      |{"form":"nos compramos","tags":["first-person","indicative","plural","present"],"source":"conjugation"}
+      |]}""".stripMargin.replace("\n", "")
+  }
+
+  private val freeLine = {
+    """{"word":"free","lang_code":"en","lang":"English","pos":"adj","senses":[{"glosses":["unconstrained"]}],
+      |"forms":[{"form":"freer","tags":["comparative"]},{"form":"more free","tags":["comparative"]},
+      |{"form":"most free","tags":["superlative"]}]}""".stripMargin.replace("\n", "")
+  }
+
+  /** Real dump lines for three Hungarian verbs, cut down to the fields the parser reads: `ad` (a regular transitive
+    * verb), `megy` (irregular and intransitive: no definite forms) and `dolgozik` (an `-ik` verb, with a second form in
+    * several cells and a rare `*` form).
+    */
+  private lazy val hungarianVerbs: Map[String, String] = {
+    val source = Source.fromResource("wiktextract-hungarian-verbs.jsonl", getClass.getClassLoader)(using
+      scala.io.Codec.UTF8
+    )
+    try source.getLines().toList.map(line => line.fromJson[WiktextractParser.RawEntry].toOption.get.word -> line).toMap
+    finally source.close()
+  }
+
+  /** One verb's forms by relation. A lookup's tags may be written in any order. */
+  private final case class Paradigm(byRelation: Map[String, Set[String]]) {
+    def get(relation: String): Option[Set[String]] = byRelation.get(ParsedForm.relationOf(relation.split(',').toList))
+    def keys: Iterable[String]                     = byRelation.keys
+    def values: Iterable[Set[String]]              = byRelation.values
+  }
+
+  private def hungarianForms(word: String): Paradigm = {
+    Paradigm(
+      WiktextractParser
+        .parse(hungarianVerbs(word))
+        .forms
+        .groupMap(_.relation)(_.form.text)
+        .view
+        .mapValues(_.toSet)
+        .toMap
+    )
   }
 
   def spec = {
@@ -182,7 +239,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         )
       },
       test(
-        "a meta/template row, the '-' placeholder, and a form with a space are dropped; a self-spelled form still parses"
+        "a meta/template row, the '-' placeholder, and a note are dropped; a self-spelled form still parses"
       ) {
         val forms = WiktextractParser.parse(formsLine).forms
         assertTrue(
@@ -235,38 +292,133 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         val forms = WiktextractParser.parse(formsLine).forms
         assertTrue(!forms.exists(_.form.text == "haben"))
       },
-      test("a separable verb's main-clause conjugation is imported, split particle and all") {
+      test("a separable verb's main clause and the composed tenses are imported, each with its relation") {
         val forms    = WiktextractParser.parse(einkaufenLine).forms
         val relation = forms.map(form => form.form.text -> form.relation).toMap
         assertTrue(
-          forms.map(_.form.text).toSet == Set("kaufe ein", "kaufest ein", "kaufte ein", "kauf ein", "einkaufe"),
+          forms.map(_.form.text).toSet == Set(
+            "kauft ein",
+            "kaufe ein",
+            "kaufest ein",
+            "kauf ein",
+            "einkaufe",
+            "habe eingekauft",
+            "würde eingekauft haben",
+          ),
           relation.get("kaufe ein").contains("first-person,indicative,present,singular"),
           relation.get("kaufest ein").contains("second-person,singular,subjunctive,subjunctive-i"),
           relation.get("kauf ein").contains("imperative,second-person,singular"),
+          // `multiword-construction` says how the cell was read, not what the form is.
+          relation.get("habe eingekauft").contains("first-person,indicative,perfect,singular"),
+          relation
+            .get("würde eingekauft haben")
+            .contains(
+              "first-person,future,future-ii,singular,subjunctive,subjunctive-ii"
+            ),
           forms.forall(_.form.partOfSpeech == PartOfSpeech.Verb),
           forms.forall(_.lemma.text == "einkaufen"),
         )
       },
-      test("a spaced cell that is not a split particle stays out: composed tenses, clitics, notes, the head line") {
+      test("a multi-word row that is not a form stays out: a predicative, a canonical row, a note, a long cell") {
         val texts = WiktextractParser.parse(einkaufenLine).forms.map(_.form.text).toSet
         assertTrue(
-          !texts.contains("habe eingekauft"),
-          !texts.contains("werde einkaufen"),
-          !texts.contains("einkaufen werden"),
-          !texts.contains("me kaufe"),
-          !texts.contains("kaufe ein mal"),
-          // The head line's summary has no source and no mood: the table's own cell says the same thing.
-          !texts.contains("kauft ein"),
+          !texts.contains("er ist eingekauft"),
+          !texts.contains("the einkaufen"),
+          !texts.contains("definite forms are not used"),
+          !texts.contains("one two three four five"),
         )
       },
-      test("a Spanish clitic form stays out, though the lemma starts with its second word") {
-        val acabar = {
-          """{"word":"acabar","lang_code":"es","lang":"Spanish","pos":"verb","senses":[{"glosses":["to finish"]}],""" +
-            """"forms":[{"form":"se acaba","tags":["indicative","present","singular","third-person"],""" +
-            """"source":"conjugation"},{"form":"acaba","tags":["indicative","present","singular","third-person"],""" +
-            """"source":"conjugation"}]}"""
-        }
-        assertTrue(WiktextractParser.parse(acabar).forms.map(_.form.text) == List("acaba"))
+      test("a cell that names two forms becomes two forms with the same relation") {
+        val forms = WiktextractParser.parse(alternativesLine).forms.groupMap(_.relation)(_.form.text)
+        assertTrue(
+          forms.get("first-person,possessed-many,possessive,singular").contains(List("GUI-jaim", "GUI-im")),
+          forms.get("nominative,plural").contains(List("GUI-k", "GUI-ek")),
+          WiktextractParser.alternativesOf("lennék or") == List("lennék"),
+          WiktextractParser.alternativesOf("or adnók") == List("adnók"),
+          WiktextractParser.alternativesOf("adva (adván)") == List("adva", "adván"),
+        )
+      },
+      test("a Hungarian noun's -é and -éi forms are read from their ending, though the dump marks them an error") {
+        val forms = WiktextractParser.parse(alternativesLine).forms.map(form => form.form.text -> form.relation).toMap
+        assertTrue(
+          forms.get("GUI-é").contains("possessed-single,possessor,singular"),
+          forms.get("GUI-kéi").contains("plural,possessed-many,possessor"),
+        )
+      },
+      test("a Spanish reflexive form is imported and tagged reflexive; the plain form is not") {
+        val forms = WiktextractParser.parse(comprarLine).forms.map(form => form.form.text -> form.relation).toMap
+        assertTrue(
+          forms.get("compra").contains("indicative,present,singular,third-person"),
+          forms.get("se compra").contains("indicative,present,reflexive,singular,third-person"),
+          forms.get("nos compramos").contains("first-person,indicative,plural,present,reflexive"),
+        )
+      },
+      test("an English periphrastic comparison is a form like the inflected one") {
+        val forms = WiktextractParser.parse(freeLine).forms.map(form => form.form.text -> form.relation).toMap
+        assertTrue(
+          forms == Map("freer" -> "comparative", "more free" -> "comparative", "most free" -> "superlative")
+        )
+      },
+      test("a Hungarian conjugation table is rebuilt from cell positions: every tense, person and conjugation") {
+        val ad                                   = hungarianForms("ad")
+        def is(relation: String, forms: String*) = ad.get(relation).contains(forms.toSet)
+        assertTrue(
+          is("first-person,indicative,indefinite,present,singular", "adok"),
+          is("indicative,indefinite,present,singular,third-person", "ad"),
+          is("indicative,indefinite,plural,present,third-person", "adnak"),
+          is("indicative,definite,present,singular,third-person", "adja"),
+          is("first-person,indicative,definite,plural,present", "adjuk"),
+          is("first-person,indicative,object-second-person,present,singular", "adlak"),
+          is("first-person,indicative,indefinite,past,singular", "adtam"),
+          is("indicative,indefinite,past,singular,third-person", "adott"),
+          is("indicative,definite,past,plural,third-person", "adták"),
+          is("conditional,first-person,indefinite,present,singular", "adnék"),
+          is("conditional,first-person,definite,plural,present", "adnánk", "adnók"),
+          is("indefinite,present,second-person,singular,subjunctive", "adj", "adjál"),
+          is("indefinite,present,singular,subjunctive,third-person", "adjon"),
+          is("infinitive", "adni"),
+          is("first-person,infinitive,singular", "adnom"),
+          is("noun-from-verb", "adás"),
+          is("participle,present", "adó"),
+          is("participle,past", "adott"),
+          is("adverbial,participle", "adva", "adván"),
+        )
+      },
+      test("a verb's second table is its potential, and the archaic tenses and the notes are left out") {
+        val ad    = hungarianForms("ad")
+        val texts = ad.values.flatten.toSet
+        assertTrue(
+          ad.get("first-person,indicative,indefinite,potential,present,singular").contains(Set("adhatok")),
+          ad.get("conditional,definite,potential,present,singular,third-person").contains(Set("adhatná")),
+          // The archaic past (`adék`) and archaic future (`adandok`) are not taught.
+          !texts.contains("adék"),
+          !texts.contains("adandok"),
+          !texts.exists(_.contains(" ")),
+          // No row keeps the dump's own, shifted person tags.
+          !ad.keys.exists(_.contains("second-person-semantically")),
+        )
+      },
+      test("an intransitive verb has no definite forms, and a wrong-shaped block is dropped rather than guessed") {
+        val megy     = hungarianForms("megy")
+        val dolgozik = hungarianForms("dolgozik")
+        assertTrue(
+          megy.get("first-person,indicative,indefinite,present,singular").contains(Set("megyek")),
+          megy.get("indicative,indefinite,present,second-person,singular").contains(Set("mész")),
+          megy.get("indicative,indefinite,past,singular,third-person").contains(Set("ment")),
+          megy.get("indefinite,present,singular,subjunctive,third-person").contains(Set("menjen")),
+          !megy.keys.exists(_.split(",").contains("definite")),
+          // An -ik verb writes two forms in some cells; both are kept, in one slot.
+          dolgozik
+            .get("first-person,indicative,indefinite,present,singular")
+            .contains(
+              Set("dolgozom", "dolgozok")
+            ),
+          dolgozik
+            .get("indefinite,present,singular,subjunctive,third-person")
+            .contains(
+              Set("dolgozzon", "dolgozzék")
+            ),
+        )
       },
       test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
         // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
