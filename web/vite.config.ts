@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       scalaJSPlugin({ cwd: '..', projectID: 'frontend' }),
       // `npm run build:analyze` — writes dist/stats.html, a treemap of what's actually in the bundle by byte.
-      process.env.ANALYZE && visualizer({ filename: 'dist/stats.html', gzipSize: true, brotliSize: true, template: 'treemap' }),
+      !!process.env.ANALYZE && visualizer({ filename: 'dist/stats.html', gzipSize: true, brotliSize: true, template: 'treemap' }),
     ],
     build: {
       sourcemap: !!process.env.ANALYZE,
