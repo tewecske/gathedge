@@ -28,6 +28,15 @@ let transferCode: string;
 const wordRow = (p: Page, headword: string) =>
   p.locator('tr').filter({ has: p.locator('a.link.font-medium', { hasText: new RegExp(`^${headword}$`) }) });
 
+// The guest banner starts as one line; its transfer-code and upgrade controls show only once it is open. A no-op when
+// it is open already, since the open state lasts until the next full page load.
+async function openGuestBanner(p: Page): Promise<void> {
+  const open = p.getByRole('button', { name: 'Open', exact: true, expanded: false });
+  if (await open.isVisible()) {
+    await open.click();
+  }
+}
+
 // Tag creation moved off the Words page collect bar to the Tags editor. Mint a tag there, name it, and hand back
 // its id so the caller can pick it in the "Collect into" select (the select's option value is the tag id).
 async function createTag(p: Page, name: string): Promise<string> {
@@ -105,6 +114,8 @@ test('tagging a word mints a guest account and keeps the word', async () => {
   // The banner is the first thing that tells the visitor they now have an account.
   // By role: the account menu offers the same words as a link to the banner, so plain text matches twice.
   await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Get a transfer code' })).toHaveCount(0);
+  await openGuestBanner(page);
   await expect(page.getByRole('button', { name: 'Get a transfer code' })).toBeVisible();
 
   // The banner appears as soon as the guest exists, which is two requests before the word is actually
@@ -122,6 +133,7 @@ test('tagging a word mints a guest account and keeps the word', async () => {
 });
 
 test('a transfer code is shown once and carries the vocabulary to another browser', async ({ browser }) => {
+  await openGuestBanner(page);
   await page.getByRole('button', { name: 'Get a transfer code' }).click();
   const code = page.locator('code');
   await expect(code).toBeVisible();
@@ -149,6 +161,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
 
   // The shell banner's upgrade control is a real `<a href>` (it navigates to Page.SignUp), so its accessible
   // role is "link" even though it is styled as a button.
+  await openGuestBanner(page);
   await page.getByRole('link', { name: 'Create an account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await page.locator('input[type=email]').fill(email);

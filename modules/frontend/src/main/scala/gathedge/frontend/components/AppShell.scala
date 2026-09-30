@@ -32,6 +32,11 @@ object AppShell {
     * out from the top — these pages are a single card, not a screenful.
     */
   def renderPublic(content: HtmlElement): HtmlElement = new AppShell(None, content).render()
+
+  /** Whether the reader opened the guest banner. Here rather than on the shell: every page builds a new shell, and an
+    * open banner must stay open when the reader goes to another page. A full page load starts it closed again.
+    */
+  private[components] val guestBannerOpenVar = Var(false)
 }
 
 private class AppShell(active: Option[Page], content: HtmlElement) {
@@ -564,13 +569,41 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     * the vocabulary to another machine, and upgrading turns the account into an ordinary one, in place.
     *
     * A full-bleed bar rather than a card: it is the first thing under the navbar on every page, so it is squared off
-    * against the bar above it. It scrolls away with the page and has no dismiss control — the account it warns about
-    * stays as fragile after the reader has read this once.
+    * against the bar above it. It scrolls away with the page.
+    *
+    * It starts as one short line: the title and an Open button. On every page the full text took a screenful on a
+    * phone. Open shows the full banner, and its Close button makes it one line again. The line never goes away: the
+    * account it warns about stays as fragile after the reader has read the text once. A failed code request opens the
+    * banner, since the error is shown in it.
     */
   private def renderGuestBanner(): HtmlElement = {
+    val open = AppShell.guestBannerOpenVar.signal
+      .combineWith(codeErrorVar.signal)
+      .map { case (opened, error) => opened || error.isDefined }
+      .distinct
     div(
-      cls  := "alert alert-info rounded-none flex flex-col items-start gap-2 lg:flex-row lg:items-center",
       role := "status",
+      child <-- open.map(isOpen => if (isOpen) renderGuestBannerOpen() else renderGuestBannerClosed()),
+    )
+  }
+
+  private def renderGuestBannerClosed(): HtmlElement = {
+    div(
+      cls := "alert alert-info rounded-none flex items-center gap-2 py-2",
+      h2(cls          := "text-sm font-semibold", I18n.t(UiKeys.guestBannerTitle)),
+      button(
+        cls           := "btn btn-xs ms-auto",
+        typ           := "button",
+        aria.expanded := false,
+        I18n.t(UiKeys.guestBannerOpen),
+        onClick.mapToUnit --> Observer[Unit](_ => AppShell.guestBannerOpenVar.set(true)),
+      ),
+    )
+  }
+
+  private def renderGuestBannerOpen(): HtmlElement = {
+    div(
+      cls := "alert alert-info rounded-none flex flex-col items-start gap-2 lg:flex-row lg:items-center",
       div(
         cls := "flex flex-col gap-1",
         h2(cls := "font-semibold", I18n.t(UiKeys.guestBannerTitle)),
@@ -581,8 +614,8 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
         cls := "flex flex-wrap gap-2 lg:ms-auto",
         // The same request the account menu makes, answered by the same floating panel.
         button(
-          cls := "btn btn-sm",
-          typ := "button",
+          cls           := "btn btn-sm",
+          typ           := "button",
           I18n.t(UiKeys.guestGetCode),
           onClick.mapToUnit --> codeBus.writer,
         ),
@@ -590,9 +623,19 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
         // starting a new one, and the `RequireAnon` guard is what lets a guest reach that page at all. A real anchor,
         // so it is a link to a reader and to the accessibility tree whatever it is styled as.
         a(
-          cls := "btn btn-sm btn-primary",
+          cls           := "btn btn-sm btn-primary",
           AppRouter.router.navigateTo(Page.SignUp),
           I18n.t(UiKeys.guestUpgrade),
+        ),
+        // Also clears the code error: while it is set, the banner stays open to show it.
+        button(
+          cls           := "btn btn-sm btn-ghost",
+          typ           := "button",
+          aria.expanded := true,
+          I18n.t(UiKeys.guestBannerClose),
+          onClick.mapToUnit --> Observer[Unit] { _ =>
+            Var.set(AppShell.guestBannerOpenVar -> false, codeErrorVar -> None)
+          },
         ),
       ),
     )
