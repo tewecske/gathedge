@@ -4,7 +4,7 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, WordCollect}
+import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, Pronunciation, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
@@ -334,6 +334,7 @@ private class WordDetailPage(id: Long) {
           cls  := "text-sm opacity-70",
           s"${Labels.language(detail.word.language)} · ${Labels.partOfSpeech(detail.word.partOfSpeech)}",
         ),
+        Pronunciation.render(Word.display(detail.word), detail.word.language, detail.audio),
         // Shown only on a noun of a gendered language that was imported without its article — the one thing about an
         // existing word anybody may change.
         child.maybe <-- signedInSignal.map(signedIn => Option.when(signedIn)(renderSetGender(detail.word)).flatten),

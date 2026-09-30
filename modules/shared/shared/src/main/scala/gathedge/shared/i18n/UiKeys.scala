@@ -848,6 +848,14 @@ object UiKeys {
   /** Shown when this word is itself an inflected/declined form of another — `dto.WordDetail.mainWords`. */
   val wordDetailMainWordLabel: String = key("ui.word.mainWord.label")
 
+  /** The pronunciation row under the word — `dto.WordDetail.audio`. `source` links each recording to its Commons file
+    * page, which is its attribution. `synthetic` labels the browser's own voice, used where there is no recording.
+    */
+  val wordDetailAudioListen: String     = key("ui.word.audio.listen")
+  val wordDetailAudioSource: String     = key("ui.word.audio.source")
+  val wordDetailAudioSourceHint: String = key("ui.word.audio.sourceHint")
+  val wordDetailAudioSynthetic: String  = key("ui.word.audio.synthetic")
+
   /** The Forms section, shown when this word is a lemma with forms of its own — `dto.WordDetail.forms`, grouped by
     * `GrammarCategory` in the same priority order `GrammarTag.priorityOf` sorts by, so the two never disagree about
     * which group of forms comes first.
