@@ -11,16 +11,15 @@ package gathedge.shared.domain
   * Spanish's plural `los`/`las` are recognised on the way in even though only the singular nominative form
   * ([[definiteArticles]]) is ever shown, since `words` rows are lemmas and a plural belongs to `word_forms` instead.
   *
-  * `splitsVerbParticles` says that a separable verb's main-clause forms split the particle off to the end: German
-  * `einkaufen` gives `kaufe ein`. The dictionary import keeps such a two-word form only for a language that says so.
-  * Hungarian verb prefixes also move, but its conjugation tables never write them split, so it stays `false`.
+  * `reflexivePronouns` are the pronouns a reflexive verb form is written with: Spanish `me quejo`, `se compra`. The
+  * dictionary import tags a form that starts with one as `reflexive`, since the dump gives it the plain form's tags.
   */
 final case class LanguageProfile(
   genders: List[Gender],
   definiteArticles: Map[Gender, String],
   articleForms: Map[String, Gender],
   capitalizesNouns: Boolean,
-  splitsVerbParticles: Boolean = false,
+  reflexivePronouns: Set[String] = Set.empty,
 ) {
 
   def hasGenders: Boolean = genders.nonEmpty
@@ -69,7 +68,6 @@ object LanguageProfile {
       "das" -> Gender.Neuter,
     ),
     capitalizesNouns = true,
-    splitsVerbParticles = true,
   )
 
   private val spanish: LanguageProfile = LanguageProfile(
@@ -82,6 +80,7 @@ object LanguageProfile {
       "las" -> Gender.Feminine,
     ),
     capitalizesNouns = false,
+    reflexivePronouns = Set("me", "te", "se", "nos", "os"),
   )
 
   def of(language: WordLanguage): LanguageProfile = {
