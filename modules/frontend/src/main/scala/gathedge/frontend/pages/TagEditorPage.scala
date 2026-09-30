@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, Pagination, Tooltip}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagEntryQuery}
 import gathedge.frontend.ocr.ImageOcr
@@ -1031,9 +1031,9 @@ private final class TagEditorPage(
       tag.soloGame match {
         case Some(game) =>
           a(
-            cls   := "btn btn-sm btn-primary btn-soft",
+            cls := "btn btn-sm btn-primary btn-soft",
             AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
-            title := game.name,
+            Tooltip(game.name),
             I18n.t(UiKeys.tagsListPlayGame),
           )
         case None       =>
@@ -1072,12 +1072,12 @@ private final class TagEditorPage(
     */
   private def renderLangSwap(): HtmlElement = {
     span(
-      cls             := "tooltip pb-1",
-      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
+      cls := "pb-1",
       button(
         typ        := "button",
         cls        := "btn btn-ghost btn-sm btn-square",
         aria.label := I18n.t(UiKeys.wordsSwapLanguages),
+        Tooltip(I18n.t(UiKeys.wordsSwapLanguages)),
         swapMark(),
         onClick.mapToUnit --> Observer[Unit] { _ =>
           val source = targetLangVar.now()
@@ -1105,8 +1105,8 @@ private final class TagEditorPage(
 
   private def languageSelect(labelKey: String, langVar: Var[WordLanguage]): HtmlElement = {
     label(
-      cls := "flex flex-col gap-1 tooltip",
-      dataAttr("tip") <-- langsLocked.map(locked => if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else ""),
+      cls := "flex flex-col gap-1",
+      Tooltip.signal(langsLocked.map(locked => if (locked) I18n.t(UiKeys.wordsLanguagesLockedHint) else "")),
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       select(
         cls    := "select select-sm w-28",

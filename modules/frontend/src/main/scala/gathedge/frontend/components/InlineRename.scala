@@ -177,16 +177,13 @@ object InlineRename {
     * like one family of controls rather than two different button styles beside each other.
     */
   def iconButton(label: String, icon: SvgElement, click: Modifier[HtmlElement]): HtmlElement = {
-    span(
-      cls             := "tooltip",
-      dataAttr("tip") := label,
-      button(
-        cls        := "btn btn-ghost btn-sm btn-square",
-        typ        := "button",
-        aria.label := label,
-        icon,
-        click,
-      ),
+    button(
+      cls        := "btn btn-ghost btn-sm btn-square",
+      typ        := "button",
+      aria.label := label,
+      Tooltip(label),
+      icon,
+      click,
     )
   }
 }

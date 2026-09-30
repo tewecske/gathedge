@@ -3,7 +3,16 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, HelpIcon, Labels, Pagination, SortHeader, TagImportDialog}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  HelpIcon,
+  Labels,
+  Pagination,
+  SortHeader,
+  TagImportDialog,
+  Tooltip,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagQuery}
 import gathedge.frontend.state.{AppState, GameOwnership}
@@ -389,7 +398,7 @@ private class TagsPage(
         typ := "checkbox",
         cls := "checkbox checkbox-sm",
         aria.label <-- row.map(tag => I18n.t(UiKeys.tagsListSelectRow, tag.name)),
-        title <-- mismatch.map(off => if (off) I18n.t(UiKeys.tagsListSelectPairMismatch) else ""),
+        Tooltip.signal(mismatch.map(off => if (off) I18n.t(UiKeys.tagsListSelectPairMismatch) else "")),
         disabled <-- mismatch,
         checked <-- row.combineWith(selectedVar.signal).map { case (tag, selected) => selected.contains(tag.id) },
         onClick.mapToChecked.compose(_.withCurrentValueOf(row)) --> Observer[(Boolean, Tag)] { case (on, tag) =>
@@ -473,9 +482,9 @@ private class TagsPage(
 
   private def renderPlayGame(game: GameRef): HtmlElement = {
     a(
-      cls   := "btn btn-xs btn-primary btn-soft whitespace-nowrap",
+      cls := "btn btn-xs btn-primary btn-soft whitespace-nowrap",
       AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
-      title := game.name,
+      Tooltip(game.name),
       I18n.t(UiKeys.tagsListPlayGame),
     )
   }

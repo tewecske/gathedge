@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
-import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList}
+import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList, Tooltip}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
@@ -524,18 +524,19 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
             if (swapped) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
           div(
             cls := "flex items-center gap-2",
-            span(cls := "font-medium", Labels.language(first)),
+            span(cls     := "font-medium", Labels.language(first)),
             button(
-              cls    := "btn btn-ghost btn-xs",
-              typ    := "button",
-              title  := I18n.t(UiKeys.gameInstanceDirectionSwap),
+              cls        := "btn btn-ghost btn-xs",
+              typ        := "button",
+              aria.label := I18n.t(UiKeys.gameInstanceDirectionSwap),
+              Tooltip(I18n.t(UiKeys.gameInstanceDirectionSwap)),
               // Disabled/no-op if the reverse direction's pool is empty — mirrors `swapDirection`'s `badRequest`
               // case being unreachable from the UI. See [[reversePoolEmptySignal]].
               disabled <-- reversePoolEmptySignal,
               "⇄",
               onClick.mapToUnit --> Observer[Unit](_ => swapDirectionVar.update(!_)),
             ),
-            span(cls := "font-medium", Labels.language(second)),
+            span(cls     := "font-medium", Labels.language(second)),
           )
         case (None, _)             =>
           emptyNode

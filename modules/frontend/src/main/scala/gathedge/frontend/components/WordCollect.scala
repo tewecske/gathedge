@@ -559,7 +559,7 @@ final class WordCollect(
         }
         I18n.t(key, word)
       },
-      tipPlacement = "tooltip-right",
+      tipPlacement = Tooltip.Placement.Right,
     ).amend(
       onClick.compose(_.sample(tagged)) --> Observer[Boolean](isTagged => toggleBus.emit((wordId, isTagged)))
     )
@@ -575,23 +575,24 @@ final class WordCollect(
   private def toggleButton(
     active: Signal[Boolean],
     label: Signal[String],
-    tipPlacement: String = "tooltip-top",
+    tipPlacement: Tooltip.Placement = Tooltip.Placement.Top,
   ): HtmlElement = {
     button(
       // A fixed box, so the column does not twitch when the icon swaps.
-      cls := "btn btn-ghost btn-xs tooltip group w-8 px-0",
-      cls := tipPlacement,
+      cls := "btn btn-ghost btn-xs group w-8 px-0",
       typ := "button",
       aria.pressed <-- active.map(_.toString),
       aria.label <-- label,
-      // Says what a click does, in the same daisyUI tooltip the missing-answer warning uses. Drawn by CSS off a `data-`
-      // attribute, which no screen reader announces, so the accessible name stays the `aria-label` above.
-      dataAttr("tip") <-- active.map(isActive => {
-        I18n.t(
-          if (isActive) UiKeys.wordsTagRemoveTip
-          else UiKeys.wordsTagAddTip
-        )
-      }),
+      // Says what a click does. The tooltip is not announced, so the accessible name stays the `aria-label` above.
+      Tooltip.signal(
+        active.map(isActive => {
+          I18n.t(
+            if (isActive) UiKeys.wordsTagRemoveTip
+            else UiKeys.wordsTagAddTip
+          )
+        }),
+        tipPlacement,
+      ),
       child <-- active.map(isActive => {
         if (isActive) {
           span(
@@ -691,10 +692,10 @@ final class WordCollect(
     */
   def renderPairWarning(): HtmlElement = {
     span(
-      cls             := "tooltip tooltip-error text-error leading-none",
-      dataAttr("tip") := I18n.t(UiKeys.wordsNoPair),
-      // Drawn by CSS off a `data-` attribute, which no screen reader announces — so the same sentence goes into the
-      // accessibility tree as text, the way the mark itself carries none.
+      cls := "text-error leading-none",
+      Tooltip(I18n.t(UiKeys.wordsNoPair), tone = Tooltip.Tone.Error),
+      // The tooltip is not announced, so the same sentence goes into the accessibility tree as text, the way the mark
+      // itself carries none.
       span(cls := "sr-only", I18n.t(UiKeys.wordsNoPair)),
       warningMark(),
     )
