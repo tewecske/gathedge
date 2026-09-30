@@ -1168,6 +1168,8 @@ object UiKeys {
 
   val guestBannerTitle: String = key("ui.guest.bannerTitle")
   val guestBannerHint: String  = key("ui.guest.bannerHint")
+  val guestBannerOpen: String  = key("ui.guest.bannerOpen")
+  val guestBannerClose: String = key("ui.guest.bannerClose")
   val guestGetCode: String     = key("ui.guest.getCode")
   val guestUpgrade: String     = key("ui.guest.upgrade")
 

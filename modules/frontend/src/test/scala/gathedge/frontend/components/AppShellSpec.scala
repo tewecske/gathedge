@@ -51,17 +51,63 @@ object AppShellSpec extends ZIOSpecDefault {
     }
   }
 
+  /** The banner alone: the account menu repeats its two controls, so the whole shell's text would always hold them. */
+  private def bannerText(c: dom.Element): String = {
+    Option(c.querySelector("[role=status]")).map(_.textContent).getOrElse("")
+  }
+
+  private def clickButton(c: dom.Element, label: String): Unit = {
+    val buttons = c.querySelectorAll("button")
+    (0 until buttons.length)
+      .map(buttons(_).asInstanceOf[dom.html.Button])
+      .find(_.textContent.trim == label)
+      .foreach(_.click())
+  }
+
   def spec = {
     suite("AppShell")(
       test("a guest is warned on any page, not only the ones about words") {
+        AppShell.guestBannerOpenVar.set(false)
         val text = signedInAs(isGuest = true) {
           withShell(AppShell.render(Page.About, div()))(_.textContent)
         }
+        assertTrue(text.contains(UiKeys.guestBannerTitle), text.contains(UiKeys.guestBannerOpen))
+      },
+      // The full text took a screenful on a phone, on every page, so the banner starts as its title and one button.
+      test("the banner starts as one line, and Open shows the full text and the two ways out") {
+        AppShell.guestBannerOpenVar.set(false)
+        val (closed, opened) = signedInAs(isGuest = true) {
+          withShell(AppShell.render(Page.About, div())) { c =>
+            val before = bannerText(c)
+            clickButton(c, UiKeys.guestBannerOpen)
+            (before, bannerText(c))
+          }
+        }
         assertTrue(
-          text.contains(UiKeys.guestBannerTitle),
-          text.contains(UiKeys.guestBannerHint),
-          text.contains(UiKeys.guestGetCode),
-          text.contains(UiKeys.guestUpgrade),
+          !closed.contains(UiKeys.guestBannerHint),
+          !closed.contains(UiKeys.guestGetCode),
+          opened.contains(UiKeys.guestBannerTitle),
+          opened.contains(UiKeys.guestBannerHint),
+          opened.contains(UiKeys.guestGetCode),
+          opened.contains(UiKeys.guestUpgrade),
+          !opened.contains(UiKeys.guestBannerOpen),
+        )
+      },
+      test("Close makes the banner one line again, and the open state lasts to the next page") {
+        AppShell.guestBannerOpenVar.set(false)
+        val (nextPage, afterClose) = signedInAs(isGuest = true) {
+          withShell(AppShell.render(Page.About, div()))(c => clickButton(c, UiKeys.guestBannerOpen))
+          withShell(AppShell.render(Page.Settings, div())) { c =>
+            val shown = bannerText(c)
+            clickButton(c, UiKeys.guestBannerClose)
+            (shown, bannerText(c))
+          }
+        }
+        assertTrue(
+          nextPage.contains(UiKeys.guestBannerHint),
+          !afterClose.contains(UiKeys.guestBannerHint),
+          afterClose.contains(UiKeys.guestBannerTitle),
+          afterClose.contains(UiKeys.guestBannerOpen),
         )
       },
       test("a guest can reach Settings to change its name") {
