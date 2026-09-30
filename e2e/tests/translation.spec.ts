@@ -52,7 +52,7 @@ async function signIn(page: Page, prefix: string): Promise<void> {
   await page.locator('input[name=identifier]').fill(adminEmail);
   await page.locator('input[type=password]').fill(adminPassword);
   await page.locator('button[type=submit]').click();
-  await expect(page).toHaveURL(new RegExp(`${prefix}/$`));
+  await expect(page).toHaveURL(new RegExp(`${prefix}/games/all$`));
 }
 
 for (const prefix of ['/en', '/hu']) {

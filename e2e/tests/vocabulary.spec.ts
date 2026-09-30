@@ -175,7 +175,7 @@ test('upgrading keeps every word, and the account can sign in afterwards', async
   await page.getByRole('button', { name: 'Sign in' }).click();
   // Wait for the sign-in to land: navigating while the request is in flight cancels it, and the page
   // that follows is then an anonymous one whose rows carry no tags.
-  await page.waitForURL(/\/en\/$/);
+  await page.waitForURL(/\/en\/games\/all$/);
 
   await page.goto('/en/words?q=mann');
   await expect(wordRow(page, 'der Mann').getByRole('button', { name: /my vocabulary/ })).toHaveAccessibleName(

@@ -82,7 +82,7 @@ test('an account signs up to build the quiz', async () => {
   await page.locator('input[type=email]').fill(ownerEmail);
   await page.locator('input[type=password]').fill(ownerPassword);
   await page.getByRole('button', { name: 'Sign up' }).click();
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
 });
 
 test('a tag collects four words, each with its Hungarian translation marked', async () => {
@@ -173,7 +173,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
 
   // Preview list reflects the full pool before any play — `GET /api/games/{slug}` carries it.
   // The list is collapsed by default here (it lists the quiz answers), so open "Show words" first.
-  await guestPage.getByText('Show words').click();
+  await guestPage.getByText('Show words', { exact: true }).click();
   await expect(guestPage.getByText('Eligible words')).toBeVisible();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
@@ -274,7 +274,7 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // The option's value is still `unplayed`: that is the wire code `WordPreference.code` writes and
   // `game_plays.word_preference` stores, kept across the rename so recorded plays still read back.
   await guestPage.locator('select').filter({ hasText: 'All words' }).selectOption('unplayed');
-  await guestPage.getByText('Show words').click();
+  await guestPage.getByText('Show words', { exact: true }).click();
   await expect(guestPage.getByText(`${words.length} words`)).toBeVisible();
 
   await customWordsRadio.click();
