@@ -26,6 +26,18 @@ object GrammarTagSpec extends ZIOSpecDefault {
         // "plural" (priority 10) beats "archaic" (priority 50) -- a plural/case fact outranks a register label.
         assertTrue(GrammarTag.categoryOf("archaic,plural") == GrammarCategory.PluralCase)
       },
+      test(
+        "a verb form is a tense form though it carries number, and a possessive noun form is not, though it has a person"
+      ) {
+        assertTrue(
+          GrammarTag.categoryOf("first-person,indicative,plural,present") == GrammarCategory.Tense,
+          GrammarTag.categoryOf("first-person,indicative,definite,plural,present") == GrammarCategory.Tense,
+          GrammarTag.categoryOf("feminine,participle,past,singular") == GrammarCategory.Tense,
+          GrammarTag.categoryOf("first-person,possessed-single,possessive,singular") == GrammarCategory.PluralCase,
+          GrammarTag.categoryOf("dative,definite,includes-article,masculine,singular,weak") ==
+            GrammarCategory.PluralCase,
+        )
+      },
       test("priorityOf agrees with categoryOf's own ordering, so a sort by it never contradicts the grouping") {
         assertTrue(
           GrammarTag.priorityOf(GrammarCategory.PluralCase) < GrammarTag.priorityOf(GrammarCategory.Tense),
