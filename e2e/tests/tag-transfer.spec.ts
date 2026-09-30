@@ -24,7 +24,7 @@ async function signUp(page: Page, email: string) {
   await page.locator('input[type=email]').fill(email);
   await page.locator('input[type=password]').fill(password);
   await page.getByRole('button', { name: 'Sign up' }).click();
-  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page).toHaveURL(/\/en\/games\/all$/);
 }
 
 // Tag creation moved off the Words page collect bar to the Tags editor. Mint a tag there, name it, and hand
