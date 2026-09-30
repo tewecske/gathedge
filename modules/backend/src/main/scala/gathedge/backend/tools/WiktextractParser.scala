@@ -233,21 +233,51 @@ object WiktextractParser {
 
   /** `"-"` is the dump's own placeholder for "this word has no such form" (a mass noun with no plural, say), and a
     * space marks a periphrastic construction or, more often on inspection, a corrupted entry — the same rule [[wordOf]]
-    * and [[pairsOf]] already apply to word text applies here too.
+    * and [[pairsOf]] already apply to word text applies here too. The one exception is [[isSeparatedForm]].
     *
     * An `error-*` tag (`error-unrecognized-form`, `error-unknown-tag`, ...) is wiktextract's own admission that it
     * could not classify this table cell — mostly Hungarian conjugation-table cells its template logic failed on. The
     * whole row is dropped, not just the offending tag: the remaining tags on such a row describe an incomplete,
     * unreliable grammatical fact (person/number without the tense that made the cell what it was), not a real one.
     */
-  private def isUsableForm(form: RawForm): Boolean = {
+  private def isUsableForm(lemma: ParsedWord, form: RawForm): Boolean = {
     val tags = form.tags.getOrElse(Nil)
     val text = form.form.trim
     tags.nonEmpty &&
     !tags.exists(tag => metaFormTags.contains(tag.toLowerCase)) &&
     !tags.exists(tag => tag.toLowerCase.startsWith("error-")) &&
     !tags.exists(tag => nonStandardFormTags.contains(tag.toLowerCase)) &&
-    text.nonEmpty && text != "-" && !text.contains(" ")
+    text.nonEmpty && text != "-" && (!text.contains(" ") || isSeparatedForm(lemma.language, lemma.text, form))
+  }
+
+  /** The moods of a conjugation table's main-clause rows: Wiktionary's "indicative" and "subjunctive" sections, and the
+    * imperative below them.
+    */
+  private val finiteMoodTags: Set[String] = Set("indicative", "subjunctive", "imperative")
+
+  /** A separable verb's main-clause form: `kaufe ein` for `einkaufen`, `setzte über` for `übersetzen`. The particle
+    * splits off and moves to the end, so the form is two words. Its subordinate-clause twin (`einkaufe`) is one word
+    * and passes the ordinary rule.
+    *
+    * The test is narrow on purpose. The language must split its verb particles ([[LanguageProfile]]). The row must be a
+    * cell of the conjugation table, in a finite mood, and not a composed tense (`multiword-construction`:
+    * `habe eingekauft`, `werde einkaufen`). It must be exactly two words, and the lemma must start with the second
+    * word. The language check keeps out Spanish clitics, where the second word is the verb itself and so also starts
+    * the lemma (`se acaba` for `acabar`). The table checks keep out the notes Hungarian tables leave in their cells
+    * (`e.g. nem ad le`).
+    */
+  private def isSeparatedForm(language: WordLanguage, lemma: String, form: RawForm): Boolean = {
+    val tags = form.tags.getOrElse(Nil).map(_.toLowerCase)
+    LanguageProfile.of(language).splitsVerbParticles &&
+    form.source.contains("conjugation") &&
+    tags.exists(finiteMoodTags.contains) &&
+    !tags.contains("multiword-construction") &&
+    (form.form.trim.split(' ').toList match {
+      case List(verb, particle) =>
+        verb.nonEmpty && particle.nonEmpty && lemma.toLowerCase.startsWith(particle.toLowerCase)
+      case _                    =>
+        false
+    })
   }
 
   /** The forms this entry's own `forms[]` array states, keyed to the entry as a lemma. `None` if the entry itself is
@@ -264,7 +294,7 @@ object WiktextractParser {
       case None        =>
         Nil
       case Some(lemma) =>
-        entry.forms.getOrElse(Nil).filter(isUsableForm).map { raw =>
+        entry.forms.getOrElse(Nil).filter(raw => isUsableForm(lemma, raw)).map { raw =>
           val tags   = raw.tags.getOrElse(Nil)
           val gender = genderOf(lemma.language, lemma.partOfSpeech, tags)
           val word   = ParsedWord(lemma.language, raw.form.trim, lemma.partOfSpeech, gender)

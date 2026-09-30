@@ -1,6 +1,7 @@
 package gathedge.shared.domain
 
-/** How one [[WordLanguage]] handles grammatical gender and its articles.
+/** How one [[WordLanguage]] handles grammatical gender and its articles, and the one fact about its verbs that the
+  * dictionary import needs.
   *
   * This is the one place that names an article. Nothing outside this file may write `"der"`, `"el"` or any other
   * article literal — every display, strip, or picker call goes through here, so a fifth language is one new entry
@@ -9,12 +10,17 @@ package gathedge.shared.domain
   * `articleForms` deliberately carries more than [[definiteArticles]]' values: German's declined `den`/`dem`/`des` and
   * Spanish's plural `los`/`las` are recognised on the way in even though only the singular nominative form
   * ([[definiteArticles]]) is ever shown, since `words` rows are lemmas and a plural belongs to `word_forms` instead.
+  *
+  * `splitsVerbParticles` says that a separable verb's main-clause forms split the particle off to the end: German
+  * `einkaufen` gives `kaufe ein`. The dictionary import keeps such a two-word form only for a language that says so.
+  * Hungarian verb prefixes also move, but its conjugation tables never write them split, so it stays `false`.
   */
 final case class LanguageProfile(
   genders: List[Gender],
   definiteArticles: Map[Gender, String],
   articleForms: Map[String, Gender],
   capitalizesNouns: Boolean,
+  splitsVerbParticles: Boolean = false,
 ) {
 
   def hasGenders: Boolean = genders.nonEmpty
@@ -63,6 +69,7 @@ object LanguageProfile {
       "das" -> Gender.Neuter,
     ),
     capitalizesNouns = true,
+    splitsVerbParticles = true,
   )
 
   private val spanish: LanguageProfile = LanguageProfile(

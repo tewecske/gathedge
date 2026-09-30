@@ -85,6 +85,32 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |]}""".stripMargin.replace("\n", "")
   }
 
+  /** A separable verb's conjugation table, cut down to one row of each kind: main-clause cells in each finite mood (two
+    * words), a subordinate-clause cell (one word), composed tenses, and the head line's untabled summary. The last two
+    * cells are spaced rows the lemma does not start with the second word of — a clitic, a table note.
+    */
+  private val einkaufenLine = {
+    """{"word":"einkaufen","lang_code":"de","lang":"German","pos":"verb","senses":[{"glosses":["to shop"]}],
+      |"forms":[
+      |{"form":"kauft ein","tags":["present","singular","third-person"]},
+      |{"form":"kaufe ein","tags":["first-person","indicative","present","singular"],"source":"conjugation"},
+      |{"form":"kaufest ein","tags":["second-person","singular","subjunctive","subjunctive-i"],"source":"conjugation"},
+      |{"form":"kaufte ein","tags":["first-person","formal","rare","singular","subjunctive","subjunctive-ii"],
+      |"source":"conjugation"},
+      |{"form":"kauf ein","tags":["imperative","second-person","singular"],"source":"conjugation"},
+      |{"form":"einkaufe","tags":["first-person","indicative","present","singular","subordinate-clause"],
+      |"source":"conjugation"},
+      |{"form":"habe eingekauft","tags":["first-person","indicative","multiword-construction","perfect","singular"],
+      |"source":"conjugation"},
+      |{"form":"werde einkaufen","tags":["first-person","future","future-i","indicative","multiword-construction",
+      |"singular"],"source":"conjugation"},
+      |{"form":"einkaufen werden","tags":["future","future-i","infinitive","multiword-construction"],
+      |"source":"conjugation"},
+      |{"form":"me kaufe","tags":["first-person","indicative","present","singular"],"source":"conjugation"},
+      |{"form":"kaufe ein mal","tags":["first-person","indicative","present","singular"],"source":"conjugation"}
+      |]}""".stripMargin.replace("\n", "")
+  }
+
   def spec = {
     suite("DictionaryImport")(
       test("a German noun keeps its article, and everything else keeps none") {
@@ -208,6 +234,39 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       ) {
         val forms = WiktextractParser.parse(formsLine).forms
         assertTrue(!forms.exists(_.form.text == "haben"))
+      },
+      test("a separable verb's main-clause conjugation is imported, split particle and all") {
+        val forms    = WiktextractParser.parse(einkaufenLine).forms
+        val relation = forms.map(form => form.form.text -> form.relation).toMap
+        assertTrue(
+          forms.map(_.form.text).toSet == Set("kaufe ein", "kaufest ein", "kaufte ein", "kauf ein", "einkaufe"),
+          relation.get("kaufe ein").contains("first-person,indicative,present,singular"),
+          relation.get("kaufest ein").contains("second-person,singular,subjunctive,subjunctive-i"),
+          relation.get("kauf ein").contains("imperative,second-person,singular"),
+          forms.forall(_.form.partOfSpeech == PartOfSpeech.Verb),
+          forms.forall(_.lemma.text == "einkaufen"),
+        )
+      },
+      test("a spaced cell that is not a split particle stays out: composed tenses, clitics, notes, the head line") {
+        val texts = WiktextractParser.parse(einkaufenLine).forms.map(_.form.text).toSet
+        assertTrue(
+          !texts.contains("habe eingekauft"),
+          !texts.contains("werde einkaufen"),
+          !texts.contains("einkaufen werden"),
+          !texts.contains("me kaufe"),
+          !texts.contains("kaufe ein mal"),
+          // The head line's summary has no source and no mood: the table's own cell says the same thing.
+          !texts.contains("kauft ein"),
+        )
+      },
+      test("a Spanish clitic form stays out, though the lemma starts with its second word") {
+        val acabar = {
+          """{"word":"acabar","lang_code":"es","lang":"Spanish","pos":"verb","senses":[{"glosses":["to finish"]}],""" +
+            """"forms":[{"form":"se acaba","tags":["indicative","present","singular","third-person"],""" +
+            """"source":"conjugation"},{"form":"acaba","tags":["indicative","present","singular","third-person"],""" +
+            """"source":"conjugation"}]}"""
+        }
+        assertTrue(WiktextractParser.parse(acabar).forms.map(_.form.text) == List("acaba"))
       },
       test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
         // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
