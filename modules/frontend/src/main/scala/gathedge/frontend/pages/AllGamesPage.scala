@@ -3,7 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader, TagPicker}
+import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader, TagPicker, Tooltip}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AllGameQuery
 import gathedge.frontend.state.AppState
@@ -296,8 +296,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       span(
-        cls("tooltip") <-- locked,
-        dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
+        Tooltip.signal(locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else "")),
         select(
           cls := "select select-sm w-28",
           disabled <-- locked,

@@ -412,15 +412,16 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     )
   }
 
-  /** Placeholder avatar that opens [[renderAccountMenu]]. The email rides on `title` rather than in the menu body: as
-    * menu text it would be a second (hidden) match for the e2e suite's `getByText(email)`.
+  /** Placeholder avatar that opens [[renderAccountMenu]]. The email rides on a tooltip rather than in the menu body: as
+    * menu text it would be a second (hidden) match for the e2e suite's `getByText(email)`. The tooltip holds no text
+    * while hidden, so it makes no such match.
     */
   private def renderAccountMenuTrigger(): HtmlElement = {
     button(
       cls                := "btn btn-ghost btn-circle avatar avatar-placeholder",
       typ                := "button",
       aria.label         := I18n.t(UiKeys.navAccountMenu),
-      title <-- accountLabelSignal,
+      Tooltip.signal(accountLabelSignal, Tooltip.Placement.Bottom),
       Popover.targetAttr := menuId,
       styleAttr          := s"anchor-name:$menuAnchor",
       div(cls := "bg-neutral text-neutral-content w-8 rounded-full", span(cls := "text-xs", text <-- initialSignal)),

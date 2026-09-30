@@ -2,34 +2,20 @@ package gathedge.frontend.components
 
 import com.raquo.laminar.api.L._
 
-/** A small "?" mark that reveals a sentence or two of explanation on hover, next to whatever it explains.
+/** A small "?" mark that reveals a sentence or two of explanation on hover, focus or tap, next to whatever it explains.
   *
-  * Built on daisyUI's *classic* dropdown (`dropdown dropdown-hover`), not the popover-API one [[Popover]] and
-  * [[LanguagePicker]] share: those open on a click, through `popovertarget`, which the Popover API has no CSS
-  * equivalent for. A pure `:hover`/`:focus-within` reveal needs the older `tabindex`-based dropdown instead, so this is
-  * its own small component rather than a third caller of [[Popover]].
-  *
-  * `text` is real DOM text, not a `data-tip` attribute (unlike `InlineRename.iconButton`'s tooltip), so a paragraph of
-  * copy can wrap instead of being squeezed onto one CSS-drawn line. The trigger's `aria-label` carries the same text,
-  * since a screen reader has no reason to look at a sibling element a mouse merely hovers.
+  * The text goes in the shared [[Tooltip]], which wraps a paragraph and keeps it on screen. The trigger's `aria-label`
+  * carries the same text, since the tooltip says nothing to a screen reader.
   */
 object HelpIcon {
 
   def render(text: String): HtmlElement = {
-    div(
-      cls := "dropdown dropdown-hover align-middle",
-      div(
-        tabIndex   := 0,
-        role       := "button",
-        cls        := "btn btn-ghost btn-circle btn-xs",
-        aria.label := text,
-        questionMark(),
-      ),
-      div(
-        tabIndex   := 0,
-        cls        := "dropdown-content z-20 w-64 rounded-box bg-base-100 p-3 text-sm font-normal shadow-md",
-        text,
-      ),
+    button(
+      typ        := "button",
+      cls        := "btn btn-ghost btn-circle btn-xs align-middle",
+      aria.label := text,
+      Tooltip(text, Tooltip.Placement.Bottom),
+      questionMark(),
     )
   }
 

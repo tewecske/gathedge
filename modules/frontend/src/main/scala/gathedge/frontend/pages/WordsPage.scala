@@ -12,6 +12,7 @@ import gathedge.frontend.components.{
   Labels,
   Pagination,
   SortHeader,
+  Tooltip,
   WordCollect,
 }
 import gathedge.frontend.i18n.I18n
@@ -429,21 +430,16 @@ private class WordsPage(
     * height up with `select-sm` rather than with the labels above them.
     */
   private def renderSwap(): HtmlElement = {
-    span(
-      // The tooltip has to be a wrapper: daisyUI's `.tooltip` is `display:inline-block`, which would undo the
-      // `inline-flex` that centres a `btn`'s icon.
-      cls             := "tooltip",
-      dataAttr("tip") := I18n.t(UiKeys.wordsSwapLanguages),
-      button(
-        typ        := "button",
-        cls        := "btn btn-ghost btn-sm btn-square",
-        // The tooltip is a `data-` attribute drawn by CSS, so it says nothing to a screen reader; this is what does.
-        aria.label := I18n.t(UiKeys.wordsSwapLanguages),
-        swapMark(),
-        onClick.mapToUnit --> Observer[Unit] { _ =>
-          change(_.reset(query => query.copy(language = query.target, target = query.language)))
-        },
-      ),
+    button(
+      typ        := "button",
+      cls        := "btn btn-ghost btn-sm btn-square",
+      // The tooltip says nothing to a screen reader; this is what does.
+      aria.label := I18n.t(UiKeys.wordsSwapLanguages),
+      Tooltip(I18n.t(UiKeys.wordsSwapLanguages)),
+      swapMark(),
+      onClick.mapToUnit --> Observer[Unit] { _ =>
+        change(_.reset(query => query.copy(language = query.target, target = query.language)))
+      },
     )
   }
 
@@ -498,10 +494,9 @@ private class WordsPage(
       cls := "flex flex-col gap-1",
       span(cls := "label-text text-xs", I18n.t(labelKey)),
       span(
-        // The tooltip has to be a wrapper — daisyUI's `.tooltip` is `display:inline-block` — and it carries a class
-        // only while locked, so nothing draws around a live select.
-        cls("tooltip") <-- locked,
-        dataAttr("tip") <-- locked.map(on => if (on) I18n.t(UiKeys.wordsLanguagesCollectHint) else ""),
+        // A wrapper, since a disabled select is not a reliable target for pointer events in every browser. The text is
+        // empty while unlocked, so a live select has no tooltip.
+        Tooltip.signal(locked.map(on => if (on) I18n.t(UiKeys.wordsLanguagesCollectHint) else "")),
         select(
           cls := "select select-sm w-28",
           disabled <-- locked,
