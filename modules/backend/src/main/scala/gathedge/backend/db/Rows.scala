@@ -210,6 +210,17 @@ final case class WordFormRow(
   createdBy: Option[Long] = None,
 )
 
+/** One recorded pronunciation of a word: a Wikimedia Commons file name, never the audio itself. `region` is the accent
+  * tags as the dump states them, comma-joined, or '' where it gives none. See `CommonsAudio` for the URLs.
+  */
+final case class WordAudioRow(
+  id: Long,
+  wordId: Long,
+  fileName: String,
+  region: String,
+  createdAt: Long,
+)
+
 /** A label one account puts on words. `nameNorm` is the lowercased form the per-account uniqueness is on.
   *
   * `groupId` defaults to `None` so every existing positional construction of this row (test fixtures included) keeps

@@ -1232,6 +1232,7 @@ final case class WordServiceLive(
       marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, List(row.id))).map(_.toList.flatten).orDie
       mainLinks    <- repo.lemmaContextOf(List(row.id)).orDie
       formLinks    <- repo.formsContextOf(List(row.id)).orDie
+      audio        <- repo.audioOf(row.id).orDie
       formTags     <- ZIO
                         .foreach(reader)(userId => repo.tagsFor(userId, formLinks.map { case (_, word) => word.id }))
                         .map(_.toList.flatten)
@@ -1283,6 +1284,7 @@ final case class WordServiceLive(
         },
       fromDictionary = row.source != WordSource.user,
       createdByMe = row.source == WordSource.user && reader.isDefined && row.createdBy == reader,
+      audio = audio.map(CommonsAudio.toDto),
     )
   }
 

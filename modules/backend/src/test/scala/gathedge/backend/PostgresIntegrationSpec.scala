@@ -29,6 +29,7 @@ import gathedge.backend.db.{
   UsageEventRepository,
   UsageEventRow,
   UserRepository,
+  WordAudioRow,
   WordFormRow,
   WordRepository,
   WordRow,
@@ -107,6 +108,25 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     * The drop is registered *after* the pool, so the finalizers run drop-then-close and the drop still has a connection
     * to run on.
     */
+  /** There is no `deleteWord` anywhere in the app — a `words` row is never deleted through a service — so a cascade
+    * test issues it as raw SQL against the pooled `DataSource`, which `repoLayer`'s `>+>` keeps in the environment.
+    */
+  private def deleteWord(id: Long): RIO[DataSource, Unit] = {
+    ZIO.serviceWithZIO[DataSource] { ds =>
+      ZIO.attemptBlocking {
+        val conn = ds.getConnection()
+        try {
+          val stmt = conn.prepareStatement("DELETE FROM words WHERE id = ?")
+          try {
+            stmt.setLong(1, id)
+            stmt.executeUpdate()
+            ()
+          } finally stmt.close()
+        } finally conn.close()
+      }
+    }
+  }
+
   private def schemaDataSource(schema: String): ZLayer[Any, Throwable, DataSource] = ZLayer.scoped {
     for {
       container <- ZIO.attempt(TestDataSource.Container.instance)
@@ -1138,22 +1158,6 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       // delete here is issued as raw SQL directly against the pooled `DataSource`, which `repoLayer`'s `>+>` keeps
       // in the environment for exactly this reason.
       pgTest("a word's forms cascade away when either the lemma or the form word is deleted") {
-        def deleteWord(id: Long): RIO[DataSource, Unit] = {
-          ZIO.serviceWithZIO[DataSource] { ds =>
-            ZIO.attemptBlocking {
-              val conn = ds.getConnection()
-              try {
-                val stmt = conn.prepareStatement("DELETE FROM words WHERE id = ?")
-                try {
-                  stmt.setLong(1, id)
-                  stmt.executeUpdate()
-                  ()
-                } finally stmt.close()
-              } finally conn.close()
-            }
-          }
-        }
-
         for {
           haus       <- WordRepository.ensureWord(
                           WordRow(0L, "de", "Haus", "haus", "noun", "neuter", 1, "dictionary", None, 0L, "haus")
@@ -1181,6 +1185,32 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterForm.map(_.relation) == List("genitive"),
           // Deleting the lemma takes every remaining relation with it.
           afterLemma.isEmpty,
+        )
+      },
+      // `word_audio` references `words`, so it needs the same cascade: a recording must not outlive its word. The
+      // unique `(word_id, file_name)` is what makes a re-import insert nothing twice, and `detail` is the one reader.
+      pgTest("a word's recordings cascade away with it, are unique per file, and reach the detail page") {
+        for {
+          gratis   <- WordRepository.ensureWord(
+                        WordRow(0L, "de", "pggratis", "pggratis", "adverb", "", 1, "dictionary", None, 0L, "pggratis")
+                      )
+          now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          rows      = List(
+                        WordAudioRow(0L, gratis.id, "De-gratis.ogg", "Germany, Berlin", now),
+                        WordAudioRow(0L, gratis.id, "LL-Q188 (deu)-X-gratis.wav", "", now),
+                      )
+          _        <- WordRepository.insertAudio(rows)
+          existing <- WordRepository.existingAudio(List(gratis.id))
+          twice    <- WordRepository.insertAudio(rows.take(1)).either
+          detail   <- WordService.detail(gratis.id, None)
+          _        <- deleteWord(gratis.id)
+          after    <- WordRepository.audioOf(gratis.id)
+        } yield assertTrue(
+          existing.toSet == Set((gratis.id, "De-gratis.ogg"), (gratis.id, "LL-Q188 (deu)-X-gratis.wav")),
+          twice.isLeft,
+          detail.audio.map(_.fileName) == List("De-gratis.ogg", "LL-Q188_(deu)-X-gratis.wav"),
+          detail.audio.map(_.region) == List("Germany, Berlin", ""),
+          after.isEmpty,
         )
       },
       // `words.is_form` is a denormalization of `word_forms`, kept true by the two writers of that table inside their

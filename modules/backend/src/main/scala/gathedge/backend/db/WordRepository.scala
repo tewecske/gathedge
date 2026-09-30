@@ -482,6 +482,16 @@ trait WordRepository {
     */
   def formsContextOf(lemmaWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]]
 
+  def insertAudio(rows: List[WordAudioRow]): Task[Long]
+
+  /** Which `(word, file)` pairs already exist for those word ids, so a re-run inserts nothing twice -- the audio
+    * equivalent of [[existingFormRelations]].
+    */
+  def existingAudio(wordIds: List[Long]): Task[List[(Long, String)]]
+
+  /** Every recording of one word, oldest first. */
+  def audioOf(wordId: Long): Task[List[WordAudioRow]]
+
   /** Every `(form word, relation)` pair claiming more than `threshold` distinct lemmas -- the shape of the bug where a
     * mislabeled wiktextract tag (e.g. a German conjugation table's `auxiliary` note) turns one common word into a
     * "form" of hundreds of others, which then floods every listing page that word appears on with context rows.
@@ -880,6 +890,15 @@ object WordRepository {
   def formsContextOf(lemmaWordIds: List[Long]): RIO[WordRepository, List[(WordFormRow, WordRow)]] =
     ZIO.serviceWithZIO[WordRepository](_.formsContextOf(lemmaWordIds))
 
+  def insertAudio(rows: List[WordAudioRow]): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.insertAudio(rows))
+
+  def existingAudio(wordIds: List[Long]): RIO[WordRepository, List[(Long, String)]] =
+    ZIO.serviceWithZIO[WordRepository](_.existingAudio(wordIds))
+
+  def audioOf(wordId: Long): RIO[WordRepository, List[WordAudioRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.audioOf(wordId))
+
   def formFanOutAnomalies(threshold: Int): RIO[WordRepository, List[(WordRow, String, Long)]] =
     ZIO.serviceWithZIO[WordRepository](_.formFanOutAnomalies(threshold))
 
@@ -904,6 +923,7 @@ final class WordRepositoryLive(dataSource: DataSource)
   private inline def words        = quote(querySchema[WordRow]("words"))
   private inline def translations = quote(querySchema[WordTranslationRow]("word_translations"))
   private inline def wordForms    = quote(querySchema[WordFormRow]("word_forms"))
+  private inline def wordAudio    = quote(querySchema[WordAudioRow]("word_audio"))
   private inline def tags         = quote(querySchema[TagRow]("tags"))
   private inline def wordTags     = quote(querySchema[WordTagRow]("word_tags"))
   private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
@@ -2505,6 +2525,40 @@ final class WordRepositoryLive(dataSource: DataSource)
   def lemmaOf(formWordId: Long): Task[List[WordFormRow]] = {
     val q = quote(wordForms.filter(_.formWordId == lift(formWordId)))
     logged(run(ctx.run(q)))(rows => s"wordForms.lemmaOf form=$formWordId rows=${rows.size}")
+  }
+
+  def insertAudio(rows: List[WordAudioRow]): Task[Long] = {
+    if (rows.isEmpty)
+      ZIO.succeed(0L)
+    else {
+      val q = quote {
+        liftQuery(rows).foreach(row => {
+          wordAudio.insert(
+            _.wordId    -> row.wordId,
+            _.fileName  -> row.fileName,
+            _.region    -> row.region,
+            _.createdAt -> row.createdAt,
+          )
+        })
+      }
+      logged(run(ctx.run(q)).map(_.sum))(inserted => s"wordAudio.insertBatch rows=${rows.size} inserted=$inserted")
+    }
+  }
+
+  def existingAudio(wordIds: List[Long]): Task[List[(Long, String)]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordAudio.filter(row => liftQuery(wordIds).contains(row.wordId)).map(row => (row.wordId, row.fileName))
+      }
+      logged(run(ctx.run(q)))(rows => s"wordAudio.existing words=${wordIds.size} rows=${rows.size}")
+    }
+  }
+
+  def audioOf(wordId: Long): Task[List[WordAudioRow]] = {
+    val q = quote(wordAudio.filter(_.wordId == lift(wordId)).sortBy(_.id))
+    logged(run(ctx.run(q)))(rows => s"wordAudio.audioOf word=$wordId rows=${rows.size}")
   }
 
   def lemmaContextOf(formWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]] = {

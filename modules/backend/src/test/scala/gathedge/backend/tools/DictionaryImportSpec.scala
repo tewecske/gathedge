@@ -1,6 +1,6 @@
 package gathedge.backend.tools
 
-import gathedge.backend.tools.WiktextractParser.{ParsedForm, ParsedWord}
+import gathedge.backend.tools.WiktextractParser.{ParsedAudio, ParsedForm, ParsedWord}
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import zio.test._
 
@@ -37,6 +37,18 @@ object DictionaryImportSpec extends ZIOSpecDefault {
   private val inflectedLine = {
     """{"word":"Häuser","lang_code":"de","lang":"German","pos":"noun","tags":["neuter"],
       |"senses":[{"glosses":["plural of Haus"],"tags":["form-of","plural"]}]}""".stripMargin.replace("\n", "")
+  }
+
+  /** A `sounds[]` array as the dump writes it: IPA rows, two recordings (one without tags), the first file again under
+    * a lower-case spelling, and the dump's own URLs, which the parser does not read.
+    */
+  private val soundsLine = {
+    """{"word":"gratis","lang_code":"de","lang":"German","pos":"adv","senses":[{"glosses":["free of charge"]}],
+      |"sounds":[{"ipa":"/ˈɡʁaːtɪs/"},
+      |{"audio":"De-gratis.ogg","tags":["Germany","Berlin"],
+      |"ogg_url":"https://upload.wikimedia.org/wikipedia/commons/8/88/De-gratis.ogg"},
+      |{"audio":"LL-Q188 (deu)-Sebastian Wallroth-gratis.wav"},
+      |{"audio":"de-gratis.ogg","tags":["Austria"]}]}""".stripMargin.replace("\n", "")
   }
 
   private val prefixLine = {
@@ -364,6 +376,50 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           decoded.forms.toSet == collected.forms.toSet,
           decoded.words.keySet == collected.words.keySet,
         )
+      },
+      test("a recording is read from sounds[], keyed to the entry, with its accent tags joined") {
+        val entry = WiktextractParser.parse(soundsLine)
+        val word  = ParsedWord(WordLanguage.De, "gratis", PartOfSpeech.Adverb, None)
+        assertTrue(
+          entry.audio == List(
+            ParsedAudio(word, "De-gratis.ogg", "Germany, Berlin"),
+            ParsedAudio(word, "LL-Q188_(deu)-Sebastian_Wallroth-gratis.wav", ""),
+          )
+        )
+      },
+      test("a form-of page brings no recording: it is not a word of its own") {
+        val line = inflectedLine.dropRight(1) + ""","sounds":[{"audio":"De-Häuser.ogg"}]}"""
+        assertTrue(WiktextractParser.parse(line).audio == Nil)
+      },
+      test("select keeps a recording only when its word survives") {
+        val house     = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
+        val rare      = ParsedWord(WordLanguage.En, "haubitze", PartOfSpeech.Noun, None)
+        val collected = DictionaryImport.Collected.empty
+          .withWord(house, 0)
+          .withWord(rare, 0)
+          .copy(audio = List(ParsedAudio(house, "En-us-house.ogg", "US"), ParsedAudio(rare, "En-haubitze.ogg", "")))
+        val selected  = DictionaryImport.select(collected, Map(WordLanguage.En -> Map("house" -> 1)), limit = 10)
+        assertTrue(selected.audio == List(ParsedAudio(house, "En-us-house.ogg", "US")))
+      },
+      test("the seed format round-trips recordings, empty region included") {
+        val gratis    = ParsedWord(WordLanguage.De, "gratis", PartOfSpeech.Adverb, None)
+        val audio     = List(ParsedAudio(gratis, "De-gratis.ogg", "Germany, Berlin"), ParsedAudio(gratis, "LL-x.wav", ""))
+        val collected = DictionaryImport.Collected.empty.withWord(gratis, 4).copy(audio = audio)
+        val decoded   = DictionaryImport.SeedFormat.decode(DictionaryImport.SeedFormat.encode(collected))
+        assertTrue(decoded.audio.toSet == audio.toSet, decoded.words.get(gratis).contains(4))
+      },
+      test("dedupeHomographs moves the genderless twin's recording onto the gendered survivor") {
+        val frauGenderless = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, None)
+        val frauGendered   = ParsedWord(WordLanguage.De, "Frau", PartOfSpeech.Noun, Some(Gender.Feminine))
+        val deduped        = DictionaryImport.dedupeHomographs(
+          DictionaryImport.Collected(
+            words = Map(frauGenderless -> 1, frauGendered -> 1),
+            pairs = Nil,
+            forms = Nil,
+            audio = List(ParsedAudio(frauGenderless, "De-Frau.ogg", "")),
+          )
+        )
+        assertTrue(deduped.audio == List(ParsedAudio(frauGendered, "De-Frau.ogg", "")))
       },
       test("arguments are read, and the two modes are exclusive") {
         assertTrue(
