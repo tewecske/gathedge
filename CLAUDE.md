@@ -373,6 +373,8 @@ Four load-bearing columns:
 
 `backend/service/TagGames.scala` holds both questions, as an object over `GameRepository` the way `GlobalAdmin` is one over `UserRepository`: `WordService` fills `Tag.soloGame` from it and `GameService` answers `same-tags` from it, so the rule has one home. That is also why `WordService` takes a `GameRepository` — read-only, for that one question. The admin report is the one place `game_tags` is read whole, since comparing tag *sets* is an aggregate no Quill query expresses.
 
+**Pronunciation is a link, never a file.** `word_audio` holds a Wikimedia Commons file name per recording, read from the dump's `sounds[]` (seed record `A`); `DictionaryImport` is its only writer. `service/CommonsAudio` derives the play URLs and the file page from the name (MD5 path, MP3 transcode first). Each recording must carry its file-page link: that link is the licence's attribution. Coverage is good for German, fair for English, near zero for Hungarian, so the word page falls back to the browser's speech synthesis, and only where the browser has a voice for the word's language. Only the word details page shows audio.
+
 **The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the committed sample; `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
 
 ### Bulk import: two paths, one panel

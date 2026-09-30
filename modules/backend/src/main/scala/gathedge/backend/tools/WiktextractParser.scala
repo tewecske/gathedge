@@ -1,5 +1,6 @@
 package gathedge.backend.tools
 
+import gathedge.backend.service.CommonsAudio
 import gathedge.shared.domain.{Gender, LanguageProfile, PartOfSpeech, WordLanguage}
 import zio.json.*
 
@@ -50,6 +51,12 @@ object WiktextractParser {
     source: Option[String] = None,
   ) derives JsonDecoder
 
+  /** One row of `sounds[]`. Most rows are IPA or rhymes; only a row with `audio` names a recording, as the Wikimedia
+    * Commons file name. `tags` is the accent (`US`, `Berlin`). The dump's own `ogg_url`/`mp3_url` are not read:
+    * `CommonsAudio` derives both from the name.
+    */
+  final case class RawSound(audio: Option[String] = None, tags: Option[List[String]] = None) derives JsonDecoder
+
   final case class RawEntry(
     word: String,
     lang_code: Option[String] = None,
@@ -58,6 +65,7 @@ object WiktextractParser {
     senses: Option[List[RawSense]] = None,
     translations: Option[List[RawTranslation]] = None,
     forms: Option[List[RawForm]] = None,
+    sounds: Option[List[RawSound]] = None,
   ) derives JsonDecoder
 
   /** A word as it will be stored, before it has an id. */
@@ -91,8 +99,18 @@ object WiktextractParser {
     }
   }
 
-  /** Both halves of one wiktextract line: the entry as a word, what it translates to, and what forms it has. */
-  final case class ParsedEntry(word: Option[ParsedWord], pairs: List[ParsedPair], forms: List[ParsedForm])
+  /** One recording of a word: a Wikimedia Commons file name, and the accent tags comma-joined (`''` for none). */
+  final case class ParsedAudio(word: ParsedWord, fileName: String, region: String)
+
+  /** Both halves of one wiktextract line: the entry as a word, what it translates to, what forms it has, and how it
+    * sounds.
+    */
+  final case class ParsedEntry(
+    word: Option[ParsedWord],
+    pairs: List[ParsedPair],
+    forms: List[ParsedForm],
+    audio: List[ParsedAudio] = Nil,
+  )
 
   /** Wiktionary's part-of-speech vocabulary is much wider than this application's five values; everything unmapped
     * becomes `Other`, and the handful that are not words at all are dropped by [[isUsablePos]].
@@ -310,6 +328,38 @@ object WiktextractParser {
     }
   }
 
+  /** `word_audio`'s two text columns are this wide. */
+  private val maxAudioColumn = 255
+
+  /** The recordings this entry names, keyed to the entry as a word. `None` from [[wordOf]] means none: a form-of page
+    * (`Häuser`) is not a word this application stores on its own.
+    *
+    * The name is stored in MediaWiki's normal form, so two spellings of one file (`en-us-x.ogg`, `En-us-x.ogg`) are one
+    * row. A name that holds a tab or a line break could not survive the seed file, and one longer than the column could
+    * not be stored. No real name is either, so such a name is dropped rather than escaped or cut.
+    */
+  def audioOf(entry: RawEntry): List[ParsedAudio] = {
+    wordOf(entry) match {
+      case None       =>
+        Nil
+      case Some(word) =>
+        entry.sounds
+          .getOrElse(Nil)
+          .flatMap { sound =>
+            sound.audio
+              .map(CommonsAudio.normalise)
+              .filter(name =>
+                name.nonEmpty && name.length <= maxAudioColumn && !name.exists(c => c == '\t' || c == '\n')
+              )
+              .map { name =>
+                val region = sound.tags.getOrElse(Nil).map(_.trim).filter(_.nonEmpty).mkString(", ")
+                ParsedAudio(word, name, region.take(maxAudioColumn))
+              }
+          }
+          .distinctBy(_.fileName)
+    }
+  }
+
   /** Both halves of one line: the entry as a word, and whatever it says about other languages and its own forms.
     *
     * A line that decodes to nothing usable is silently skipped rather than failing the import. The dump has millions of
@@ -320,7 +370,12 @@ object WiktextractParser {
       case Left(_)      =>
         ParsedEntry(None, Nil, Nil)
       case Right(entry) =>
-        ParsedEntry(wordOf(entry), pairsOf(entry), formsOf(entry) ++ formOfPageOf(entry, includeAltOf))
+        ParsedEntry(
+          wordOf(entry),
+          pairsOf(entry),
+          formsOf(entry) ++ formOfPageOf(entry, includeAltOf),
+          audioOf(entry),
+        )
     }
   }
 

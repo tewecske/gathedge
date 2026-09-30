@@ -100,6 +100,9 @@ final case class TranslationEntry(
   *
   * `fromDictionary` says the import wrote the word; `createdByMe` says this reader minted it. Together they decide who
   * may change the word's part of speech: its author, and otherwise only an administrator.
+  *
+  * `audio` lists the recorded pronunciations of the word. It is empty for most words, and the page then falls back to
+  * the browser's own speech synthesis.
   */
 final case class WordDetail(
   word: Word,
@@ -110,7 +113,18 @@ final case class WordDetail(
   forms: List[WordFormEntry],
   fromDictionary: Boolean = false,
   createdByMe: Boolean = false,
+  audio: List[WordAudio] = Nil,
 ) derives JsonCodec
+
+/** One recorded pronunciation, as a file on Wikimedia Commons.
+  *
+  * The server derives both URLs from `fileName`, so the browser does no hashing. `playUrls` is in order of preference:
+  * the MP3 transcode first (every browser plays it), then the file as uploaded. `filePageUrl` is the file's Commons
+  * page. It names the author and the licence, and a link to it is the attribution the licence asks for. `region` is the
+  * accent as the source states it (`US`, `Germany, Berlin`), or empty. It is a stored value, so it is never translated.
+  */
+final case class WordAudio(fileName: String, region: String, playUrls: List[String], filePageUrl: String)
+    derives JsonCodec
 
 /** One page of the vocabulary, counted the way [[UserPage]] is: `total` counts what the filter matches, not what the
   * table holds, because that is what decides how many pages there are.

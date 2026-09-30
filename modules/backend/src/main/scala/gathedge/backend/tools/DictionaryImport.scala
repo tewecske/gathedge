@@ -5,6 +5,7 @@ import gathedge.backend.db.{
   DataSourceFactory,
   FlywayMigrator,
   TextSearch,
+  WordAudioRow,
   WordFormRow,
   WordRepository,
   WordRow,
@@ -22,7 +23,7 @@ import java.util.concurrent.TimeUnit
 
 import javax.sql.DataSource
 
-import WiktextractParser.{ParsedForm, ParsedPair, ParsedWord}
+import WiktextractParser.{ParsedAudio, ParsedForm, ParsedPair, ParsedWord}
 
 /** Loads the shared dictionary: English, German, Spanish and Hungarian words with their parts of speech, gender where
   * the language has one, and the translations between them.
@@ -128,7 +129,12 @@ object DictionaryImport extends ZIOAppDefault {
     * per language, not the dump's millions — and having the lot at once is what makes the German–Hungarian pivot
     * possible at all.
     */
-  final case class Collected(words: Map[ParsedWord, Int], pairs: List[ParsedPair], forms: List[ParsedForm]) {
+  final case class Collected(
+    words: Map[ParsedWord, Int],
+    pairs: List[ParsedPair],
+    forms: List[ParsedForm],
+    audio: List[ParsedAudio] = Nil,
+  ) {
 
     def withWord(word: ParsedWord, rank: Int): Collected = {
       // The best rank wins: a word reached both as a headword and as somebody's translation keeps the one that says
@@ -222,7 +228,12 @@ object DictionaryImport extends ZIOAppDefault {
         // frequency cut has run, so a lemma's whole case/tense table is not materialised for every one of the
         // dump's millions of entries before `--limit` narrows anything down.
         val relevantForms = entry.forms.filter(form => options.languages.contains(form.lemma.language))
-        withPairs.copy(pairs = relevantPairs ++ withPairs.pairs, forms = relevantForms ++ withPairs.forms)
+        val relevantAudio = entry.audio.filter(audio => options.languages.contains(audio.word.language))
+        withPairs.copy(
+          pairs = relevantPairs ++ withPairs.pairs,
+          forms = relevantForms ++ withPairs.forms,
+          audio = relevantAudio ++ withPairs.audio,
+        )
       }
   }
 
@@ -287,7 +298,9 @@ object DictionaryImport extends ZIOAppDefault {
       if (acc.contains(form.form)) acc
       else acc.updated(form.form, acc.getOrElse(form.lemma, WordService.unrankedFrequency))
     }
-    Collected(allRanks, pairs, forms)
+    // A recording is kept only if its word is: it has nothing else to hang on.
+    val audio     = collected.audio.filter(audio => allRanks.contains(audio.word))
+    Collected(allRanks, pairs, forms, audio)
   }
 
   /** Wiktextract sometimes gives one spelling more than one entry that this application's schema cannot tell apart by
@@ -353,6 +366,11 @@ object DictionaryImport extends ZIOAppDefault {
           .filterNot(form => dropped.contains(form.lemma) || dropped.contains(form.form))
           .map(form => form.copy(lemma = resolve(form.lemma), form = resolve(form.form)))
           .distinct,
+        // A redirected entry's recordings are the survivor's: it is the same headword, spelled the same way.
+        audio = collected.audio
+          .filterNot(audio => dropped.contains(audio.word))
+          .map(audio => audio.copy(word = resolve(audio.word)))
+          .distinct,
       )
     }
   }
@@ -401,6 +419,7 @@ object DictionaryImport extends ZIOAppDefault {
     *   - `T  <word columns> <word columns> sense` — a translation pair, source then target.
     *   - `F  <word columns> <word columns> relation` — a form relation, lemma then form, `relation` in the sense
     *     column's place.
+    *   - `A  <word columns> file region` — a recording of the word, as a Wikimedia Commons file name.
     */
   object SeedFormat {
 
@@ -451,7 +470,20 @@ object DictionaryImport extends ZIOAppDefault {
             ).mkString("\t")
           }
       }
-      words ++ pairs ++ forms
+      val audio = {
+        collected.audio.distinct.sortBy(audio => (audio.word.key.toString, audio.fileName)).map { audio =>
+          List(
+            "A",
+            WordLanguage.code(audio.word.language),
+            audio.word.text,
+            PartOfSpeech.code(audio.word.partOfSpeech),
+            Gender.toColumn(audio.word.gender),
+            audio.fileName,
+            audio.region,
+          ).mkString("\t")
+        }
+      }
+      words ++ pairs ++ forms ++ audio
     }
 
     private def wordAt(columns: Array[String], offset: Int): Option[ParsedWord] = {
@@ -506,6 +538,16 @@ object DictionaryImport extends ZIOAppDefault {
                         .copy(forms = ParsedForm(lemma, form, relation) :: collected.forms)
                   }
                 case _                         =>
+                  collected
+              }
+            case Some("A") =>
+              (wordAt(columns, 1), columns.lift(5).map(_.trim).filter(_.nonEmpty)) match {
+                case (Some(word), Some(fileName)) =>
+                  val region = columns.lift(6).map(_.trim).getOrElse("")
+                  collected
+                    .withWord(word, WordService.unrankedFrequency)
+                    .copy(audio = ParsedAudio(word, fileName, region) :: collected.audio)
+                case _                            =>
                   collected
               }
             case _         =>
@@ -683,6 +725,28 @@ object DictionaryImport extends ZIOAppDefault {
       .map(_.sum)
   }
 
+  /** Writes every recording that is not already recorded. A recording whose word did not get stored is dropped, the
+    * same rule [[formEdges]] applies to a form.
+    */
+  private def storeAudio(audio: List[ParsedAudio], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
+    val rows = audio.flatMap(a => ids.get(a.word).map(id => (id, a.fileName, a.region))).distinctBy {
+      case (id, fileName, _) => (id, fileName)
+    }
+
+    ZIO
+      .foreach(rows.grouped(batchSize).toList) { batch =>
+        val wordIds = batch.map { case (id, _, _) => id }.distinct
+        for {
+          known <- WordRepository.existingAudio(wordIds).map(_.toSet)
+          fresh  = batch.filterNot { case (id, fileName, _) => known.contains((id, fileName)) }.map {
+                     case (id, fileName, region) => WordAudioRow(0L, id, fileName, region, now)
+                   }
+          _     <- WordRepository.insertAudio(fresh)
+        } yield fresh.size.toLong
+      }
+      .map(_.sum)
+  }
+
   private def store(collected: Collected): RIO[WordRepository & DataSource & AppConfig, Unit] = {
     for {
       config     <- ZIO.service[AppConfig]
@@ -704,6 +768,8 @@ object DictionaryImport extends ZIOAppDefault {
       _          <- ZIO.logInfo(s"Stored $forms form relation row(s)")
       formLinked <- storePairs(formPairs(collected.pairs ++ pivoted, collected.forms), ids, WordService.formOrigin, now)
       _          <- ZIO.logInfo(s"Stored $formLinked form-to-form translation row(s)")
+      audio      <- storeAudio(collected.audio, ids, now)
+      _          <- ZIO.logInfo(s"Stored $audio recording row(s)")
     } yield ()
   }
 
