@@ -16,7 +16,7 @@ import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import zio.*
 import zio.stream.{ZPipeline, ZStream}
 
-import java.io.{FileInputStream, FileOutputStream}
+import java.io.{BufferedWriter, FileInputStream, FileOutputStream, OutputStreamWriter}
 import java.nio.charset.StandardCharsets
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
 import java.util.concurrent.TimeUnit
@@ -343,7 +343,9 @@ object DictionaryImport extends ZIOAppDefault {
     }.toMap
 
     val dropped = byHomograph.flatMap { homographs =>
-      val survivors    = homographs.toSet -- redirects.keySet
+      // Filtered against the map, not `-- redirects.keySet`: that walks every redirect once per spelling group,
+      // which is quadratic and never finishes on the whole dump.
+      val survivors    = homographs.toSet.filterNot(redirects.contains)
       val hasRealSense = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
       if (hasRealSense)
         survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
@@ -580,8 +582,14 @@ object DictionaryImport extends ZIOAppDefault {
         else
           new FileOutputStream(path)
       }
-      try stream.write(SeedFormat.encode(collected).mkString("\n").getBytes(StandardCharsets.UTF_8))
-      finally stream.close()
+      // Line by line: the whole dump's seed is past 2 GB as one string, which no byte array can hold.
+      val writer = new BufferedWriter(new OutputStreamWriter(stream, StandardCharsets.UTF_8))
+      try {
+        SeedFormat.encode(collected).iterator.zipWithIndex.foreach { case (line, index) =>
+          if (index > 0) writer.write('\n')
+          writer.write(line)
+        }
+      } finally writer.close()
     }
   }
 
