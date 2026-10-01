@@ -18,6 +18,7 @@ import gathedge.shared.dto.{
   RouteUsage,
   SuspiciousUser,
   SystemOverview,
+  TagExportFile,
   UpdateUserRequest,
   UserPage,
   WordFormAnomaly,
@@ -186,6 +187,11 @@ object AdminApiClient {
   /** Every set of wordlists more than one game was built from — the duplicate report. */
   def duplicateGames: EventStream[Either[ApiError, List[DuplicateGameGroup]]] = {
     HttpClient.call[List[DuplicateGameGroup]](AdminPaths.duplicateGames())
+  }
+
+  /** Every wordlist in the application, whoever owns it, in one file. */
+  def exportAllTags: EventStream[Either[ApiError, TagExportFile]] = {
+    HttpClient.call[TagExportFile](AdminPaths.exportAllTags())
   }
 
   def usageRoutes(windowHours: Option[Int] = None): EventStream[Either[ApiError, List[RouteUsage]]] = {

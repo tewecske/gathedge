@@ -1305,10 +1305,11 @@ object UiKeys {
 
   // -- Tag export / import -----------------------------------------------------------------------
   // Export writes a tag (or every owned tag) to a JSON file; import rebuilds it here. `TagImportDialog`, plus a button
-  // on `TagEditorPage` and two on `TagsPage`.
+  // on `TagEditorPage` and two on `TagsPage` — three for a global administrator, who can export every wordlist.
 
-  val tagsExportButton: String    = key("ui.tags.export.button")
-  val tagsExportAllButton: String = key("ui.tags.export.allButton")
+  val tagsExportButton: String      = key("ui.tags.export.button")
+  val tagsExportAllButton: String   = key("ui.tags.export.allButton")
+  val tagsExportEveryButton: String = key("ui.tags.export.everyButton")
 
   val tagsImportButton: String     = key("ui.tags.import.button")
   val tagsImportTitle: String      = key("ui.tags.import.title")

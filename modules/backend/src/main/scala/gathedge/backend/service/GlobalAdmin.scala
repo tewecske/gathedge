@@ -17,6 +17,11 @@ import zio.*
   *     listings, the collect picker and the quota that charges an owner all read it that way. `editableByMe` is the
   *     permission half, and that one an administrator gets on every row.
   *
+  * A global administrator is also never rate limited on the budgets keyed on an account (`RateLimitKey.wordUpload`,
+  * `.groupJoin`, `.shareRedeem`) — see [[unlessAdmin]]. The budgets a caller meets before signing in (login, signup,
+  * verification, password reset, guest, claim) stay as they are: nobody is known to be an administrator there yet, and
+  * an administrator's address is the last one to hand an unmetered password guesser.
+  *
   * The check is a primary-key read, so each gate makes it '''only after''' the ordinary owner test has already said no.
   * The common request pays nothing for it.
   */
@@ -24,6 +29,10 @@ object GlobalAdmin {
 
   def is(userRepo: UserRepository, userId: Long): UIO[Boolean] =
     userRepo.findById(userId).orDie.map(_.exists(_.isAdmin))
+
+  /** Runs `meter` — a rate-limit check and its count — for anyone but a global administrator, who skips it. */
+  def unlessAdmin[E](userRepo: UserRepository, userId: Long)(meter: IO[E, Unit]): IO[E, Unit] =
+    is(userRepo, userId).flatMap(admin => if (admin) ZIO.unit else meter)
 
   /** The [[is]] a listing needs, where the reader may be a visitor with no session at all — who is never one. */
   def isReader(userRepo: UserRepository, reader: Option[Long]): UIO[Boolean] =

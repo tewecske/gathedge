@@ -3755,6 +3755,49 @@ object WordServiceSpec extends ZIOSpecDefault {
           page   <- WordService.listTagsPaged(Some(admin), 1, 50, None, descending = false, None, TagScope.All)
         } yield assertTrue(page.items.find(_.id == theirs.id).exists(t => !t.ownedByMe && t.editableByMe))
       },
+      test("exportAllTags holds every owner's wordlists, numbers a repeated name, and imports as one account") {
+        for {
+          _        <- seed
+          admin    <- adminUserId("admin-export@example.com")
+          mine     <- createTag("Shared GA8", 7L)
+          theirs   <- createTag("shared ga8", 8L)
+          haus     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          _        <- WordService.tagWord(haus.id, theirs.id, 8L)
+          file     <- WordService.exportAllTags
+          names     = file.tags.map(_.name)
+          response <- WordService.importTags(
+                        file.copy(tags = file.tags.filter(t => Tag.normalize(t.name).startsWith("shared ga8"))),
+                        Map.empty,
+                        admin,
+                      )
+        } yield assertTrue(
+          names.contains("Shared GA8"),
+          names.contains("shared ga8 (2)"),
+          // The second holder of the name is the later id, and its words travel with it.
+          file.tags.find(_.name == "shared ga8 (2)").exists(_.entries.map(_.word.text) == List("Haus")),
+          mine.id < theirs.id,
+          response.results.map(_.tagName).sorted == List("Shared GA8", "shared ga8 (2)"),
+        )
+      },
+      test("uniqueTagNames numbers each repeat and keeps a numbered name within the length limit") {
+        val long = "x" * Tag.maxNameLength
+        val out  = WordService.uniqueTagNames(List("a", "A", "a (2)", "a", long, long))
+        assertTrue(
+          out.take(4) == List("a", "A (2)", "a (2) (2)", "a (3)"),
+          out(4) == long,
+          out(5).length == Tag.maxNameLength,
+          out(5).endsWith(" (2)"),
+        )
+      },
+      test("is never rate limited on a bulk upload") {
+        for {
+          admin <- adminUserId("admin-upload@example.com")
+          tag   <- createTag("theirsGA9", 7L)
+          calls <- ZIO.foreach(0 to RateLimiter.maxAttempts * 2)(_ =>
+                     WordService.bulkUploadPreview(tag.id, "hello", WordLanguage.En, WordLanguage.De, admin).either
+                   )
+        } yield assertTrue(calls.forall(_.isRight))
+      },
       test("an ordinary account is still refused both the rename and the content edit") {
         for {
           _       <- seed

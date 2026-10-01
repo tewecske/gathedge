@@ -547,6 +547,12 @@ trait WordService {
   /** Every tag `userId` owns, in one file. */
   def exportOwnedTags(userId: Long): UIO[TagExportFile]
 
+  /** Every tag in the application, whoever owns it, in one file — for a global administrator; `AdminRoutes` is the
+    * gate. A name that an earlier tag in the file already holds gets a number (`Animals (2)`), since [[importTags]]
+    * refuses a file with two tags of one name.
+    */
+  def exportAllTags: UIO[TagExportFile]
+
   /** Rebuilds the tags in `file` under `userId`'s account: each word is matched by identity and created in this
     * dictionary when missing, memberships and practice pairs are written, and both quotas are checked before any write
     * the way [[copyTag]] checks them. `NameConflict` is a tag whose name the caller already owns with no matching entry
@@ -856,6 +862,35 @@ object WordService {
 
   def exportOwnedTags(userId: Long): URIO[WordService, TagExportFile] =
     ZIO.serviceWithZIO[WordService](_.exportOwnedTags(userId))
+
+  def exportAllTags: URIO[WordService, TagExportFile] =
+    ZIO.serviceWithZIO[WordService](_.exportAllTags)
+
+  /** Gives each later holder of a name a number, `Animals (2)`, until no two names in the list compare equal. A base
+    * name is cut so the numbered one still fits [[Tag.maxNameLength]].
+    */
+  private[service] def uniqueTagNames(names: List[String]): List[String] = {
+    names
+      .foldLeft((Vector.empty[String], Set.empty[String])) { case ((out, taken), name) =>
+        val unique = {
+          if (!taken.contains(Tag.normalize(name))) {
+            name
+          } else {
+            Iterator
+              .from(2)
+              .map { n =>
+                val suffix = s" ($n)"
+                name.take(Tag.maxNameLength - suffix.length).trim + suffix
+              }
+              .find(candidate => !taken.contains(Tag.normalize(candidate)))
+              .get
+          }
+        }
+        (out :+ unique, taken + Tag.normalize(unique))
+      }
+      ._1
+      .toList
+  }
 
   def importTags(
     file: TagExportFile,
@@ -2788,14 +2823,19 @@ final case class WordServiceLive(
     */
   private def bulkUploadGuard(tagId: Long, userId: Long): IO[BulkUploadFailure, TagRow] = {
     val rateLimitKey = RateLimitKey.wordUpload(userId)
+    val meter        = {
+      for {
+        blocked <- limiter.isBlocked(rateLimitKey)
+        _       <- ZIO.when(blocked) {
+                     SecurityLog.warn(s"Rate limit exceeded on bulk word upload for user $userId") *>
+                       ZIO.fail(BulkUploadFailure.RateLimited)
+                   }
+        _       <- limiter.recordFailure(rateLimitKey)
+      } yield ()
+    }
     for {
-      blocked <- limiter.isBlocked(rateLimitKey)
-      _       <- ZIO.when(blocked) {
-                   SecurityLog.warn(s"Rate limit exceeded on bulk word upload for user $userId") *>
-                     ZIO.fail(BulkUploadFailure.RateLimited)
-                 }
-      _       <- limiter.recordFailure(rateLimitKey)
-      tag     <- requireEditableTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
+      _   <- GlobalAdmin.unlessAdmin(userRepo, userId)(meter)
+      tag <- requireEditableTag(tagId, userId).mapError(_ => BulkUploadFailure.TagNotFound)
     } yield tag
   }
 
@@ -3487,6 +3527,19 @@ final case class WordServiceLive(
     } yield TagExportFile(TagExportFile.currentVersion, now, bodies)
   }
 
+  def exportAllTags: UIO[TagExportFile] = {
+    for {
+      // The viewer only decides `ownedByMe`, which this export does not read.
+      rows   <- repo.listTags(0L).orDie
+      all     = rows.map(_._1).sortBy(tag => (tag.nameNorm, tag.id))
+      bodies <- ZIO.foreach(all)(tag => buildTagExport(tag).orDie)
+      named   = bodies.zip(WordService.uniqueTagNames(bodies.map(_.name))).map { case (body, name) =>
+                  body.copy(name = name)
+                }
+      now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
+    } yield TagExportFile(TagExportFile.currentVersion, now, named)
+  }
+
   /** Any [[ensure]]/[[linkOrExisting]] failure during an import is a bad word inside the file — reshaped to this enum's
     * own validation case so the whole request answers 400 with field errors.
     */
@@ -3510,14 +3563,16 @@ final case class WordServiceLive(
     */
   private def importGuard(userId: Long): IO[TagImportFailure, Unit] = {
     val rateLimitKey = RateLimitKey.wordUpload(userId)
-    for {
-      blocked <- limiter.isBlocked(rateLimitKey)
-      _       <- ZIO.when(blocked) {
-                   SecurityLog.warn(s"Rate limit exceeded on tag import for user $userId") *>
-                     ZIO.fail(TagImportFailure.RateLimited)
-                 }
-      _       <- limiter.recordFailure(rateLimitKey)
-    } yield ()
+    GlobalAdmin.unlessAdmin(userRepo, userId) {
+      for {
+        blocked <- limiter.isBlocked(rateLimitKey)
+        _       <- ZIO.when(blocked) {
+                     SecurityLog.warn(s"Rate limit exceeded on tag import for user $userId") *>
+                       ZIO.fail(TagImportFailure.RateLimited)
+                   }
+        _       <- limiter.recordFailure(rateLimitKey)
+      } yield ()
+    }
   }
 
   /** `ensure`'s own rule for which gender it would actually store, mirrored here so the pre-check lookup uses the same

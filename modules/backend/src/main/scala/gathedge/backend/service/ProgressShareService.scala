@@ -118,9 +118,13 @@ final case class ProgressShareServiceLive(
     val normalized = Tokens.normalizeClaimCode(code)
     val key        = RateLimitKey.shareRedeem(viewerUserId)
     for {
-      blocked  <- rateLimiter.isBlocked(key)
-      _        <- ZIO.when(blocked)(ZIO.fail(ProgressShareFailure.RateLimited))
-      _        <- rateLimiter.recordFailure(key)
+      _        <- GlobalAdmin.unlessAdmin(userRepo, viewerUserId) {
+                    for {
+                      blocked <- rateLimiter.isBlocked(key)
+                      _       <- ZIO.when(blocked)(ZIO.fail(ProgressShareFailure.RateLimited))
+                      _       <- rateLimiter.recordFailure(key)
+                    } yield ()
+                  }
       found    <- repo.findActiveCode(normalized).orDie
       claimed  <- ZIO.fromOption(found).orElseFail(ProgressShareFailure.CodeInvalid)
       // A code whose account has since been deleted answers the same "no such code" as one that never existed.

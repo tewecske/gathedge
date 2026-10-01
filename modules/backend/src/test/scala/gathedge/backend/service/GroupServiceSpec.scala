@@ -283,6 +283,21 @@ object GroupServiceSpec extends ZIOSpecDefault {
           gone == Left(GroupFailure.NotFound),
         )
       },
+      test("wrong invite codes rate limit an ordinary account, but never a global admin") {
+        for {
+          plain   <- userId("guesser@example.com")
+          admin   <- adminId("guesser-admin@example.com")
+          guesses  = ZIO.foreachDiscard(1 to RateLimiter.maxAttempts)(_ =>
+                       ZIO.foreachDiscard(List(plain, admin))(GroupService.join("ZZZZ-ZZZZ-ZZZZ-ZZZZ", _).either)
+                     )
+          _       <- guesses
+          blocked <- GroupService.join("ZZZZ-ZZZZ-ZZZZ-ZZZZ", plain).either
+          free    <- GroupService.join("ZZZZ-ZZZZ-ZZZZ-ZZZZ", admin).either
+        } yield assertTrue(
+          blocked == Left(GroupFailure.RateLimited),
+          free == Left(GroupFailure.InviteCodeInvalid),
+        )
+      },
     ).provideShared(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential
   }
 }
