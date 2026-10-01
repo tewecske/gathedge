@@ -1,6 +1,6 @@
 package gathedge.shared.dto
 
-import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, Word, WordLanguage}
+import gathedge.shared.domain.{Gender, PairMatch, PartOfSpeech, Tag, Word, WordLanguage, WordLinkKind}
 import gathedge.shared.i18n.MessageRef
 import zio.json.*
 
@@ -103,6 +103,9 @@ final case class TranslationEntry(
   *
   * `audio` lists the recorded pronunciations of the word. It is empty for most words, and the page then falls back to
   * the browser's own speech synthesis.
+  *
+  * `links` lists the words related to this one without being its forms: a noun's counterpart of another gender
+  * (`Künstlerin`), a diminutive (`Häuschen`), or the word this one is a diminutive of.
   */
 final case class WordDetail(
   word: Word,
@@ -114,7 +117,11 @@ final case class WordDetail(
   fromDictionary: Boolean = false,
   createdByMe: Boolean = false,
   audio: List[WordAudio] = Nil,
+  links: List[WordLinkEntry] = Nil,
 ) derives JsonCodec
+
+/** One entry of [[WordDetail.links]]: the linked word, and what it is to the word the page shows. */
+final case class WordLinkEntry(word: Word, kind: WordLinkKind) derives JsonCodec
 
 /** One recorded pronunciation, as a file on Wikimedia Commons.
   *

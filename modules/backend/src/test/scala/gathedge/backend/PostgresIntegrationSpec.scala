@@ -31,6 +31,7 @@ import gathedge.backend.db.{
   UserRepository,
   WordAudioRow,
   WordFormRow,
+  WordLinkRow,
   WordRepository,
   WordRow,
 }
@@ -58,6 +59,7 @@ import gathedge.shared.domain.{
   TagScope,
   TranslationFilter,
   WordLanguage,
+  WordLinkKind,
 }
 import gathedge.shared.dto.{
   ColumnSample,
@@ -1187,6 +1189,105 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           afterLemma.isEmpty,
         )
       },
+      // `word_links` references `words` twice over, like `word_forms`, so it needs the same cascade from either side.
+      // `detail` is the one reader, and orders the links by kind.
+      pgTest("a word's links cascade away with either word, and reach the detail page in kind order") {
+        def noun(text: String, gender: String) = {
+          WordRepository.ensureWord(
+            WordRow(
+              0L,
+              "de",
+              text,
+              text.toLowerCase,
+              "noun",
+              gender,
+              1,
+              "dictionary",
+              None,
+              0L,
+              TextSearch.fold(text.toLowerCase),
+            )
+          )
+        }
+        for {
+          artist    <- noun("Pgkünstler", "masculine")
+          female    <- noun("Pgkünstlerin", "feminine")
+          small     <- noun("Pgkünstlerchen", "neuter")
+          now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _         <- WordRepository.insertLinks(
+                         List(
+                           WordLinkRow(0L, artist.id, small.id, "diminutive", now),
+                           WordLinkRow(0L, artist.id, female.id, "feminine", now),
+                           WordLinkRow(0L, female.id, artist.id, "masculine", now),
+                           WordLinkRow(0L, small.id, artist.id, "diminutive-of", now),
+                         )
+                       )
+          existing  <- WordRepository.existingLinks(List(artist.id))
+          detail    <- WordService.detail(artist.id, None)
+          main      <- mainWords("pgkünstler")
+          _         <- deleteWord(female.id)
+          afterOne  <- WordRepository.linksOf(artist.id)
+          _         <- deleteWord(artist.id)
+          afterBase <- WordRepository.linksOf(small.id)
+        } yield assertTrue(
+          existing.toSet == Set((artist.id, small.id, "diminutive"), (artist.id, female.id, "feminine")),
+          detail.links.map(link => (link.word.text, link.kind)) == List(
+            ("Pgkünstlerin", WordLinkKind.Feminine),
+            ("Pgkünstlerchen", WordLinkKind.Diminutive),
+          ),
+          // A link hides neither word from the main-word listing.
+          main.toSet == Set("Pgkünstler", "Pgkünstlerin", "Pgkünstlerchen"),
+          afterOne.map(_._2.text) == List("Pgkünstlerchen"),
+          afterBase.isEmpty,
+        )
+      },
+      // A form spelled like its own word (`Künstler`, plural `Künstler`) is stored as a self-link. It must not make the
+      // word a form, must not name the word as its own main word, and must still reach the Forms section. A word that
+      // is a real form of another as well goes back to being a main word once that other link goes.
+      pgTest("a self-link keeps a word a main word, names no main word, and still shows among its forms") {
+        def noun(text: String, gender: String) = {
+          WordRepository.ensureWord(
+            WordRow(
+              0L,
+              "de",
+              text,
+              text.toLowerCase,
+              "noun",
+              gender,
+              1,
+              "dictionary",
+              None,
+              0L,
+              TextSearch.fold(text.toLowerCase),
+            )
+          )
+        }
+        for {
+          teacher   <- noun("Pglehrer", "masculine")
+          genitive  <- noun("Pglehrers", "")
+          now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+          _         <- WordRepository.insertForms(
+                         List(
+                           WordFormRow(0L, teacher.id, teacher.id, "plural", now),
+                           WordFormRow(0L, teacher.id, genitive.id, "genitive", now),
+                           WordFormRow(0L, genitive.id, genitive.id, "genitive", now),
+                         )
+                       )
+          main      <- mainWords("pglehrer")
+          detail    <- WordService.detail(teacher.id, None)
+          _         <- WordRepository.deleteWordForm(teacher.id, genitive.id, "genitive")
+          mainAfter <- mainWords("pglehrer")
+        } yield assertTrue(
+          main == List("Pglehrer"),
+          detail.mainWords.isEmpty,
+          detail.forms.map(form => (form.word.text, form.relation)).toSet == Set(
+            ("Pglehrer", "plural"),
+            ("Pglehrers", "genitive"),
+          ),
+          // Only the self-link is left naming `Pglehrers`, so it is a main word again.
+          mainAfter.toSet == Set("Pglehrer", "Pglehrers"),
+        )
+      },
       // `word_audio` references `words`, so it needs the same cascade: a recording must not outlive its word. The
       // unique `(word_id, file_name)` is what makes a re-import insert nothing twice, and `detail` is the one reader.
       pgTest("a word's recordings cascade away with it, are unique per file, and reach the detail page") {
@@ -1730,6 +1831,133 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
             memberLangs._1 == "en",
             emptyLangs == (("de", "hu")),
             nullInsert.isLeft,
+          )
+        }
+      },
+      // V32 moves the gender counterparts and diminutives an earlier import stored as forms into `word_links`. Every
+      // other test runs on a schema already at latest, where `word_forms` never held such a row, so this stops Flyway
+      // at V31, writes the old shapes by hand, then lets V32 run against them.
+      test("V32 moves counterparts and diminutives out of word_forms and frees the words it hid") {
+        val testSchema = "gathedge"
+
+        def withConnection[A](ds: DataSource)(body: java.sql.Connection => A): Task[A] = {
+          ZIO.attemptBlocking {
+            val conn = ds.getConnection()
+            try body(conn)
+            finally conn.close()
+          }
+        }
+
+        def insert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
+          withConnection(ds) { conn =>
+            val stmt = conn.prepareStatement(sql)
+            try {
+              params.zipWithIndex.foreach { case (p, idx) =>
+                p match {
+                  case s: String  => stmt.setString(idx + 1, s)
+                  case l: Long    => stmt.setLong(idx + 1, l)
+                  case b: Boolean => stmt.setBoolean(idx + 1, b)
+                }
+              }
+              val rs = stmt.executeQuery()
+              try { rs.next(); rs.getLong(1) }
+              finally rs.close()
+            } finally stmt.close()
+          }
+        }
+
+        def rows(ds: DataSource, sql: String): Task[Set[List[String]]] = {
+          withConnection(ds) { conn =>
+            val stmt = conn.createStatement()
+            try {
+              val rs = stmt.executeQuery(sql)
+              try {
+                val width = rs.getMetaData.getColumnCount
+                Iterator.continually(rs).takeWhile(_.next()).map(r => (1 to width).map(r.getString).toList).toSet
+              } finally rs.close()
+            } finally stmt.close()
+          }
+        }
+
+        def word(ds: DataSource, text: String, pos: String, gender: String, isForm: Boolean): Task[Long] = {
+          insert(
+            ds,
+            s"""INSERT INTO $testSchema.words (language, text, text_norm, part_of_speech, gender, source, created_at, is_form)
+               |VALUES ('de', ?, ?, ?, ?, 'dictionary', 0, ?) RETURNING id""".stripMargin,
+            List(text, text.toLowerCase, pos, gender, isForm),
+          )
+        }
+
+        def form(ds: DataSource, lemma: Long, form: Long, relation: String, origin: String): Task[Long] = {
+          insert(
+            ds,
+            s"""INSERT INTO $testSchema.word_forms (lemma_word_id, form_word_id, relation, created_at, origin)
+               |VALUES (?, ?, ?, 0, ?) RETURNING id""".stripMargin,
+            List(lemma, form, relation, origin),
+          )
+        }
+
+        ZIO.scoped {
+          for {
+            container <-
+              ZIO.acquireRelease(
+                ZIO.attempt(
+                  PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:16-alpine")).start()
+                )
+              )(c => ZIO.attempt(c.stop()).orDie)
+            ds        <- ZIO.acquireRelease(ZIO.attempt {
+                           val config = new HikariConfig()
+                           config.setJdbcUrl(container.jdbcUrl)
+                           config.setDriverClassName("org.postgresql.Driver")
+                           config.setUsername(container.username)
+                           config.setPassword(container.password)
+                           config.setSchema(testSchema)
+                           new HikariDataSource(config)
+                         })(ds => ZIO.attempt(ds.close()).orDie)
+            _         <- FlywayMigrator.migrate(ds, Some(testSchema), target = Some("31"))
+            artist    <- word(ds, "Künstler", "noun", "masculine", isForm = true)
+            female    <- word(ds, "Künstlerin", "noun", "feminine", isForm = true)
+            plural    <- word(ds, "Künstlerinnen", "noun", "", isForm = true)
+            house     <- word(ds, "Haus", "noun", "neuter", isForm = false)
+            small     <- word(ds, "Häuschen", "noun", "neuter", isForm = true)
+            pretty    <- word(ds, "hübsch", "adjective", "", isForm = false)
+            prettyF   <- word(ds, "hübsche", "adjective", "", isForm = true)
+            mine      <- word(ds, "Meinwort", "noun", "", isForm = true)
+            _         <- form(ds, artist, female, "feminine", "dictionary")
+            _         <- form(ds, female, artist, "masculine", "dictionary")
+            _         <- form(ds, female, plural, "plural", "dictionary")
+            _         <- form(ds, house, small, "diminutive,neuter", "dictionary")
+            // Not a noun: a gender tag on an adjective is an ordinary form.
+            _         <- form(ds, pretty, prettyF, "feminine", "dictionary")
+            // A reader's own row stays where it is.
+            _         <- form(ds, house, mine, "feminine", "user")
+            _         <- FlywayMigrator.migrate(ds, Some(testSchema))
+            links     <- rows(
+                           ds,
+                           s"""SELECT w.text, l.text, k.kind FROM $testSchema.word_links k
+                              |JOIN $testSchema.words w ON w.id = k.word_id
+                              |JOIN $testSchema.words l ON l.id = k.linked_word_id""".stripMargin,
+                         )
+            forms     <- rows(
+                           ds,
+                           s"""SELECT w.text, f.text, x.relation FROM $testSchema.word_forms x
+                              |JOIN $testSchema.words w ON w.id = x.lemma_word_id
+                              |JOIN $testSchema.words f ON f.id = x.form_word_id""".stripMargin,
+                         )
+            stillForm <- rows(ds, s"SELECT text FROM $testSchema.words WHERE is_form")
+          } yield assertTrue(
+            links == Set(
+              List("Künstler", "Künstlerin", "feminine"),
+              List("Künstlerin", "Künstler", "masculine"),
+              List("Haus", "Häuschen", "diminutive"),
+              List("Häuschen", "Haus", "diminutive-of"),
+            ),
+            forms == Set(
+              List("Künstlerin", "Künstlerinnen", "plural"),
+              List("hübsch", "hübsche", "feminine"),
+              List("Haus", "Meinwort", "feminine"),
+            ),
+            stillForm == Set(List("Künstlerinnen"), List("hübsche"), List("Meinwort")),
           )
         }
       },

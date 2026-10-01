@@ -9,6 +9,7 @@ import gathedge.shared.domain.{
   Tag,
   TranslationFilter,
   WordLanguage,
+  WordLinkKind,
   WordPreference,
 }
 import gathedge.shared.dto.GameVariantDto
@@ -90,6 +91,26 @@ object Labels {
         I18n.t(UiKeys.posPhrase)
       case PartOfSpeech.Other     =>
         I18n.t(UiKeys.posOtherKind)
+    }
+  }
+
+  /** What a linked word is to the word the page shows. Matched exhaustively: `WordLinkKind` is a fixed shared enum. */
+  def wordLink(kind: WordLinkKind): String = {
+    kind match {
+      case WordLinkKind.Feminine       =>
+        I18n.t(UiKeys.wordLinkFeminine)
+      case WordLinkKind.Masculine      =>
+        I18n.t(UiKeys.wordLinkMasculine)
+      case WordLinkKind.Neuter         =>
+        I18n.t(UiKeys.wordLinkNeuter)
+      case WordLinkKind.Diminutive     =>
+        I18n.t(UiKeys.wordLinkDiminutive)
+      case WordLinkKind.Augmentative   =>
+        I18n.t(UiKeys.wordLinkAugmentative)
+      case WordLinkKind.DiminutiveOf   =>
+        I18n.t(UiKeys.wordLinkDiminutiveOf)
+      case WordLinkKind.AugmentativeOf =>
+        I18n.t(UiKeys.wordLinkAugmentativeOf)
     }
   }
 

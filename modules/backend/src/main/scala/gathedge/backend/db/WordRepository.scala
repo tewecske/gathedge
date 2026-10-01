@@ -482,6 +482,14 @@ trait WordRepository {
     */
   def formsContextOf(lemmaWordIds: List[Long]): Task[List[(WordFormRow, WordRow)]]
 
+  def insertLinks(rows: List[WordLinkRow]): Task[Long]
+
+  /** Which `(word, linked word, kind)` links already exist from those word ids, so a re-run inserts nothing twice. */
+  def existingLinks(wordIds: List[Long]): Task[List[(Long, Long, String)]]
+
+  /** Every word linked to this one, with the link: its gender counterparts, diminutives and the like. */
+  def linksOf(wordId: Long): Task[List[(WordLinkRow, WordRow)]]
+
   def insertAudio(rows: List[WordAudioRow]): Task[Long]
 
   /** Which `(word, file)` pairs already exist for those word ids, so a re-run inserts nothing twice -- the audio
@@ -890,6 +898,15 @@ object WordRepository {
   def formsContextOf(lemmaWordIds: List[Long]): RIO[WordRepository, List[(WordFormRow, WordRow)]] =
     ZIO.serviceWithZIO[WordRepository](_.formsContextOf(lemmaWordIds))
 
+  def insertLinks(rows: List[WordLinkRow]): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.insertLinks(rows))
+
+  def existingLinks(wordIds: List[Long]): RIO[WordRepository, List[(Long, Long, String)]] =
+    ZIO.serviceWithZIO[WordRepository](_.existingLinks(wordIds))
+
+  def linksOf(wordId: Long): RIO[WordRepository, List[(WordLinkRow, WordRow)]] =
+    ZIO.serviceWithZIO[WordRepository](_.linksOf(wordId))
+
   def insertAudio(rows: List[WordAudioRow]): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.insertAudio(rows))
 
@@ -924,6 +941,7 @@ final class WordRepositoryLive(dataSource: DataSource)
   private inline def translations = quote(querySchema[WordTranslationRow]("word_translations"))
   private inline def wordForms    = quote(querySchema[WordFormRow]("word_forms"))
   private inline def wordAudio    = quote(querySchema[WordAudioRow]("word_audio"))
+  private inline def wordLinks    = quote(querySchema[WordLinkRow]("word_links"))
   private inline def tags         = quote(querySchema[TagRow]("tags"))
   private inline def wordTags     = quote(querySchema[WordTagRow]("word_tags"))
   private inline def wordTagPairs = quote(querySchema[WordTagPairRow]("word_tag_pairs"))
@@ -2495,7 +2513,8 @@ final class WordRepositoryLive(dataSource: DataSource)
       // `words.is_form` is derived from the rows just written, so it is set in the same transaction: a reader must
       // never see a `word_forms` row whose form word still counts as a main word. One `UPDATE ... WHERE id IN (...)`
       // for the whole batch, which is what keeps this affordable on `DictionaryImport`'s bulk path.
-      val formIds = rows.map(_.formWordId).distinct
+      // A self-link (`Künstler`, plural `Künstler`) does not make a word a form: only another word naming it does.
+      val formIds = rows.filter(row => row.lemmaWordId != row.formWordId).map(_.formWordId).distinct
       val flag    = quote {
         words.filter(row => liftQuery(formIds).contains(row.id) && !row.isForm).update(_.isForm -> true)
       }
@@ -2525,6 +2544,47 @@ final class WordRepositoryLive(dataSource: DataSource)
   def lemmaOf(formWordId: Long): Task[List[WordFormRow]] = {
     val q = quote(wordForms.filter(_.formWordId == lift(formWordId)))
     logged(run(ctx.run(q)))(rows => s"wordForms.lemmaOf form=$formWordId rows=${rows.size}")
+  }
+
+  def insertLinks(rows: List[WordLinkRow]): Task[Long] = {
+    if (rows.isEmpty)
+      ZIO.succeed(0L)
+    else {
+      val q = quote {
+        liftQuery(rows).foreach(row => {
+          wordLinks.insert(
+            _.wordId       -> row.wordId,
+            _.linkedWordId -> row.linkedWordId,
+            _.kind         -> row.kind,
+            _.createdAt    -> row.createdAt,
+          )
+        })
+      }
+      logged(run(ctx.run(q)).map(_.sum))(inserted => s"wordLinks.insertBatch rows=${rows.size} inserted=$inserted")
+    }
+  }
+
+  def existingLinks(wordIds: List[Long]): Task[List[(Long, Long, String)]] = {
+    if (wordIds.isEmpty)
+      ZIO.succeed(Nil)
+    else {
+      val q = quote {
+        wordLinks
+          .filter(row => liftQuery(wordIds).contains(row.wordId))
+          .map(row => (row.wordId, row.linkedWordId, row.kind))
+      }
+      logged(run(ctx.run(q)))(rows => s"wordLinks.existing words=${wordIds.size} rows=${rows.size}")
+    }
+  }
+
+  def linksOf(wordId: Long): Task[List[(WordLinkRow, WordRow)]] = {
+    val q = quote {
+      wordLinks
+        .join(words)
+        .on((link, word) => link.linkedWordId == word.id)
+        .filter { case (link, _) => link.wordId == lift(wordId) }
+    }
+    logged(run(ctx.run(q)))(rows => s"wordLinks.linksOf word=$wordId rows=${rows.size}")
   }
 
   def insertAudio(rows: List[WordAudioRow]): Task[Long] = {
@@ -2569,7 +2629,10 @@ final class WordRepositoryLive(dataSource: DataSource)
         wordForms
           .join(words)
           .on((form, word) => form.lemmaWordId == word.id)
-          .filter { case (form, _) => liftQuery(formWordIds).contains(form.formWordId) }
+          // A self-link says a form of the word is spelled like the word itself; the word is no form of itself.
+          .filter { case (form, _) =>
+            liftQuery(formWordIds).contains(form.formWordId) && form.lemmaWordId != form.formWordId
+          }
       }
       logged(run(ctx.run(q)))(rows => s"wordForms.lemmaContextOf forms=${formWordIds.size} rows=${rows.size}")
     }
@@ -2618,10 +2681,12 @@ final class WordRepositoryLive(dataSource: DataSource)
     val q         = quote(
       wordForms.filter(row => row.formWordId == lift(formWordId) && row.relation == lift(relation)).delete
     )
-    // The word goes back to being a main word only once *no* relation names it as a form any more — deleting one
+    // The word goes back to being a main word only once no *other* word names it as a form any more — deleting one
     // `(form, relation)` pair may well leave others. Counted and cleared as two statements inside the delete's own
     // transaction rather than one `UPDATE` with a correlated `NOT EXISTS`, which is a shape nothing else here renders.
-    val remaining = quote(wordForms.filter(row => row.formWordId == lift(formWordId)).size)
+    val remaining = quote(
+      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).size
+    )
     val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
     val deleted   = transaction(
       for {
@@ -2654,7 +2719,9 @@ final class WordRepositoryLive(dataSource: DataSource)
     )
     // The same upkeep as `deleteWordForms`, in the same transaction: the word is a main word again only once no
     // relation names it as a form.
-    val remaining = quote(wordForms.filter(row => row.formWordId == lift(formWordId)).size)
+    val remaining = quote(
+      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).size
+    )
     val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
     val deleted   = transaction(
       for {

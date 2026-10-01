@@ -210,6 +210,17 @@ final case class WordFormRow(
   createdBy: Option[Long] = None,
 )
 
+/** One link between two words that are not forms of each other: `linkedWordId` is `kind` of `wordId` (see
+  * `WordLinkKind`, whose `code` this column holds). Stored in both directions; `DictionaryImport` is the only writer.
+  */
+final case class WordLinkRow(
+  id: Long,
+  wordId: Long,
+  linkedWordId: Long,
+  kind: String,
+  createdAt: Long,
+)
+
 /** One recorded pronunciation of a word: a Wikimedia Commons file name, never the audio itself. `region` is the accent
   * tags as the dump states them, comma-joined, or '' where it gives none. See `CommonsAudio` for the URLs.
   */

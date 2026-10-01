@@ -1,7 +1,7 @@
 package gathedge.backend.tools
 
 import gathedge.backend.tools.WiktextractParser.{ParsedAudio, ParsedForm, ParsedWord}
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage, WordLinkKind}
 import zio.json._
 import zio.test._
 
@@ -420,8 +420,8 @@ object DictionaryImportSpec extends ZIOSpecDefault {
             ),
         )
       },
-      test("formEdges resolves ids via the id map and drops a form spelled identically to its own lemma") {
-        // English "put"'s past tense is "put" -- a real fact, kept by the parser -- while "went" is a distinct word.
+      test("formEdges resolves ids via the id map and keeps a form spelled like its own lemma as a self-link") {
+        // English "put"'s past tense is "put": a real fact, and how the word page knows it. "went" is a distinct word.
         val put   = ParsedWord(WordLanguage.En, "put", PartOfSpeech.Verb, None)
         val went  = ParsedWord(WordLanguage.En, "went", PartOfSpeech.Verb, None)
         val ids   = Map(put -> 1L, went -> 2L)
@@ -429,7 +429,70 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           List(ParsedForm(put, put, "past"), ParsedForm(put, went, "past")),
           ids,
         )
-        assertTrue(edges == List((1L, 2L, "past")))
+        assertTrue(edges == List((1L, 1L, "past"), (1L, 2L, "past")))
+      },
+      test("a noun's gender counterpart and a diminutive are links, not forms; a counterpart's plural is a form") {
+        val artist  = ParsedWord(WordLanguage.De, "Künstler", PartOfSpeech.Noun, Some(Gender.Masculine))
+        val female  = ParsedWord(WordLanguage.De, "Künstlerin", PartOfSpeech.Noun, Some(Gender.Feminine))
+        val females = ParsedWord(WordLanguage.De, "Künstlerinnen", PartOfSpeech.Noun, None)
+        val house   = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
+        val small   = ParsedWord(WordLanguage.De, "Häuschen", PartOfSpeech.Noun, Some(Gender.Neuter))
+        val bonito  = ParsedWord(WordLanguage.Es, "bonito", PartOfSpeech.Adjective, None)
+        val bonita  = ParsedWord(WordLanguage.Es, "bonita", PartOfSpeech.Adjective, None)
+        val lawyer  = ParsedWord(WordLanguage.Es, "abogado", PartOfSpeech.Noun, None)
+        val lawyerF = ParsedWord(WordLanguage.Es, "abogada", PartOfSpeech.Noun, None)
+        val forms   = List(
+          ParsedForm(artist, female, "feminine"),
+          ParsedForm(artist, females, "feminine,plural"),
+          ParsedForm(house, small, "diminutive,neuter"),
+          ParsedForm(bonito, bonita, "feminine"),
+          ParsedForm(lawyer, lawyerF, "feminine,rare"),
+        )
+        val ids     = Map(
+          artist  -> 1L,
+          female  -> 2L,
+          females -> 3L,
+          house   -> 4L,
+          small   -> 5L,
+          bonito  -> 6L,
+          bonita  -> 7L,
+          lawyer  -> 8L,
+          lawyerF -> 9L,
+        )
+        assertTrue(
+          WordLinks.of(forms(0)).contains((WordLinkKind.Feminine, WordLinkKind.Masculine)),
+          WordLinks.of(forms(1)).isEmpty,
+          WordLinks.of(forms(2)).contains((WordLinkKind.Diminutive, WordLinkKind.DiminutiveOf)),
+          // An adjective's feminine is an inflection.
+          WordLinks.of(forms(3)).isEmpty,
+          // `rare` does not change what a row is, and a lemma with no gender takes the opposite one.
+          WordLinks.of(forms(4)).contains((WordLinkKind.Feminine, WordLinkKind.Masculine)),
+          DictionaryImport.formEdges(forms, ids).toSet == Set((1L, 3L, "feminine,plural"), (6L, 7L, "feminine")),
+          DictionaryImport.linkEdges(forms, ids).toSet == Set(
+            (1L, 2L, "feminine"),
+            (2L, 1L, "masculine"),
+            (4L, 5L, "diminutive"),
+            (5L, 4L, "diminutive-of"),
+            (8L, 9L, "feminine"),
+            (9L, 8L, "masculine"),
+          ),
+        )
+      },
+      test("formPairs pairs no self-form and no linked word") {
+        // `Künstler`'s plural is spelled `Künstler`. Pairing it would give `artists` the masculine singular row.
+        val artist  = ParsedWord(WordLanguage.En, "artist", PartOfSpeech.Noun, None)
+        val artists = ParsedWord(WordLanguage.En, "artists", PartOfSpeech.Noun, None)
+        val kuenstl = ParsedWord(WordLanguage.De, "Künstler", PartOfSpeech.Noun, Some(Gender.Masculine))
+        val female  = ParsedWord(WordLanguage.De, "Künstlerin", PartOfSpeech.Noun, Some(Gender.Feminine))
+        val actress = ParsedWord(WordLanguage.En, "artiste", PartOfSpeech.Noun, None)
+        val pairs   = List(WiktextractParser.ParsedPair(artist, kuenstl, None))
+        val forms   = List(
+          ParsedForm(artist, artists, "plural"),
+          ParsedForm(kuenstl, kuenstl, "plural"),
+          ParsedForm(artist, actress, "feminine"),
+          ParsedForm(kuenstl, female, "feminine"),
+        )
+        assertTrue(DictionaryImport.formPairs(pairs, forms).isEmpty)
       },
       test("a form's translation is inferred through its lemma's own translation, matched on relation") {
         val house    = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)

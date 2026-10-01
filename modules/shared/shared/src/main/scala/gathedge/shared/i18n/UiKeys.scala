@@ -848,6 +848,17 @@ object UiKeys {
   /** Shown when this word is itself an inflected/declined form of another — `dto.WordDetail.mainWords`. */
   val wordDetailMainWordLabel: String = key("ui.word.mainWord.label")
 
+  /** One label per `WordLinkKind`, shown before the linked word on the word page: "Female form: die Künstlerin".
+    * `Labels.wordLink` matches the kind exhaustively.
+    */
+  val wordLinkFeminine: String       = key("ui.word.link.feminine")
+  val wordLinkMasculine: String      = key("ui.word.link.masculine")
+  val wordLinkNeuter: String         = key("ui.word.link.neuter")
+  val wordLinkDiminutive: String     = key("ui.word.link.diminutive")
+  val wordLinkAugmentative: String   = key("ui.word.link.augmentative")
+  val wordLinkDiminutiveOf: String   = key("ui.word.link.diminutiveOf")
+  val wordLinkAugmentativeOf: String = key("ui.word.link.augmentativeOf")
+
   /** The pronunciation row under the word — `dto.WordDetail.audio`. `source` links each recording to its Commons file
     * page, which is its attribution. `synthetic` labels the browser's own voice, used where there is no recording.
     */

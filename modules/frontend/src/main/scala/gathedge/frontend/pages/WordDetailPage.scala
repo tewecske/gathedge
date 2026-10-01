@@ -18,7 +18,15 @@ import gathedge.shared.domain.{
   Word,
   WordLanguage,
 }
-import gathedge.shared.dto.{NewTranslation, TaggedPair, TranslationEntry, WordDetail, WordFormEntry, WordFormRef}
+import gathedge.shared.dto.{
+  NewTranslation,
+  TaggedPair,
+  TranslationEntry,
+  WordDetail,
+  WordFormEntry,
+  WordFormRef,
+  WordLinkEntry,
+}
 import gathedge.shared.i18n.UiKeys
 
 /** One word: what it is, what it means in the other two languages, and which of the reader's tags it carries.
@@ -343,8 +351,10 @@ private class WordDetailPage(id: Long) {
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTranslations)),
         renderTranslations(detail.word, detail.translations),
         child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
+        // Shown only when another word is linked to this one — see `dto.WordDetail.links`.
+        child.maybe <-- Val(Option.when(detail.links.nonEmpty)(renderLinks(detail.links))),
         // Shown only when this word is a lemma with forms of its own — see `dto.WordDetail.forms`.
-        child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.forms))),
+        child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.word, detail.forms))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTags)),
         renderTags(detail.tags),
       ),
@@ -418,10 +428,30 @@ private class WordDetailPage(id: Long) {
     )
   }
 
+  /** The words linked to this one without being its forms, each after what it is to this word: "Female form: die
+    * Künstlerin", "Diminutive: das Häuschen".
+    */
+  private def renderLinks(links: List[WordLinkEntry]): HtmlElement = {
+    div(
+      cls := "flex flex-col gap-1 mt-4",
+      links.map(link => {
+        div(
+          cls := "flex items-center gap-2 text-sm",
+          span(cls := "opacity-60", Labels.wordLink(link.kind) + ":"),
+          a(
+            cls    := "link link-hover",
+            AppRouter.router.navigateTo(Page.WordDetail(link.word.id)),
+            Word.display(link.word),
+          ),
+        )
+      }),
+    )
+  }
+
   /** Grouped by [[GrammarCategory]], in the same priority order `GrammarTag.priorityOf` sorts by, so this never
     * disagrees with the order `WordService.detailOf` already sorted `forms` into.
     */
-  private def renderForms(forms: List[WordFormEntry]): HtmlElement = {
+  private def renderForms(word: Word, forms: List[WordFormEntry]): HtmlElement = {
     val byCategory = forms.groupBy(entry => GrammarTag.categoryOf(entry.relation))
     div(
       h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailFormsHeading)),
@@ -433,14 +463,30 @@ private class WordDetailPage(id: Long) {
             div(
               cls := "mt-2",
               div(cls := "badge badge-ghost badge-sm", Labels.grammarCategory(category)),
-              div(cls := "flex flex-col gap-1 mt-1", entries.map(renderFormEntry)),
+              div(cls := "flex flex-col gap-1 mt-1", entries.map(entry => renderFormEntry(word, entry))),
             )
           })
       }),
     )
   }
 
-  private def renderFormEntry(entry: WordFormEntry): HtmlElement = {
+  /** A form spelled like the word itself (`Künstler`, plural `Künstler`) is this page's own word: it gets no link and
+    * no tick of its own. A plural one shows without the article, since the article is the singular's.
+    */
+  private def renderFormEntry(word: Word, entry: WordFormEntry): HtmlElement = {
+    if (entry.word.id == word.id) renderSelfForm(entry) else renderOtherForm(entry)
+  }
+
+  private def renderSelfForm(entry: WordFormEntry): HtmlElement = {
+    val plural = entry.relation.split(',').contains("plural")
+    div(
+      cls := "flex items-center gap-2",
+      span(if (plural) entry.word.text else Word.display(entry.word)),
+      span(cls := "text-xs opacity-60", Labels.grammarRelation(entry.relation)),
+    )
+  }
+
+  private def renderOtherForm(entry: WordFormEntry): HtmlElement = {
     div(
       cls := "flex items-center gap-2",
       collect.renderTick(entry.word.id, Val(Word.display(entry.word)), Val(entry.tagIds)),
