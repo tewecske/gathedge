@@ -43,6 +43,10 @@ object ProgressShareServiceSpec extends ZIOSpecDefault {
     AuthService.signup(email, "password123").orDieWith(failure => new RuntimeException(failure.toString)).map(_._1.id)
   }
 
+  private def adminId(email: String): ZIO[UserRepository, Nothing, Long] = {
+    UserRepository.insert(email, Some("hash"), isAdmin = true, "light", "en", 0L, None).orDie.map(_.id)
+  }
+
   def spec = {
     suite("Progress sharing")(
       test("asking for the share code again answers the same one, not a fresh one") {
@@ -108,6 +112,20 @@ object ProgressShareServiceSpec extends ZIOSpecDefault {
           before == Left(ProgressShareFailure.NotShared),
           granted.isRight,
           after == Left(ProgressShareFailure.NotShared),
+        )
+      },
+      test("wrong share codes rate limit an ordinary account, but never a global admin") {
+        for {
+          plain   <- userId("guesser7@example.com")
+          admin   <- adminId("guesser7-admin@example.com")
+          _       <- ZIO.foreachDiscard(1 to RateLimiter.maxAttempts)(_ =>
+                       ZIO.foreachDiscard(List(plain, admin))(ProgressShareService.redeem(_, "ZZZZ-ZZZZ-ZZZZ-ZZZZ").either)
+                     )
+          blocked <- ProgressShareService.redeem(plain, "ZZZZ-ZZZZ-ZZZZ-ZZZZ").either
+          free    <- ProgressShareService.redeem(admin, "ZZZZ-ZZZZ-ZZZZ-ZZZZ").either
+        } yield assertTrue(
+          blocked == Left(ProgressShareFailure.RateLimited),
+          free == Left(ProgressShareFailure.CodeInvalid),
         )
       },
     ).provideShared(layer) @@ TestAspect.timeout(120.seconds) @@ TestAspect.sequential

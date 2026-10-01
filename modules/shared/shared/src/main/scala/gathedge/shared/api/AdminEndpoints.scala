@@ -16,6 +16,7 @@ import gathedge.shared.dto.{
   RouteUsage,
   SuspiciousUser,
   SystemOverview,
+  TagExportFile,
   UpdateUserRequest,
   UserPage,
   WordFormAnomaly,
@@ -54,6 +55,7 @@ object AdminPaths {
   val wordFormAnomalies      = ApiPath0(GET, "/api/admin/word-forms/anomalies")
   val deleteWordFormAnomaly  = ApiPath0(POST, "/api/admin/word-forms/anomalies/delete")
   val duplicateGames         = ApiPath0(GET, "/api/admin/games/same-tags")
+  val exportAllTags          = ApiPath0(GET, "/api/admin/tags/export")
   val usageRoutes            = ApiPath0(GET, "/api/admin/usage/routes")
   val usageSuspicious        = ApiPath0(GET, "/api/admin/usage/suspicious")
   val userPlays              = ApiPath1[Long](GET, "/api/admin/users/{id}/plays")
@@ -80,6 +82,7 @@ object AdminPaths {
     wordFormAnomalies,
     deleteWordFormAnomaly,
     duplicateGames,
+    exportAllTags,
     usageRoutes,
     usageSuspicious,
     userPlays,
@@ -324,6 +327,16 @@ object AdminEndpoints {
       .outFailure(failure.unauthorized)
   }
 
+  /** Every wordlist in the application, whoever owns it, in one `TagExportFile` — the administrator's version of
+    * `WordEndpoints.exportOwnedTags`. Two owners can hold a wordlist of the same name, so the file numbers each later
+    * duplicate (`Animals (2)`): import reads it as one account, where names must be unique.
+    */
+  val exportAllTags = {
+    Endpoint(ApiRoutes.route0(paths.exportAllTags))
+      .out[TagExportFile]
+      .outFailure(failure.unauthorized)
+  }
+
   /** Every (method, route) pair `usage_events` holds a row for, most-used first is the caller's job — the same list
     * sorted the other way is the least-used report, so there is only one endpoint for both.
     */
@@ -398,6 +411,7 @@ object AdminEndpoints {
       wordFormAnomalies,
       deleteWordFormAnomaly,
       duplicateGames,
+      exportAllTags,
       usageRoutes,
       usageSuspicious,
     )

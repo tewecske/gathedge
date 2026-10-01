@@ -2,7 +2,7 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
-import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
+import gathedge.frontend.api.{AdminApiClient, ApiClient, ApiError, GameApiClient, WordApiClient}
 import gathedge.frontend.components.{
   Alert,
   AppShell,
@@ -30,7 +30,8 @@ import zio.json._
   * they belong to has opened to them, then everyone else's — see `TagQuery`'s and `WordService.listTagsPaged`'s doc
   * comments; `scope` is the filter that replaces picking a section by eye. A signed-out visitor sees the same table
   * with the scope filter hidden, since none of it is theirs to narrow by. The "New wordlist", "Export all" and "Import"
-  * controls are shown only when signed in ("New wordlist" always, since it mints a guest).
+  * controls are shown only when signed in ("New wordlist" always, since it mints a guest). A global administrator also
+  * gets "Export every wordlist", which takes everyone's.
   */
 object TagsPage {
 
@@ -76,8 +77,9 @@ private class TagsPage(
   private val searchInputVar = Var("")
   private val searchTypedBus = new EventBus[String]()
 
-  private val reloadBus    = new EventBus[Unit]()
-  private val exportAllBus = new EventBus[Unit]()
+  private val reloadBus      = new EventBus[Unit]()
+  private val exportAllBus   = new EventBus[Unit]()
+  private val exportEveryBus = new EventBus[Unit]()
 
   private val errorVar: Var[Option[String]] = Var(None)
 
@@ -156,6 +158,16 @@ private class TagsPage(
                   )
                 )
               ),
+              child.maybe <-- AppState.isGlobalAdminSignal.map(
+                Option.when(_)(
+                  button(
+                    cls := "btn btn-sm",
+                    typ := "button",
+                    I18n.t(UiKeys.tagsExportEveryButton),
+                    onClick.mapToUnit --> exportEveryBus.writer,
+                  )
+                )
+              ),
               child.maybe <-- signedInSignal.map(Option.when(_)(importDialog.renderButton())),
             ),
           ),
@@ -195,6 +207,13 @@ private class TagsPage(
         Observer[Either[ApiError, TagExportFile]] {
           case Right(file) =>
             Download.text("my-tags.json", file.toJson)
+          case Left(err)   =>
+            errorVar.set(Some(err.message))
+        },
+      exportEveryBus.events.flatMapSwitch(_ => AdminApiClient.exportAllTags) -->
+        Observer[Either[ApiError, TagExportFile]] {
+          case Right(file) =>
+            Download.text("all-tags.json", file.toJson)
           case Left(err)   =>
             errorVar.set(Some(err.message))
         },

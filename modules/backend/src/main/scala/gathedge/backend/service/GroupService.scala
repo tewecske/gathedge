@@ -282,14 +282,18 @@ final case class GroupServiceLive(
   def join(code: String, userId: Long): IO[GroupFailure, Unit] = {
     val key = RateLimitKey.groupJoin(userId)
     for {
-      blocked <- rateLimiter.isBlocked(key)
-      _       <- ZIO.when(blocked)(ZIO.fail(GroupFailure.RateLimited))
-      _       <- rateLimiter.recordFailure(key)
-      group   <-
+      _     <- GlobalAdmin.unlessAdmin(userRepo, userId) {
+                 for {
+                   blocked <- rateLimiter.isBlocked(key)
+                   _       <- ZIO.when(blocked)(ZIO.fail(GroupFailure.RateLimited))
+                   _       <- rateLimiter.recordFailure(key)
+                 } yield ()
+               }
+      group <-
         repo.findGroupByInviteCode(Tokens.normalizeClaimCode(code)).orDie.someOrFail(GroupFailure.InviteCodeInvalid)
-      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      _       <- repo.insertMembership(group.id, userId, memberCode, now).orDie
-      _       <- rateLimiter.clear(key)
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _     <- repo.insertMembership(group.id, userId, memberCode, now).orDie
+      _     <- rateLimiter.clear(key)
     } yield ()
   }
 

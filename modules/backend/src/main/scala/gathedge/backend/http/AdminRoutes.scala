@@ -1,7 +1,15 @@
 package gathedge.backend.http
 
 import gathedge.backend.config.AppConfig
-import gathedge.backend.service.{AdminActor, AdminFailure, AdminService, AuthService, SystemService, UsageStatsService}
+import gathedge.backend.service.{
+  AdminActor,
+  AdminFailure,
+  AdminService,
+  AuthService,
+  SystemService,
+  UsageStatsService,
+  WordService,
+}
 import gathedge.shared.api.AdminEndpoints
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{
@@ -284,6 +292,10 @@ object AdminRoutes {
       )
   }
 
+  private val exportAllTagsRoute = {
+    AdminEndpoints.exportAllTags.implementHandler(handler((_: Unit) => WordService.exportAllTags))
+  }
+
   private val usageSuspiciousRoute = {
     AdminEndpoints.usageSuspicious
       .implementHandler(
@@ -299,7 +311,8 @@ object AdminRoutes {
 
   // `AppConfig` is here for `requestContext`, which needs the trusted-proxy hop count to decide what the client's
   // address is — the value that lands on every `audit_log` row this file writes.
-  val routes: Routes[AuthService & AdminService & SystemService & UsageStatsService & AppConfig, Response] = {
+  val routes
+    : Routes[AuthService & AdminService & SystemService & UsageStatsService & WordService & AppConfig, Response] = {
     Routes(
       listUsersRoute,
       getUserRoute,
@@ -323,6 +336,7 @@ object AdminRoutes {
       wordFormAnomaliesRoute,
       deleteWordFormAnomalyRoute,
       duplicateGamesRoute,
+      exportAllTagsRoute,
       usageRoutesRoute,
       usageSuspiciousRoute,
     ) @@ RouteSupport.adminOnly @@ RouteSupport.requestContext @@ RouteSupport.csrf
