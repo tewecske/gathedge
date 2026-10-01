@@ -31,6 +31,7 @@ import gathedge.shared.domain.{
   TranslationFilter,
   Word,
   WordLanguage,
+  WordLinkKind,
 }
 import gathedge.shared.parsing.{ExtraCell, MarkerVocabulary, WordCell}
 import gathedge.shared.dto.{
@@ -79,6 +80,7 @@ import gathedge.shared.dto.{
   TranslationOption,
   WordDetail,
   WordFormEntry,
+  WordLinkEntry,
   WordFormPreview,
   WordFormRef,
   WordPage,
@@ -1165,7 +1167,10 @@ final case class WordServiceLive(
             .mapValues(_.headOption.map { case (form, lemma) => WordFormRef(toDomain(lemma), form.relation) })
             .toMap
         }
-        variantsByLemma    = formLinks.groupBy { case (form, _) => form.lemmaWordId }
+        // A self-link (`Künstler`, plural `Künstler`) is the row itself, so it is no variant of it.
+        variantsByLemma    = formLinks
+                               .filter { case (form, _) => form.lemmaWordId != form.formWordId }
+                               .groupBy { case (form, _) => form.lemmaWordId }
         lemmaRowById       = lemmaLinks.map { case (_, lemma) => lemma.id -> lemma }.toMap
       } yield {
         // Matched entries first (the ★ the reader searched for), then the lemma's own commonest-first order --
@@ -1233,6 +1238,7 @@ final case class WordServiceLive(
       mainLinks    <- repo.lemmaContextOf(List(row.id)).orDie
       formLinks    <- repo.formsContextOf(List(row.id)).orDie
       audio        <- repo.audioOf(row.id).orDie
+      links        <- repo.linksOf(row.id).orDie
       formTags     <- ZIO
                         .foreach(reader)(userId => repo.tagsFor(userId, formLinks.map { case (_, word) => word.id }))
                         .map(_.toList.flatten)
@@ -1285,6 +1291,10 @@ final case class WordServiceLive(
       fromDictionary = row.source != WordSource.user,
       createdByMe = row.source == WordSource.user && reader.isDefined && row.createdBy == reader,
       audio = audio.map(CommonsAudio.toDto),
+      links = links
+        .flatMap { case (link, word) => WordLinkKind.fromCode(link.kind).map(kind => (kind, word)) }
+        .sortBy { case (kind, word) => (kind.ordinal, word.textNorm) }
+        .map { case (kind, word) => WordLinkEntry(toDomain(word), kind) },
     )
   }
 

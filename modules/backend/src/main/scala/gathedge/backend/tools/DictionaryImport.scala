@@ -7,12 +7,13 @@ import gathedge.backend.db.{
   TextSearch,
   WordAudioRow,
   WordFormRow,
+  WordLinkRow,
   WordRepository,
   WordRow,
   WordTranslationRow,
 }
 import gathedge.backend.service.WordService
-import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
+import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage, WordLinkKind}
 import zio.*
 import zio.stream.{ZPipeline, ZStream}
 
@@ -399,7 +400,9 @@ object DictionaryImport extends ZIOAppDefault {
     * through the same pivoted `Haus`/`ház` pair its singular already relies on.
     */
   def formPairs(pairs: List[ParsedPair], forms: List[ParsedForm]): List[ParsedPair] = {
-    val byLemma = formsByRelation(forms)
+    // A self-form (`Künstler`, plural `Künstler`) is the lemma's own row, which carries the singular's gender: pairing
+    // it would give `artists` the translation `der Künstler`. A linked word is no form at all.
+    val byLemma = formsByRelation(forms.filter(form => form.form != form.lemma && WordLinks.of(form).isEmpty))
     pairs.flatMap { pair =>
       val sourceForms = byLemma.getOrElse(pair.source, Map.empty)
       val targetForms = byLemma.getOrElse(pair.target, Map.empty)
@@ -703,14 +706,47 @@ object DictionaryImport extends ZIOAppDefault {
     *
     * Pulled out as a pure function, like [[dedupeByKey]] and [[pivot]], so it is unit-testable without a database.
     */
+  /** The `word_forms` rows for these forms. A form spelled like its own lemma (`Künstler`, plural `Künstler`; `put`,
+    * past `put`) is kept as a self-link: it is how the word page knows the plural, and it does not make the word a form
+    * (see `WordRepository.insertForms`). A linked word ([[WordLinks]]) is no form, and goes to [[linkEdges]].
+    */
   def formEdges(forms: List[ParsedForm], ids: Map[ParsedWord, Long]): List[(Long, Long, String)] = {
+    forms
+      .filter(form => WordLinks.of(form).isEmpty)
+      .flatMap { form =>
+        for {
+          lemmaId <- ids.get(form.lemma)
+          formId  <- ids.get(form.form)
+        } yield (lemmaId, formId, form.relation)
+      }
+      .distinct
+  }
+
+  /** The `word_links` rows for the forms that are linked words, both directions of each. */
+  def linkEdges(forms: List[ParsedForm], ids: Map[ParsedWord, Long]): List[(Long, Long, String)] = {
     forms.flatMap { form =>
       for {
-        lemmaId <- ids.get(form.lemma)
-        formId  <- ids.get(form.form)
+        (kind, back) <- WordLinks.of(form).toList
+        lemmaId      <- ids.get(form.lemma).toList
+        formId       <- ids.get(form.form).toList
         if lemmaId != formId
-      } yield (lemmaId, formId, form.relation)
+        edge         <- List((lemmaId, formId, WordLinkKind.code(kind)), (formId, lemmaId, WordLinkKind.code(back)))
+      } yield edge
     }.distinct
+  }
+
+  private def storeLinks(forms: List[ParsedForm], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
+    ZIO
+      .foreach(linkEdges(forms, ids).grouped(batchSize).toList) { batch =>
+        for {
+          known <- WordRepository.existingLinks(batch.map { case (wordId, _, _) => wordId }.distinct).map(_.toSet)
+          rows   = batch.filterNot(known.contains).map { case (wordId, linkedId, kind) =>
+                     WordLinkRow(0L, wordId, linkedId, kind, now)
+                   }
+          _     <- WordRepository.insertLinks(rows)
+        } yield rows.size.toLong
+      }
+      .map(_.sum)
   }
 
   /** Writes every form relation that is not already recorded. Unlike [[storePairs]], a form relation is directional and
@@ -774,6 +810,8 @@ object DictionaryImport extends ZIOAppDefault {
       _          <- ZIO.logInfo(s"Stored $inferred inferred German-Hungarian row(s)")
       forms      <- storeForms(collected.forms, ids, now)
       _          <- ZIO.logInfo(s"Stored $forms form relation row(s)")
+      links      <- storeLinks(collected.forms, ids, now)
+      _          <- ZIO.logInfo(s"Stored $links word link row(s)")
       formLinked <- storePairs(formPairs(collected.pairs ++ pivoted, collected.forms), ids, WordService.formOrigin, now)
       _          <- ZIO.logInfo(s"Stored $formLinked form-to-form translation row(s)")
       audio      <- storeAudio(collected.audio, ids, now)

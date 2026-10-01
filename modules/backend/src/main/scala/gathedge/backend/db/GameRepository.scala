@@ -735,14 +735,18 @@ final class GameRepositoryLive(dataSource: DataSource)
         wordForms
           .join(words)
           .on((form, word) => form.formWordId == word.id)
-          .filter { case (form, _) => liftQuery(wordIds).contains(form.lemmaWordId) }
+          .filter { case (form, _) =>
+            liftQuery(wordIds).contains(form.lemmaWordId) && form.lemmaWordId != form.formWordId
+          }
           .map { case (_, word) => word }
       }
       val lemmasOfThese = quote {
         wordForms
           .join(words)
           .on((form, word) => form.lemmaWordId == word.id)
-          .filter { case (form, _) => liftQuery(wordIds).contains(form.formWordId) }
+          .filter { case (form, _) =>
+            liftQuery(wordIds).contains(form.formWordId) && form.lemmaWordId != form.formWordId
+          }
           .map { case (_, word) => word }
       }
       val effect        = for {
