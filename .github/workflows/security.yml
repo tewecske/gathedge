@@ -105,12 +105,16 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
+      # gosu drops root once at container start. Its findings are Go stdlib CVEs in TLS, x509, URL
+      # and HTTP code it never runs (see gosu's README), and only docker-library can rebuild it.
+      # Skipped here alone; scripts/cve-scan.sh skips it the same way.
       - name: Trivy scan -> SARIF
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: postgres:16-alpine
           trivy-config: trivy.yaml
+          skip-files: usr/local/bin/gosu
           format: sarif
           output: trivy-postgres.sarif
       - name: Upload SARIF
@@ -124,6 +128,7 @@ jobs:
           scan-type: image
           image-ref: postgres:16-alpine
           trivy-config: trivy.yaml
+          skip-files: usr/local/bin/gosu
           format: table
           exit-code: "1"
 

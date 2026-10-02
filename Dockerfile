@@ -91,7 +91,10 @@ ENTRYPOINT ["/app/bin/backend", "-Dlogback.configurationFile=/app/logback.xml"]
 # ---------------------------------------------------------------------------------------------
 # Runtime: static SPA + reverse proxy
 # ---------------------------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS web
+FROM nginx:1.30-alpine AS web
+
+# Alpine ships fixes faster than the nginx image is rebuilt; take them at build time.
+RUN apk upgrade --no-cache
 
 COPY --from=web-build /opt/web/ /usr/share/nginx/html/
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf

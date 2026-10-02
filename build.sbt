@@ -3,10 +3,10 @@ import org.scalajs.linker.interface.{ESVersion, ModuleKind}
 
 val scala3Version = "3.8.4"
 val zioVersion = "2.1.26"
-val zioHttpVersion = "3.11.3"
+val zioHttpVersion = "3.11.6"
 val zioJsonVersion = "0.9.1"
-// Matches what zio-http 3.11.3 pulls in; only the derivation module has to be requested explicitly.
-val zioSchemaVersion = "1.8.5"
+// Matches what zio-http 3.11.6 pulls in; only the derivation module has to be requested explicitly.
+val zioSchemaVersion = "1.8.7"
 val zioConfigVersion = "4.0.8"
 val zioLoggingVersion = "2.5.3"
 val laminarVersion = "17.2.1"
@@ -17,7 +17,7 @@ val logbackVersion = "1.5.38"
 val quillVersion = "4.8.6"
 val postgresqlVersion = "42.7.13"
 val hikariCpVersion = "7.1.0"
-val flywayVersion = "13.1.0"
+val flywayVersion = "13.9.0"
 val zioTelemetryVersion = "3.1.19"
 val otelSemconvVersion = "1.43.0"
 // The OpenTelemetry Java agent, for `~backend/reStart` and `npm run dev`. Same jar the Dockerfile
@@ -27,6 +27,11 @@ val otelSemconvVersion = "1.43.0"
 val otelAgentVersion = "2.31.1"
 val OtelAgent = config("otelAgent").hide
 val testcontainersScalaVersion = "0.44.1"
+// Transitive jars the Trivy scan flags (HIGH/CRITICAL) in `backend/stage/lib`. zio-http pulls
+// BouncyCastle in through netty-pkitesting; Quill pulls jline in through scalafmt. Neither has a
+// release with a fixed version yet, so the backend pins them. Drop a pin once its parent catches up.
+val bouncyCastleVersion = "1.86"
+val jlineVersion = "3.30.17"
 
 ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "tewe.gathedge"
@@ -153,6 +158,13 @@ lazy val backend = project
         "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
         "dev.zio" %% "zio-http-testkit" % zioHttpVersion % Test,
         "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
+      ),
+    dependencyOverrides ++=
+      Seq(
+        "org.bouncycastle" % "bcprov-jdk18on" % bouncyCastleVersion,
+        "org.bouncycastle" % "bcpkix-jdk18on" % bouncyCastleVersion,
+        "org.bouncycastle" % "bcutil-jdk18on" % bouncyCastleVersion,
+        "org.jline" % "jline" % jlineVersion,
       ),
     Compile / mainClass := Some("gathedge.backend.Main"),
     // Every backend spec now opens its own Postgres schema and HikariCP pool against one shared
