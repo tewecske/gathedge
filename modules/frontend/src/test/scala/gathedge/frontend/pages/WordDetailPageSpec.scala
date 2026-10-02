@@ -3,6 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import org.scalajs.dom
 import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.frontend.components.WordCollect
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -40,10 +41,10 @@ object WordDetailPageSpec extends ZIOSpecDefault {
         val text = withPage(12L)(_.textContent)
         assertTrue(
           text.contains(UiKeys.wordDetailBack),
-          // The collect bar is shown to every visitor, exactly as on the listing; its `<select>` needs a session, so
-          // for a signed-out visitor it stays absent.
-          text.contains(UiKeys.wordsCollectHint),
-          !text.contains(UiKeys.wordsCollectLabel),
+          // The collect bar and its select are shown to every visitor, exactly as on the listing; with no wordlist the
+          // select offers the default tag.
+          text.contains(UiKeys.wordsCollectLabel),
+          text.contains(WordCollect.defaultTagName),
           // Adding a translation belongs to an account.
           !text.contains(UiKeys.wordDetailAddTitle),
         )

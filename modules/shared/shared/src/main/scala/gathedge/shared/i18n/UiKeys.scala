@@ -694,7 +694,6 @@ object UiKeys {
     * which words are shown.
     */
   val wordsCollectLabel: String = key("ui.words.collectLabel")
-  val wordsCollectHint: String  = key("ui.words.collectHint")
 
   /** The first entry of the collect select: clears the collect tag, which frees the two language selects. */
   val wordsCollectNone: String = key("ui.words.collectNone")
@@ -706,9 +705,6 @@ object UiKeys {
     * button stays live, so the pair can still be read the other way round.
     */
   val wordsLanguagesCollectHint: String = key("ui.words.languagesCollectHint")
-
-  /** The second half of that hint: clicking a translation is the other thing this screen's rows can do. */
-  val wordsPairHint: String = key("ui.words.pairHint")
 
   /** Clears every filter above back to its default, remembered per browser — shown only once a filter differs from it.
     * See `listing.WordQuery.filterOnly`/`.storedFilter`.

@@ -31,9 +31,10 @@ object WordCollect {
 
   /** The tag a word goes under when the reader has chosen none. Data rather than copy: it becomes a row in `tags` that
     * they can rename or delete on the Tags screen, so it is not translated — a tag created in Hungarian and then read
-    * in English would otherwise appear to change its name.
+    * in English would otherwise appear to change its name. The collect select shows the same name before the tag
+    * exists, so the first tick does not change what the select says.
     */
-  val defaultTagName = "saved"
+  val defaultTagName = "Default"
 
   /** Where the tag a tick files into is remembered — per browser, never in the URL: it is the reader's working state,
     * not a view of the data worth bookmarking or sending.
@@ -77,7 +78,7 @@ object WordCollect {
     * before the tag list arrives, or a reader with no tags at all, where the honest answer is whatever they have.
     *
     * `explicitNone` is the reader picking "No tag" in the select on purpose — a different state from the `None` above.
-    * Nothing is marked then: the collect target is a "saved" tag that does not exist until the first click mints it, so
+    * Nothing is marked then: the collect target is a default tag that does not exist until the first click mints it, so
     * a just-cleared select must stop showing the previous tag's chips.
     *
     * Takes the marks rather than a row so both screens can ask it: the listing has a `WordSummary`, the word page a
@@ -184,6 +185,16 @@ object WordCollect {
     mineOpts ++ groupOpts
   }
 
+  /** The collect select's first entry, the one with no tag behind it: [[defaultTagName]] while the reader has nothing
+    * else to collect into, and "No wordlist" once they have.
+    */
+  def emptyOptionLabel(tags: List[Tag]): String = {
+    if (tags.exists(collectable)) I18n.t(UiKeys.wordsCollectNone)
+    else defaultTagName
+  }
+
+  def emptyOption(tags: List[Tag]): HtmlElement = option(value := "", emptyOptionLabel(tags))
+
   private def tagOption(tag: Tag): HtmlElement =
     option(value := tag.id.toString, s"${Labels.tagCodes(tag)} ${tag.name} (${tag.wordCount})")
 }
@@ -196,7 +207,7 @@ object WordCollect {
   * @param onWritten
   *   what the page does when a tick or a chip lands: apply what changed to its local state.
   * @param collectLanguages
-  *   the source/target languages an auto-minted "saved" tag is created with — the direction the page is browsing.
+  *   the source/target languages an auto-minted default tag is created with — the direction the page is browsing.
   *   Mandatory on every tag now, so the first tick has to name one.
   */
 final class WordCollect(
@@ -479,7 +490,8 @@ final class WordCollect(
 
   /** Where ticks are filed. Rendered for every visitor, signed in or not — a tag belongs to an account, but a reader
     * with no account yet still has to be able to see and use the control before their first tick mints one for them,
-    * through the same `asReader` detour a tick or a chip takes.
+    * through the same `asReader` detour a tick or a chip takes. A reader with no wordlist sees
+    * [[WordCollect.defaultTagName]] in the select: that is where their first tick goes.
     *
     * A card of its own, away from the filters, because it says where words go, not which words are shown. Making,
     * renaming and deleting tags all live on the Tags screen now; this bar only picks among the ones that exist.
@@ -491,21 +503,20 @@ final class WordCollect(
         cls := "card-body py-3 gap-2",
         div(
           cls := "flex flex-wrap items-end gap-3",
-          // Shown to anyone with a session, a guest included, even before they own a tag: it still offers "No tag", and
-          // a first tick mints "saved" through `collectTagOrDefault`. A signed-out visitor has no account to hang a tag
-          // on yet, so the select waits for their first tick to mint the guest.
-          child.maybe <-- signedInSignal.map(Option.when(_)(renderCollectSelect())),
+          renderCollectSelect(),
           HelpIcon.render(I18n.t(UiKeys.helpWordsCollect)),
         ),
-        p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsCollectHint)),
-        p(cls := "text-xs opacity-60", I18n.t(UiKeys.wordsPairHint)),
       ),
     )
   }
 
   /** The collect tag itself. Offers a "no tag" entry — picking it clears the collect tag, which frees the words page's
     * language selects — then every tag the reader may edit (see [[WordCollect.mineOptions]]); a tick against any other
-    * would fail with `TagNotFound`. With no tag chosen, a tick still mints "saved" through `collectTagOrDefault`.
+    * would fail with `TagNotFound`. With no tag chosen, a tick still mints [[WordCollect.defaultTagName]] through
+    * `collectTagOrDefault`.
+    *
+    * A reader with no wordlist to offer — a signed-out visitor, or an account that owns none — sees that name as the
+    * only entry instead of "no tag", since it names where their first tick goes.
     */
   private def renderCollectSelect(): HtmlElement = {
     label(
@@ -513,7 +524,7 @@ final class WordCollect(
       span(cls := "label-text text-xs font-semibold", I18n.t(UiKeys.wordsCollectLabel)),
       select(
         cls    := "select select-sm select-primary w-52",
-        option(value := "", I18n.t(UiKeys.wordsCollectNone)),
+        child <-- tagsSignal.map(WordCollect.emptyOption),
         children <-- tagsSignal.map(WordCollect.mineOptions),
         controlled(
           value <-- selectedTagValue(collectTagSignal),

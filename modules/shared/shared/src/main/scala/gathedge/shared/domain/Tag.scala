@@ -9,7 +9,7 @@ import zio.json.*
   *
   * An entity with an id rather than a string on a word, because a name may contain anything a reader types and the tag
   * bar has to list them anyway. Names are unique per account, case-insensitively — not globally, since two accounts
-  * copying the same idea (or the default "saved") is expected, not a collision.
+  * copying the same idea (or the default "Default") is expected, not a collision.
   *
   * @param wordCount
   *   how many words currently carry it, which is what the tag picker shows next to each name.
