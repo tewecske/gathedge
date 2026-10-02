@@ -10,6 +10,7 @@ import gathedge.backend.db.{
   WordLinkRow,
   WordRepository,
   WordRow,
+  WordSource,
   WordTranslationRow,
 }
 import gathedge.backend.service.WordService
@@ -378,17 +379,8 @@ object DictionaryImport extends ZIOAppDefault {
     }
   }
 
-  /** Every lemma's forms, keyed by relation, one form per relation. When a lemma states the same relation more than
-    * once (a table cell repeated under two spellings) the alphabetically first wins, so a re-import derives the same
-    * edge rather than picking whichever happened to sort first in a `HashMap`.
-    */
-  private def formsByRelation(forms: List[ParsedForm]): Map[ParsedWord, Map[String, ParsedWord]] = {
-    forms
-      .groupBy(_.lemma)
-      .view
-      .mapValues(_.groupBy(_.relation).view.mapValues(_.map(_.form).minBy(_.text)).toMap)
-      .toMap
-  }
+  /** One stored form of a lemma, as [[formPairs]] reads it back: ids, the relation, and the form's text. */
+  final case class LemmaForm(lemmaId: Long, relation: String, formId: Long, formText: String)
 
   /** Translations between two lemmas' forms, inferred through the lemma pair itself: if `Haus` translates to `house`,
     * and both have a form tagged `plural` (`Häuser`, `houses`), those two forms translate to each other too. No source
@@ -398,16 +390,25 @@ object DictionaryImport extends ZIOAppDefault {
     *
     * Runs over every lemma pair passed in, direct and pivoted alike, so a German plural picks up a Hungarian one
     * through the same pivoted `Haus`/`ház` pair its singular already relies on.
+    *
+    * On ids, over forms already stored, so a batch of pairs needs only its own lemmas' forms in memory. A linked word
+    * ([[WordLinks]]) is never a stored form, so it never pairs.
     */
-  def formPairs(pairs: List[ParsedPair], forms: List[ParsedForm]): List[ParsedPair] = {
+  def formPairs(pairs: List[(Long, Long)], forms: List[LemmaForm]): List[(Long, Long)] = {
     // A self-form (`Künstler`, plural `Künstler`) is the lemma's own row, which carries the singular's gender: pairing
-    // it would give `artists` the translation `der Künstler`. A linked word is no form at all.
-    val byLemma = formsByRelation(forms.filter(form => form.form != form.lemma && WordLinks.of(form).isEmpty))
-    pairs.flatMap { pair =>
-      val sourceForms = byLemma.getOrElse(pair.source, Map.empty)
-      val targetForms = byLemma.getOrElse(pair.target, Map.empty)
+    // it would give `artists` the translation `der Künstler`. When a lemma states one relation more than once (a table
+    // cell repeated under two spellings) the alphabetically first wins, so a re-import derives the same edge.
+    val byLemma = forms
+      .filter(form => form.formId != form.lemmaId)
+      .groupBy(_.lemmaId)
+      .view
+      .mapValues(_.groupBy(_.relation).view.mapValues(_.minBy(form => (form.formText, form.formId)).formId).toMap)
+      .toMap
+    pairs.flatMap { case (source, target) =>
+      val sourceForms = byLemma.getOrElse(source, Map.empty)
+      val targetForms = byLemma.getOrElse(target, Map.empty)
       sourceForms.keySet.intersect(targetForms.keySet).toList.sorted.map { relation =>
-        ParsedPair(sourceForms(relation), targetForms(relation), pair.sense)
+        (sourceForms(relation), targetForms(relation))
       }
     }
   }
@@ -500,80 +501,137 @@ object DictionaryImport extends ZIOAppDefault {
       } yield ParsedWord(language, text, pos, gender)
     }
 
-    /** Blank lines and lines starting with `#` are comments, so the committed sample can be annotated. */
+    /** One line of the file, decoded. */
+    enum Record {
+      case Word(word: ParsedWord, rank: Int)
+      case Pair(pair: ParsedPair)
+      case Form(form: ParsedForm)
+      case Audio(audio: ParsedAudio)
+    }
+
+    /** One line's record, or `None` for a comment, a blank line or a line that does not parse. Blank lines and lines
+      * starting with `#` are comments, so the committed sample can be annotated.
+      */
+    def decodeLine(line: String): Option[Record] = {
+      val trimmed = line.trim
+      if (trimmed.isEmpty || trimmed.startsWith("#"))
+        None
+      else {
+        val columns = line.split('\t')
+        columns.headOption match {
+          case Some("W") =>
+            wordAt(columns, 1).map { word =>
+              Record.Word(word, columns.lift(5).flatMap(_.toIntOption).getOrElse(WordService.unrankedFrequency))
+            }
+          case Some("T") =>
+            for {
+              source <- wordAt(columns, 1)
+              target <- wordAt(columns, 5)
+            } yield Record.Pair(ParsedPair(source, target, columns.lift(9).map(_.trim).filter(_.nonEmpty)))
+          case Some("F") =>
+            for {
+              lemma    <- wordAt(columns, 1)
+              form     <- wordAt(columns, 5)
+              relation <- columns.lift(9).map(_.trim).filter(_.nonEmpty)
+            } yield Record.Form(ParsedForm(lemma, form, relation))
+          case Some("A") =>
+            for {
+              word     <- wordAt(columns, 1)
+              fileName <- columns.lift(5).map(_.trim).filter(_.nonEmpty)
+            } yield Record.Audio(ParsedAudio(word, fileName, columns.lift(6).map(_.trim).getOrElse("")))
+          case _         =>
+            None
+        }
+      }
+    }
+
+    /** The whole file in memory. A word named only by a pair, form or recording comes in unranked. */
     def decode(lines: List[String]): Collected = {
-      lines.foldLeft(Collected.empty) { (collected, line) =>
-        val trimmed = line.trim
-        if (trimmed.isEmpty || trimmed.startsWith("#"))
-          collected
-        else {
-          val columns = line.split('\t')
-          columns.headOption match {
-            case Some("W") =>
-              wordAt(columns, 1) match {
-                case None       =>
-                  collected
-                case Some(word) =>
-                  collected.withWord(
-                    word,
-                    columns.lift(5).flatMap(_.toIntOption).getOrElse(WordService.unrankedFrequency),
-                  )
-              }
-            case Some("T") =>
-              (wordAt(columns, 1), wordAt(columns, 5)) match {
-                case (Some(source), Some(target)) =>
-                  val sense = columns.lift(9).map(_.trim).filter(_.nonEmpty)
-                  collected
-                    .withWord(source, WordService.unrankedFrequency)
-                    .withWord(target, WordService.unrankedFrequency)
-                    .copy(pairs = ParsedPair(source, target, sense) :: collected.pairs)
-                case _                            =>
-                  collected
-              }
-            case Some("F") =>
-              (wordAt(columns, 1), wordAt(columns, 5)) match {
-                case (Some(lemma), Some(form)) =>
-                  columns.lift(9).map(_.trim).filter(_.nonEmpty) match {
-                    case None           =>
-                      collected
-                    case Some(relation) =>
-                      collected
-                        .withWord(lemma, WordService.unrankedFrequency)
-                        .withWord(form, WordService.unrankedFrequency)
-                        .copy(forms = ParsedForm(lemma, form, relation) :: collected.forms)
-                  }
-                case _                         =>
-                  collected
-              }
-            case Some("A") =>
-              (wordAt(columns, 1), columns.lift(5).map(_.trim).filter(_.nonEmpty)) match {
-                case (Some(word), Some(fileName)) =>
-                  val region = columns.lift(6).map(_.trim).getOrElse("")
-                  collected
-                    .withWord(word, WordService.unrankedFrequency)
-                    .copy(audio = ParsedAudio(word, fileName, region) :: collected.audio)
-                case _                            =>
-                  collected
-              }
-            case _         =>
-              collected
-          }
+      lines.iterator.flatMap(decodeLine).foldLeft(Collected.empty) { (collected, record) =>
+        record match {
+          case Record.Word(word, rank) =>
+            collected.withWord(word, rank)
+          case Record.Pair(pair)       =>
+            collected
+              .withWord(pair.source, WordService.unrankedFrequency)
+              .withWord(pair.target, WordService.unrankedFrequency)
+              .copy(pairs = pair :: collected.pairs)
+          case Record.Form(form)       =>
+            collected
+              .withWord(form.lemma, WordService.unrankedFrequency)
+              .withWord(form.form, WordService.unrankedFrequency)
+              .copy(forms = form :: collected.forms)
+          case Record.Audio(audio)     =>
+            collected
+              .withWord(audio.word, WordService.unrankedFrequency)
+              .copy(audio = audio :: collected.audio)
         }
       }
     }
   }
 
+  private def seedLines(path: String): ZStream[Any, Throwable, String] = {
+    ZStream
+      .fromInputStreamZIO(
+        ZIO
+          .attemptBlockingIO {
+            val stream = new FileInputStream(path)
+            if (path.endsWith(".gz"))
+              new GZIPInputStream(stream, 1 << 16)
+            else
+              stream
+          }
+          .map(identity[java.io.InputStream])
+      )
+      .via(ZPipeline.utf8Decode >>> ZPipeline.splitLines)
+  }
+
+  /** The whole seed in memory: what `--seed --export` rewrites. A plain `--seed` streams it instead ([[Records.seed]]).
+    */
   private def readSeed(path: String): Task[Collected] = {
-    ZIO.attemptBlocking {
-      val stream = {
-        if (path.endsWith(".gz"))
-          new GZIPInputStream(new FileInputStream(path))
-        else
-          new FileInputStream(path)
+    seedLines(path).runCollect.map(lines => SeedFormat.decode(lines.toList))
+  }
+
+  /** What [[store]] writes, one kind at a time. Each call starts the stream again, so a seed file is read once per kind
+    * rather than held whole: the whole dump's seed is 13 million lines, more objects than a small server's heap holds.
+    */
+  trait Records {
+    def words: ZStream[Any, Throwable, (ParsedWord, Int)]
+    def pairs: ZStream[Any, Throwable, ParsedPair]
+    def forms: ZStream[Any, Throwable, ParsedForm]
+    def audio: ZStream[Any, Throwable, ParsedAudio]
+  }
+
+  object Records {
+
+    /** A dump's import, already in memory. */
+    def of(collected: Collected): Records = {
+      new Records {
+        def words = ZStream.fromIterable(dedupeByKey(collected.words.toList))
+        def pairs = ZStream.fromIterable(collected.pairs)
+        def forms = ZStream.fromIterable(collected.forms)
+        def audio = ZStream.fromIterable(collected.audio)
       }
-      val source = scala.io.Source.fromInputStream(stream, StandardCharsets.UTF_8.name)
-      try SeedFormat.decode(source.getLines().toList)
-      finally source.close()
+    }
+
+    /** A seed file, streamed. Each kind reads only its own lines: the record type is the line's first column.
+      *
+      * No homograph dedupe: `--export` writes a seed after [[dedupeHomographs]], which finds nothing on its own output.
+      * A word that only a pair, form or recording names is stored unranked when that record reaches it, as
+      * [[SeedFormat.decode]] ranks it.
+      */
+    def seed(path: String): Records = {
+      def of[A](prefix: String)(pick: PartialFunction[SeedFormat.Record, A]): ZStream[Any, Throwable, A] = {
+        seedLines(path).filter(_.startsWith(prefix)).map(SeedFormat.decodeLine).collect {
+          case Some(record) if pick.isDefinedAt(record) => pick(record)
+        }
+      }
+      new Records {
+        def words = of("W\t") { case SeedFormat.Record.Word(word, rank) => (word, rank) }
+        def pairs = of("T\t") { case SeedFormat.Record.Pair(pair) => pair }
+        def forms = of("F\t") { case SeedFormat.Record.Form(form) => form }
+        def audio = of("A\t") { case SeedFormat.Record.Audio(audio) => audio }
+      }
     }
   }
 
@@ -634,81 +692,111 @@ object DictionaryImport extends ZIOAppDefault {
       .sortBy { case (word, rank) => (rank, word.text) }
   }
 
-  /** Inserts the words that are not there yet, then answers every word's id.
+  /** The ids of a batch of words, inserting the ones not stored yet with the rank they come with.
     *
-    * Idempotence without an `ON CONFLICT` clause, which the two dialects spell differently: read the batch's keys
-    * first, insert what is missing, read back what was inserted.
+    * Idempotence without an `ON CONFLICT` clause: read the batch's keys first, insert what is missing, read back what
+    * was inserted. Every pass calls it on its own batch's words, so no pass needs every word's id in memory. A word an
+    * earlier batch stored is found, not inserted again, which also keeps the first of two case variants (`Grammy`,
+    * `grammy`) that fall in different batches; [[dedupeByKey]] handles the two in one batch.
     */
-  private def storeWords(collected: Collected, now: Long): RIO[WordRepository, Map[ParsedWord, Long]] = {
-    val byLanguage = collected.words.toList.groupBy { case (word, _) => word.language }
+  private def idsOf(words: Iterable[(ParsedWord, Int)], now: Long): RIO[WordRepository, Map[ParsedWord, Long]] = {
+    def keyOf(row: WordRow) = (row.language, row.textNorm, row.partOfSpeech, row.gender)
+    val byLanguage          = dedupeByKey(words.toList).groupBy { case (word, _) => word.language }
     ZIO
-      .foreach(byLanguage.toList) { case (language, words) =>
-        val code = WordLanguage.code(language)
-        ZIO
-          .foreach(dedupeByKey(words).grouped(batchSize).toList) { batch =>
-            val norms = batch.map { case (word, _) => word.text.toLowerCase }.distinct
-            for {
-              existing <- WordRepository.findWordsByKeys(code, norms)
-              known     = existing.map(row => (row.language, row.textNorm, row.partOfSpeech, row.gender)).toSet
-              missing   = batch.collect { case (word, rank) if !known.contains(word.key) => toRow(word, rank, now) }
-              _        <- WordRepository.insertWords(missing)
-              // Read back rather than trusting generated keys from a batch insert: `getGeneratedKeys` after an
-              // `executeBatch` is not something both drivers agree about.
-              stored   <- WordRepository.findWordsByKeys(code, norms)
-            } yield stored.map(row => ((row.language, row.textNorm, row.partOfSpeech, row.gender), row.id)).toMap
+      .foreach(byLanguage.toList) { case (language, batch) =>
+        val code  = WordLanguage.code(language)
+        val norms = batch.map { case (word, _) => word.text.toLowerCase }.distinct
+        for {
+          existing <- WordRepository.findWordsByKeys(code, norms)
+          known     = existing.map(keyOf).toSet
+          missing   = batch.collect { case (word, rank) if !known.contains(word.key) => toRow(word, rank, now) }
+          // Read back rather than trusting generated keys from a batch insert: `getGeneratedKeys` after an
+          // `executeBatch` is not something both drivers agree about.
+          stored   <- {
+            if (missing.isEmpty)
+              ZIO.succeed(existing)
+            else
+              WordRepository.insertWords(missing) *> WordRepository.findWordsByKeys(code, norms)
           }
-          .map(_.foldLeft(Map.empty[(String, String, String, String), Long])(_ ++ _))
+        } yield stored.map(row => (keyOf(row), row.id))
       }
-      .map { maps =>
-        val byKey = maps.foldLeft(Map.empty[(String, String, String, String), Long])(_ ++ _)
-        collected.words.keys.flatMap(word => byKey.get(word.key).map(id => (word, id))).toMap
+      .map { found =>
+        val byKey = found.flatten.toMap
+        words.iterator.flatMap { case (word, _) => byKey.get(word.key).map(id => (word, id)) }.toMap
       }
   }
 
-  /** Writes both directions of every pair that is not already recorded. */
-  private def storePairs(
-    pairs: List[ParsedPair],
-    ids: Map[ParsedWord, Long],
-    origin: String,
-    now: Long,
-  ): RIO[WordRepository, Long] = {
-    val edges = pairs.flatMap { pair =>
-      for {
-        source <- ids.get(pair.source)
-        target <- ids.get(pair.target)
-        if source != target
-      } yield (source, target)
-    }.distinct
+  /** [[idsOf]] for words that come with no rank of their own: a pair's, a form's or a recording's. */
+  private def idsOfUnranked(words: Iterable[ParsedWord], now: Long): RIO[WordRepository, Map[ParsedWord, Long]] = {
+    idsOf(words.map(word => (word, WordService.unrankedFrequency)), now)
+  }
 
+  /** Inserts the words that are not there yet, a batch at a time. Answers how many words it saw stored. */
+  private def storeWords(words: ZStream[Any, Throwable, (ParsedWord, Int)], now: Long): RIO[WordRepository, Long] = {
+    words.grouped(batchSize).mapZIO(batch => idsOf(batch, now).map(_.size.toLong)).runSum
+  }
+
+  /** Writes both directions of every edge that is not already recorded. */
+  private def storeEdges(edges: List[(Long, Long)], origin: String, now: Long): RIO[WordRepository, Long] = {
+    val sources = edges.flatMap { case (source, target) => List(source, target) }.distinct
+    for {
+      known <- WordRepository.existingTranslationPairs(sources).map(_.toSet)
+      // Distinct for the same reason dedupeByKey exists: `word_translations` is unique on
+      // (source_word_id, target_word_id, created_by), and two collected pairs can reach the same id pair once
+      // case variants have collapsed onto one row.
+      rows   = edges
+                 .filter { case (source, target) => source != target }
+                 .flatMap { case (source, target) => List((source, target), (target, source)) }
+                 .distinct
+                 .filterNot(known.contains)
+                 .map { case (from, to) => WordTranslationRow(0L, from, to, origin, None, now) }
+      _     <- WordRepository.insertTranslations(rows)
+    } yield rows.size.toLong
+  }
+
+  /** A batch of pairs as `(source id, target id)`. */
+  private def pairIds(batch: Iterable[ParsedPair], now: Long): RIO[WordRepository, List[(Long, Long)]] = {
+    idsOfUnranked(batch.flatMap(pair => List(pair.source, pair.target)), now).map { ids =>
+      batch.toList.flatMap(pair => ids.get(pair.source).zip(ids.get(pair.target)))
+    }
+  }
+
+  /** Writes both directions of every pair that is not already recorded, a batch at a time. */
+  private def storePairs(pairs: List[ParsedPair], origin: String, now: Long): RIO[WordRepository, Long] = {
     ZIO
-      .foreach(edges.grouped(batchSize).toList) { batch =>
-        val sources = batch.flatMap { case (source, target) => List(source, target) }.distinct
-        for {
-          known <- WordRepository.existingTranslationPairs(sources).map(_.toSet)
-          // Distinct for the same reason dedupeByKey exists: `word_translations` is unique on
-          // (source_word_id, target_word_id, created_by), and two collected pairs can reach the same id pair once
-          // case variants have collapsed onto one row.
-          rows   = batch
-                     .flatMap { case (source, target) => List((source, target), (target, source)) }
-                     .distinct
-                     .filterNot(known.contains)
-                     .map { case (from, to) => WordTranslationRow(0L, from, to, origin, None, now) }
-          _     <- WordRepository.insertTranslations(rows)
-        } yield rows.size.toLong
+      .foreach(pairs.grouped(batchSize).toList) { batch =>
+        pairIds(batch, now).flatMap(edges => storeEdges(edges, origin, now))
       }
       .map(_.sum)
   }
 
-  /** The `(lemmaId, formId, relation)` edges this batch of forms resolves to, once ids are known: a form whose lemma or
-    * form-word did not get stored contributes nothing, and a form spelled identically to its own lemma (English `put`'s
-    * past tense is `put`) is dropped, the same rule [[storePairs]] applies to a translation pair that would otherwise
-    * link a word to itself.
-    *
-    * Pulled out as a pure function, like [[dedupeByKey]] and [[pivot]], so it is unit-testable without a database.
+  /** Writes the [[formPairs]] of every pair, a batch at a time, reading each batch's lemmas' forms back from the
+    * database. Runs after [[storeForms]], so the forms are there. Only the dictionary's own forms count: a reader's
+    * form row is theirs, not a fact to derive shared translations from.
     */
+  private def storeFormPairs(pairs: List[ParsedPair], now: Long): RIO[WordRepository, Long] = {
+    ZIO
+      .foreach(pairs.grouped(batchSize).toList) { batch =>
+        for {
+          edges  <- pairIds(batch, now)
+          stored <-
+            WordRepository.formsContextOf(edges.flatMap { case (source, target) => List(source, target) }.distinct)
+          forms   = stored.collect {
+                      case (form, word) if form.origin == WordSource.dictionary =>
+                        LemmaForm(form.lemmaWordId, form.relation, form.formWordId, word.text)
+                    }
+          count  <- storeEdges(formPairs(edges, forms), WordService.formOrigin, now)
+        } yield count
+      }
+      .map(_.sum)
+  }
+
   /** The `word_forms` rows for these forms. A form spelled like its own lemma (`Künstler`, plural `Künstler`; `put`,
     * past `put`) is kept as a self-link: it is how the word page knows the plural, and it does not make the word a form
-    * (see `WordRepository.insertForms`). A linked word ([[WordLinks]]) is no form, and goes to [[linkEdges]].
+    * (see `WordRepository.insertForms`). A linked word ([[WordLinks]]) is no form, and goes to [[linkEdges]]. A form
+    * whose lemma or form word has no id contributes nothing.
+    *
+    * Pulled out as a pure function, like [[dedupeByKey]] and [[pivot]], so it is unit-testable without a database.
     */
   def formEdges(forms: List[ParsedForm], ids: Map[ParsedWord, Long]): List[(Long, Long, String)] = {
     forms
@@ -735,87 +823,94 @@ object DictionaryImport extends ZIOAppDefault {
     }.distinct
   }
 
-  private def storeLinks(forms: List[ParsedForm], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
-    ZIO
-      .foreach(linkEdges(forms, ids).grouped(batchSize).toList) { batch =>
-        for {
-          known <- WordRepository.existingLinks(batch.map { case (wordId, _, _) => wordId }.distinct).map(_.toSet)
-          rows   = batch.filterNot(known.contains).map { case (wordId, linkedId, kind) =>
-                     WordLinkRow(0L, wordId, linkedId, kind, now)
-                   }
-          _     <- WordRepository.insertLinks(rows)
-        } yield rows.size.toLong
-      }
-      .map(_.sum)
+  private def storeLinkEdges(edges: List[(Long, Long, String)], now: Long): RIO[WordRepository, Long] = {
+    for {
+      known <- WordRepository.existingLinks(edges.map { case (wordId, _, _) => wordId }.distinct).map(_.toSet)
+      rows   = edges.filterNot(known.contains).map { case (wordId, linkedId, kind) =>
+                 WordLinkRow(0L, wordId, linkedId, kind, now)
+               }
+      _     <- WordRepository.insertLinks(rows)
+    } yield rows.size.toLong
   }
 
-  /** Writes every form relation that is not already recorded. Unlike [[storePairs]], a form relation is directional and
-    * stored once -- `formsOf`/`lemmaOf` answer the two directions with two different queries, rather than two rows.
-    */
-  private def storeForms(forms: List[ParsedForm], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
-    val edges = formEdges(forms, ids)
-
-    ZIO
-      .foreach(edges.grouped(batchSize).toList) { batch =>
-        val lemmaIds = batch.map { case (lemmaId, _, _) => lemmaId }.distinct
-        for {
-          known <- WordRepository.existingFormRelations(lemmaIds).map(_.toSet)
-          rows   = batch.filterNot(known.contains).map { case (lemmaId, formId, relation) =>
-                     WordFormRow(0L, lemmaId, formId, relation, now)
-                   }
-          _     <- WordRepository.insertForms(rows)
-        } yield rows.size.toLong
-      }
-      .map(_.sum)
+  private def storeFormEdges(edges: List[(Long, Long, String)], now: Long): RIO[WordRepository, Long] = {
+    for {
+      known <- WordRepository.existingFormRelations(edges.map { case (lemmaId, _, _) => lemmaId }.distinct).map(_.toSet)
+      rows   = edges.filterNot(known.contains).map { case (lemmaId, formId, relation) =>
+                 WordFormRow(0L, lemmaId, formId, relation, now)
+               }
+      _     <- WordRepository.insertForms(rows)
+    } yield rows.size.toLong
   }
 
-  /** Writes every recording that is not already recorded. A recording whose word did not get stored is dropped, the
-    * same rule [[formEdges]] applies to a form.
+  /** Writes every form relation and every word link that is not already recorded, a batch at a time. Answers the two
+    * counts. Unlike a translation, a form relation is directional and stored once -- `formsOf`/`lemmaOf` answer the two
+    * directions with two different queries, rather than two rows.
     */
-  private def storeAudio(audio: List[ParsedAudio], ids: Map[ParsedWord, Long], now: Long): RIO[WordRepository, Long] = {
-    val rows = audio.flatMap(a => ids.get(a.word).map(id => (id, a.fileName, a.region))).distinctBy {
-      case (id, fileName, _) => (id, fileName)
-    }
-
-    ZIO
-      .foreach(rows.grouped(batchSize).toList) { batch =>
-        val wordIds = batch.map { case (id, _, _) => id }.distinct
+  private def storeForms(forms: ZStream[Any, Throwable, ParsedForm], now: Long): RIO[WordRepository, (Long, Long)] = {
+    forms
+      .grouped(batchSize)
+      .mapZIO { chunk =>
+        val batch = chunk.toList
         for {
-          known <- WordRepository.existingAudio(wordIds).map(_.toSet)
-          fresh  = batch.filterNot { case (id, fileName, _) => known.contains((id, fileName)) }.map {
+          ids   <- idsOfUnranked(batch.flatMap(form => List(form.lemma, form.form)), now)
+          forms <- storeFormEdges(formEdges(batch, ids), now)
+          links <- storeLinkEdges(linkEdges(batch, ids), now)
+        } yield (forms, links)
+      }
+      .runFold((0L, 0L)) { case ((forms, links), (moreForms, moreLinks)) => (forms + moreForms, links + moreLinks) }
+  }
+
+  /** Writes every recording that is not already recorded, a batch at a time. */
+  private def storeAudio(audio: ZStream[Any, Throwable, ParsedAudio], now: Long): RIO[WordRepository, Long] = {
+    audio
+      .grouped(batchSize)
+      .mapZIO { batch =>
+        for {
+          ids   <- idsOfUnranked(batch.map(_.word), now)
+          rows   = batch.toList
+                     .flatMap(a => ids.get(a.word).map(id => (id, a.fileName, a.region)))
+                     .distinctBy { case (id, fileName, _) => (id, fileName) }
+          known <- WordRepository.existingAudio(rows.map { case (id, _, _) => id }.distinct).map(_.toSet)
+          fresh  = rows.filterNot { case (id, fileName, _) => known.contains((id, fileName)) }.map {
                      case (id, fileName, region) => WordAudioRow(0L, id, fileName, region, now)
                    }
           _     <- WordRepository.insertAudio(fresh)
         } yield fresh.size.toLong
       }
-      .map(_.sum)
+      .runSum
   }
 
-  private def store(collected: Collected): RIO[WordRepository & DataSource & AppConfig, Unit] = {
+  /** Writes one import, one kind of record at a time and a batch at a time. Only the translation pairs are held whole,
+    * since the pivot joins every pair of an English sense; they are a few hundred thousand where the forms are
+    * millions.
+    */
+  private def store(records: Records): RIO[WordRepository & DataSource & AppConfig, Unit] = {
     for {
-      config     <- ZIO.service[AppConfig]
-      dataSource <- ZIO.service[DataSource]
+      config        <- ZIO.service[AppConfig]
+      dataSource    <- ZIO.service[DataSource]
       // The same migration `Main` runs, and for the same reason it is safe to run twice: without it a fresh clone has
       // to start the server once before it can load the dictionary, which is a footgun rather than a step.
-      _          <- FlywayMigrator.migrate(dataSource, Some(config.db.schema))
-      now        <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      ids        <- storeWords(collected, now)
-      _          <- ZIO.logInfo(s"Stored ${ids.size} word(s)")
-      direct     <- storePairs(collected.pairs, ids, WordService.dictionaryOrigin, now)
-      _          <- ZIO.logInfo(s"Stored $direct direct translation row(s)")
-      // The pivot runs over the collected pairs rather than the stored ones, so a re-import derives the same set and
-      // inserts none of it a second time.
-      pivoted     = pivot(collected.pairs)
-      inferred   <- storePairs(pivoted, ids, WordService.pivotOrigin, now)
-      _          <- ZIO.logInfo(s"Stored $inferred inferred German-Hungarian row(s)")
-      forms      <- storeForms(collected.forms, ids, now)
-      _          <- ZIO.logInfo(s"Stored $forms form relation row(s)")
-      links      <- storeLinks(collected.forms, ids, now)
-      _          <- ZIO.logInfo(s"Stored $links word link row(s)")
-      formLinked <- storePairs(formPairs(collected.pairs ++ pivoted, collected.forms), ids, WordService.formOrigin, now)
-      _          <- ZIO.logInfo(s"Stored $formLinked form-to-form translation row(s)")
-      audio      <- storeAudio(collected.audio, ids, now)
-      _          <- ZIO.logInfo(s"Stored $audio recording row(s)")
+      _             <- FlywayMigrator.migrate(dataSource, Some(config.db.schema))
+      now           <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      words         <- storeWords(records.words, now)
+      _             <- ZIO.logInfo(s"Stored $words word(s)")
+      pairs         <- records.pairs.runCollect.map(_.toList)
+      direct        <- storePairs(pairs, WordService.dictionaryOrigin, now)
+      _             <- ZIO.logInfo(s"Stored $direct direct translation row(s)")
+      // The pivot runs over the read pairs rather than the stored ones, so a re-import derives the same set and inserts
+      // none of it a second time.
+      pivoted        = pivot(pairs)
+      inferred      <- storePairs(pivoted, WordService.pivotOrigin, now)
+      _             <- ZIO.logInfo(s"Stored $inferred inferred German-Hungarian row(s)")
+      stored        <- storeForms(records.forms, now)
+      (forms, links) = stored
+      _             <- ZIO.logInfo(s"Stored $forms form relation row(s)")
+      _             <- ZIO.logInfo(s"Stored $links word link row(s)")
+      formLinked    <- storeFormPairs(pairs ++ pivoted, now)
+      _             <- ZIO.logInfo(s"Stored $formLinked form-to-form translation row(s)")
+      audio         <- storeAudio(records.audio, now)
+      _             <- ZIO.logInfo(s"Stored $audio recording row(s)")
     } yield ()
   }
 
@@ -849,10 +944,9 @@ object DictionaryImport extends ZIOAppDefault {
     }
   }
 
-  def run: ZIO[ZIOAppArgs, Any, Any] = {
-    val imported = for {
-      args     <- ZIOAppArgs.getArgs
-      options  <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
+  /** Reads the dump (or the seed, for `--seed --export`) into memory, dedupes it, and exports or stores it. */
+  private def importCollected(options: Options): Task[Unit] = {
+    for {
       loaded   <- load(options)
       _        <- ZIO.logInfo("Deduping homographs...")
       collected = dedupeHomographs(loaded)
@@ -866,9 +960,25 @@ object DictionaryImport extends ZIOAppDefault {
       // Exporting is an offline transformation of a dump into the committed sample: it touches no database, so it
       // does not need one to be running.
       _        <- ZIO
-                    .when(options.exportTo.isEmpty)(store(collected))
+                    .when(options.exportTo.isEmpty)(store(Records.of(collected)))
                     .provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
-      _        <- ZIO.logInfo("Dictionary import finished")
+    } yield ()
+  }
+
+  def run: ZIO[ZIOAppArgs, Any, Any] = {
+    val imported = for {
+      args    <- ZIOAppArgs.getArgs
+      options <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
+      // A seed is loaded the way a server loads one: streamed, so the heap it needs does not grow with the seed.
+      _       <- {
+        if (options.seed && options.exportTo.isEmpty) {
+          val path = options.seedPath.getOrElse(defaultSeedPath)
+          ZIO.logInfo(s"Streaming seed $path...") *>
+            store(Records.seed(path)).provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
+        } else
+          importCollected(options)
+      }
+      _       <- ZIO.logInfo("Dictionary import finished")
     } yield ()
 
     GcStats.logPeriodically().forkDaemon.flatMap(gcFiber => imported.ensuring(gcFiber.interrupt))

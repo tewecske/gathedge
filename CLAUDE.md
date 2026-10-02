@@ -383,6 +383,8 @@ Four load-bearing columns:
 
 **The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the committed sample; `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
 
+**A seed load streams; a dump import holds everything.** `--seed` reads the file once per record kind, a batch at a time, and looks each batch's word ids up in the database, so the whole dump's seed loads in a small server's default heap. Only the translation pairs stay whole, for the pivot. Form-to-form translations are derived per batch of pairs from the forms already stored. `--raw` and `--export` still hold the lot in memory (frequency cut, homograph dedupe); they run where the dump is, not on the server. A plain `--seed` skips the dedupe, since `--export` ran it before writing the file.
+
 ### Bulk import: two paths, one panel
 
 The tag editor's bulk-import panel sniffs its input (`shared/parsing/DelimitedText.sniff`) and forks. Prose keeps the old free-text path unchanged; a delimited paste or file goes through a column-mapping step instead.

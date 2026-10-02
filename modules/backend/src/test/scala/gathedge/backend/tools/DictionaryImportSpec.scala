@@ -2,6 +2,7 @@ package gathedge.backend.tools
 
 import gathedge.backend.tools.WiktextractParser.{ParsedAudio, ParsedForm, ParsedWord}
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage, WordLinkKind}
+import zio.ZIO
 import zio.json._
 import zio.test._
 
@@ -478,48 +479,34 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           ),
         )
       },
-      test("formPairs pairs no self-form and no linked word") {
-        // `Künstler`'s plural is spelled `Künstler`. Pairing it would give `artists` the masculine singular row.
-        val artist  = ParsedWord(WordLanguage.En, "artist", PartOfSpeech.Noun, None)
-        val artists = ParsedWord(WordLanguage.En, "artists", PartOfSpeech.Noun, None)
-        val kuenstl = ParsedWord(WordLanguage.De, "Künstler", PartOfSpeech.Noun, Some(Gender.Masculine))
-        val female  = ParsedWord(WordLanguage.De, "Künstlerin", PartOfSpeech.Noun, Some(Gender.Feminine))
-        val actress = ParsedWord(WordLanguage.En, "artiste", PartOfSpeech.Noun, None)
-        val pairs   = List(WiktextractParser.ParsedPair(artist, kuenstl, None))
-        val forms   = List(
-          ParsedForm(artist, artists, "plural"),
-          ParsedForm(kuenstl, kuenstl, "plural"),
-          ParsedForm(artist, actress, "feminine"),
-          ParsedForm(kuenstl, female, "feminine"),
+      test("formPairs pairs no self-form") {
+        // `Künstler`'s plural is spelled `Künstler`. Pairing it would give `artists` (2) the masculine singular row (3).
+        val forms = List(
+          DictionaryImport.LemmaForm(1L, "plural", 2L, "artists"),
+          DictionaryImport.LemmaForm(3L, "plural", 3L, "Künstler"),
         )
-        assertTrue(DictionaryImport.formPairs(pairs, forms).isEmpty)
+        assertTrue(DictionaryImport.formPairs(List((1L, 3L)), forms).isEmpty)
       },
       test("a form's translation is inferred through its lemma's own translation, matched on relation") {
-        val house    = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
-        val houses   = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
-        val haus     = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
-        val haeuser  = ParsedWord(WordLanguage.De, "Häuser", PartOfSpeech.Noun, None)
-        val teller   = ParsedWord(WordLanguage.De, "Teller", PartOfSpeech.Noun, Some(Gender.Masculine))
-        val pairs    = List(WiktextractParser.ParsedPair(house, haus, Some("building")))
-        val forms    = List(
-          ParsedForm(house, houses, "plural"),
-          ParsedForm(haus, haeuser, "plural"),
-          // Teller has no translation pair, so its plural (untagged here) contributes no edge.
+        // house (1) -> houses (2); Haus (3) -> Häuser (4), and a second spelling of the same cell that sorts later.
+        val forms = List(
+          DictionaryImport.LemmaForm(1L, "plural", 2L, "houses"),
+          DictionaryImport.LemmaForm(3L, "plural", 5L, "Häusern"),
+          DictionaryImport.LemmaForm(3L, "plural", 4L, "Häuser"),
+          // Teller (6) has no translation pair, so its plural contributes no edge.
+          DictionaryImport.LemmaForm(6L, "plural", 7L, "Teller"),
         )
-        val inferred = DictionaryImport.formPairs(pairs, forms)
-        assertTrue(
-          inferred.map(pair => (pair.source.text, pair.target.text)) == List(("houses", "Häuser")),
-          inferred.forall(_.sense.contains("building")),
-        )
+        assertTrue(DictionaryImport.formPairs(List((1L, 3L)), forms) == List((2L, 4L)))
       },
       test("formPairs finds nothing when a relation is not shared, or a lemma has no pair") {
-        val house  = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
-        val houses = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
-        val haus   = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
-        val hauses = ParsedWord(WordLanguage.De, "Hauses", PartOfSpeech.Noun, None)
-        val pairs  = List(WiktextractParser.ParsedPair(house, haus, None))
-        val forms  = List(ParsedForm(house, houses, "plural"), ParsedForm(haus, hauses, "genitive"))
-        assertTrue(DictionaryImport.formPairs(pairs, forms).isEmpty)
+        val forms = List(
+          DictionaryImport.LemmaForm(1L, "plural", 2L, "houses"),
+          DictionaryImport.LemmaForm(3L, "genitive", 4L, "Hauses"),
+        )
+        assertTrue(
+          DictionaryImport.formPairs(List((1L, 3L)), forms).isEmpty,
+          DictionaryImport.formPairs(List((1L, 9L)), forms).isEmpty,
+        )
       },
       test("a limit keeps the commonest words, and whatever they translate to") {
         val entry       = WiktextractParser.parse(houseLine)
@@ -609,6 +596,8 @@ object DictionaryImportSpec extends ZIOSpecDefault {
             .take(5)
             .toList
           val pivotCount                        = DictionaryImport.pivot(collected.pairs).size
+          // A plain `--seed` streams the file and skips the dedupe, which `--export` already ran before writing it.
+          val deduped                           = DictionaryImport.dedupeHomographs(collected)
           assertTrue(
             wordCount > 100,
             pairCount > 100,
@@ -621,6 +610,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
             // Every pair is stated from English, since that is the only direction any source has.
             foreignPairs == Nil,
             pivotCount > 0,
+            deduped.words.keySet == collected.words.keySet,
+            deduped.pairs.toSet == collected.pairs.toSet,
+            deduped.forms.toSet == collected.forms.toSet,
           )
         }
       },
@@ -649,6 +641,40 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         assertTrue(
           decoded.forms.toSet == collected.forms.toSet,
           decoded.words.keySet == collected.words.keySet,
+        )
+      },
+      test("a streamed seed reads the same records as the whole file decoded") {
+        val house     = ParsedWord(WordLanguage.En, "house", PartOfSpeech.Noun, None)
+        val houses    = ParsedWord(WordLanguage.En, "houses", PartOfSpeech.Noun, None)
+        val haus      = ParsedWord(WordLanguage.De, "Haus", PartOfSpeech.Noun, Some(Gender.Neuter))
+        val collected = DictionaryImport.Collected.empty
+          .withWord(house, 3)
+          .withWord(houses, 3)
+          .withWord(haus, 5)
+          .copy(
+            pairs = List(WiktextractParser.ParsedPair(house, haus, Some("building"))),
+            forms = List(ParsedForm(house, houses, "plural")),
+            audio = List(ParsedAudio(haus, "De-Haus.ogg", "")),
+          )
+        val lines     = "# a comment" :: DictionaryImport.SeedFormat.encode(collected)
+        for {
+          path   <- ZIO.attemptBlocking {
+                      val file = java.nio.file.Files.createTempFile("seed", ".tsv")
+                      java.nio.file.Files.writeString(file, lines.mkString("\n"))
+                      file
+                    }
+          seed    = DictionaryImport.Records.seed(path.toString)
+          words  <- seed.words.runCollect
+          pairs  <- seed.pairs.runCollect
+          forms  <- seed.forms.runCollect
+          audio  <- seed.audio.runCollect
+          _      <- ZIO.attemptBlocking(java.nio.file.Files.delete(path))
+          decoded = DictionaryImport.SeedFormat.decode(lines)
+        } yield assertTrue(
+          words.toMap == decoded.words,
+          pairs.toSet == decoded.pairs.toSet,
+          forms.toSet == decoded.forms.toSet,
+          audio.toSet == decoded.audio.toSet,
         )
       },
       test("a recording is read from sounds[], keyed to the entry, with its accent tags joined") {
