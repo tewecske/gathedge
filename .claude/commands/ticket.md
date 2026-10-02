@@ -50,8 +50,7 @@ Run every remaining step with `$WT` as the working directory.
 - Implement the change on branch `$BR`. Follow `CLAUDE.md` — `-noindent` Scala 3
   (explicit `{ }`), `-Werror`, ASD-STE100 writing style, the database strategy
   rules, endpoint/DTO parity, i18n message-key rules, and anything else in scope.
-- Keep commits focused; write commit messages in the repo's style and end each with:
-  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`
+- Keep commits focused; write commit messages in the repo's style.
 
 ## 4. Gate before finishing
 
