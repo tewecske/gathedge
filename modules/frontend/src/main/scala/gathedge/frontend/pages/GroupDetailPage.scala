@@ -26,6 +26,19 @@ object GroupDetailPage {
     AppShell.render(Page.GroupDetail(groupId), new GroupDetailPage(groupId, generateQr).render())
   }
 
+  /** The tags the attach dropdown offers: the reader's own, not yet in any group. */
+  private[pages] def attachable(tags: List[Tag]): List[Tag] = tags.filter(tag => tag.ownedByMe && tag.group.isEmpty)
+
+  /** The tag the attach button sends: the reader's pick while the dropdown still offers it, else the first offered tag.
+    * A `<select>` shows its first option without firing `onChange`, so that is the tag on screen before any pick. This
+    * is derived, not stored: the page loads the group and the tags in parallel, and a stored default could be cleared
+    * by whichever answer comes last.
+    */
+  private[pages] def attachTarget(tags: List[Tag], picked: Option[Long]): Option[Long] = {
+    val offered = attachable(tags)
+    picked.filter(id => offered.exists(_.id == id)).orElse(offered.headOption.map(_.id))
+  }
+
   private enum Tab {
     case Wordlists, Members
   }
@@ -41,7 +54,14 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   private val errorVar: Var[Option[String]] = Var(None)
   private val busyVar                       = Var(false)
 
-  private val attachSelectionVar = Var(Option.empty[Long])
+  /** The tag the reader picked in the attach dropdown, if any. [[attachTargetSignal]] is what the button sends. */
+  private val attachPickVar = Var(Option.empty[Long])
+
+  private val attachTargetSignal: Signal[Option[Long]] = {
+    myTagsVar.signal.combineWith(attachPickVar.signal).map { case (tags, picked) =>
+      GroupDetailPage.attachTarget(tags, picked)
+    }
+  }
 
   /** The invite code [[shareRow]]'s `link` closure reads — kept in its own `Var` rather than re-derived from
     * `detailVar` each time, since a regenerate has to reach [[ShareRow.resetQr]] with the *new* code already in place
@@ -94,7 +114,7 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
   /** The selected tag id at the moment the attach button is clicked — `sample`d rather than read via `.now()`, the same
     * pattern `SharedProgressPage.redeemStream` uses for its text input.
     */
-  private val attachStream = attachClickBus.events.sample(attachSelectionVar.signal).collect { case Some(id) => id }
+  private val attachStream = attachClickBus.events.sample(attachTargetSignal).collect { case Some(id) => id }
 
   private val currentEmailSignal = AppState.currentUserSignal.map(_.flatMap(_.email))
 
@@ -126,9 +146,9 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
         Observer[Either[ApiError, GroupDetail]] {
           case Right(detail) =>
             Var.set(
-              detailVar          -> Some(detail),
-              attachSelectionVar -> None,
-              inviteCodeVar      -> detail.inviteCode.getOrElse(""),
+              detailVar     -> Some(detail),
+              attachPickVar -> None,
+              inviteCodeVar -> detail.inviteCode.getOrElse(""),
             )
           case Left(err)     =>
             errorVar.set(Some(err.message))
@@ -140,11 +160,6 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
           case Left(_)     =>
             () // Only feeds the attach dropdown; a failure here does not block the rest of the page.
         },
-      // A <select> auto-selects its first option without firing onChange, so the attach button must default
-      // to that same first eligible tag itself — otherwise it stays disabled until the user picks a *different*
-      // option, which is impossible when there's only one eligible tag.
-      myTagsVar.signal.map(_.filter(tag => tag.ownedByMe && tag.group.isEmpty).headOption.map(_.id)) -->
-        attachSelectionVar.writer,
       inlineRename.bindings(onSaved = Observer[GroupDetail](detail => detailVar.set(Some(detail)))),
       leaveBus.events --> Observer[Unit](_ => Var.set(busyVar -> true, errorVar -> None)),
       leaveBus.events.flatMapSwitch(_ => GroupApiClient.leave(groupId)) -->
@@ -463,11 +478,11 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
     div(
       cls := "mt-4 pt-4 border-t border-base-300",
       child.maybe <-- myTagsVar.signal.map { tags =>
-        val eligible = tags.filter(tag => tag.ownedByMe && tag.group.isEmpty)
+        val eligible = GroupDetailPage.attachable(tags)
         Option.when(eligible.isEmpty)(p(cls := "text-sm opacity-70", I18n.t(UiKeys.groupDetailAttachNoneAvailable)))
       },
       child.maybe <-- myTagsVar.signal.map { tags =>
-        val eligible = tags.filter(tag => tag.ownedByMe && tag.group.isEmpty)
+        val eligible = GroupDetailPage.attachable(tags)
         Option.when(eligible.nonEmpty)(
           div(
             cls := "flex items-end gap-2",
@@ -477,13 +492,14 @@ private class GroupDetailPage(groupId: Long, generateQr: String => Future[String
               select(
                 cls    := "select select-sm",
                 eligible.map(tag => option(value := tag.id.toString, s"${Labels.tagCodes(tag)} ${tag.name}")),
-                onChange.mapToValue --> attachSelectionVar.writer.contramap[String](_.toLongOption),
+                value <-- attachTargetSignal.map(_.fold("")(_.toString)),
+                onChange.mapToValue --> attachPickVar.writer.contramap[String](_.toLongOption),
               ),
             ),
             button(
               cls := "btn btn-sm btn-primary",
               typ := "button",
-              disabled <-- attachSelectionVar.signal.combineWith(busyVar.signal).map { case (sel, busy) =>
+              disabled <-- attachTargetSignal.combineWith(busyVar.signal).map { case (sel, busy) =>
                 sel.isEmpty || busy
               },
               I18n.t(UiKeys.groupDetailAttachButton),
