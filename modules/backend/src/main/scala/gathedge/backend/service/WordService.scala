@@ -1451,10 +1451,11 @@ final case class WordServiceLive(
 
   /** The target word of a translation the caller is adding, and whether the edge was new.
     *
-    * `false` means they had already recorded it — still the translation they mean, which is why this answers the word
-    * rather than failing. [[addTranslation]] turns that into the 409; [[create]] does not, because a duplicate is no
-    * reason to refuse a request that is about adding a *word*, and it still needs the word's id to mark it for
-    * practice.
+    * `false` means the edge was already there — the dictionary's, or one they recorded before. It is still the
+    * translation they mean, which is why this answers the word rather than failing. Another reader's edge does not
+    * count: that reader may delete it. [[addTranslation]] turns that into the 409; [[create]] does not, because a
+    * duplicate is no reason to refuse a request that is about adding a *word*, and it still needs the word's id to mark
+    * it for practice.
     */
   private def linkOrExisting(
     source: WordRow,
@@ -1471,7 +1472,7 @@ final case class WordServiceLive(
                   userId,
                 )
       _      <- ZIO.when(target.id == source.id)(ZIO.fail(WordFailure.ValidationError(Map.empty)))
-      known  <- repo.findTranslation(source.id, target.id, Some(userId)).orDie
+      known  <- repo.findUsableTranslation(source.id, target.id, userId).orDie
       added  <- ZIO
                   .when(known.isEmpty)(
                     for {
@@ -3035,16 +3036,16 @@ final case class WordServiceLive(
       }
     }
 
-    /** Records the pair the row asserts, unless the caller had already recorded it. Written from the two rows already
-      * in hand rather than through [[linkOrExisting]], which would `ensure` the target a second time. Both directions
-      * go in, as everywhere else — `insertTranslationPair` writes the mirror.
+    /** Records the pair the row asserts, unless the dictionary or the caller already has. Written from the two rows
+      * already in hand rather than through [[linkOrExisting]], which would `ensure` the target a second time. Both
+      * directions go in, as everywhere else — `insertTranslationPair` writes the mirror.
       */
     def linkRows(source: WordRow, target: WordRow, now: Long): UIO[Unit] = {
       if (source.id == target.id)
         ZIO.unit
       else {
         repo
-          .findTranslation(source.id, target.id, Some(userId))
+          .findUsableTranslation(source.id, target.id, userId)
           .orDie
           .flatMap(known => {
             ZIO.when(known.isEmpty)(
@@ -3055,11 +3056,44 @@ final case class WordServiceLive(
       }
     }
 
-    /** Every word one cell named, minted or found, with the count of the ones that were new. */
-    def ensureCells(cell: WordCell, language: WordLanguage): IO[WordFailure, (List[WordRow], Int)] = {
+    /** Every word one cell named, minted or found, with the count of the ones that were new.
+      *
+      * `Other` and `Phrase` are guesses from the cell's shape: a bare `királyság` carries no article and no marker to
+      * say it is a noun. Such a word takes an existing row of the same spelling before a new one is minted, or the
+      * import would make a second `királyság` and record a new translation to it. Of those rows, one the other cell's
+      * words already translate wins (`linked`), then the most frequent — a dictionary row before a reader's.
+      */
+    def ensureCells(
+      cell: WordCell,
+      language: WordLanguage,
+      spelled: List[WordRow],
+      linked: Set[Long],
+    ): IO[WordFailure, (List[WordRow], Int)] = {
       ZIO
-        .foreach(cell.words)(word => ensureCounted(language, word.text, word.partOfSpeech, word.gender, userId))
+        .foreach(cell.words)(word => {
+          val guessed  = word.partOfSpeech == PartOfSpeech.Other || word.partOfSpeech == PartOfSpeech.Phrase
+          val existing = {
+            if (!guessed)
+              None
+            else {
+              spelled
+                .filter(_.textNorm == word.text.toLowerCase)
+                .minByOption(row => {
+                  (!linked.contains(row.id), row.frequencyRank, row.source != WordService.dictionarySource, row.id)
+                })
+            }
+          }
+          existing match {
+            case Some(row) => ZIO.succeed((row, false))
+            case None      => ensureCounted(language, word.text, word.partOfSpeech, word.gender, userId)
+          }
+        })
         .map(results => (results.map(_._1), results.count(_._2)))
+    }
+
+    /** The rows already spelled like the words of `cell`, the candidates [[ensureCells]] picks from. */
+    def spelledLike(cell: WordCell, language: WordLanguage): UIO[List[WordRow]] = {
+      repo.findWordsByKeys(WordLanguage.code(language), cell.words.map(_.text.toLowerCase).distinct).orDie
     }
 
     /** Records the reader's note against every word the side named, but only when they wrote one: a cell with no note
@@ -3098,9 +3132,19 @@ final case class WordServiceLive(
         ZIO.succeed(RowOutcome.skipped)
       else {
         val effect = for {
-          sourced             <- ensureCells(sourceCell, sourceLanguage)
+          srcSpelled          <- spelledLike(sourceCell, sourceLanguage)
+          tgtSpelled          <- spelledLike(targetCell, targetLanguage)
+          tgtSpelledIds        = tgtSpelled.map(_.id).toSet
+          edges               <- repo
+                                   .existingTranslationPairs(srcSpelled.map(_.id))
+                                   .orDie
+                                   .map(_.filter { case (_, target) => tgtSpelledIds.contains(target) })
+          sourced             <- ensureCells(sourceCell, sourceLanguage, srcSpelled, edges.map(_._1).toSet)
           (sources, srcMinted) = sourced
-          targeted            <- ensureCells(targetCell, targetLanguage)
+          // The source words are settled now, so a target guess follows what they translate to, not what any
+          // spelling-alike of them does.
+          targetLinks         <- repo.existingTranslationPairs(sources.map(_.id)).orDie
+          targeted            <- ensureCells(targetCell, targetLanguage, tgtSpelled, targetLinks.map(_._2).toSet)
           (targets, tgtMinted) = targeted
           _                   <- if (targets.isEmpty)
                                    ZIO.foreachDiscard(sources)(src => repo.importWord(src.id, tagId, now).orDie)
