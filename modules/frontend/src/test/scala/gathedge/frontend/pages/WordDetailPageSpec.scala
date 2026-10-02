@@ -3,6 +3,8 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import org.scalajs.dom
 import gathedge.shared.domain.{Tag, WordLanguage}
+import gathedge.frontend.AppRouter
+import gathedge.frontend.Page
 import gathedge.frontend.components.WordCollect
 import gathedge.shared.i18n.UiKeys
 import zio.test._
@@ -103,6 +105,26 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           takes.contains(WordLanguage.Es),
           alsoDe.contains(WordLanguage.De),
         )
+      },
+      // A wordlist the word is on is a way to that wordlist, not a label.
+      test("each wordlist at the foot of the page links to that wordlist") {
+        val tags      = List(tag(WordLanguage.De, WordLanguage.Hu), tag(WordLanguage.En, WordLanguage.Hu).copy(id = 7L))
+        val container = dom.document.createElement("div")
+        dom.document.body.appendChild(container)
+        val rootNode  = L.render(container, WordDetailPage.renderTags(tags))
+        try {
+          val links = container.querySelectorAll("a").toList
+          assertTrue(
+            links.map(_.textContent) == List("lesson1", "lesson1"),
+            links.map(_.getAttribute("href")) == List(
+              AppRouter.router.absoluteUrlForPage(Page.TagDetail(1L)),
+              AppRouter.router.absoluteUrlForPage(Page.TagDetail(7L)),
+            ),
+          )
+        } finally {
+          rootNode.unmount()
+          dom.document.body.removeChild(container)
+        }
       },
     )
   }
