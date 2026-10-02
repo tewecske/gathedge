@@ -108,7 +108,7 @@ private class WordDetailPage(id: Long) {
     onError = errorVar.writer,
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => applyChange(change)),
-    // No listing direction here; an auto-minted "saved" tag takes the words page's remembered pair.
+    // No listing direction here; an auto-minted default tag takes the words page's remembered pair.
     collectLanguages = Val((WordQuery.storedFilter.map(_.language).getOrElse(WordLanguage.De), WordQuery.storedTarget)),
   )
 

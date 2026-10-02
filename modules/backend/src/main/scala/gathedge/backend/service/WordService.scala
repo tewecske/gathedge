@@ -584,7 +584,7 @@ object WordService {
   /** Where a word goes when the reader tagged one without choosing a tag. Not a translated string: it is a row in
     * `tags` like any other, which the reader can rename or delete.
     */
-  val defaultTagName = "saved"
+  val defaultTagName = "Default"
 
   def list(
     page: Int,

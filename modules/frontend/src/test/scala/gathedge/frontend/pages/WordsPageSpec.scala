@@ -6,6 +6,7 @@ import org.scalajs.dom
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{Locale, Theme, TranslationFilter, User, WordLanguage}
+import gathedge.frontend.components.WordCollect
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -150,22 +151,22 @@ object WordsPageSpec extends ZIOSpecDefault {
           text.contains(UiKeys.wordsTitle),
           // Required by the licence the dictionary data is under, so it is not optional page furniture.
           text.contains(UiKeys.wordsAttribution),
-          // The collect bar's own hint is unconditional; its `<select>` needs a session — a signed-out visitor mints
-          // one on their first tick — so it is absent here.
-          text.contains(UiKeys.wordsCollectHint),
-          !text.contains(UiKeys.wordsCollectLabel),
+          // The collect select is there too, before any session: with no wordlist it offers the default tag the
+          // first tick mints, not "No wordlist".
+          text.contains(UiKeys.wordsCollectLabel),
+          text.contains(WordCollect.defaultTagName),
+          !text.contains(UiKeys.wordsCollectNone),
           // The shell's theme control is a checkbox too, so this asks about the toggle by name rather than by counting
           // inputs.
           !text.contains(UiKeys.wordsOnlyMine),
         )
       },
       // Signed in — a guest counts — the collect select is on offer even before the reader owns a tag: it still lets
-      // them pick "No tag", and a first tick mints "saved".
+      // them pick the default tag a first tick mints.
       test("a signed-in reader gets the only-mine toggle and the collect select") {
         val text = signedIn(withPage(WordQuery())((container, _) => container.textContent))
         assertTrue(
           text.contains(UiKeys.wordsOnlyMine),
-          text.contains(UiKeys.wordsCollectHint),
           text.contains(UiKeys.wordsCollectLabel),
         )
       },

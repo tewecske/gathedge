@@ -118,7 +118,7 @@ private class WordsPage(
     onError = errorVar.writer,
     onWarning = warningVar.writer.contramap[String](Some(_)),
     onWritten = Observer[WordCollect.Change](change => wordsVar.update(_.map(applyChange(_, change)))),
-    // The tag an auto-minted "saved" gets its language pair from is the direction the reader is browsing.
+    // The tag an auto-minted default tag gets its language pair from is the direction the reader is browsing.
     collectLanguages = querySignal.map(query => (query.language, query.target)),
   )
 

@@ -2,6 +2,7 @@ package gathedge.frontend.components
 
 import gathedge.shared.domain.{Gender, GroupRef, PartOfSpeech, Tag, Word, WordLanguage}
 import gathedge.shared.dto.{TaggedPair, TranslationOption, WordSummary}
+import gathedge.shared.i18n.UiKeys
 import zio.test._
 
 /** The two rules a tick and a chip are made of, stated as tables.
@@ -49,6 +50,19 @@ object WordCollectSpec extends ZIOSpecDefault {
           !WordCollect.isTagged(Nil, None),
           // "No tag" chosen on purpose: nothing is ticked, even for a word filed under other tags.
           !WordCollect.isTagged(summary.tagIds, None, explicitNone = true),
+        )
+      },
+      // A reader with nothing to collect into — a signed-out visitor, or an account with no wordlist — sees where their
+      // first tick goes, not "No wordlist": that tick mints the default tag.
+      test("the select's empty entry names the default tag until the reader has a wordlist to collect into") {
+        val mine      = Tag(10L, "mine", 0L, ownedByMe = true, editableByMe = true)
+        val theirs    = Tag(11L, "theirs", 0L, ownedByMe = false, editableByMe = false)
+        // A global admin may write to every row, but a stranger's wordlist is still not a collect tag.
+        val adminSees = Tag(13L, "stranger", 0L, ownedByMe = false, editableByMe = true)
+        assertTrue(
+          WordCollect.emptyOptionLabel(Nil) == WordCollect.defaultTagName,
+          WordCollect.emptyOptionLabel(List(theirs, adminSees)) == WordCollect.defaultTagName,
+          WordCollect.emptyOptionLabel(List(theirs, mine)) == UiKeys.wordsCollectNone,
         )
       },
       test("a remembered tag this account cannot write to is dropped, not written against") {

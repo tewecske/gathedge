@@ -99,11 +99,11 @@ test('searching a plural form shows it as its own row, with the lemma alongside 
 });
 
 test('the collect bar is there for a visitor with no account yet, but the tag filter is not', async () => {
-  // The collect bar's hint is shown to everybody, so a first-time visitor sees where a tick files before their
-  // first tick mints an account. The select itself waits for a session; the tag *filter*, the "only mine" filter
-  // and the guest banner all still belong to an account.
-  await expect(page.getByText('Words you tick go into this wordlist.')).toBeVisible();
-  await expect(page.getByLabel('Collect into')).toHaveCount(0);
+  // The collect select is shown to everybody, so a first-time visitor sees where a tick files ("Default") before
+  // their first tick mints an account. The tag *filter*, the "only mine" filter and the guest banner all still
+  // belong to an account.
+  await expect(page.getByLabel('Collect into')).toHaveValue('');
+  await expect(page.getByLabel('Collect into').locator('option:checked')).toHaveText('Default');
   await expect(page.getByText('Only my words')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'You have data saved as a guest' })).toHaveCount(0);
 });
