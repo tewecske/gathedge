@@ -639,6 +639,18 @@ object WordServiceSpec extends ZIOSpecDefault {
             another.translations.count(_.word.text == "otthon") == 2,
           )
         },
+        test("a translation the dictionary already holds is a conflict, not a second edge") {
+          for {
+            burg   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Burg", gender = Some(Gender.Feminine)))
+            castle <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "vár"))
+            _      <- WordRepository.insertTranslationPair(burg.id, castle.id, WordService.dictionaryOrigin, None, 0L)
+            again  <- WordService.addTranslation(burg.id, NewTranslation(WordLanguage.Hu, "vár", None, None), 1L).either
+            edges  <- WordRepository.allTranslationsOf(burg.id)
+          } yield assertTrue(
+            again == Left(WordFailure.DuplicateTranslation),
+            edges.map(_._1.origin) == List(WordService.dictionaryOrigin),
+          )
+        },
         test("somebody else's tag answers the same as one that does not exist") {
           for {
             _      <- seed
@@ -3605,6 +3617,59 @@ object WordServiceSpec extends ZIOSpecDefault {
                         .tabularImport(tag.id, List(row("Haus", "ház")), WordLanguage.De, WordLanguage.Hu, 21L)
                         .either
           } yield assertTrue(result == Left(BulkUploadFailure.TagNotFound))
+        },
+        test("a pair the dictionary already links is reused, not written again as the reader's") {
+          for {
+            reich  <-
+              WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Königreich", gender = Some(Gender.Neuter)))
+            sag    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "királyság"))
+            _      <- WordRepository.insertTranslationPair(reich.id, sag.id, WordService.dictionaryOrigin, None, 0L)
+            tag    <- createTag("import22", 22L)
+            result <- WordService.tabularImport(
+                        tag.id,
+                        List(row("das Königreich", "királyság")),
+                        WordLanguage.De,
+                        WordLanguage.Hu,
+                        22L,
+                      )
+            edges  <- WordRepository.allTranslationsOf(reich.id)
+            rows   <- WordService.tagEntries(tag.id, Some(22L))
+          } yield assertTrue(
+            edges.map { case (edge, word) => (word.id, edge.origin) } == List(sag.id -> WordService.dictionaryOrigin),
+            rows.map(r => (r.source.id, r.target.map(_.id))) == List(reich.id -> Some(sag.id)),
+            result.newWords == 0,
+          )
+        },
+        test("a bare word on both sides finds the dictionary rows, and the one its partner already translates") {
+          // Neither cell says what part of speech it is, and `vár` is both a noun (castle) and a verb (to wait). The verb
+          // is the more frequent, so only the dictionary's own edge can pick the noun.
+          for {
+            castle <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "castle", rank = 300))
+            noun   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "vár", rank = 200))
+            _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "vár", PartOfSpeech.Verb, rank = 100))
+            _      <- WordRepository.insertTranslationPair(castle.id, noun.id, WordService.dictionaryOrigin, None, 0L)
+            tag    <- createTag("import25", 25L, WordLanguage.En, WordLanguage.Hu)
+            result <-
+              WordService.tabularImport(tag.id, List(row("castle", "vár")), WordLanguage.En, WordLanguage.Hu, 25L)
+            edges  <- WordRepository.allTranslationsOf(castle.id)
+            rows   <- WordService.tagEntries(tag.id, Some(25L))
+          } yield assertTrue(
+            rows.map(r => (r.source.id, r.target.map(_.id))) == List(castle.id -> Some(noun.id)),
+            edges.map { case (edge, word) => (word.id, edge.origin) } == List(noun.id -> WordService.dictionaryOrigin),
+            result.newWords == 0,
+          )
+        },
+        test("another reader's edge is not reused: the importer gets one of their own") {
+          // The other reader may delete theirs, and that must not leave this reader's pair without a translation.
+          val fuerst = row("Fürstentum", "fejedelemség")
+          for {
+            first  <- createTag("import23", 23L)
+            _      <- WordService.tabularImport(first.id, List(fuerst), WordLanguage.De, WordLanguage.Hu, 23L)
+            second <- createTag("import24", 24L)
+            _      <- WordService.tabularImport(second.id, List(fuerst), WordLanguage.De, WordLanguage.Hu, 24L)
+            rows   <- WordService.tagEntries(second.id, Some(24L))
+            edges  <- WordRepository.allTranslationsOf(rows.head.source.id)
+          } yield assertTrue(edges.map(_._1.createdBy).toSet == Set(Some(23L), Some(24L)))
         },
       ).provideShared(layer) @@ TestAspect.sequential,
     )

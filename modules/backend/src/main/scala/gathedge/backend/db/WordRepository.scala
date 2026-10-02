@@ -130,7 +130,10 @@ trait WordRepository {
   /** Removes an edge and its mirror, but only if `ownerId` typed it. Returns rows affected. */
   def deleteTranslationPair(id: Long, ownerId: Long): Task[Long]
 
-  def findTranslation(sourceWordId: Long, targetWordId: Long, createdBy: Option[Long]): Task[Option[WordTranslationRow]]
+  /** An edge from `sourceWordId` to `targetWordId` that `userId` can rely on: one with no author (the dictionary's, or
+    * a pivot) or one `userId` typed. Another reader's edge does not count, since that reader may delete it.
+    */
+  def findUsableTranslation(sourceWordId: Long, targetWordId: Long, userId: Long): Task[Option[WordTranslationRow]]
 
   /** Every tag in the system, not only `viewerId`'s own — tags are globally visible for filtering and copying, even
     * though only the owner may attach or detach words with one. Each row carries the count every account's writes
@@ -635,12 +638,12 @@ object WordRepository {
   def deleteTranslationPair(id: Long, ownerId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteTranslationPair(id, ownerId))
 
-  def findTranslation(
+  def findUsableTranslation(
     sourceWordId: Long,
     targetWordId: Long,
-    createdBy: Option[Long],
+    userId: Long,
   ): RIO[WordRepository, Option[WordTranslationRow]] =
-    ZIO.serviceWithZIO[WordRepository](_.findTranslation(sourceWordId, targetWordId, createdBy))
+    ZIO.serviceWithZIO[WordRepository](_.findUsableTranslation(sourceWordId, targetWordId, userId))
 
   def listTags(viewerId: Long): RIO[WordRepository, List[(TagRow, Long, Boolean)]] =
     ZIO.serviceWithZIO[WordRepository](_.listTags(viewerId))
@@ -1225,18 +1228,18 @@ final class WordRepositoryLive(dataSource: DataSource)
     }
   }
 
-  def findTranslation(
+  def findUsableTranslation(
     sourceWordId: Long,
     targetWordId: Long,
-    createdBy: Option[Long],
+    userId: Long,
   ): Task[Option[WordTranslationRow]] = {
     val q = quote(
       translations.filter(edge => {
         edge.sourceWordId == lift(sourceWordId) && edge.targetWordId == lift(targetWordId) &&
-        edge.createdBy == lift(createdBy)
+        (edge.createdBy.isEmpty || edge.createdBy.contains(lift(userId)))
       })
     )
-    logged(run(ctx.run(q)).map(_.headOption))(found => s"wordTranslations.find found=${found.isDefined}")
+    logged(run(ctx.run(q)).map(_.headOption))(found => s"wordTranslations.findUsable found=${found.isDefined}")
   }
 
   def insertTranslationPair(
