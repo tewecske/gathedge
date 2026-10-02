@@ -71,6 +71,18 @@ object WordDetailPage {
       .orElse(Some(listingTarget).filter(allowed.contains))
       .orElse(allowed.headOption)
   }
+
+  /** Each wordlist is a link to its own page, the way the game pages name theirs. */
+  private[pages] def renderTags(tags: List[Tag]): HtmlElement = {
+    if (tags.isEmpty)
+      p(cls := "text-sm opacity-60", I18n.t(UiKeys.wordDetailNoTags))
+    else {
+      div(
+        cls := "flex flex-wrap gap-2",
+        tags.map(tag => a(cls := "link", AppRouter.router.navigateTo(Page.TagDetail(tag.id)), tag.name)),
+      )
+    }
+  }
 }
 
 private class WordDetailPage(id: Long) {
@@ -356,7 +368,7 @@ private class WordDetailPage(id: Long) {
         // Shown only when this word is a lemma with forms of its own — see `dto.WordDetail.forms`.
         child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.word, detail.forms))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTags)),
-        renderTags(detail.tags),
+        WordDetailPage.renderTags(detail.tags),
       ),
     )
   }
@@ -542,13 +554,6 @@ private class WordDetailPage(id: Long) {
       } else
         emptyNode,
     )
-  }
-
-  private def renderTags(tags: List[Tag]): HtmlElement = {
-    if (tags.isEmpty)
-      p(cls   := "text-sm opacity-60", I18n.t(UiKeys.wordDetailNoTags))
-    else
-      div(cls := "flex flex-wrap gap-2", tags.map(tag => span(cls := "badge badge-primary badge-soft", tag.name)))
   }
 
   /** The only place a word gains a translation in a language the listing was not showing, so it names itself and its
