@@ -99,6 +99,23 @@ test('editing the target and pressing Enter saves it and leaves edit mode', asyn
   await expect(rowFor(src)).toContainText(newTgt);
 });
 
+// A reader who cannot edit sees only the words and the part of speech on a phone: no tick-box column, no icon
+// column, no badge column. An empty cell there still took width at the end of each row.
+test('a read-only reader on a phone gets no empty columns', async ({ browser }) => {
+  const src = `Editquelle${unique}`;
+  const other = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const reader = await other.newPage();
+  await reader.goto(page.url());
+  const row = reader.locator('tbody tr').filter({ hasText: src });
+  await expect(row).toBeVisible();
+  await expect(reader.getByText('You can view this wordlist but not change it.')).toBeVisible();
+
+  const widths = await row.locator('td').evaluateAll((cells) => cells.map((c) => c.getBoundingClientRect().width));
+  expect(widths.filter((w) => w > 0)).toHaveLength(3);
+  await expect(row.getByRole('button')).toHaveCount(0);
+  await other.close();
+});
+
 // The trash icon asks first: a delete is never one click. This confirms in the open dialog.
 const confirmRemove = async () => {
   await page.locator('.modal-open .modal-box').getByRole('button', { name: 'Remove', exact: true }).click();

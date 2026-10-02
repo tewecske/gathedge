@@ -430,9 +430,17 @@ private final class TagEditorPage(
   private val selectedVar = Var(Set.empty[(Long, Option[Long])])
 
   /** Whether multiselect is on: tick boxes instead of each row's edit and delete icons. */
-  private val selectingVar   = Var(false)
-  private val bulkDeleteOpen = Var(false)
-  private val bulkDeleteBus  = new EventBus[Unit]()
+  private val selectingVar = Var(false)
+
+  /** The tick-box column shows only while an editor selects; the icon column only while an editor does not. A reader
+    * who cannot edit gets neither, so an empty cell takes no width at either end of the row.
+    */
+  private val tickColumnHidden: Signal[Boolean]   =
+    canEditSignal.combineWith(selectingVar.signal).map { case (can, selecting) => !can || !selecting }
+  private val actionColumnHidden: Signal[Boolean] =
+    canEditSignal.combineWith(selectingVar.signal).map { case (can, selecting) => !can || selecting }
+  private val bulkDeleteOpen                      = Var(false)
+  private val bulkDeleteBus                       = new EventBus[Unit]()
 
   /** "Delete selected words" — a hard delete of `words` rows, not just untagging. Only selected rows the reader minted
     * (`createdByMe`) that this tag alone holds (`!inMyOtherTags`) qualify; the server re-checks and skips the rest.
@@ -1264,7 +1272,7 @@ private final class TagEditorPage(
               tr(
                 th(
                   cls  := "w-4",
-                  cls("hidden") <-- selectingVar.signal.map(!_),
+                  cls("hidden") <-- tickColumnHidden,
                   child.maybe <-- canEditSignal.map(
                     Option.when(_)(
                       input(
@@ -1283,7 +1291,7 @@ private final class TagEditorPage(
                 th(I18n.t(UiKeys.wordsColPos)),
                 // The pair's badges have a column only from `sm` up; a phone has no room for them.
                 th(cls := "hidden sm:table-cell", ""),
-                th(cls("hidden") <-- selectingVar.signal, ""),
+                th(cls("hidden") <-- actionColumnHidden, ""),
               )
             ),
             tbody(
@@ -1350,7 +1358,7 @@ private final class TagEditorPage(
     val cells      = List(
       td(
         cls := "w-4",
-        cls("hidden") <-- selectingVar.signal.map(!_),
+        cls("hidden") <-- tickColumnHidden,
         child.maybe <-- canEditSignal.map(
           Option.when(_)(
             input(
@@ -1380,7 +1388,7 @@ private final class TagEditorPage(
       ),
       td(
         // Multiselect puts the tick boxes where the icons were, so one row never offers both.
-        cls("hidden") <-- selectingVar.signal,
+        cls("hidden") <-- actionColumnHidden,
         child <-- Signal.combine(canEditSignal, isDeleting).map {
           case (false, _)    => span()
           case (true, true)  =>
