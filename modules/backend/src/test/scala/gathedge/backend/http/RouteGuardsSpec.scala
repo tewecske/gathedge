@@ -4,6 +4,7 @@ import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   StreakRepository,
+  AchievementRepository,
   AuditLogRepository,
   EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
@@ -23,6 +24,7 @@ import gathedge.backend.db.{
 import gathedge.backend.security.PasswordHasher
 import gathedge.backend.service.{
   StreakService,
+  AchievementService,
   AdminActor,
   AdminService,
   AuditTrail,
@@ -60,7 +62,8 @@ object RouteGuardsSpec extends ZIOSpecDefault {
         OAuthIdentityRepository.live ++ EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++
         LoginAttemptRepository.live ++ GuestClaimCodeRepository.live ++ AuditLogRepository.live ++
         UsageEventRepository.live ++ MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++
-        GroupRepository.live ++ ProgressShareRepository.live ++ StreakRepository.live
+        GroupRepository.live ++ ProgressShareRepository.live ++ StreakRepository.live ++
+        AchievementRepository.live
     )
   }
 
@@ -73,7 +76,7 @@ object RouteGuardsSpec extends ZIOSpecDefault {
       repoLayers ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
         GameWordList.live ++ TestAuthLayers.emailAndConfig ++ ((AppConfig.live ++ Client.default) >>> OAuthClients.live)
     }
-    base >+> (AuthService.live ++ AuditTrail.live ++ GameService.live ++ ProgressShareService.live ++ StreakService.live) >+>
+    base >+> (AuthService.live ++ AuditTrail.live ++ GameService.live ++ ProgressShareService.live ++ StreakService.live ++ AchievementService.live) >+>
       (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
   }
 

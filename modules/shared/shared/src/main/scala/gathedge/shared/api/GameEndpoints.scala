@@ -4,7 +4,6 @@ import gathedge.shared.domain.{GameRef, Tag}
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
-  GameAnswerResult,
   GameCreated,
   GameDetail,
   GamePlayDetail,
@@ -17,6 +16,7 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   StartPlayRequest,
   SubmitAnswerRequest,
+  SubmitAnswerResponse,
 }
 import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -268,13 +268,14 @@ object GameEndpoints {
   /** Scores one answer and answers with that one row, so the player is told at once whether it was right and what the
     * game would have accepted — see `GameService.submitAnswer`. The row is the same [[GameAnswerResult]] the finished
     * play's [[results]] table carries, built by the same code, so the two can never disagree. The running score stays
-    * out of it: a player still learns their total only when the play ends.
+    * out of it: a player still learns their total only when the play ends. The answer that finishes the play also
+    * carries the achievement tiers it unlocked (see `AchievementService.evaluate`).
     */
   val submitAnswer = {
     Endpoint(ApiRoutes.route1(paths.submitAnswer, PathCodec.long))
       .in[SubmitAnswerRequest]
       .withCodecError
-      .out[GameAnswerResult]
+      .out[SubmitAnswerResponse]
       .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound)
   }
 

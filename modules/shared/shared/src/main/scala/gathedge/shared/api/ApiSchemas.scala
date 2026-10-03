@@ -75,6 +75,10 @@ import gathedge.shared.dto.{
   DuplicateGameGroup,
   ForgotPasswordRequest,
   GameAnswerResult,
+  AchievementProgress,
+  AchievementsResponse,
+  AchievementUnlock,
+  SubmitAnswerResponse,
   GameCreated,
   GameDetail,
   GamePlayDetail,
@@ -185,6 +189,11 @@ object ApiSchemas {
   given Schema[Theme]          = DeriveSchema.gen[Theme]
   given Schema[StreakState]    = DeriveSchema.gen[StreakState]
   given Schema[StreakResponse] = DeriveSchema.gen[StreakResponse]
+
+  given Schema[AchievementProgress]  = DeriveSchema.gen[AchievementProgress]
+  given Schema[AchievementsResponse] = DeriveSchema.gen[AchievementsResponse]
+  given Schema[AchievementUnlock]    = DeriveSchema.gen[AchievementUnlock]
+
   given Schema[Locale]         = DeriveSchema.gen[Locale]
   given Schema[OAuthProvider]  = DeriveSchema.gen[OAuthProvider]
   given Schema[WordLanguage]   = DeriveSchema.gen[WordLanguage]
@@ -321,28 +330,29 @@ object ApiSchemas {
   given Schema[SystemOverview] = DeriveSchema.gen[SystemOverview]
   given Schema[PruneResult]    = DeriveSchema.gen[PruneResult]
 
-  given Schema[GameTagRef]          = DeriveSchema.gen[GameTagRef]
-  given Schema[DuplicateGame]       = DeriveSchema.gen[DuplicateGame]
-  given Schema[DuplicateGameGroup]  = DeriveSchema.gen[DuplicateGameGroup]
-  given Schema[GameDetail]          = DeriveSchema.gen[GameDetail]
-  given Schema[GameCreated]         = DeriveSchema.gen[GameCreated]
-  given Schema[CreateGameRequest]   = DeriveSchema.gen[CreateGameRequest]
-  given Schema[RenameGameRequest]   = DeriveSchema.gen[RenameGameRequest]
-  given Schema[StartPlayRequest]    = DeriveSchema.gen[StartPlayRequest]
-  given Schema[GameVariantDto]      = DeriveSchema.gen[GameVariantDto]
-  given Schema[PlayStarted]         = DeriveSchema.gen[PlayStarted]
-  given Schema[GamePrompt]          = DeriveSchema.gen[GamePrompt]
-  given Schema[SubmitAnswerRequest] = DeriveSchema.gen[SubmitAnswerRequest]
-  given Schema[GameAnswerResult]    = DeriveSchema.gen[GameAnswerResult]
-  given Schema[GameResults]         = DeriveSchema.gen[GameResults]
-  given Schema[GameSetupWord]       = DeriveSchema.gen[GameSetupWord]
-  given Schema[AllGameSummary]      = DeriveSchema.gen[AllGameSummary]
-  given Schema[AllGamePage]         = DeriveSchema.gen[AllGamePage]
-  given Schema[GamePlaySummary]     = DeriveSchema.gen[GamePlaySummary]
-  given Schema[GamePlayPage]        = DeriveSchema.gen[GamePlayPage]
-  given Schema[GamePlayDetail]      = DeriveSchema.gen[GamePlayDetail]
-  given Schema[MyPlaySummary]       = DeriveSchema.gen[MyPlaySummary]
-  given Schema[MyPlayPage]          = DeriveSchema.gen[MyPlayPage]
+  given Schema[GameTagRef]           = DeriveSchema.gen[GameTagRef]
+  given Schema[DuplicateGame]        = DeriveSchema.gen[DuplicateGame]
+  given Schema[DuplicateGameGroup]   = DeriveSchema.gen[DuplicateGameGroup]
+  given Schema[GameDetail]           = DeriveSchema.gen[GameDetail]
+  given Schema[GameCreated]          = DeriveSchema.gen[GameCreated]
+  given Schema[CreateGameRequest]    = DeriveSchema.gen[CreateGameRequest]
+  given Schema[RenameGameRequest]    = DeriveSchema.gen[RenameGameRequest]
+  given Schema[StartPlayRequest]     = DeriveSchema.gen[StartPlayRequest]
+  given Schema[GameVariantDto]       = DeriveSchema.gen[GameVariantDto]
+  given Schema[PlayStarted]          = DeriveSchema.gen[PlayStarted]
+  given Schema[GamePrompt]           = DeriveSchema.gen[GamePrompt]
+  given Schema[SubmitAnswerRequest]  = DeriveSchema.gen[SubmitAnswerRequest]
+  given Schema[GameAnswerResult]     = DeriveSchema.gen[GameAnswerResult]
+  given Schema[SubmitAnswerResponse] = DeriveSchema.gen[SubmitAnswerResponse]
+  given Schema[GameResults]          = DeriveSchema.gen[GameResults]
+  given Schema[GameSetupWord]        = DeriveSchema.gen[GameSetupWord]
+  given Schema[AllGameSummary]       = DeriveSchema.gen[AllGameSummary]
+  given Schema[AllGamePage]          = DeriveSchema.gen[AllGamePage]
+  given Schema[GamePlaySummary]      = DeriveSchema.gen[GamePlaySummary]
+  given Schema[GamePlayPage]         = DeriveSchema.gen[GamePlayPage]
+  given Schema[GamePlayDetail]       = DeriveSchema.gen[GamePlayDetail]
+  given Schema[MyPlaySummary]        = DeriveSchema.gen[MyPlaySummary]
+  given Schema[MyPlayPage]           = DeriveSchema.gen[MyPlayPage]
 
   given Schema[ShareCodeResponse]  = DeriveSchema.gen[ShareCodeResponse]
   given Schema[RedeemShareRequest] = DeriveSchema.gen[RedeemShareRequest]
