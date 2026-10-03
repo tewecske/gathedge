@@ -57,6 +57,15 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.deserialize(AppRouter.serialize(page)) == page,
         )
       },
+      test("the achievements tab has its own route under the profile, for a signed-in reader only") {
+        val page = Page.ProfileAchievements
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(page) == s"$prefix/profile/achievements",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/profile/achievements").contains(page),
+          AppRouter.deserialize(AppRouter.serialize(page)) == page,
+          Page.guardFor(page) == Page.AuthGuard.RequireAuth,
+        )
+      },
       test("the forgot-password route builds under the language prefix too") {
         assertTrue(AppRouter.router.relativeUrlForPage(Page.ForgotPassword) == s"$prefix/forgot-password")
       },

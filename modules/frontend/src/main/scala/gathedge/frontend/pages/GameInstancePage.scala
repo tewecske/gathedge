@@ -651,8 +651,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       ),
       select(
         cls := "select select-sm w-full max-w-xs",
-        option(value := "typing", I18n.t(UiKeys.gameInstanceModeTyping)),
-        option(value := "multipleChoice", I18n.t(UiKeys.gameInstanceModeMultipleChoice)),
+        GameMode.all.map(mode => option(value := GameMode.code(mode), Labels.gameMode(mode))),
         controlled(
           value <-- gameModeVar.signal.map(GameMode.code),
           onChange.mapToValue --> gameModeVar.writer.contramap[String](code =>

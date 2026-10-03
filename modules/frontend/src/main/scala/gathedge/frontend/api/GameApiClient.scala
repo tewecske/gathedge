@@ -6,7 +6,6 @@ import gathedge.shared.domain.{GameMode, GameRef, Tag, WordLanguage, WordPrefere
 import gathedge.shared.dto.{
   AllGamePage,
   CreateGameRequest,
-  GameAnswerResult,
   GameCreated,
   GameDetail,
   GamePlayDetail,
@@ -128,12 +127,17 @@ object GameApiClient {
   }
 
   /** Answers with the graded row, which is what the play loop shows the player before it moves on. The answer that
-    * finishes a play also carries the achievement tiers it unlocked; the play loop does not show them yet.
+    * finishes a play also carries the achievement tiers it unlocked, which the results screen shows.
     */
-  def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, GameAnswerResult]] = {
-    HttpClient
-      .call[SubmitAnswerResponse](GamePaths.submitAnswer(playId), Some(SubmitAnswerRequest(wordId, answerText).toJson))
-      .map(_.map(_.result))
+  def submitAnswer(
+    playId: Long,
+    wordId: Long,
+    answerText: String,
+  ): EventStream[Either[ApiError, SubmitAnswerResponse]] = {
+    HttpClient.call[SubmitAnswerResponse](
+      GamePaths.submitAnswer(playId),
+      Some(SubmitAnswerRequest(wordId, answerText).toJson),
+    )
   }
 
   /** The finished play's score, full answer history, and the variant it ran under. */
