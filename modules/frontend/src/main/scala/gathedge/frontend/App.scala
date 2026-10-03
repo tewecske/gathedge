@@ -29,6 +29,7 @@ import gathedge.frontend.pages.{
   NotFoundPage,
   ResetPasswordPage,
   ProfilePage,
+  AchievementsPage,
   SettingsPage,
   SharedPlayerHistoryPage,
   TagCreatePage,
@@ -499,6 +500,8 @@ object App {
         SettingsPage.render()
       case Page.Profile                                   =>
         ProfilePage.render()
+      case Page.ProfileAchievements                       =>
+        AchievementsPage.render()
       case Page.TagCreate                                 =>
         TagCreatePage.render()
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as

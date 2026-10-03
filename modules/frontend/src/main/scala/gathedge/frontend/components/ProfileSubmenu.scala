@@ -5,8 +5,8 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.shared.i18n.UiKeys
 
-/** Sub-navigation across the profile's three tabs: the daily streak, the play history and the accounts that share their
-  * progress with the reader.
+/** Sub-navigation across the profile's four tabs: the daily streak, the achievements, the play history and the accounts
+  * that share their progress with the reader.
   *
   * Built like `AdminSubmenu`. `Page.SharedPlayerHistory` counts as the "Shared with me" tab: it is reached from that
   * list and returns to it.
@@ -30,6 +30,7 @@ object ProfileSubmenu {
       cls := "tabs tabs-boxed mb-4 w-fit",
       // Each tab links to its screen's default view — the plain path, with no listing state on it.
       tabLink(Page.Profile, I18n.t(UiKeys.profileStreakCard), active == Page.Profile),
+      tabLink(Page.ProfileAchievements, I18n.t(UiKeys.profileTabAchievements), active == Page.ProfileAchievements),
       tabLink(Page.MyPlays(), I18n.t(UiKeys.profileTabHistory), isHistoryTab(active)),
       tabLink(Page.SharedProgress, I18n.t(UiKeys.profileTabShared), isSharedTab(active)),
     )
