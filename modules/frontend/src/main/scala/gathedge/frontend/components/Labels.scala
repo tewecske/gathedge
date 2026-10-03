@@ -2,6 +2,8 @@ package gathedge.frontend.components
 
 import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{
+  Achievement,
+  Achievements,
   AnswerOutcome,
   GameMode,
   GrammarCategory,
@@ -203,14 +205,41 @@ object Labels {
   }
 
   /** The picker's own worded option text for the play mode, reused on every results screen so a play states how it was
-    * answered — typed, or clicked. Matched exhaustively, like [[wordPreference]].
+    * answered — typed, or clicked. The key comes from the mode's code (see `UiKeys.gameMode`), so a new game type needs
+    * only its catalog line.
     */
-  def gameMode(mode: GameMode): String = {
-    mode match {
-      case GameMode.Typing         =>
-        I18n.t(UiKeys.gameInstanceModeTyping)
-      case GameMode.MultipleChoice =>
-        I18n.t(UiKeys.gameInstanceModeMultipleChoice)
+  def gameMode(mode: GameMode): String = I18n.t(UiKeys.gameMode(mode))
+
+  /** The name of an achievement. A per-game-type entry fills one shared name with the game type's label. */
+  def achievementName(achievement: Achievement): String = {
+    achievement.mode match {
+      case Some(mode) =>
+        I18n.t(UiKeys.achievementsGamesPlayedInName, gameMode(mode))
+      case None       =>
+        I18n.t(UiKeys.achievementName(achievement.code))
+    }
+  }
+
+  /** One sentence that says what an achievement counts, with the numbers its rule uses. */
+  def achievementHint(achievement: Achievement): String = {
+    achievement.mode match {
+      case Some(mode) =>
+        I18n.t(UiKeys.achievementsGamesPlayedInHint, Achievements.qualifyingWordCount, gameMode(mode))
+      case None       =>
+        I18n.t(UiKeys.achievementHint(achievement.code), achievementHintArgs(achievement)*)
+    }
+  }
+
+  /** The streak and the play days count every finished play, so their hints name no word count. */
+  private def achievementHintArgs(achievement: Achievement): List[Int] = {
+    if (achievement == Achievements.marathon) {
+      List(Achievements.marathonWordCount)
+    } else if (achievement == Achievements.polyglot) {
+      List(Achievements.polyglotPlaysPerPair, Achievements.qualifyingWordCount)
+    } else if (achievement == Achievements.longestStreak || achievement == Achievements.daysPlayed) {
+      Nil
+    } else {
+      List(Achievements.qualifyingWordCount)
     }
   }
 

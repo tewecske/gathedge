@@ -3,10 +3,11 @@ package gathedge.frontend.api
 import com.raquo.laminar.api.L._
 import gathedge.frontend.i18n.CurrentLocale
 import gathedge.frontend.state.AppState
-import gathedge.shared.api.{AuthPaths, StreakPaths}
+import gathedge.shared.api.{AchievementPaths, AuthPaths, StreakPaths}
 import gathedge.shared.domain.{Locale, OAuthProvider, Theme}
 import gathedge.shared.domain.Locale.code
 import gathedge.shared.dto.{
+  AchievementsResponse,
   AuthResponse,
   StreakResponse,
   CaptchaStatusResponse,
@@ -88,6 +89,11 @@ object ApiClient {
   /** The signed-in account's daily play streak. */
   def streak: EventStream[Either[ApiError, StreakResponse]] = {
     HttpClient.call[StreakResponse](StreakPaths.streak())
+  }
+
+  /** Every achievement of the catalog, with the signed-in account's tier and count on each. */
+  def achievements: EventStream[Either[ApiError, AchievementsResponse]] = {
+    HttpClient.call[AchievementsResponse](AchievementPaths.achievements())
   }
 
   def updateTheme(theme: Theme): EventStream[Either[ApiError, AuthResponse]] = {

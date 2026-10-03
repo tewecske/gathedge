@@ -1,5 +1,7 @@
 package gathedge.shared.i18n
 
+import gathedge.shared.domain.{Achievements, GameMode}
+
 import scala.collection.mutable
 
 /** Every catalog key the *browser* renders as page copy, as a constant.
@@ -268,6 +270,36 @@ object UiKeys {
   val profileActiveHint: String = key("ui.profile.activeHint")
   val profileTabHistory: String = key("ui.profile.tabHistory")
   val profileTabShared: String  = key("ui.profile.tabShared")
+
+  // -- Achievements ----------------------------------------------------------------------------
+  // The name and the hint of each achievement are derived from its code, so a new entry of
+  // `Achievements.all` needs only its catalog lines. The per-game-type entries share one name and
+  // one hint, filled with the game type's own label, so a new game type needs only that label.
+
+  val profileTabAchievements: String        = key("ui.profile.tabAchievements")
+  val achievementsIntro: String             = key("ui.achievements.intro")
+  val achievementsNotStarted: String        = key("ui.achievements.notStarted")
+  val achievementsTier: String              = key("ui.achievements.tier")
+  val achievementsProgress: String          = key("ui.achievements.progress")
+  val achievementsDone: String              = key("ui.achievements.done")
+  val achievementsDoneOn: String            = key("ui.achievements.doneOn")
+  val achievementsNotDone: String           = key("ui.achievements.notDone")
+  val achievementsGamesPlayedInName: String = key("ui.achievements.gamesPlayedIn.name")
+  val achievementsGamesPlayedInHint: String = key("ui.achievements.gamesPlayedIn.hint")
+  val achievementsUnlockedTitle: String     = key("ui.achievements.unlockedTitle")
+  val achievementsUnlockedTier: String      = key("ui.achievements.unlockedTier")
+  val achievementsViewAll: String           = key("ui.achievements.viewAll")
+
+  /** The name of an achievement that is not per game type. */
+  def achievementName(code: String): String = s"ui.achievements.$code.name"
+
+  /** One sentence that says what an achievement that is not per game type counts. */
+  def achievementHint(code: String): String = s"ui.achievements.$code.hint"
+
+  Achievements.all.filter(_.mode.isEmpty).foreach { achievement =>
+    key(achievementName(achievement.code))
+    key(achievementHint(achievement.code))
+  }
 
   // -- Account settings ------------------------------------------------------------------------
 
@@ -1400,9 +1432,14 @@ object UiKeys {
   val gameInstancePreferenceLeastPlayed: String  = key("ui.gameInstance.preference.leastPlayed")
   val gameInstancePreferenceMostMistakes: String = key("ui.gameInstance.preference.mostMistakes")
 
-  val gameInstanceModeLabel: String          = key("ui.gameInstance.mode.label")
-  val gameInstanceModeTyping: String         = key("ui.gameInstance.mode.typing")
-  val gameInstanceModeMultipleChoice: String = key("ui.gameInstance.mode.multipleChoice")
+  val gameInstanceModeLabel: String = key("ui.gameInstance.mode.label")
+
+  /** The label of a game type: the picker's option, the results screen's variant line, and the per-game-type
+    * achievements. Derived from `GameMode.code`, so a new game type needs only its catalog line.
+    */
+  def gameMode(mode: GameMode): String = s"ui.gameInstance.mode.${GameMode.code(mode)}"
+
+  GameMode.all.foreach(mode => key(gameMode(mode)))
 
   val gameInstanceProgress: String          = key("ui.gameInstance.progress")
   val gameInstanceAnswerLabel: String       = key("ui.gameInstance.answerLabel")
