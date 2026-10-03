@@ -19,6 +19,7 @@ import gathedge.shared.dto.{
   RenameGameRequest,
   StartPlayRequest,
   SubmitAnswerRequest,
+  SubmitAnswerResponse,
 }
 import zio.json._
 
@@ -126,10 +127,13 @@ object GameApiClient {
     HttpClient.call[GamePrompt](GamePaths.nextPrompt(playId))
   }
 
-  /** Answers with the graded row, which is what the play loop shows the player before it moves on. */
+  /** Answers with the graded row, which is what the play loop shows the player before it moves on. The answer that
+    * finishes a play also carries the achievement tiers it unlocked; the play loop does not show them yet.
+    */
   def submitAnswer(playId: Long, wordId: Long, answerText: String): EventStream[Either[ApiError, GameAnswerResult]] = {
     HttpClient
-      .call[GameAnswerResult](GamePaths.submitAnswer(playId), Some(SubmitAnswerRequest(wordId, answerText).toJson))
+      .call[SubmitAnswerResponse](GamePaths.submitAnswer(playId), Some(SubmitAnswerRequest(wordId, answerText).toJson))
+      .map(_.map(_.result))
   }
 
   /** The finished play's score, full answer history, and the variant it ran under. */

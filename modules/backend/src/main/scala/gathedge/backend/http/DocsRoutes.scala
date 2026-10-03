@@ -4,6 +4,7 @@ import gathedge.backend.security.SessionAuth
 import gathedge.backend.config.AppConfig
 import gathedge.shared.Branding
 import gathedge.shared.api.{
+  AchievementEndpoints,
   AdminEndpoints,
   AuthEndpoints,
   GameEndpoints,
@@ -34,7 +35,8 @@ object DocsRoutes {
 
   private val allEndpoints = {
     AuthEndpoints.all ++ WordEndpoints.all ++ AdminEndpoints.all ++ GameEndpoints.all ++
-      ProgressShareEndpoints.all ++ GroupEndpoints.all ++ StreakEndpoints.all
+      ProgressShareEndpoints.all ++ GroupEndpoints.all ++ StreakEndpoints.all ++
+      AchievementEndpoints.all
   }
 
   /** The endpoints reachable without a session, i.e. the ones whose `Routes` value in this package does *not* carry the

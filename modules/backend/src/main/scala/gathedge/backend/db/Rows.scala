@@ -480,3 +480,8 @@ final case class UserStreakRow(
   lastPlayDay: Long,
   updatedAt: Long,
 )
+
+/** One achievement tier one account unlocked. `code` names an entry of [[gathedge.shared.domain.Achievements.all]];
+  * `tier` counts from 1. `unlockedAt` is epoch millis.
+  */
+final case class UserAchievementRow(userId: Long, code: String, tier: Int, unlockedAt: Long)

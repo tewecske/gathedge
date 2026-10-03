@@ -1,9 +1,10 @@
 package gathedge.backend.http
 
-import gathedge.backend.service.{AuthService, GameService, StreakService}
+import gathedge.backend.service.{AchievementService, AuthService, GameService, StreakService}
 import gathedge.shared.api.GameEndpoints
 import gathedge.shared.domain.{User, WordLanguage, WordPreference}
 import gathedge.shared.dto.{
+  AchievementUnlock,
   CreateGameRequest,
   GameCreated,
   Paging,
@@ -11,6 +12,7 @@ import gathedge.shared.dto.{
   SortDirection,
   StartPlayRequest,
   SubmitAnswerRequest,
+  SubmitAnswerResponse,
 }
 import zio.*
 import zio.http.*
@@ -250,6 +252,31 @@ object GameRoutes {
     )
   }
 
+  /** What a finished play earns: the daily streak first, then the achievements, which read the streak. Only a finished
+    * play counts, and the last answer is what finishes it. A failure in any step is logged and never fails the answer;
+    * it only costs the unlocks this answer would have shown.
+    */
+  private def afterAnswer(
+    playId: Long,
+    userId: Long,
+  ): URIO[GameService & StreakService & AchievementService, List[AchievementUnlock]] = {
+    GameService
+      .isPlayFinished(playId, userId)
+      .orElseSucceed(false)
+      .flatMap { finished =>
+        if (!finished) {
+          ZIO.succeed(Nil)
+        } else {
+          StreakService
+            .recordPlay(userId)
+            .catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause)) *>
+            AchievementService
+              .evaluate(userId)
+              .catchAllCause(cause => ZIO.logWarningCause("achievement evaluation failed", cause).as(Nil))
+        }
+      }
+  }
+
   private val submitAnswerRoute = {
     GameEndpoints.submitAnswer.implementHandler(
       handler { (playId: Long, body: SubmitAnswerRequest) =>
@@ -257,15 +284,7 @@ object GameRoutes {
           GameService
             .submitAnswer(playId, body.wordId, body.answerText, id)
             .mapError(ApiFailures.gamePlay)
-            // Only a finished play keeps the streak, and the last answer is what finishes it. A failure in either
-            // step must never fail the answer.
-            .tap(_ => {
-              (GameService
-                .isPlayFinished(playId, id)
-                .orElseSucceed(false)
-                .flatMap(finished => ZIO.when(finished)(StreakService.recordPlay(id))))
-                .catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause))
-            })
+            .flatMap(result => afterAnswer(playId, id).map(unlocked => SubmitAnswerResponse(result, unlocked)))
         })
       }
     )
@@ -338,7 +357,7 @@ object GameRoutes {
     ) @@ RouteSupport.authenticated
   }
 
-  val routes: Routes[AuthService & GameService & StreakService, Response] = {
+  val routes: Routes[AuthService & GameService & StreakService & AchievementService, Response] = {
     (publicRoutes ++ sessionRoutes) @@ RouteSupport.csrf
   }
 }
