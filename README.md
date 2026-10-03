@@ -38,18 +38,189 @@ translations says *that* is the answer you want to be asked for, which is what t
 will check against. Several translations may be marked for one word, and the one you mark joins the
 tag as a word in its own right, so the pair works in both directions.
 
-The dictionary is imported rather than typed. Load the committed sample once, and the dev stack has
+The dictionary is imported rather than typed. Build and load the sample once, and the dev stack has
 real words in it:
 
 ```
 sbt "backend/runMain gathedge.backend.tools.DictionaryImport --seed"
 ```
 
-The real thing is a 2.6 GB wiktextract dump of the English Wiktionary, turned into a few-megabyte
-seed file by `./scripts/build-dictionary-seed.sh` — a server is given that, never the dump. See
-[`data/dictionary/README.md`](data/dictionary/README.md) for both, for the frequency lists that
-decide search ranking, and for how German–Hungarian translations are derived (no free source states
-them directly). Word data is **CC BY-SA 4.0**, which the word list attributes on screen.
+The real thing is a 2.6 GB wiktextract dump of the English Wiktionary. `./scripts/build-dictionary-seed.sh`
+turns it into a seed file of a few dozen megabytes, and a server gets that file, never the dump.
+[Dictionary data](#dictionary-data) covers both, the frequency lists that decide search ranking, and how
+German–Hungarian translations are derived (no free source states them directly). Word data is
+**CC BY-SA 4.0**, which the word list attributes on screen.
+
+## Dictionary data
+
+The vocabulary feature browses a shared dictionary of English, German, Spanish and Hungarian words. Each word has a
+part of speech. German and Spanish nouns also have a gender. Nothing in the application writes these rows: they are
+imported. All files below live under `data/`, which is git-ignored.
+
+### The sample
+
+`data/dictionary/seed.tsv` is the commonest 2000 words per language, with their translation pairs and their
+inflected forms (see [Word forms](#word-forms)). The dev stack, the e2e suite and `DictionaryImportSpec` run on it,
+so nobody has to download 2.6 GB to see the feature work. It is not committed: build it once with the `--limit 2000`
+export under [Building a seed](#building-a-seed). Then load it:
+
+```
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --seed"
+```
+
+The import is idempotent. A second run inserts nothing, so it is safe to run again after a `docker compose down -v`.
+
+`./scripts/import-dictionary-dev.sh` is the same command with the dev stack's wiring around it. It starts the
+compose Postgres if it is down, reads `.env` (`sbt runMain` does not; only `reStart` does), points the connection at
+`localhost` rather than the compose network's `postgres` host, and reports the row counts. With no argument it loads
+the newest seed under `target/dictionary`, or the sample if there is none.
+
+### The source
+
+The source is the English Wiktionary, extracted by [wiktextract](https://github.com/tatuylonen/wiktextract) and
+published as one JSON object per line at
+[`https://kaikki.org/dictionary/raw-wiktextract-data.jsonl.gz`](https://kaikki.org/dictionary/raw-wiktextract-data.jsonl.gz).
+
+**The download is 2.6 GB.** The often-quoted 22.9 GB is the uncompressed size, and nothing here needs it: the
+importer streams the `.gz`. The dump is large because it holds every language the English Wiktionary covers (about a
+thousand), and each entry carries etymology, pronunciations, inflection tables, examples and categories.
+`WiktextractParser` reads six fields. Every inflected form also has an entry of its own, which `isLemma` drops. The
+four languages here are a few per cent of the dump. The per-language extracts kaikki also publishes do not help:
+they are uncompressed, they total more than the whole dump gzipped, and they are marked for removal.
+
+### Frequency lists
+
+The frequency lists decide two things: which words a `--limit` keeps, and the order of search matches. `hau` should
+offer `Haus` before `Haubitze`, and only corpus frequency knows that. They live in `data/frequency/`.
+`build-dictionary-seed.sh` fetches them. To fetch them by hand:
+
+```
+BASE=https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018
+for lang in en de es hu; do curl -o data/frequency/${lang}_50k.txt $BASE/$lang/${lang}_50k.txt; done
+```
+
+Each line is a `word count` pair, commonest first. The importer reads the line number as the rank and ignores the
+count. A missing file is not an error: that language is imported unranked, with a warning. Source:
+[hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords), built from OpenSubtitles, CC BY-SA 4.0.
+
+### Building a seed
+
+```
+./scripts/build-dictionary-seed.sh --limit 20000
+```
+
+The script fetches the frequency lists and the dump, cuts the dump into shards, and writes
+`target/dictionary/seed-20000.tsv.gz`. The dump is cached at `data/dictionary/raw-wiktextract-data.jsonl.gz`. The
+download resumes, and it is skipped when the dump or current shards are already there. `--drop-dump` deletes the
+dump afterwards. The shards stay, so a later run at a different `--limit` needs neither the dump nor a download.
+
+`--limit` is per language and counts against the frequency lists: it means "the commonest N words". A vocabulary
+trainer wants that, because the tail of Wiktionary is mostly technical terms and archaisms. A word outside the cut
+is still kept when a word inside it translates to it. A word with no frequency entry is unranked, and only
+`--limit 999999999` keeps unranked words. That limit keeps the whole dictionary.
+
+| `--limit` | Words (most are forms) | Translation pairs | Seed, gzipped | Export time |
+|---|---|---|---|---|
+| 20000 | 1.8 million | 147k | 23 MB | 2 min |
+| 999999999 (everything) | 5.0 million | 269k | 59 MB | 3 min |
+
+#### Shards
+
+The export reads shards, not the dump. `--extract` cuts the dump into one gzipped file per language in
+`data/dictionary/shards/`. A shard holds the lines whose entry is in that language. The four shards are about
+585 MB, 406 MB of it English, and cutting them takes about four minutes. The script cuts a shard again when it is
+missing or older than the dump, and leaves the others alone. So a new language costs one pass of the dump, and
+every later export skips it.
+
+#### Memory
+
+English is the hub. Every translation pair comes from an English entry's translation table. A word's forms,
+recordings and homographs never leave its own language. So the export runs in two passes:
+
+1. Read every shard for words and pairs only. Keep the words inside the frequency cut and the pairs with an end
+   inside it. A word's rank is its text's line in the frequency list, so the cut is made line by line, and the
+   long tail is never held.
+2. For each language in turn, read its shard for forms and recordings. Keep those of the words pass 1 kept, dedupe
+   the language's homographs, write its lines and let them go.
+
+The pairs are written last. Only the pairs and one language's share are in memory at once. At `--limit 20000` the
+export runs in a 2 GB heap. The uncut export needs about 4 GB, since every lemma is kept. A new language adds its own
+share to the time, not to the peak.
+
+#### By hand
+
+```
+# cut the shards; no database involved, so nothing need be running
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --raw data/dictionary/raw-wiktextract-data.jsonl.gz \
+       --extract data/dictionary/shards"
+
+# one language only, e.g. after adding it
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --raw data/dictionary/raw-wiktextract-data.jsonl.gz \
+       --extract data/dictionary/shards --languages es"
+
+# a seed file from the shards; this is how the sample is built
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --shards data/dictionary/shards \
+       --limit 2000 --frequencies data/frequency --export data/dictionary/seed.tsv"
+
+# or straight into the database this machine is configured for
+sbt "backend/runMain gathedge.backend.tools.DictionaryImport --shards data/dictionary/shards \
+       --limit 50000 --frequencies data/frequency"
+```
+
+`--raw <dump>` in place of `--shards <dir>` also works, but it reads the whole dump once per pass. Without
+`--export`, the import writes a temporary seed and streams it into the database, the way a deployment loads one.
+
+### Loading a deployment
+
+A server needs neither the dump nor a checkout. It needs the seed the export produced. `nix/scala.nix` installs
+`gathedge-dictionary-import` beside the backend for this: the same staged classpath, started at `DictionaryImport`.
+
+```
+scp target/dictionary/seed-20000.tsv.gz <host>:/tmp/
+
+# on the host: DB_URL and DB_USER as nix/module.nix sets them, DB_PASSWORD from the environment file
+sudo sh -c 'set -a; . /var/lib/secrets/gathedge.env; set +a
+  DB_URL=jdbc:postgresql://127.0.0.1:5432/gathedge DB_USER=gathedge \
+  gathedge-dictionary-import --seed /tmp/seed-20000.tsv.gz'
+```
+
+`--seed` takes an optional path. A bare `--seed` means the sample, which only a checkout has. The importer runs the
+Flyway migration itself and is idempotent. So it is safe against a live database, and a later run with a bigger seed
+inserts only the difference. The load streams the seed in under 1 GB of memory. The uncut seed takes about 40
+minutes.
+
+The seed carries the words and the translation pairs the dictionary *asserts*. The pivoted pairs are not in the
+file: the importer derives them again from those pairs as it stores. That is most of why the file is small.
+
+### Pivoted translations
+
+No free source states German–Hungarian translations directly. The English Wiktionary's translation tables are
+English→other, WikDict has no Hungarian, and neither FreeDict nor PONS covers the pair. So the importer derives
+them: two translations of the same English *sense* are translations of each other. This joins every pair of
+non-English languages (German–Hungarian, German–Spanish, Spanish–Hungarian). These rows have
+`origin = 'pivot'`, so a screen can tell them apart from what the dictionary asserts.
+
+### Word forms
+
+Each entry in the dump has its own `forms[]` array: plurals, verb tenses and participles, and declension and
+conjugation tables. `WiktextractParser.formsOf` decodes it and drops template scaffolding and the dump's "no such
+form" placeholder. The importer stores each form as its own `words` row, linked to its lemma in `word_forms` with
+a relation tag (`plural`, `dative,definite,plural`, ...).
+
+A word's forms are imported whenever the word itself gets a `words` row: because it made the frequency cut, or
+because a translation pair names it. Forms have no limit of their own. German, Spanish and Hungarian nouns and verbs
+can have dozens of forms each, so even `--limit 2000` brings in several hundred thousand form rows. Most of a
+seed's size is forms. A lower `--limit` does not shrink this much while it still keeps everyday words (`Haus`,
+`See`), since their own ranks and their pair partners' ranks set a floor.
+
+The seed's `F` record (lemma, form word, relation) carries forms through the file. `DictionaryImport.SeedFormat`'s
+doc comment gives the exact columns.
+
+### Licence
+
+Wiktionary content is **CC BY-SA 4.0**. The word list page carries the required attribution
+(`ui.words.attribution`). Share-alike applies to the imported tables, and to an exported seed file. Remember that
+before you publish or hand one to anybody.
 
 ## Starting a project from it
 

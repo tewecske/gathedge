@@ -97,7 +97,7 @@ let
       # `-main <classname>`, so this needs no second sbt output. It exists because the deployment has
       # no repository and no dump — data/ is excluded from the source filter in flake.nix — so the
       # only way words reach the server's database is a seed file built elsewhere and named with
-      # `--seed <path>`. See data/dictionary/README.md.
+      # `--seed <path>`. See "Dictionary data" in README.md.
       #
       # Not a systemd unit: it is run by hand, once, with the DB_* variables the backend's unit sets.
       makeWrapper ${scala}/bin/backend $out/bin/gathedge-dictionary-import \

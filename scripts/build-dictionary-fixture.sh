@@ -50,7 +50,7 @@ DB_USER=$(env_value "$env_src" DB_USER);         DB_USER=${DB_USER:-gathedge}
 DB_PASSWORD=$(env_value "$env_src" DB_PASSWORD); DB_PASSWORD=${DB_PASSWORD:-gathedge}
 DB_PORT=$(env_value "$env_src" DB_PORT);         DB_PORT=${DB_PORT:-5432}
 
-[ -f "$SEED" ] || die "$SEED is missing — see data/dictionary/README.md"
+[ -f "$SEED" ] || die "$SEED is missing — see \"Dictionary data\" in README.md"
 
 # Host psql when there is one, the compose container otherwise. Identical to new-worktree.sh's rule.
 if command -v psql >/dev/null 2>&1; then

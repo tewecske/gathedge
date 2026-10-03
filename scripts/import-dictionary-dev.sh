@@ -24,7 +24,7 @@
 # The import itself is idempotent — it reads keys back rather than inserting them twice — so re-running
 # after a bigger seed inserts only the difference, and running it against a populated database is safe.
 #
-# Build a seed with scripts/build-dictionary-seed.sh; see data/dictionary/README.md for both halves.
+# Build a seed with scripts/build-dictionary-seed.sh; see "Dictionary data" in README.md for both halves.
 
 set -euo pipefail
 

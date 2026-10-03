@@ -381,7 +381,7 @@ Four load-bearing columns:
 
 **Pronunciation is a link, never a file.** `word_audio` holds a Wikimedia Commons file name per recording, read from the dump's `sounds[]` (seed record `A`); `DictionaryImport` is its only writer. `service/CommonsAudio` derives the play URLs and the file page from the name (MD5 path, MP3 transcode first). Each recording must carry its file-page link: that link is the licence's attribution. Coverage is good for German, fair for English, near zero for Hungarian, so the word page falls back to the browser's speech synthesis, and only where the browser has a voice for the word's language. Only the word details page shows audio.
 
-**The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the committed sample; `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
+**The dictionary is imported, not migrated** (`backend/tools/DictionaryImport`). `--seed` loads the local sample (`data/dictionary/seed.tsv`, git-ignored, built with `--limit 2000`); `--raw` streams the wiktextract dump. Data is CC BY-SA 4.0; `ui.words.attribution` is required.
 
 **A seed load streams; a dump export holds one language at a time.** `--seed` reads the file once per record kind, a batch at a time, and looks each batch's word ids up in the database, so the whole dump's seed loads in a small server's default heap. Only the translation pairs stay whole, for the pivot. Form-to-form translations are derived per batch of pairs from the forms already stored. A plain `--seed` skips the dedupe, since the export ran it before writing the file.
 

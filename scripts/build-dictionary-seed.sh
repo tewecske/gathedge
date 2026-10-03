@@ -46,7 +46,7 @@ readonly DUMP_URL="https://kaikki.org/dictionary/raw-wiktextract-data.jsonl.gz"
 readonly DEFAULT_DUMP="data/dictionary/raw-wiktextract-data.jsonl.gz"
 readonly SHARD_DIR="data/dictionary/shards"
 
-# Corpus frequency, as data/frequency/README.md documents it. Missing files are not an error to the
+# Corpus frequency, as "Frequency lists" in README.md documents it. Missing files are not an error to the
 # importer, but without them --limit keeps everything and the search box loses its ordering, so they
 # are fetched rather than left to chance.
 readonly FREQ_DIR="data/frequency"
