@@ -68,6 +68,25 @@ object WiktextractParser {
     sounds: Option[List[RawSound]] = None,
   ) derives JsonDecoder
 
+  /** [[RawEntry]] without `forms` and `sounds`, for a pass that wants only the word and its translations. The decoder
+    * skips the two arrays rather than building them, and they are most of a German or Hungarian line.
+    */
+  final case class RawHead(
+    word: String,
+    lang_code: Option[String] = None,
+    pos: Option[String] = None,
+    tags: Option[List[String]] = None,
+    senses: Option[List[RawSense]] = None,
+    translations: Option[List[RawTranslation]] = None,
+  ) derives JsonDecoder {
+    def toEntry: RawEntry = RawEntry(word, lang_code, pos, tags, senses, translations)
+  }
+
+  /** Only the entry's own language. Its `lang_code` is not always the line's first: a translation row before it carries
+    * one too.
+    */
+  final case class RawLanguage(lang_code: Option[String] = None) derives JsonDecoder
+
   /** A word as it will be stored, before it has an id. */
   final case class ParsedWord(
     language: WordLanguage,
@@ -482,6 +501,24 @@ object WiktextractParser {
           audioOf(entry),
         )
     }
+  }
+
+  /** [[parse]] without the forms and the recordings: the entry as a word, and its translations. */
+  def parseHead(line: String): ParsedEntry = {
+    line.fromJson[RawHead] match {
+      case Left(_)     =>
+        ParsedEntry(None, Nil, Nil)
+      case Right(head) =>
+        val entry = head.toEntry
+        ParsedEntry(wordOf(entry), pairsOf(entry), Nil)
+    }
+  }
+
+  /** The language of the entry itself, as opposed to [[mayConcern]]'s guess, which a translation row also satisfies.
+    * `None` for a language this application does not hold, or a line that does not decode.
+    */
+  def languageOf(line: String): Option[WordLanguage] = {
+    line.fromJson[RawLanguage].toOption.flatMap(_.lang_code).flatMap(WordLanguage.fromString)
   }
 
   /** A cheap test applied before the JSON parser, because the parser is the expensive part and 95% of the dump is

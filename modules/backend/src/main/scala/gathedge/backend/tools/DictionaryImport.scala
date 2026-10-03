@@ -20,12 +20,13 @@ import zio.stream.{ZPipeline, ZStream}
 
 import java.io.{BufferedWriter, FileInputStream, FileOutputStream, OutputStreamWriter}
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Path, StandardCopyOption}
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
 import java.util.concurrent.TimeUnit
 
 import javax.sql.DataSource
 
-import WiktextractParser.{ParsedAudio, ParsedForm, ParsedPair, ParsedWord}
+import WiktextractParser.{ParsedAudio, ParsedEntry, ParsedForm, ParsedPair, ParsedWord}
 
 /** Loads the shared dictionary: English, German, Spanish and Hungarian words with their parts of speech, gender where
   * the language has one, and the translations between them.
@@ -44,6 +45,11 @@ import WiktextractParser.{ParsedAudio, ParsedForm, ParsedPair, ParsedWord}
   *
   * # rebuild the committed sample from a dump
   * sbt "backend/runMain gathedge.backend.tools.DictionaryImport --raw ~/raw...gz --limit 2000 --export data/dictionary/seed.tsv"
+  *
+  * # cut the dump into one shard per language once, then export from the shards without the dump
+  * sbt "backend/runMain gathedge.backend.tools.DictionaryImport --raw ~/raw...gz --extract data/dictionary/shards"
+  * sbt "backend/runMain gathedge.backend.tools.DictionaryImport --shards data/dictionary/shards --limit 20000 \
+  *        --frequencies data/frequency --export target/dictionary/seed-20000.tsv.gz"
   *
   * # load a seed built elsewhere (`--seed <path>`, `.gz` understood) — how a deployment gets the real
   * # dictionary without the 2.6 GB dump ever reaching the server; scripts/build-dictionary-seed.sh
@@ -73,6 +79,8 @@ object DictionaryImport extends ZIOAppDefault {
     seed: Boolean = false,
     seedPath: Option[String] = None,
     raw: Option[String] = None,
+    shards: Option[String] = None,
+    extractTo: Option[String] = None,
     limit: Int = 50000,
     frequencies: Option[String] = None,
     exportTo: Option[String] = None,
@@ -94,6 +102,10 @@ object DictionaryImport extends ZIOAppDefault {
           loop(tail, options.copy(seed = true))
         case "--raw" :: path :: tail                            =>
           loop(tail, options.copy(raw = Some(path)))
+        case "--shards" :: path :: tail                         =>
+          loop(tail, options.copy(shards = Some(path)))
+        case "--extract" :: path :: tail                        =>
+          loop(tail, options.copy(extractTo = Some(path)))
         case "--limit" :: value :: tail                         =>
           value.toIntOption match {
             case None        =>
@@ -118,18 +130,18 @@ object DictionaryImport extends ZIOAppDefault {
       }
     }
     loop(args, Options()).flatMap { options =>
-      if (options.seed == options.raw.isDefined)
-        Left("Give exactly one of --seed and --raw <path>")
+      val modes = List(options.seed, options.raw.isDefined, options.shards.isDefined).count(identity)
+      if (modes != 1)
+        Left("Give exactly one of --seed, --raw <path> and --shards <dir>")
+      else if (options.extractTo.isDefined && (options.raw.isEmpty || options.exportTo.isDefined))
+        Left("--extract <dir> needs --raw <path>, and writes shards rather than a seed, so it takes no --export")
       else
         Right(options)
     }
   }
 
-  /** Everything one import holds in memory before any of it reaches the database.
-    *
-    * Deliberately in memory: the whole point of `--limit` is that the result is bounded — tens of thousands of words
-    * per language, not the dump's millions — and having the lot at once is what makes the German–Hungarian pivot
-    * possible at all.
+  /** Words, pairs, forms and recordings held together: one language's share of an export ([[slice]]), or a whole seed
+    * being rewritten.
     */
   final case class Collected(
     words: Map[ParsedWord, Int],
@@ -191,52 +203,195 @@ object DictionaryImport extends ZIOAppDefault {
       .getOrElse(word.text.toLowerCase, WordService.unrankedFrequency)
   }
 
-  /** Streams the dump, decoding only the lines that mention a language being imported.
-    *
-    * The substring test before the JSON decode is what makes this minutes rather than an hour: the file is 22.9 GB of
-    * which the three languages here are a small fraction, and decoding a line is far more expensive than scanning it.
+  /** How many lines go to one decoding task. Decoding is most of a pass's time, and every line is independent, so a
+    * pass decodes on every core. [[ZStream.mapZIOPar]] keeps the chunks in the file's order.
     */
-  private def readDump(path: String, options: Options): Task[Collected] = {
-    val bytes = {
-      ZStream
-        .fromInputStreamZIO(
-          ZIO
-            .attemptBlockingIO {
-              val stream = new FileInputStream(path)
-              if (path.endsWith(".gz"))
-                new GZIPInputStream(stream, 1 << 16)
-              else
-                stream
-            }
-            .map(identity[java.io.InputStream])
-        )
-        .via(ZPipeline.utf8Decode >>> ZPipeline.splitLines)
+  private val decodeChunk = 1000
+
+  private val decodeParallelism = java.lang.Runtime.getRuntime.availableProcessors.max(1)
+
+  private def decoded[A](lines: ZStream[Any, Throwable, String])(decode: String => A): ZStream[Any, Throwable, A] = {
+    lines.grouped(decodeChunk).mapZIOPar(decodeParallelism)(chunk => ZIO.attempt(chunk.map(decode))).flattenChunks
+  }
+
+  /** Where a pass reads the dump's lines from. Each pass names the languages it reads. */
+  trait DumpSource {
+    def lines(languages: Set[WordLanguage]): ZStream[Any, Throwable, String]
+  }
+
+  object DumpSource {
+
+    /** The whole dump, read again on every pass. A line of another language gets through when a translation row names
+      * one of these. It adds nothing, since every record is keyed to the entry's own language, but it costs a decode.
+      */
+    def dump(path: String): DumpSource = {
+      new DumpSource {
+        def lines(languages: Set[WordLanguage]) = fileLines(path).filter(WiktextractParser.mayConcern(_, languages))
+      }
     }
 
-    bytes
-      .filter(line => WiktextractParser.mayConcern(line, options.languages))
-      .map(WiktextractParser.parse(_, options.includeAltOf))
-      .runFold(Collected.empty) { case (collected, entry) =>
-        val withWord      = entry.word
-          .filter(w => options.languages.contains(w.language))
-          .fold(collected)(w => collected.withWord(w, WordService.unrankedFrequency))
-        val relevantPairs = entry.pairs.filter(pair =>
-          options.languages.contains(pair.source.language) && options.languages.contains(pair.target.language)
-        )
-        val withPairs     = relevantPairs.foldLeft(withWord)((acc, pair) =>
-          acc.withWord(pair.source, WordService.unrankedFrequency).withWord(pair.target, WordService.unrankedFrequency)
-        )
-        // The form-word itself is not added to `collected.words` here -- that happens in `select`, once the
-        // frequency cut has run, so a lemma's whole case/tense table is not materialised for every one of the
-        // dump's millions of entries before `--limit` narrows anything down.
-        val relevantForms = entry.forms.filter(form => options.languages.contains(form.lemma.language))
-        val relevantAudio = entry.audio.filter(audio => options.languages.contains(audio.word.language))
-        withPairs.copy(
-          pairs = relevantPairs ++ withPairs.pairs,
-          forms = relevantForms ++ withPairs.forms,
-          audio = relevantAudio ++ withPairs.audio,
-        )
+    /** The shards [[extract]] cut. A pass reads only its own languages' files. */
+    def shards(directory: String): DumpSource = {
+      new DumpSource {
+        def lines(languages: Set[WordLanguage]) = {
+          ZStream
+            .fromIterable(languages.toList.sortBy(WordLanguage.code))
+            .flatMap(language => fileLines(shardPath(directory, language)))
+        }
       }
+    }
+  }
+
+  def shardPath(directory: String, language: WordLanguage): String = {
+    s"$directory/${WordLanguage.code(language)}.jsonl.gz"
+  }
+
+  /** Cuts the dump into one gzipped shard per language. A shard holds the lines whose entry is in that language, so the
+    * English shard holds every translation table. A later export reads the shards instead of the 2.6 GB dump, and
+    * adding a language reads the dump once more, for that language alone.
+    *
+    * Each shard is written under a `.part` name and renamed at the end, so an interrupted run leaves no half shard.
+    */
+  private[tools] def extract(dump: String, directory: String, languages: Set[WordLanguage]): Task[Unit] = {
+    val ordered = languages.toList.sortBy(WordLanguage.code)
+    ZIO.scoped {
+      for {
+        _       <- ZIO.attemptBlocking(Files.createDirectories(Path.of(directory)))
+        writers <- ZIO
+                     .foreach(ordered) { language =>
+                       openWriter(shardPath(directory, language) + ".part", gzip = true).map(language -> _)
+                     }
+                     .map(_.toMap)
+        counts  <- decoded(fileLines(dump).filter(WiktextractParser.mayConcern(_, languages))) { line =>
+                     WiktextractParser.languageOf(line).filter(languages.contains).map(_ -> line)
+                   }.collectSome.chunks
+                     .runFoldZIO(Map.empty[WordLanguage, Long]) { (counts, chunk) =>
+                       ZIO.attemptBlocking {
+                         chunk.foreach { case (language, line) =>
+                           writers(language).write(line)
+                           writers(language).write('\n')
+                         }
+                         chunk.groupBy(_._1).foldLeft(counts) { case (acc, (language, lines)) =>
+                           acc.updated(language, acc.getOrElse(language, 0L) + lines.size)
+                         }
+                       }
+                     }
+        _       <- ZIO.attemptBlocking(writers.values.foreach(_.close()))
+        _       <- ZIO.foreachDiscard(ordered) { language =>
+                     val path = shardPath(directory, language)
+                     ZIO.attemptBlocking(
+                       Files.move(Path.of(path + ".part"), Path.of(path), StandardCopyOption.REPLACE_EXISTING)
+                     ) *> ZIO.logInfo(s"Wrote $path: ${counts.getOrElse(language, 0L)} line(s)")
+                   }
+      } yield ()
+    }
+  }
+
+  /** What the first pass keeps: the words inside the frequency cut, and the pairs with an end inside it. Both are known
+    * line by line, since a word's rank is its text's line in the frequency list. So the dump's long tail is read and
+    * dropped here, never held.
+    */
+  final case class Heads(kept: Set[ParsedWord], pairs: List[ParsedPair]) {
+
+    def add(entry: ParsedEntry, languages: Set[WordLanguage], inCut: ParsedWord => Boolean): Heads = {
+      val word  = entry.word.filter(w => languages.contains(w.language) && inCut(w))
+      val pairs = entry.pairs.filter(pair => {
+        languages.contains(pair.source.language) && languages.contains(pair.target.language) &&
+        (inCut(pair.source) || inCut(pair.target))
+      })
+      if (word.isEmpty && pairs.isEmpty)
+        this
+      else
+        Heads(kept ++ word ++ pairs.flatMap(pair => List(pair.source, pair.target)).filter(inCut), pairs ++ this.pairs)
+    }
+  }
+
+  object Heads {
+    val empty: Heads = Heads(Set.empty, Nil)
+  }
+
+  /** Reads a dump into a seed file, one language at a time.
+    *
+    * English is the hub. Every pair comes from an English entry's translation table, and a word's forms, recordings and
+    * homographs never leave its own language. So the first pass reads only the words and the pairs, and cuts them as it
+    * goes. The second pass runs once per language: it reads that language's forms and recordings, keeps those of the
+    * words the cut kept, dedupes the language's homographs, writes its lines and lets them go. Only the pairs and one
+    * language's share are held at once. The pairs are written last, when every language has said which of its words a
+    * dedupe moved.
+    *
+    * The file holds what [[select]] and [[dedupeHomographs]] make of the whole dump read at once; only the line order
+    * differs, since each language's lines come together.
+    */
+  private[tools] def exportDump(
+    source: DumpSource,
+    options: Options,
+    frequencies: Map[WordLanguage, Map[String, Int]],
+    path: String,
+  ): Task[Unit] = {
+    val languages = options.languages.toList.sortBy(WordLanguage.code)
+    val inCut     = (word: ParsedWord) => rankOf(frequencies, word) <= options.limit
+    ZIO.scoped {
+      for {
+        _             <- ZIO.logInfo(s"Reading words and pairs, keeping the commonest ${options.limit} word(s)...")
+        heads         <- decoded(source.lines(options.languages))(WiktextractParser.parseHead)
+                           .runFold(Heads.empty)((heads, entry) => heads.add(entry, options.languages, inCut))
+        (ranks, pairs) = cut(heads.kept, heads.pairs, frequencies, options.limit)
+        _             <- ZIO.logInfo(s"Kept ${ranks.size} word(s), ${pairs.size} pair(s)")
+        writer        <- openWriter(path, gzip = path.endsWith(".gz"))
+        plans         <- ZIO.foreach(languages) { language =>
+                           val code = WordLanguage.code(language)
+                           for {
+                             _              <- ZIO.logInfo(s"Reading $code forms and recordings...")
+                             read           <- decoded(source.lines(Set(language)))(
+                                                 WiktextractParser.parse(_, options.includeAltOf)
+                                               ).runFold((List.empty[ParsedForm], List.empty[ParsedAudio])) {
+                                                 case ((forms, audio), entry) =>
+                                                   (
+                                                     entry.forms.filter(form => {
+                                                       form.lemma.language == language && ranks.contains(form.lemma)
+                                                     }) ++ forms,
+                                                     entry.audio.filter(_.word.language == language) ++ audio,
+                                                   )
+                                               }
+                             (forms, audio)  = read
+                             (written, plan) = slice(language, ranks, pairs, forms, audio)
+                             _              <- writeLines(
+                                                 writer,
+                                                 SeedFormat.wordLines(written.words) ++
+                                                   SeedFormat.formLines(written.forms) ++
+                                                   SeedFormat.audioLines(written.audio),
+                                               )
+                             heap           <- GcStats.line
+                             _              <- ZIO.logInfo(
+                                                 s"Wrote $code: ${written.words.size} word(s), " +
+                                                   s"${written.forms.size} form(s), ${written.audio.size} " +
+                                                   s"recording(s); $heap"
+                                               )
+                           } yield plan
+                         }
+        resolved       = plans.foldLeft(HomographPlan.empty)(_ ++ _).applyToPairs(pairs)
+        _             <- writeLines(writer, SeedFormat.pairLines(resolved))
+        _             <- ZIO.logInfo(s"Wrote ${resolved.size} pair(s)")
+      } yield ()
+    }
+  }
+
+  /** One language's share of the import, deduped, and the plan that deduped it, for the pairs to follow later. `forms`
+    * and `audio` are the language's own; `ranks` and `pairs` are every language's.
+    */
+  def slice(
+    language: WordLanguage,
+    ranks: Map[ParsedWord, Int],
+    pairs: List[ParsedPair],
+    forms: List[ParsedForm],
+    audio: List[ParsedAudio],
+  ): (Collected, HomographPlan) = {
+    val own      = ranks.filter { case (word, _) => word.language == language }
+    // The pairs only tell the dedupe which words are translated; they are written with every language's plan.
+    val touching = pairs.filter(pair => pair.source.language == language || pair.target.language == language)
+    val selected = withForms(own, touching, forms, audio)
+    val plan     = HomographPlan.of(selected)
+    (plan.applyTo(selected).copy(pairs = Nil), plan)
   }
 
   /** Parts of speech specific enough for a shared English sense to reliably mean the same thing on both sides. A
@@ -284,25 +439,46 @@ object DictionaryImport extends ZIOAppDefault {
     * at nothing.
     */
   def select(collected: Collected, frequencies: Map[WordLanguage, Map[String, Int]], limit: Int): Collected = {
-    val ranked    = collected.words.keys.map(word => (word, rankOf(frequencies, word))).toMap
-    val kept      = ranked.filter { case (_, rank) => rank <= limit }.keySet
-    val pairs     = collected.pairs.filter(pair => kept.contains(pair.source) || kept.contains(pair.target))
-    val needed    = kept ++ pairs.flatMap(pair => List(pair.source, pair.target))
+    val (ranks, pairs) = cut(collected.words.keys, collected.pairs, frequencies, limit)
+    withForms(ranks, pairs, collected.forms, collected.audio)
+  }
+
+  /** [[select]]'s first half: the words inside the cut, the pairs with an end inside it, and every word those pairs
+    * name, each with its rank.
+    */
+  def cut(
+    words: Iterable[ParsedWord],
+    pairs: List[ParsedPair],
+    frequencies: Map[WordLanguage, Map[String, Int]],
+    limit: Int,
+  ): (Map[ParsedWord, Int], List[ParsedPair]) = {
+    val kept   = words.filter(word => rankOf(frequencies, word) <= limit).toSet
+    val linked = pairs.filter(pair => kept.contains(pair.source) || kept.contains(pair.target))
+    val needed = kept ++ linked.flatMap(pair => List(pair.source, pair.target))
+    (needed.map(word => (word, rankOf(frequencies, word))).toMap, linked)
+  }
+
+  /** [[select]]'s second half: the forms and recordings of the words [[cut]] kept. */
+  def withForms(
+    ranks: Map[ParsedWord, Int],
+    pairs: List[ParsedPair],
+    forms: List[ParsedForm],
+    audio: List[ParsedAudio],
+  ): Collected = {
     // A form is kept only if its lemma's own word row is going to exist -- whether that word made the frequency
     // cut directly, or is kept only because something translates to or from it. Anything whose lemma did not
     // survive contributes no form either.
-    val forms     = collected.forms.filter(form => needed.contains(form.lemma))
-    val baseRanks = needed.map(word => (word, ranked.getOrElse(word, WordService.unrankedFrequency))).toMap
+    val keptForms = forms.filter(form => ranks.contains(form.lemma))
     // A form has no frequency entry of its own -- "Häuser" is never a line in a frequency list -- so it inherits its
     // lemma's rank instead of the sentinel, which is what makes a common word's plural searchable near it rather than
     // buried at the bottom of every result.
-    val allRanks  = forms.foldLeft(baseRanks) { (acc, form) =>
+    val allRanks  = keptForms.foldLeft(ranks) { (acc, form) =>
       if (acc.contains(form.form)) acc
       else acc.updated(form.form, acc.getOrElse(form.lemma, WordService.unrankedFrequency))
     }
     // A recording is kept only if its word is: it has nothing else to hang on.
-    val audio     = collected.audio.filter(audio => allRanks.contains(audio.word))
-    Collected(allRanks, pairs, forms, audio)
+    val keptAudio = audio.filter(audio => allRanks.contains(audio.word))
+    Collected(allRanks, pairs, keptForms, keptAudio)
   }
 
   /** Wiktextract sometimes gives one spelling more than one entry that this application's schema cannot tell apart by
@@ -324,48 +500,38 @@ object DictionaryImport extends ZIOAppDefault {
     *     it is not the same headword as the survivor, so there is nothing of its own worth keeping.
     */
   def dedupeHomographs(collected: Collected): Collected = {
-    val translated: Set[ParsedWord]               =
-      collected.pairs.iterator.flatMap(pair => Iterator(pair.source, pair.target)).toSet
-    def hasTranslation(word: ParsedWord): Boolean = translated.contains(word)
-
-    val byHomograph = collected.words.keys
-      .groupBy(word => (word.language, word.text.toLowerCase))
-      .values
-      .toList
-
-    val redirects: Map[ParsedWord, ParsedWord] = byHomograph.flatMap { homographs =>
-      homographs.groupBy(_.partOfSpeech).values.flatMap { posGroup =>
-        posGroup.filter(_.gender.isDefined).toList.sortBy(word => (Gender.toColumn(word.gender), word.text)) match {
-          case survivor :: _ =>
-            posGroup.filter(_.gender.isEmpty).map(_ -> survivor)
-          case Nil           =>
-            Nil
-        }
-      }
-    }.toMap
-
-    val dropped = byHomograph.flatMap { homographs =>
-      // Filtered against the map, not `-- redirects.keySet`: that walks every redirect once per spelling group,
-      // which is quadratic and never finishes on the whole dump.
-      val survivors    = homographs.toSet.filterNot(redirects.contains)
-      val hasRealSense = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
-      if (hasRealSense)
-        survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
-      else
-        Set.empty[ParsedWord]
-    }.toSet
-
-    if (redirects.isEmpty && dropped.isEmpty)
+    val plan = HomographPlan.of(collected)
+    if (plan.isEmpty)
       collected
-    else {
-      def resolve(word: ParsedWord): ParsedWord = redirects.getOrElse(word, word)
+    else
+      plan.applyTo(collected)
+  }
 
+  /** What [[dedupeHomographs]] decided: which words move onto a survivor, and which go. A word's homographs are all in
+    * its own language, so one language's plan never touches another's words. That is what lets [[exportDump]] dedupe a
+    * language at a time and apply every plan to the pairs at the end.
+    */
+  final case class HomographPlan(redirects: Map[ParsedWord, ParsedWord], dropped: Set[ParsedWord]) {
+
+    def isEmpty: Boolean = redirects.isEmpty && dropped.isEmpty
+
+    def ++(other: HomographPlan): HomographPlan = {
+      HomographPlan(redirects ++ other.redirects, dropped ++ other.dropped)
+    }
+
+    private def resolve(word: ParsedWord): ParsedWord = redirects.getOrElse(word, word)
+
+    def applyToPairs(pairs: List[ParsedPair]): List[ParsedPair] = {
+      pairs
+        .filterNot(pair => dropped.contains(pair.source) || dropped.contains(pair.target))
+        .map(pair => pair.copy(source = resolve(pair.source), target = resolve(pair.target)))
+        .distinct
+    }
+
+    def applyTo(collected: Collected): Collected = {
       Collected(
         words = collected.words.filter { case (word, _) => !redirects.contains(word) && !dropped.contains(word) },
-        pairs = collected.pairs
-          .filterNot(pair => dropped.contains(pair.source) || dropped.contains(pair.target))
-          .map(pair => pair.copy(source = resolve(pair.source), target = resolve(pair.target)))
-          .distinct,
+        pairs = applyToPairs(collected.pairs),
         forms = collected.forms
           .filterNot(form => dropped.contains(form.lemma) || dropped.contains(form.form))
           .map(form => form.copy(lemma = resolve(form.lemma), form = resolve(form.form)))
@@ -376,6 +542,46 @@ object DictionaryImport extends ZIOAppDefault {
           .map(audio => audio.copy(word = resolve(audio.word)))
           .distinct,
       )
+    }
+  }
+
+  object HomographPlan {
+
+    val empty: HomographPlan = HomographPlan(Map.empty, Set.empty)
+
+    def of(collected: Collected): HomographPlan = {
+      val translated: Set[ParsedWord]               =
+        collected.pairs.iterator.flatMap(pair => Iterator(pair.source, pair.target)).toSet
+      def hasTranslation(word: ParsedWord): Boolean = translated.contains(word)
+
+      val byHomograph = collected.words.keys
+        .groupBy(word => (word.language, word.text.toLowerCase))
+        .values
+        .toList
+
+      val redirects: Map[ParsedWord, ParsedWord] = byHomograph.flatMap { homographs =>
+        homographs.groupBy(_.partOfSpeech).values.flatMap { posGroup =>
+          posGroup.filter(_.gender.isDefined).toList.sortBy(word => (Gender.toColumn(word.gender), word.text)) match {
+            case survivor :: _ =>
+              posGroup.filter(_.gender.isEmpty).map(_ -> survivor)
+            case Nil           =>
+              Nil
+          }
+        }
+      }.toMap
+
+      val dropped = byHomograph.flatMap { homographs =>
+        // Filtered against the map, not `-- redirects.keySet`: that walks every redirect once per spelling group,
+        // which is quadratic and never finishes on the whole dump.
+        val survivors    = homographs.toSet.filterNot(redirects.contains)
+        val hasRealSense = survivors.exists(word => word.partOfSpeech != PartOfSpeech.Other && hasTranslation(word))
+        if (hasRealSense)
+          survivors.filter(word => word.partOfSpeech == PartOfSpeech.Other && !hasTranslation(word))
+        else
+          Set.empty[ParsedWord]
+      }.toSet
+
+      HomographPlan(redirects, dropped)
     }
   }
 
@@ -430,66 +636,42 @@ object DictionaryImport extends ZIOAppDefault {
   object SeedFormat {
 
     def encode(collected: Collected): List[String] = {
-      val words = {
-        collected.words.toList.sortBy { case (word, rank) => (rank, word.key.toString) }.map { case (word, rank) =>
-          List(
-            "W",
-            WordLanguage.code(word.language),
-            word.text,
-            PartOfSpeech.code(word.partOfSpeech),
-            Gender.toColumn(word.gender),
-            rank.toString,
-          ).mkString("\t")
-        }
+      wordLines(collected.words) ++ pairLines(collected.pairs) ++ formLines(collected.forms) ++
+        audioLines(collected.audio)
+    }
+
+    private def wordColumns(word: ParsedWord): List[String] = {
+      List(
+        WordLanguage.code(word.language),
+        word.text,
+        PartOfSpeech.code(word.partOfSpeech),
+        Gender.toColumn(word.gender),
+      )
+    }
+
+    def wordLines(words: Map[ParsedWord, Int]): List[String] = {
+      words.toList.sortBy { case (word, rank) => (rank, word.key.toString) }.map { case (word, rank) =>
+        ("W" :: wordColumns(word) ::: List(rank.toString)).mkString("\t")
       }
-      val pairs = {
-        collected.pairs.distinct.sortBy(pair => (pair.source.key.toString, pair.target.key.toString)).map { pair =>
-          List(
-            "T",
-            WordLanguage.code(pair.source.language),
-            pair.source.text,
-            PartOfSpeech.code(pair.source.partOfSpeech),
-            Gender.toColumn(pair.source.gender),
-            WordLanguage.code(pair.target.language),
-            pair.target.text,
-            PartOfSpeech.code(pair.target.partOfSpeech),
-            Gender.toColumn(pair.target.gender),
-            pair.sense.getOrElse(""),
-          ).mkString("\t")
-        }
+    }
+
+    def pairLines(pairs: List[ParsedPair]): List[String] = {
+      pairs.distinct.sortBy(pair => (pair.source.key.toString, pair.target.key.toString)).map { pair =>
+        ("T" :: wordColumns(pair.source) ::: wordColumns(pair.target) ::: List(pair.sense.getOrElse("")))
+          .mkString("\t")
       }
-      val forms = {
-        collected.forms.distinct
-          .sortBy(form => (form.lemma.key.toString, form.form.key.toString, form.relation))
-          .map { form =>
-            List(
-              "F",
-              WordLanguage.code(form.lemma.language),
-              form.lemma.text,
-              PartOfSpeech.code(form.lemma.partOfSpeech),
-              Gender.toColumn(form.lemma.gender),
-              WordLanguage.code(form.form.language),
-              form.form.text,
-              PartOfSpeech.code(form.form.partOfSpeech),
-              Gender.toColumn(form.form.gender),
-              form.relation,
-            ).mkString("\t")
-          }
+    }
+
+    def formLines(forms: List[ParsedForm]): List[String] = {
+      forms.distinct.sortBy(form => (form.lemma.key.toString, form.form.key.toString, form.relation)).map { form =>
+        ("F" :: wordColumns(form.lemma) ::: wordColumns(form.form) ::: List(form.relation)).mkString("\t")
       }
-      val audio = {
-        collected.audio.distinct.sortBy(audio => (audio.word.key.toString, audio.fileName)).map { audio =>
-          List(
-            "A",
-            WordLanguage.code(audio.word.language),
-            audio.word.text,
-            PartOfSpeech.code(audio.word.partOfSpeech),
-            Gender.toColumn(audio.word.gender),
-            audio.fileName,
-            audio.region,
-          ).mkString("\t")
-        }
+    }
+
+    def audioLines(audio: List[ParsedAudio]): List[String] = {
+      audio.distinct.sortBy(audio => (audio.word.key.toString, audio.fileName)).map { audio =>
+        ("A" :: wordColumns(audio.word) ::: List(audio.fileName, audio.region)).mkString("\t")
       }
-      words ++ pairs ++ forms ++ audio
     }
 
     private def wordAt(columns: Array[String], offset: Int): Option[ParsedWord] = {
@@ -570,7 +752,8 @@ object DictionaryImport extends ZIOAppDefault {
     }
   }
 
-  private def seedLines(path: String): ZStream[Any, Throwable, String] = {
+  /** A text file's lines, gunzipped if the name ends in `.gz`: a seed, a shard or the dump. */
+  private def fileLines(path: String): ZStream[Any, Throwable, String] = {
     ZStream
       .fromInputStreamZIO(
         ZIO
@@ -589,7 +772,7 @@ object DictionaryImport extends ZIOAppDefault {
   /** The whole seed in memory: what `--seed --export` rewrites. A plain `--seed` streams it instead ([[Records.seed]]).
     */
   private def readSeed(path: String): Task[Collected] = {
-    seedLines(path).runCollect.map(lines => SeedFormat.decode(lines.toList))
+    fileLines(path).runCollect.map(lines => SeedFormat.decode(lines.toList))
   }
 
   /** What [[store]] writes, one kind at a time. Each call starts the stream again, so a seed file is read once per kind
@@ -604,16 +787,6 @@ object DictionaryImport extends ZIOAppDefault {
 
   object Records {
 
-    /** A dump's import, already in memory. */
-    def of(collected: Collected): Records = {
-      new Records {
-        def words = ZStream.fromIterable(dedupeByKey(collected.words.toList))
-        def pairs = ZStream.fromIterable(collected.pairs)
-        def forms = ZStream.fromIterable(collected.forms)
-        def audio = ZStream.fromIterable(collected.audio)
-      }
-    }
-
     /** A seed file, streamed. Each kind reads only its own lines: the record type is the line's first column.
       *
       * No homograph dedupe: `--export` writes a seed after [[dedupeHomographs]], which finds nothing on its own output.
@@ -622,7 +795,7 @@ object DictionaryImport extends ZIOAppDefault {
       */
     def seed(path: String): Records = {
       def of[A](prefix: String)(pick: PartialFunction[SeedFormat.Record, A]): ZStream[Any, Throwable, A] = {
-        seedLines(path).filter(_.startsWith(prefix)).map(SeedFormat.decodeLine).collect {
+        fileLines(path).filter(_.startsWith(prefix)).map(SeedFormat.decodeLine).collect {
           case Some(record) if pick.isDefinedAt(record) => pick(record)
         }
       }
@@ -635,23 +808,31 @@ object DictionaryImport extends ZIOAppDefault {
     }
   }
 
-  private def writeSeed(path: String, collected: Collected): Task[Unit] = {
-    ZIO.attemptBlocking {
+  /** A writer for a seed or a shard, closed when the scope ends. */
+  private def openWriter(path: String, gzip: Boolean): ZIO[Scope, Throwable, BufferedWriter] = {
+    ZIO.fromAutoCloseable(ZIO.attemptBlocking {
       val stream = {
-        if (path.endsWith(".gz"))
-          new GZIPOutputStream(new FileOutputStream(path))
+        if (gzip)
+          new GZIPOutputStream(new FileOutputStream(path), 1 << 16)
         else
           new FileOutputStream(path)
       }
-      // Line by line: the whole dump's seed is past 2 GB as one string, which no byte array can hold.
-      val writer = new BufferedWriter(new OutputStreamWriter(stream, StandardCharsets.UTF_8))
-      try {
-        SeedFormat.encode(collected).iterator.zipWithIndex.foreach { case (line, index) =>
-          if (index > 0) writer.write('\n')
-          writer.write(line)
-        }
-      } finally writer.close()
+      new BufferedWriter(new OutputStreamWriter(stream, StandardCharsets.UTF_8), 1 << 16)
+    })
+  }
+
+  /** Line by line: the whole dump's seed is past 2 GB as one string, which no byte array can hold. */
+  private def writeLines(writer: BufferedWriter, lines: Iterable[String]): Task[Unit] = {
+    ZIO.attemptBlocking {
+      lines.foreach { line =>
+        writer.write(line)
+        writer.write('\n')
+      }
     }
+  }
+
+  private def writeSeed(path: String, collected: Collected): Task[Unit] = {
+    ZIO.scoped(openWriter(path, gzip = path.endsWith(".gz")).flatMap(writeLines(_, SeedFormat.encode(collected))))
   }
 
   // -- Writing to the database ------------------------------------------------------------------
@@ -914,54 +1095,57 @@ object DictionaryImport extends ZIOAppDefault {
     } yield ()
   }
 
-  private def load(options: Options): Task[Collected] = {
-    options.raw match {
-      case None       =>
-        readSeed(options.seedPath.getOrElse(defaultSeedPath))
-      case Some(path) =>
-        for {
-          frequencies <- ZIO
-                           .foreach(options.frequencies.toList) { directory =>
-                             ZIO
-                               .foreach(options.languages.toList)(language =>
-                                 readFrequencies(directory, language).map((language, _))
-                               )
-                               .map(_.toMap)
-                           }
-                           .map(_.headOption.getOrElse(Map.empty[WordLanguage, Map[String, Int]]))
-          collected   <- readDump(path, options)
-          _           <- ZIO.logInfo(
-                           s"Read ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
-                             s"${collected.forms.size} form(s)"
-                         )
-          _           <- ZIO.logInfo(s"Selecting the commonest ${options.limit} word(s)...")
-          selected     = select(collected, frequencies, options.limit)
-          _           <- ZIO.logInfo(
-                           s"Selected ${selected.words.size} word(s), ${selected.pairs.size} pair(s), " +
-                             s"${selected.forms.size} form(s)"
-                         )
-        } yield selected
-    }
+  private def loadFrequencies(options: Options): Task[Map[WordLanguage, Map[String, Int]]] = {
+    ZIO
+      .foreach(options.frequencies.toList) { directory =>
+        ZIO
+          .foreach(options.languages.toList)(language => readFrequencies(directory, language).map((language, _)))
+          .map(_.toMap)
+      }
+      .map(_.headOption.getOrElse(Map.empty[WordLanguage, Map[String, Int]]))
   }
 
-  /** Reads the dump (or the seed, for `--seed --export`) into memory, dedupes it, and exports or stores it. */
-  private def importCollected(options: Options): Task[Unit] = {
+  /** A dump or its shards, turned into a seed. Without `--export` the seed goes to a temporary file and is then
+    * streamed into the database, the way a deployment loads one, so the heap does not grow with the import.
+    */
+  private def importDump(source: DumpSource, options: Options): Task[Unit] = {
+    val missingShards = {
+      options.shards.toList.flatMap(directory => {
+        options.languages.toList.map(shardPath(directory, _)).filterNot(path => Files.exists(Path.of(path)))
+      })
+    }
     for {
-      loaded   <- load(options)
+      _           <- ZIO.when(missingShards.nonEmpty)(
+                       ZIO.fail(
+                         new IllegalArgumentException(
+                           s"No shard at ${missingShards.mkString(", ")}; cut them first with --raw <dump> --extract <dir>"
+                         )
+                       )
+                     )
+      frequencies <- loadFrequencies(options)
+      _           <- options.exportTo match {
+                       case Some(path) =>
+                         exportDump(source, options, frequencies, path)
+                       case None       =>
+                         ZIO.acquireReleaseWith(
+                           ZIO.attemptBlocking(Files.createTempFile("gathedge-seed", ".tsv.gz"))
+                         )(path => ZIO.attemptBlocking(Files.deleteIfExists(path)).orDie) { path =>
+                           exportDump(source, options, frequencies, path.toString) *>
+                             store(Records.seed(path.toString))
+                               .provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
+                         }
+                     }
+    } yield ()
+  }
+
+  /** `--seed <path> --export <path>`: reads a seed whole, dedupes it and writes it again. */
+  private def rewriteSeed(options: Options, exportTo: String): Task[Unit] = {
+    for {
+      loaded   <- readSeed(options.seedPath.getOrElse(defaultSeedPath))
       _        <- ZIO.logInfo("Deduping homographs...")
       collected = dedupeHomographs(loaded)
-      _        <- ZIO.logInfo(
-                    s"Importing ${collected.words.size} word(s), ${collected.pairs.size} pair(s), " +
-                      s"${collected.forms.size} form(s)"
-                  )
-      _        <- ZIO.foreachDiscard(options.exportTo)(path =>
-                    ZIO.logInfo(s"Writing seed to $path...") *> writeSeed(path, collected)
-                  )
-      // Exporting is an offline transformation of a dump into the committed sample: it touches no database, so it
-      // does not need one to be running.
-      _        <- ZIO
-                    .when(options.exportTo.isEmpty)(store(Records.of(collected)))
-                    .provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
+      _        <- ZIO.logInfo(s"Writing seed to $exportTo...")
+      _        <- writeSeed(exportTo, collected)
     } yield ()
   }
 
@@ -969,15 +1153,22 @@ object DictionaryImport extends ZIOAppDefault {
     val imported = for {
       args    <- ZIOAppArgs.getArgs
       options <- ZIO.fromEither(parseArgs(args.toList)).mapError(new IllegalArgumentException(_))
-      // A seed is loaded the way a server loads one: streamed, so the heap it needs does not grow with the seed.
-      _       <- {
-        if (options.seed && options.exportTo.isEmpty) {
-          val path = options.seedPath.getOrElse(defaultSeedPath)
-          ZIO.logInfo(s"Streaming seed $path...") *>
-            store(Records.seed(path)).provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
-        } else
-          importCollected(options)
-      }
+      _       <- (options.raw, options.shards, options.extractTo, options.exportTo) match {
+                   case (Some(dump), _, Some(directory), _) =>
+                     extract(dump, directory, options.languages)
+                   case (Some(dump), _, None, _)            =>
+                     importDump(DumpSource.dump(dump), options)
+                   case (_, Some(directory), _, _)          =>
+                     importDump(DumpSource.shards(directory), options)
+                   case (_, _, _, Some(exportTo))           =>
+                     rewriteSeed(options, exportTo)
+                   // A seed is loaded the way a server loads one: streamed, so the heap it needs does not grow with
+                   // the seed.
+                   case _                                   =>
+                     val path = options.seedPath.getOrElse(defaultSeedPath)
+                     ZIO.logInfo(s"Streaming seed $path...") *>
+                       store(Records.seed(path)).provide(AppConfig.live, DataSourceFactory.postgresLive, WordRepository.live)
+                 }
       _       <- ZIO.logInfo("Dictionary import finished")
     } yield ()
 

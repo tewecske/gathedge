@@ -25,6 +25,11 @@
 # The dump is cached rather than deleted, and the download resumes, because the whole point is that a
 # second run at a different --limit costs nothing. --drop-dump opts out of that.
 #
+# The export never reads the dump itself. A first step cuts it into one gzipped shard per language
+# (DictionaryImport --extract), and the export reads those. The shards stay in data/dictionary/shards, so a later
+# run skips the dump, and a run after a new dump download cuts them again. A shard missing or older
+# than the dump is cut again; the others are left alone, so a new language costs one pass of the dump.
+#
 # WHAT IT DELIBERATELY DOES NOT DO
 #
 # It does not copy anything to a server or touch a database. The export is an offline transformation
@@ -39,13 +44,15 @@ readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 readonly DUMP_URL="https://kaikki.org/dictionary/raw-wiktextract-data.jsonl.gz"
 readonly DEFAULT_DUMP="data/dictionary/raw-wiktextract-data.jsonl.gz"
+readonly SHARD_DIR="data/dictionary/shards"
 
 # Corpus frequency, as data/frequency/README.md documents it. Missing files are not an error to the
 # importer, but without them --limit keeps everything and the search box loses its ordering, so they
 # are fetched rather than left to chance.
 readonly FREQ_DIR="data/frequency"
 readonly FREQ_BASE="https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
-readonly FREQ_LANGS=(en de es hu)
+# Every language the importer holds: one frequency list and one shard each.
+readonly LANGS=(en de es hu)
 
 readonly MAIN_CLASS="gathedge.backend.tools.DictionaryImport"
 
@@ -73,7 +80,7 @@ fetch_frequencies() {
   head1 "Frequency lists ($FREQ_DIR)"
   mkdir -p "$FREQ_DIR"
   local lang file
-  for lang in "${FREQ_LANGS[@]}"; do
+  for lang in "${LANGS[@]}"; do
     file="$FREQ_DIR/${lang}_50k.txt"
     if [ -s "$file" ]; then
       ok "$file already present"
@@ -99,16 +106,38 @@ fetch_dump() {
   ok "$(du -h "$dump" | cut -f1)"
 }
 
+# The languages whose shard is missing or older than the dump, comma-separated.
+stale_shards() {
+  local dump="$1" lang shard stale=()
+  for lang in "${LANGS[@]}"; do
+    shard="$SHARD_DIR/$lang.jsonl.gz"
+    if [ ! -s "$shard" ] || [ "$dump" -nt "$shard" ]; then
+      stale+=("$lang")
+    fi
+  done
+  (IFS=,; printf '%s' "${stale[*]}")
+}
+
 export_seed() {
   local dump="$1" limit="$2" out="$3"
-  head1 "Export (--limit $limit)"
   mkdir -p "$(dirname "$out")"
-  # No database: DictionaryImport skips `store` whenever --export is given, so nothing needs to be
-  # running. Reading the dump holds the whole en/de/hu subset in memory before the cut is applied,
-  # which is what .jvmopts' -Xmx4G is for; raise it there if this dies with an OutOfMemoryError.
-  sbt -batch -no-colors "backend/runMain $MAIN_CLASS \
-    --raw $dump --limit $limit --frequencies $FREQ_DIR --export $out" \
-    || die "the export failed (see the sbt output above)"
+
+  # One sbt session for both steps: its startup is most of a small run.
+  local commands=() stale
+  stale="$(stale_shards "$dump")"
+  head1 "Shards ($SHARD_DIR)"
+  if [ -n "$stale" ]; then
+    say "  cutting $stale from the dump: one pass, a few minutes"
+    commands+=("backend/runMain $MAIN_CLASS --raw $dump --extract $SHARD_DIR --languages $stale")
+  else
+    ok "all present and newer than the dump"
+  fi
+
+  head1 "Export (--limit $limit)"
+  # No database: DictionaryImport skips `store` whenever --export is given, so nothing need be running.
+  # The export holds the pairs and one language at a time; .jvmopts' -Xmx4G is ample.
+  commands+=("backend/runMain $MAIN_CLASS --shards $SHARD_DIR --limit $limit --frequencies $FREQ_DIR --export $out")
+  sbt -batch -no-colors "${commands[@]}" || die "the export failed (see the sbt output above)"
   [ -s "$out" ] || die "the export produced no file at $out"
 }
 
@@ -171,14 +200,17 @@ main() {
   command -v sbt  >/dev/null || die "sbt is not on the PATH (nix develop provides it)"
 
   fetch_frequencies
-  fetch_dump "$dump"
+  # Current shards make the dump unneeded, even when --drop-dump removed it last time.
+  if [ -n "$(stale_shards "$dump")" ]; then
+    fetch_dump "$dump"
+  fi
   export_seed "$dump" "$limit" "$out"
   report "$out"
 
   if [ "$drop_dump" = yes ]; then
     rm -f "$dump"
     head1 "Dump"
-    ok "removed $dump — the next run downloads 2.6 GB again"
+    ok "removed $dump — the shards stay, so the next run needs it only for a new language"
   fi
 }
 

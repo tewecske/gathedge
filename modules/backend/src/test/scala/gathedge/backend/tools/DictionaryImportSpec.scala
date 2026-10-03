@@ -169,6 +169,37 @@ object DictionaryImportSpec extends ZIOSpecDefault {
     )
   }
 
+  /** A small dump for the export: `house` translated with the article, `home` translated to a genderless `Haus` that
+    * the dedupe moves onto `das Haus`, a genderless `Haus` entry whose form follows it, and an untranslated
+    * interjection `haus` that the dedupe drops. `Teller` is outside the cut; `gratis` is inside it, with recordings.
+    */
+  private val exportLines = List(
+    houseLine,
+    """{"word":"home","lang_code":"en","pos":"noun","senses":[{"glosses":["dwelling"]}],""" +
+      """"translations":[{"code":"de","word":"Haus","sense":"dwelling"},{"code":"hu","word":"otthon","sense":"dwelling"}]}""",
+    """{"word":"example","lang_code":"en","pos":"noun","senses":[{"glosses":["instance"]}],""" +
+      """"translations":[{"code":"de","word":"Beispiel","tags":["neuter"],"sense":"instance"}]}""",
+    hausLine,
+    """{"word":"Haus","lang_code":"de","pos":"noun","senses":[{"glosses":["house"]}],""" +
+      """"forms":[{"form":"Hauses","tags":["genitive"]}]}""",
+    """{"word":"haus","lang_code":"de","pos":"intj","senses":[{"glosses":["a call"]}]}""",
+    plateLine,
+    formsLine,
+    soundsLine,
+  )
+
+  private def writeGzip(path: java.nio.file.Path, lines: List[String]): Unit = {
+    val out = new java.util.zip.GZIPOutputStream(java.nio.file.Files.newOutputStream(path))
+    try out.write(lines.map(_ + "\n").mkString.getBytes(StandardCharsets.UTF_8))
+    finally out.close()
+  }
+
+  private def readGzip(path: java.nio.file.Path): List[String] = {
+    val in = new java.util.zip.GZIPInputStream(java.nio.file.Files.newInputStream(path))
+    try new String(in.readAllBytes(), StandardCharsets.UTF_8).split('\n').toList.filter(_.nonEmpty)
+    finally in.close()
+  }
+
   def spec = {
     suite("DictionaryImport")(
       test("a German noun keeps its article, and everything else keeps none") {
@@ -820,6 +851,103 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           DictionaryImport.Collected(words = Map(seeLake -> 1, seeSea -> 1), pairs = Nil, forms = Nil)
         )
         assertTrue(deduped.words.keySet == Set(seeLake, seeSea))
+      },
+      test("--shards is a third mode, and --extract needs --raw and no --export") {
+        assertTrue(
+          DictionaryImport.parseArgs(List("--shards", "x")).map(_.shards) == Right(Some("x")),
+          DictionaryImport.parseArgs(List("--raw", "d.gz", "--extract", "x")).map(_.extractTo) == Right(Some("x")),
+          DictionaryImport.parseArgs(List("--raw", "d.gz", "--shards", "x")).isLeft,
+          DictionaryImport.parseArgs(List("--shards", "x", "--extract", "y")).isLeft,
+          DictionaryImport.parseArgs(List("--raw", "d.gz", "--extract", "x", "--export", "s.tsv")).isLeft,
+        )
+      },
+      test("languageOf reads the entry's own language, though a translation row names another first") {
+        val translationFirst = {
+          """{"translations":[{"code":"de","lang_code":"de","word":"Haus"}],"word":"house","lang_code":"en",""" +
+            """"pos":"noun","senses":[{"glosses":["building"]}]}"""
+        }
+        assertTrue(
+          WiktextractParser.languageOf(translationFirst).contains(WordLanguage.En),
+          WiktextractParser.languageOf(hausLine).contains(WordLanguage.De),
+          WiktextractParser.languageOf("""{"word":"maison","lang_code":"fr"}""").isEmpty,
+          WiktextractParser.languageOf("not json").isEmpty,
+        )
+      },
+      test("extract writes one shard per language, holding the lines whose entry is in it") {
+        val dump = List(houseLine, hausLine, plateLine, """{"word":"maison","lang_code":"fr","pos":"noun"}""")
+        for {
+          directory <- ZIO.attemptBlocking(java.nio.file.Files.createTempDirectory("shards"))
+          dumpPath   = directory.resolve("dump.jsonl.gz")
+          _         <- ZIO.attemptBlocking(writeGzip(dumpPath, dump))
+          _         <- DictionaryImport.extract(dumpPath.toString, directory.toString, Set(WordLanguage.En, WordLanguage.De))
+          en        <- ZIO.attemptBlocking(readGzip(directory.resolve("en.jsonl.gz")))
+          de        <- ZIO.attemptBlocking(readGzip(directory.resolve("de.jsonl.gz")))
+          leftovers <- ZIO.attemptBlocking(directory.toFile.list().toList.filterNot(_ == "dump.jsonl.gz").sorted)
+        } yield assertTrue(
+          en == List(houseLine),
+          de == List(hausLine, plateLine),
+          // The `.part` files are renamed away, and a language not asked for gets no shard.
+          leftovers == List("de.jsonl.gz", "en.jsonl.gz"),
+        )
+      },
+      test("the per-language export writes what select and dedupeHomographs make of the whole dump at once") {
+        val frequencies                                   = Map(
+          WordLanguage.En -> Map("house" -> 1, "home" -> 2, "example" -> 3),
+          WordLanguage.De -> Map("haus" -> 4, "gratis" -> 5),
+        )
+        val options                                       = DictionaryImport.Options(raw = Some("unused"), limit = 10)
+        // The old pipeline: every line read into one Collected, then cut, then deduped.
+        val whole                                         = {
+          exportLines.map(WiktextractParser.parse(_)).foldLeft(DictionaryImport.Collected.empty) { (collected, entry) =>
+            val withWord = entry.word.fold(collected)(collected.withWord(_, 999999999))
+            entry.pairs
+              .foldLeft(withWord)((acc, pair) => acc.withWord(pair.source, 999999999).withWord(pair.target, 999999999))
+              .copy(
+                pairs = entry.pairs ++ collected.pairs,
+                forms = entry.forms ++ collected.forms,
+                audio = entry.audio ++ collected.audio,
+              )
+          }
+        }
+        val expected                                      = DictionaryImport.dedupeHomographs(DictionaryImport.select(whole, frequencies, limit = 10))
+        val dumpSource                                    = new DictionaryImport.DumpSource {
+          def lines(languages: Set[WordLanguage]) = {
+            zio.stream.ZStream.fromIterable(exportLines.filter(WiktextractParser.mayConcern(_, languages)))
+          }
+        }
+        val shardSource                                   = new DictionaryImport.DumpSource {
+          def lines(languages: Set[WordLanguage]) = {
+            zio.stream.ZStream.fromIterable(
+              exportLines.filter(line => WiktextractParser.languageOf(line).exists(languages.contains))
+            )
+          }
+        }
+        def exported(source: DictionaryImport.DumpSource) = {
+          for {
+            path  <- ZIO.attemptBlocking(java.nio.file.Files.createTempFile("seed", ".tsv"))
+            _     <- DictionaryImport.exportDump(source, options, frequencies, path.toString)
+            lines <- ZIO.attemptBlocking(java.nio.file.Files.readAllLines(path).toArray(Array.empty[String]).toList)
+            _     <- ZIO.attemptBlocking(java.nio.file.Files.delete(path))
+          } yield DictionaryImport.SeedFormat.decode(lines)
+        }
+        for {
+          fromDump   <- exported(dumpSource)
+          fromShards <- exported(shardSource)
+        } yield assertTrue(
+          // The fixture exercises what the split has to get right: a redirect, a drop, and a cross-language pair
+          // that points at the redirected word.
+          expected.words.keySet.exists(_.text == "Hauses"),
+          !expected.words.keySet.exists(word => word.text == "haus"),
+          expected.pairs.exists(pair => pair.source.text == "home" && pair.target.gender.contains(Gender.Neuter)),
+          fromDump.words == expected.words,
+          fromDump.pairs.toSet == expected.pairs.toSet,
+          fromDump.forms.toSet == expected.forms.toSet,
+          fromDump.audio.toSet == expected.audio.toSet,
+          fromShards.words == fromDump.words,
+          fromShards.pairs.toSet == fromDump.pairs.toSet,
+          fromShards.forms.toSet == fromDump.forms.toSet,
+          fromShards.audio.toSet == fromDump.audio.toSet,
+        )
       },
       test("--seed takes an optional path, and does not swallow the option after it") {
         assertTrue(
