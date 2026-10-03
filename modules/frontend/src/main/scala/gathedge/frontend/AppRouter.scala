@@ -34,10 +34,15 @@ object Page {
   case object CheckInbox extends Page
   case object Settings   extends Page
 
-  /** The account's daily streak and play totals: the first tab of the profile. Auth-only: it is personal. [[MyPlays]]
-    * and [[SharedProgress]] are its other two tabs.
+  /** The account's daily streak and play totals: the first tab of the profile. Auth-only: it is personal.
+    * [[ProfileAchievements]], [[MyPlays]] and [[SharedProgress]] are its other tabs.
     */
   case object Profile extends Page
+
+  /** Every achievement of the catalog and how far the account is on each: the second tab of the profile. Auth-only,
+    * like [[Profile]].
+    */
+  case object ProfileAchievements extends Page
 
   /** Mints a fresh wordlist and hands off to [[TagDetail]]. Public, so that it mints a guest on arrival (through
     * `TagCreatePage.asReader`) rather than bouncing a signed-out visitor to sign-in, so the catalog's "New wordlist"
@@ -268,12 +273,13 @@ object AppRouter {
     */
   private val basePath = CurrentLocale.prefix
 
-  private val signInRoute    = Route.static(SignIn, root / "sign-in", basePath)
-  private val signUpRoute    = Route.static(SignUp, root / "sign-up", basePath)
-  private val aboutRoute     = Route.static(About, root / "about", basePath)
-  private val settingsRoute  = Route.static(Settings, root / "settings", basePath)
-  private val profileRoute   = Route.static(Profile, root / "profile", basePath)
-  private val tagCreateRoute = Route.static(TagCreate, root / "tags" / "new", basePath)
+  private val signInRoute       = Route.static(SignIn, root / "sign-in", basePath)
+  private val signUpRoute       = Route.static(SignUp, root / "sign-up", basePath)
+  private val aboutRoute        = Route.static(About, root / "about", basePath)
+  private val settingsRoute     = Route.static(Settings, root / "settings", basePath)
+  private val profileRoute      = Route.static(Profile, root / "profile", basePath)
+  private val achievementsRoute = Route.static(ProfileAchievements, root / "profile" / "achievements", basePath)
+  private val tagCreateRoute    = Route.static(TagCreate, root / "tags" / "new", basePath)
 
   /** The bare root decodes straight into the games catalog, default query — no `Games` page, no post-boot redirect.
     * `matchEncode` is deliberately `PartialFunction.empty`: this route never claims an encode, so
@@ -509,6 +515,8 @@ object AppRouter {
         "Settings"
       case Profile                        =>
         "Profile"
+      case ProfileAchievements            =>
+        "ProfileAchievements"
       case TagCreate                      =>
         "TagCreate"
       case AllGames(query)                =>
@@ -720,6 +728,8 @@ object AppRouter {
           Settings
         case "Profile"             =>
           Profile
+        case "ProfileAchievements" =>
+          ProfileAchievements
         case "TagCreate"           =>
           TagCreate
         // "Games" is what a history entry written before the root became a direct alias for AllGames still holds.
@@ -772,6 +782,7 @@ object AppRouter {
         aboutRoute,
         settingsRoute,
         profileRoute,
+        achievementsRoute,
         tagCreateRoute,
         rootRoute,
         sharedProgressRoute,

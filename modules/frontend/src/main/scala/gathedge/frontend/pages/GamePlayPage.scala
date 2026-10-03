@@ -4,11 +4,26 @@ import com.raquo.laminar.api.L._
 import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
-import gathedge.frontend.components.{Alert, AppShell, ArticlePicker, GameAnswersTable, GameHeader, Labels}
+import gathedge.frontend.components.{
+  AchievementUnlocks,
+  Alert,
+  AppShell,
+  ArticlePicker,
+  GameAnswersTable,
+  GameHeader,
+  Labels,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{AnswerOutcome, GameMode, GameScoring, LanguageProfile, PartOfSpeech}
-import gathedge.shared.dto.{GameAnswerResult, GamePrompt, GameResults, GameVariantDto}
+import gathedge.shared.dto.{
+  AchievementUnlock,
+  GameAnswerResult,
+  GamePrompt,
+  GameResults,
+  GameVariantDto,
+  SubmitAnswerResponse,
+}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 
@@ -63,6 +78,11 @@ private class GamePlayPage(slug: String, playId: Long) {
   private val promptVar   = Var(Option.empty[GamePrompt])
   private val finishedVar = Var(false)
   private val resultsVar  = Var(Option.empty[GameResults])
+
+  /** The achievement tiers this play unlocked. Only the answer that finishes the play carries any, so this is filled
+    * once, just before the results screen shows it.
+    */
+  private val unlocksVar = Var(List.empty[AchievementUnlock])
 
   /** The graded row for the word on screen, or `None` while it is still being answered. */
   private val feedbackVar = Var(Option.empty[GameAnswerResult])
@@ -134,10 +154,11 @@ private class GamePlayPage(slug: String, playId: Long) {
       },
       // `submittingVar` deliberately stays true from here until the next prompt lands: the answer form is off screen
       // for the whole hold, and a stray Enter must not send the same word twice on the way back.
-      submitStream --> Observer[Either[ApiError, GameAnswerResult]] {
-        case Right(result) =>
-          feedbackVar.set(Some(result))
-        case Left(err)     =>
+      submitStream --> Observer[Either[ApiError, SubmitAnswerResponse]] {
+        case Right(response) =>
+          unlocksVar.update(_ ++ response.achievements)
+          feedbackVar.set(Some(response.result))
+        case Left(err)       =>
           Var.set(submittingVar -> false, errorVar -> Some(err.message))
       },
       // The hold. `flatMapSwitch` over the `None` case is what cancels a pending timer the moment the reader skips
@@ -191,7 +212,7 @@ private class GamePlayPage(slug: String, playId: Long) {
     }
   }
 
-  private def submitStream: EventStream[Either[ApiError, GameAnswerResult]] = {
+  private def submitStream: EventStream[Either[ApiError, SubmitAnswerResponse]] = {
     submitBus.events
       .filterWith(submittingVar.signal.not)
       .map(answer => (promptVar.now().flatMap(_.wordId), answer.trim))
@@ -472,6 +493,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
+      child.maybe <-- unlocksVar.signal.map(AchievementUnlocks.render),
       GameAnswersTable.render(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",
