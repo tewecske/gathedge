@@ -17,6 +17,7 @@ object ApiPathSpec extends ZIOSpecDefault {
 
   /** One entry per resource. A new `*Endpoints` file adds its line here. */
   private val resources: List[(String, List[Endpoint[?, ?, ?, ?, ?]], List[ApiPath])] = List(
+    ("achievements", AchievementEndpoints.all, AchievementPaths.all),
     ("admin", AdminEndpoints.all, AdminPaths.all),
     ("auth", AuthEndpoints.all, AuthPaths.all),
     ("games", GameEndpoints.all, GamePaths.all),

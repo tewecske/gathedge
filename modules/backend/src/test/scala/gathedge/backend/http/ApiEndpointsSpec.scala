@@ -4,6 +4,7 @@ import gathedge.backend.{TestAuthLayers, TestCaptchaService, TestDataSource}
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
   StreakRepository,
+  AchievementRepository,
   AuditLogRepository,
   EmailChangeTokenRepository,
   EmailVerificationTokenRepository,
@@ -24,6 +25,7 @@ import gathedge.backend.db.{
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
 import gathedge.backend.service.{
   StreakService,
+  AchievementService,
   AdminActor,
   AdminService,
   AuditTrail,
@@ -40,7 +42,17 @@ import gathedge.backend.service.{
 }
 import gathedge.shared.api.ApiFailure
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
-import gathedge.shared.domain.{AnswerOutcome, GameMode, Gender, PartOfSpeech, StreakState, Theme, User, WordLanguage}
+import gathedge.shared.domain.{
+  Achievements,
+  AnswerOutcome,
+  GameMode,
+  Gender,
+  PartOfSpeech,
+  StreakState,
+  Theme,
+  User,
+  WordLanguage,
+}
 import gathedge.shared.dto.{
   AdminUserDetail,
   AuditPage,
@@ -53,7 +65,8 @@ import gathedge.shared.dto.{
   CreateWordRequest,
   ErrorResponse,
   ForgotPasswordRequest,
-  GameAnswerResult,
+  AchievementsResponse,
+  SubmitAnswerResponse,
   GamePrompt,
   GameResults,
   PlayStarted,
@@ -102,7 +115,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       UserRepository.live ++ SessionRepository.live ++ OAuthIdentityRepository.live ++
         EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ UsageEventRepository.live ++
-        MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live ++ StreakRepository.live
+        MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live ++ StreakRepository.live ++
+        AchievementRepository.live
     )
   }
 
@@ -113,7 +127,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
           GameWordList.live ++ TestAuthLayers.emailAndConfig >+>
-          (AuthService.live ++ AuditTrail.live ++ GameService.live ++ StreakService.live) >+>
+          (AuthService.live ++ AuditTrail.live ++ GameService.live ++ StreakService.live ++ AchievementService.live) >+>
           (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
       )
   }
@@ -745,45 +759,63 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
       suite("games")(
         test("finishing a play keeps the daily streak; merely starting one does not") {
           for {
-            fixture        <- gameFixture("games-streak@example.com")
-            (slug, session) = fixture
-            before         <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
-            beforeRaw      <- body(before)
-            started        <- runRoutes(
-                                GameRoutes.routes,
-                                withCsrf(
-                                  withSession(
-                                    Request.post(s"/api/games/$slug/plays", Body.fromString(StartPlayRequest().toJson)),
-                                    session,
-                                  )
-                                ),
-                              )
-            midPlay        <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
-            midPlayRaw     <- body(midPlay)
-            startedRaw     <- body(started)
-            playId          = startedRaw.fromJson[PlayStarted].map(_.playId).getOrElse(0L)
-            prompt         <- runRoutes(
-                                GameRoutes.routes,
-                                withSession(Request.get(s"/api/games/plays/$playId/prompt"), session),
-                              )
-            promptRaw      <- body(prompt)
-            wordId          = promptRaw.fromJson[GamePrompt].toOption.flatMap(_.wordId).getOrElse(0L)
-            answerRequest   = Request.post(
-                                s"/api/games/plays/$playId/answers",
-                                Body.fromString(SubmitAnswerRequest(wordId, "kutya").toJson),
-                              )
-            _              <- runRoutes(GameRoutes.routes, withCsrf(withSession(answerRequest, session)))
-            after          <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
-            afterRaw       <- body(after)
-            anonymous      <- runRoutes(StreakRoutes.routes, Request.get("/api/me/streak"))
-          } yield assertTrue(
-            started.status == Status.Created,
-            beforeRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
-            // Started is not finished: the streak has not moved yet.
-            midPlayRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
-            afterRaw.fromJson[StreakResponse].map(r => (r.current, r.state)) == Right((1, StreakState.Active)),
-            anonymous.status == Status.Unauthorized,
-          )
+            fixture         <- gameFixture("games-streak@example.com")
+            (slug, session)  = fixture
+            before          <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            beforeRaw       <- body(before)
+            started         <- runRoutes(
+                                 GameRoutes.routes,
+                                 withCsrf(
+                                   withSession(
+                                     Request.post(s"/api/games/$slug/plays", Body.fromString(StartPlayRequest().toJson)),
+                                     session,
+                                   )
+                                 ),
+                               )
+            midPlay         <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            midPlayRaw      <- body(midPlay)
+            startedRaw      <- body(started)
+            playId           = startedRaw.fromJson[PlayStarted].map(_.playId).getOrElse(0L)
+            prompt          <- runRoutes(
+                                 GameRoutes.routes,
+                                 withSession(Request.get(s"/api/games/plays/$playId/prompt"), session),
+                               )
+            promptRaw       <- body(prompt)
+            wordId           = promptRaw.fromJson[GamePrompt].toOption.flatMap(_.wordId).getOrElse(0L)
+            answerRequest    = Request.post(
+                                 s"/api/games/plays/$playId/answers",
+                                 Body.fromString(SubmitAnswerRequest(wordId, "kutya").toJson),
+                               )
+            answered        <- runRoutes(GameRoutes.routes, withCsrf(withSession(answerRequest, session)))
+            answeredRaw     <- body(answered)
+            after           <- runRoutes(StreakRoutes.routes, withSession(Request.get("/api/me/streak"), session))
+            afterRaw        <- body(after)
+            anonymous       <- runRoutes(StreakRoutes.routes, Request.get("/api/me/streak"))
+            achievements    <- runRoutes(
+                                 AchievementRoutes.routes,
+                                 withSession(Request.get("/api/me/achievements"), session),
+                               )
+            achievementsRaw <- body(achievements)
+            anonymousAch    <- runRoutes(AchievementRoutes.routes, Request.get("/api/me/achievements"))
+          } yield {
+            val listed = achievementsRaw.fromJson[AchievementsResponse].map(_.achievements).getOrElse(Nil)
+            assertTrue(
+              started.status == Status.Created,
+              beforeRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
+              // Started is not finished: the streak has not moved yet.
+              midPlayRaw.fromJson[StreakResponse].map(_.state) == Right(StreakState.Inactive),
+              afterRaw.fromJson[StreakResponse].map(r => (r.current, r.state)) == Right((1, StreakState.Active)),
+              anonymous.status == Status.Unauthorized,
+              // A one-word play is finished but does not qualify: the answer that finished it unlocked nothing.
+              answeredRaw.fromJson[SubmitAnswerResponse].map(_.achievements) == Right(Nil),
+              // Every achievement is listed, not started ones too, in catalog order.
+              achievements.status == Status.Ok,
+              listed.map(_.code) == Achievements.all.map(_.code),
+              listed.forall(_.tier == 0),
+              listed.find(_.code == Achievements.gamesPlayed.code).flatMap(_.nextThreshold) == Some(1),
+              anonymousAch.status == Status.Unauthorized,
+            )
+          }
         },
         test("a play carries its mode both ways, and a clicked prompt carries its options") {
           for {
@@ -843,8 +875,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             // 200 with a body, not the bare 204 this endpoint used to answer: the player is told how the word went.
             answered.status == Status.Ok,
             answeredRaw.contains("\"Correct\""),
-            answeredRaw.fromJson[GameAnswerResult].map(_.outcome) == Right(AnswerOutcome.Correct),
-            answeredRaw.fromJson[GameAnswerResult].map(_.expectedTexts) == Right(List("kutya")),
+            answeredRaw.fromJson[SubmitAnswerResponse].map(_.result.outcome) == Right(AnswerOutcome.Correct),
+            answeredRaw.fromJson[SubmitAnswerResponse].map(_.result.expectedTexts) == Right(List("kutya")),
           )
         },
         test("deleting a game is a bare 204 for its owner and a 403 for anyone else") {
