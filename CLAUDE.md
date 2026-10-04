@@ -326,7 +326,7 @@ Pages render through `components/AppShell`. `AppShell.render` is authenticated; 
 
 ### Vocabulary
 
-The first feature: shared dictionary of English, German, Hungarian words, plus tags. `words`, `word_translations`, `tags`, `word_tags`, `word_tag_pairs` are owned by one `WordRepository`.
+The first feature: shared dictionary of English, German, Spanish, French, Portuguese and Hungarian words, plus tags. The seed holds the languages `scripts/build-dictionary-seed.sh` lists in `LANGS`; the export is told that list, so a language the code knows stays out of the seed until it is added there. `words`, `word_translations`, `tags`, `word_tags`, `word_tag_pairs` are owned by one `WordRepository`.
 
 **A word belongs to nobody; a tag is owned by one account but visible to all; tagging is "in my vocabulary."** No `user_words` table — `mine=true` is a join through `word_tags`. `POST /api/words` is *ensure and attach*, not create-or-409.
 
@@ -344,7 +344,7 @@ Four load-bearing columns:
 
 - **`gender` is part of a word's identity** (`der See` and `die See` are two rows). `NOT NULL` with `''` for "not gendered". The column stores the gender itself (`masculine`/`feminine`/`neuter`), not an article.
 - **`frequency_rank` is `NOT NULL` with a large sentinel.**
-- **Search is a prefix match on `text_norm`** (`LIKE 'hau%'`), lowercased on write.
+- **Search is a prefix match on `text_norm`** (`LIKE 'hau%'`), lowercased on write. A leading article is stripped first, but only one of the listing's own language: Portuguese `as` must not turn an English `as well` into `well`.
 - **`is_form` is derived from `word_forms`, not authoritative.** It is what the listing's "main words only" filter reads, so the predicate is a column rather than a `NOT EXISTS`, and `idx_words_main_rank` (partial, `WHERE is_form = FALSE`) answers the default order. `word_forms` stays the truth: `WordRepository.insertForms`, `.deleteWordForms` and `.deleteWordForm` are the only writers, each updating the flag in its own transaction, and another writer of that table must do the same. Deleting one `(form, relation)` pair frees the word only when no relation is left. **A self-link (`lemma_word_id = form_word_id`) never counts**: it says a form is spelled like the word itself (`Künstler`, plural `Künstler`; `put`, past `put`), so the word page shows it, but it makes no word a form, `lemmaContextOf` and the games' related words skip it, and `formPairs` pairs no translation through it.
 
 **Every form a course teaches is imported, in every language** (`WiktextractParser.formsOf`). A form may be several words: a composed tense (`habe gekauft`), a separable verb's main clause (`kaufe ein`), an adjective with its article (`der freie`), `more free`, a Spanish reflexive (`me quejo`, tagged `reflexive`). A cell naming two forms (`adva (adván)`, `X / Y`) becomes two. Notes, placeholders, `canonical` rows and archaic/nonstandard forms stay out.
@@ -393,7 +393,7 @@ The tag editor's bulk-import panel sniffs its input (`shared/parsing/DelimitedTe
 
 **The difference is who decides the pairing.** `bulkImport` *infers* it — two words are a pair only where `word_translations` already links them. `tabularImport` takes the row as given: the reader put both cells on one line, so the pair is written even for words the dictionary has never seen. That is why `POST /api/tags/{tagId}/tabular-import` exists rather than a flag on the old endpoint.
 
-- **The mapping is two language columns plus one extra column per side**, each extra belonging to a specific word. `POST /api/words/column-language-check` samples 20 words per column against **all four** languages and suggests the roles; the reader overrides them. The language guard is kept, moved to this step.
+- **The mapping is two language columns plus one extra column per side**, each extra belonging to a specific word. `POST /api/words/column-language-check` samples 20 words per column against **every** language and suggests the roles; the reader overrides them. The language guard is kept, moved to this step.
 - **Cell parsing is `shared/parsing/WordCell`**, used by the server so the browser's preview and the import cannot disagree. It strips markers so they never reach `text_norm`, reads the gender, and assigns `PartOfSpeech.Phrase` to a cell left holding two or more words. The article is stripped *before* the words are counted, which is what keeps `der Hund` a noun and makes `guten Tag` a phrase with no special case.
 - **`shared/parsing/MarkerVocabulary` holds every language's abbreviations, and `forPair` resolves the collisions.** A marker is written in the reader's language, not the column's: German writes `m`/`w`/`s` (where `w` is feminine and `s` neuter), Hungarian `hn`/`nn`/`sn` — on German words, since Hungarian has no gender. The column's own language wins a collision, then the tag's other language, then the rest. Articles stay out of this file; they come from `LanguageProfile`.
 - **Gender lands in `words.gender`; a real inflected word in an extra column becomes a `word_forms` row; a bare government marker (`+D`, `(G)`) is stripped and discarded.** There is no lemma-level property column, and a government marker is no form of the word, so it has no `word_forms` row to go in. Stripping still earns its keep: it is what stops `helfen` and `helfen +D` becoming two rows.

@@ -83,12 +83,46 @@ object LanguageProfile {
     reflexivePronouns = Set("me", "te", "se", "nos", "os"),
   )
 
+  /** `les` is left out of [[LanguageProfile.articleForms]]: it is the plural of both genders, so it names none. `l'` is
+    * left out too: it joins the noun with no space (`l'homme`), and [[LanguageProfile.strip]] splits on a space.
+    */
+  private val french: LanguageProfile = LanguageProfile(
+    genders = List(Gender.Masculine, Gender.Feminine),
+    definiteArticles = Map(Gender.Masculine -> "le", Gender.Feminine -> "la"),
+    articleForms = Map(
+      "le" -> Gender.Masculine,
+      "la" -> Gender.Feminine,
+    ),
+    capitalizesNouns = false,
+    reflexivePronouns = Set("me", "te", "se", "nous", "vous"),
+  )
+
+  /** The reflexive pronouns are the ones written before the verb (`me lavo`). A pronoun joined after it with a hyphen
+    * (`lavo-me`) is not one token of its own, so the import does not tag that form `reflexive`.
+    */
+  private val portuguese: LanguageProfile = LanguageProfile(
+    genders = List(Gender.Masculine, Gender.Feminine),
+    definiteArticles = Map(Gender.Masculine -> "o", Gender.Feminine -> "a"),
+    articleForms = Map(
+      "o"  -> Gender.Masculine,
+      "os" -> Gender.Masculine,
+      "a"  -> Gender.Feminine,
+      "as" -> Gender.Feminine,
+    ),
+    capitalizesNouns = false,
+    reflexivePronouns = Set("me", "te", "se", "nos", "vos"),
+  )
+
   def of(language: WordLanguage): LanguageProfile = {
     language match {
       case WordLanguage.De                   =>
         german
       case WordLanguage.Es                   =>
         spanish
+      case WordLanguage.Fr                   =>
+        french
+      case WordLanguage.Pt                   =>
+        portuguese
       case WordLanguage.En | WordLanguage.Hu =>
         ungendered
     }

@@ -261,7 +261,7 @@ object WiktextractParser {
   private val maxFormWords = 4
 
   /** Words that appear only in the English notes some tables leave in their cells (`definite forms are not used`,
-    * `intransitive verb`, `older also: der`). No form in the four languages uses one of them.
+    * `intransitive verb`, `older also: der`). No form in English, German, Spanish or Hungarian uses one of them.
     */
   private val noteWords: Set[String] = {
     Set(

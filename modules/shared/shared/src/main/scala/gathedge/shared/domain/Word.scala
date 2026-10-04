@@ -6,7 +6,7 @@ import zio.json.*
   *
   * Deliberately not [[Locale]]: that enum is the set of languages the *interface* is translated into, and German is not
   * one of them. A page rendered in Hungarian teaching German vocabulary needs both vocabularies at once, so conflating
-  * them would make adding a fourth study language a translation project.
+  * them would make adding a study language a translation project.
   *
   * Everything a language does *grammatically* — whether it has genders, which article each takes, whether its nouns are
   * capitalized — lives in [[LanguageProfile]] rather than in a `match` on this enum. Adding a language is a case here
@@ -16,12 +16,14 @@ enum WordLanguage derives JsonCodec, CanEqual {
   case En,
     De,
     Es,
-    Hu
+    Fr,
+    Hu,
+    Pt
 }
 
 object WordLanguage {
 
-  val all: List[WordLanguage] = List(En, De, Es, Hu)
+  val all: List[WordLanguage] = List(En, De, Es, Fr, Hu, Pt)
 
   /** Lower-case ISO 639-1 form: what `words.language` stores and what a query parameter carries. Written out rather
     * than derived from `toString`, so renaming a case cannot silently orphan every stored row — the rule
@@ -35,8 +37,12 @@ object WordLanguage {
         "de"
       case Es =>
         "es"
+      case Fr =>
+        "fr"
       case Hu =>
         "hu"
+      case Pt =>
+        "pt"
     }
   }
 
@@ -48,8 +54,12 @@ object WordLanguage {
         Some(De)
       case "es" =>
         Some(Es)
+      case "fr" =>
+        Some(Fr)
       case "hu" =>
         Some(Hu)
+      case "pt" =>
+        Some(Pt)
       case _    =>
         None
     }

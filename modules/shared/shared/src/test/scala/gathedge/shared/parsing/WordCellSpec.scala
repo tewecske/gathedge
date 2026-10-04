@@ -183,8 +183,8 @@ object WordCellSpec extends ZIOSpecDefault {
       ),
       suite("gender letters")(
         test("a leading article abbreviation in the word column is read as the gender") {
-          // `e Suche` is the article column written into the word column, which is not ambiguous: no one-letter word in
-          // any of the four languages is also a gender marker.
+          // `e Suche` is the article column written into the word column. Only `e` ("and" in Spanish and Portuguese)
+          // is also a one-letter word, and a word-list cell seldom starts with it.
           val word = one(german("e Suche"))
           assertTrue(
             word.text == "Suche",

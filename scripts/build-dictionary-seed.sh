@@ -51,7 +51,8 @@ readonly SHARD_DIR="data/dictionary/shards"
 # are fetched rather than left to chance.
 readonly FREQ_DIR="data/frequency"
 readonly FREQ_BASE="https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
-# Every language the importer holds: one frequency list and one shard each.
+# The languages a seed holds: one frequency list and one shard each. The export is told this list, so a
+# language the code knows (WordLanguage) is left out of the seed until it is added here.
 readonly LANGS=(en de es hu)
 
 readonly MAIN_CLASS="gathedge.backend.tools.DictionaryImport"
@@ -136,7 +137,9 @@ export_seed() {
   head1 "Export (--limit $limit)"
   # No database: DictionaryImport skips `store` whenever --export is given, so nothing need be running.
   # The export holds the pairs and one language at a time; .jvmopts' -Xmx4G is ample.
-  commands+=("backend/runMain $MAIN_CLASS --shards $SHARD_DIR --limit $limit --frequencies $FREQ_DIR --export $out")
+  local languages
+  languages="$(IFS=,; echo "${LANGS[*]}")"
+  commands+=("backend/runMain $MAIN_CLASS --shards $SHARD_DIR --languages $languages --limit $limit --frequencies $FREQ_DIR --export $out")
   sbt -batch -no-colors "${commands[@]}" || die "the export failed (see the sbt output above)"
   [ -s "$out" ] || die "the export produced no file at $out"
 }

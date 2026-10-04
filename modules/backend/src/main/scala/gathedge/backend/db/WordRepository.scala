@@ -15,6 +15,7 @@ import gathedge.shared.dto.{TagSort, WordSort}
 import zio.*
 
 import javax.sql.DataSource
+import scala.util.matching.Regex
 
 /** The vocabulary's five tables — `words`, `word_translations`, `tags`, `word_tags`, `word_tag_pairs` — in one
   * repository.
@@ -1006,17 +1007,23 @@ final class WordRepositoryLive(dataSource: DataSource)
     logged(run(ctx.run(q)))(rows => s"words.setPartOfSpeech id=$id pos=$partOfSpeech gender=$gender rows=$rows")
   }
 
-  /** Every article form of every language this app teaches, longest first so `"los"` is not shadowed by a shorter form
-    * that happens to be a prefix of it — none are today, but the ordering costs nothing and stays correct if one ever
-    * is. Built once from [[LanguageProfile]] rather than naming an article here, so a new language's articles are
-    * stripped by the search box with no change to this file.
+  /** A leading article of any of `languages`, longest first so `"los"` is not shadowed by a shorter form that happens
+    * to be a prefix of it. Built from [[LanguageProfile]] rather than naming an article here, so a new language's
+    * articles are stripped by the search box with no change to this file.
     */
-  private val leadingArticle = {
-    val forms = WordLanguage.all
+  private def leadingArticleOf(languages: List[WordLanguage]): Option[Regex] = {
+    val forms = languages
       .flatMap(language => LanguageProfile.of(language).articleForms.keys)
       .distinct
       .sortBy(-_.length)
     if (forms.isEmpty) None else Some(("^(?:" + forms.mkString("|") + ")\\s+").r)
+  }
+
+  /** Every language's articles, for a search with no `language` filter. */
+  private val anyLeadingArticle = leadingArticleOf(WordLanguage.all)
+
+  private val leadingArticle: Map[String, Option[Regex]] = {
+    WordLanguage.all.map(language => WordLanguage.code(language) -> leadingArticleOf(List(language))).toMap
   }
 
   /** The prefix pattern behind the search box, or `None` when it is empty.
@@ -1025,13 +1032,14 @@ final class WordRepositoryLive(dataSource: DataSource)
     * answers. Text is stored lowercased and accent-folded in `textSearch`, so lowercasing and folding the needle the
     * same way is the whole of the case- and accent-insensitivity, with no `lower()` for the two dialects to disagree
     * about — the rule `UserRepository.emailPattern` follows. This means "hau" finds "häuser" and "o" finds "ő". A
-    * leading article is stripped first, since `textSearch` holds only the noun, not its gender article — stripping
-    * every language's articles rather than only the listing's own costs nothing and keeps this independent of whichever
-    * `language` filter the caller passed.
+    * leading article is stripped first, since `textSearch` holds only the noun, not its gender article. Only the
+    * `language` filter's own articles are stripped: Portuguese `a`/`as` would otherwise turn an English `a lot` or
+    * `as well` into `lot` or `well`. A search with no filter strips every language's.
     */
-  private def searchPattern(search: Option[String]): Option[String] = {
+  private def searchPattern(search: Option[String], language: Option[String]): Option[String] = {
+    val article = language.fold(anyLeadingArticle)(code => leadingArticle.getOrElse(code, None))
     search
-      .map(needle => leadingArticle.fold(needle.trim.toLowerCase)(_.replaceFirstIn(needle.trim.toLowerCase, "")))
+      .map(needle => article.fold(needle.trim.toLowerCase)(_.replaceFirstIn(needle.trim.toLowerCase, "")))
       .map(needle => TextSearch.fold(needle))
       .filter(_.nonEmpty)
       .map(needle => s"$needle%")
@@ -1081,7 +1089,7 @@ final class WordRepositoryLive(dataSource: DataSource)
   ): DynamicQuery[WordRow] = {
     val base = dynamicQuerySchema[WordRow]("words")
       .filterOpt(language)((word, value) => quote(word.language == unquote(value)))
-      .filterOpt(searchPattern(search))((word, pattern) => quote(word.textSearch.like(unquote(pattern))))
+      .filterOpt(searchPattern(search, language))((word, pattern) => quote(word.textSearch.like(unquote(pattern))))
       .filterOpt(partOfSpeech)((word, value) => quote(word.partOfSpeech == unquote(value)))
       .filterOpt(tagId)((word, value) =>
         quote(wordTags.filter(link => link.wordId == word.id && link.tagId == unquote(value)).nonEmpty)

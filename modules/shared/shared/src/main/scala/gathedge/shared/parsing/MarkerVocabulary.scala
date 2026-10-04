@@ -149,9 +149,32 @@ object MarkerVocabulary {
     ),
   )
 
+  /** French has no neuter, and no case a marker names. `qch`/`qn` (`quelque chose`, `quelqu'un`) state what a verb
+    * takes, but no `GrammarTag` says that, so they are not here.
+    */
+  private val french: MarkerVocabulary = vocabulary(
+    masculine = List("m", "masc", "masculin"),
+    feminine = List("f", "fém", "fem", "féminin", "feminin"),
+    neuter = Nil,
+    relations = List(
+      "plural"   -> List("pl", "pluriel"),
+      "singular" -> List("sg", "sing", "singulier"),
+    ),
+  )
+
+  private val portuguese: MarkerVocabulary = vocabulary(
+    masculine = List("m", "masc", "masculino"),
+    feminine = List("f", "fem", "feminino"),
+    neuter = Nil,
+    relations = List(
+      "plural"   -> List("pl", "plural"),
+      "singular" -> List("sg", "sing", "singular"),
+    ),
+  )
+
   /** The symbolic government notation, which means the same thing whoever wrote the list — a German convention that
-    * travels into lists written in any of the four languages. Always active, under every pairing, so it never depends
-    * on a collision being resolved one way.
+    * travels into lists written in any language. Always active, under every pairing, so it never depends on a collision
+    * being resolved one way.
     *
     * The bare letters are here without their `+`/`(` wrapper: [[WordCell]] strips that punctuation before looking a
     * token up, since the punctuation is what identified the token as a marker.
@@ -175,8 +198,12 @@ object MarkerVocabulary {
         german
       case WordLanguage.Es =>
         spanish
+      case WordLanguage.Fr =>
+        french
       case WordLanguage.Hu =>
         hungarian
+      case WordLanguage.Pt =>
+        portuguese
     }
   }
 

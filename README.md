@@ -3,9 +3,9 @@
 A full-stack Scala 3 web application: a ZIO HTTP backend, a Scala.js + Laminar single-page
 frontend, Postgres, and one shared module that both ends compile against.
 
-**The application is a vocabulary trainer** for English, German and Hungarian: a shared dictionary
-imported from Wiktionary — every word with its part of speech and, for German nouns, its
-`der`/`die`/`das` — that a reader searches and tags with whatever they are learning. It needs no
+**The application is a vocabulary trainer** for English, German, Spanish, French, Portuguese and Hungarian: a
+shared dictionary imported from Wiktionary — every word with its part of speech and, for a gendered noun, its
+article — that a reader searches and tags with whatever they are learning. It needs no
 sign-up: browsing is anonymous, and the first word somebody tags mints them a **guest account**,
 which can be carried to another machine with a transfer code or turned into a real account later,
 in place, keeping everything on it.
@@ -57,6 +57,9 @@ The vocabulary feature browses a shared dictionary of English, German, Spanish a
 part of speech. German and Spanish nouns also have a gender. Nothing in the application writes these rows: they are
 imported. All files below live under `data/`, which is git-ignored.
 
+The code also knows French and Portuguese, but the seed does not hold them yet. A seed holds the languages in `LANGS`
+in `scripts/build-dictionary-seed.sh`. Adding a language there also needs its frequency list.
+
 ### The sample
 
 `data/dictionary/seed.tsv` is the commonest 2000 words per language, with their translation pairs and their
@@ -85,7 +88,7 @@ published as one JSON object per line at
 importer streams the `.gz`. The dump is large because it holds every language the English Wiktionary covers (about a
 thousand), and each entry carries etymology, pronunciations, inflection tables, examples and categories.
 `WiktextractParser` reads six fields. Every inflected form also has an entry of its own, which `isLemma` drops. The
-four languages here are a few per cent of the dump. The per-language extracts kaikki also publishes do not help:
+languages here are a few per cent of the dump. The per-language extracts kaikki also publishes do not help:
 they are uncompressed, they total more than the whole dump gzipped, and they are marked for removal.
 
 ### Frequency lists

@@ -378,6 +378,19 @@ object WordServiceSpec extends ZIOSpecDefault {
           haz.items.map(_.word.text) == List("ház"),
         )
       }.provide(layer),
+      test("a search strips a leading article of the listing's own language only") {
+        // Portuguese `as` is an article. Stripped from an English search, `as well` would find `well` instead.
+        for {
+          _      <- seed
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "as well", pos = PartOfSpeech.Phrase))
+          _      <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "well", pos = PartOfSpeech.Adverb))
+          german <- list(search = Some("das hau"))
+          asWell <- list(search = Some("as well"), language = WordLanguage.En, target = WordLanguage.De)
+        } yield assertTrue(
+          german.items.map(_.word.text) == List("Haus", "hauen", "Haufen"),
+          asWell.items.map(_.word.text) == List("as well"),
+        )
+      }.provide(layer),
       test("the translation filter narrows to words with a translation, in the target language or in any") {
         for {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))

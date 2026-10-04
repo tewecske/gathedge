@@ -14,15 +14,61 @@ import gathedge.shared.domain.WordLanguage
   */
 object ColumnHeading {
 
-  /** What each language calls each of the four, plus the endonym every list is as likely to use. Accent-stripped
+  /** What each language calls each study language, plus the endonym every list is as likely to use. Accent-stripped
     * variants are listed because a list typed on an English keyboard drops them.
     */
   private val languageNames: Map[String, WordLanguage] = {
     Map(
-      WordLanguage.En -> List("english", "englisch", "angol", "inglés", "ingles"),
-      WordLanguage.De -> List("german", "deutsch", "német", "nemet", "alemán", "aleman", "németül", "nemetul"),
-      WordLanguage.Hu -> List("hungarian", "ungarisch", "magyar", "húngaro", "hungaro", "magyarul"),
-      WordLanguage.Es -> List("spanish", "spanisch", "spanyol", "español", "espanol", "castellano"),
+      WordLanguage.En -> List("english", "englisch", "angol", "inglés", "ingles", "anglais", "inglês"),
+      WordLanguage.De -> List(
+        "german",
+        "deutsch",
+        "német",
+        "nemet",
+        "alemán",
+        "aleman",
+        "németül",
+        "nemetul",
+        "allemand",
+        "alemão",
+        "alemao",
+      ),
+      WordLanguage.Hu -> List("hungarian", "ungarisch", "magyar", "húngaro", "hungaro", "magyarul", "hongrois"),
+      WordLanguage.Es -> List(
+        "spanish",
+        "spanisch",
+        "spanyol",
+        "español",
+        "espanol",
+        "castellano",
+        "espagnol",
+        "espanhol",
+      ),
+      WordLanguage.Fr -> List(
+        "french",
+        "französisch",
+        "franzosisch",
+        "francia",
+        "franciául",
+        "franciaul",
+        "francés",
+        "frances",
+        "français",
+        "francais",
+        "francês",
+      ),
+      WordLanguage.Pt -> List(
+        "portuguese",
+        "portugiesisch",
+        "portugál",
+        "portugal",
+        "portugálul",
+        "portugalul",
+        "portugués",
+        "portugues",
+        "portugais",
+        "português",
+      ),
     ).flatMap { case (language, names) => names.map(name => name -> language) }
   }
 
@@ -67,6 +113,15 @@ object ColumnHeading {
       "forditas",
       "traducción",
       "traduccion",
+      "artigo",
+      "genre",
+      "gênero",
+      "mot",
+      "mots",
+      "palavra",
+      "traduction",
+      "tradução",
+      "traducao",
     )
   }
 
