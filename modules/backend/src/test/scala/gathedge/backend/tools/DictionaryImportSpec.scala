@@ -360,6 +360,25 @@ object DictionaryImportSpec extends ZIOSpecDefault {
           !texts.contains("one two three four five"),
         )
       },
+      test("a French recipe cell stays out, and a Portuguese negative imperative is a form") {
+        // Some French tables give a composed tense as a recipe of plain words. `of` marks it as a note.
+        val french     = {
+          """{"word":"apparaitre","lang_code":"fr","pos":"verb","senses":[{"glosses":["to appear"]}],"forms":[
+            |{"form":"apparut","tags":["historic","indicative","past","singular","third-person"]},
+            |{"form":"past historic of avoir","tags":["anterior","indicative","multiword-construction","past"]}
+            |]}""".stripMargin.replace("\n", "")
+        }
+        val portuguese = {
+          """{"word":"falar","lang_code":"pt","pos":"verb","senses":[{"glosses":["to speak"]}],"forms":[
+            |{"form":"não fales","tags":["imperative","negative","second-person","singular"]}
+            |]}""".stripMargin.replace("\n", "")
+        }
+        assertTrue(
+          WiktextractParser.parse(french).forms.map(_.form.text) == List("apparut"),
+          WiktextractParser.parse(portuguese).forms.map(form => (form.form.text, form.relation)) ==
+            List(("não fales", "imperative,negative,second-person,singular")),
+        )
+      },
       test("a cell that names two forms becomes two forms with the same relation") {
         val forms = WiktextractParser.parse(alternativesLine).forms.groupMap(_.relation)(_.form.text)
         assertTrue(

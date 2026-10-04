@@ -53,7 +53,7 @@ readonly FREQ_DIR="data/frequency"
 readonly FREQ_BASE="https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
 # The languages a seed holds: one frequency list and one shard each. The export is told this list, so a
 # language the code knows (WordLanguage) is left out of the seed until it is added here.
-readonly LANGS=(en de es hu)
+readonly LANGS=(en de es fr hu pt)
 
 readonly MAIN_CLASS="gathedge.backend.tools.DictionaryImport"
 
