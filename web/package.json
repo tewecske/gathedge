@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "canvas-confetti": "^1.9.4",
     "qrcode": "^1.5.4",
     "tesseract.js": "^7.0.0",
     "tesseract.js-core": "^7.0.0"

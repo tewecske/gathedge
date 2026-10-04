@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // The achievements, end to end: a play of ten words is the smallest play that counts toward an achievement
-// (`Achievements.qualifyingWordCount`). Finishing one shows the tiers it unlocked on the result screen, and the
+// (`Achievements.qualifyingWordCount`). Finishing one opens a dialog on the tiers it unlocked, and the
 // profile's achievements tab then shows them too.
 //
 // Requires the real stack (see playwright.config.ts). The ten words go in through `tabular-import`, the same as
@@ -80,14 +80,36 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
     }
   }
 
-  // The result screen shows what the play unlocked, with no request of its own.
+  // The result screen opens a dialog on what the play unlocked, one tier per page, with no request of its own.
   await expect(page.getByText('Quiz complete')).toBeVisible();
-  const unlocked = page.getByRole('status').filter({ hasText: 'New achievements' });
-  await expect(unlocked).toBeVisible();
-  await expect(unlocked.getByText('Games played: tier 1', { exact: true })).toBeVisible();
+  const dialog = page.locator('.modal-open .modal-box');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Achievement unlocked');
 
-  // Its link opens the profile's achievements tab, where the same tier now shows.
-  await unlocked.getByRole('link', { name: 'See all achievements' }).click();
+  // Catalog order: "Games played" comes first, then the per-game-type and the perfect-game tiers of this play.
+  await expect(dialog.getByText('Games played', { exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Tier 1');
+  await expect(dialog).toContainText('Reached: 1');
+  await expect(dialog).toContainText('Next tier: 5');
+
+  const seen: string[] = [];
+  for (;;) {
+    seen.push(((await dialog.locator('p.text-xl').textContent()) ?? '').trim());
+    const next = dialog.getByRole('button', { name: 'Next', exact: true });
+    if ((await next.count()) === 0) break;
+    await next.click();
+    await expect(dialog.locator('p.text-xl')).not.toHaveText(seen[seen.length - 1]);
+  }
+  expect(seen).toContain('Games played: Type the answer');
+  expect(seen).toContain('Perfect games');
+
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('.modal-open')).toHaveCount(0);
+
+  // The profile's achievements tab now shows the same tier. The profile link sits in the account menu, so the test
+  // opens the profile by its address and follows the tab from there.
+  await page.goto('/en/profile');
+  await page.locator('.tab', { hasText: 'Achievements' }).click();
   await expect(page).toHaveURL(/\/en\/profile\/achievements$/);
   await expect(page.locator('.tab-active')).toHaveText('Achievements');
   await expect(gamesPlayed).toContainText('Tier 1');
