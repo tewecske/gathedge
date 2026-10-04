@@ -2,7 +2,16 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{AdminApiClient, ApiError}
-import gathedge.frontend.components.{AdminSubmenu, Alert, AppShell, Formats, Labels, Pagination, SortHeader}
+import gathedge.frontend.components.{
+  AdminSubmenu,
+  Alert,
+  AppShell,
+  EmptyOption,
+  Formats,
+  Labels,
+  Pagination,
+  SortHeader,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AuditQuery
 import gathedge.frontend.{AppRouter, Page}
@@ -146,7 +155,7 @@ private class AdminAuditPage(pageQuery: Signal[AuditQuery], onQuery: Observer[Au
           span(cls := "label-text text-xs", I18n.t(UiKeys.adminAuditColAction)),
           select(
             cls    := "select select-sm",
-            option(value := "", I18n.t(UiKeys.adminAuditEveryAction)),
+            EmptyOption(I18n.t(UiKeys.adminAuditEveryAction)),
             // The `value` stays the stored code — it is what the filter sends to the API.
             AuditAction.all.map(action => option(value := action, Labels.auditAction(action))),
             controlled(value <-- actionInputVar.signal, onChange.mapToValue --> actionInputVar.writer),

@@ -20,7 +20,7 @@ object ArticleSelect {
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddGender)),
       select(
         cls    := "select select-sm w-24",
-        option(value := "", I18n.t(UiKeys.wordsAddGenderNone)),
+        EmptyOption(I18n.t(UiKeys.wordsAddGenderNone)),
         profile.genders.flatMap(gender => profile.article(gender).map(article => option(value := article, article))),
         controlled(
           value <-- target.signal.map(gender => gender.flatMap(profile.article).getOrElse("")),
