@@ -1017,6 +1017,13 @@ object UiKeys {
   val grammarTagPredicative: String              = key(grammarTagPrefix + "predicative")
   val grammarTagNegative: String                 = key(grammarTagPrefix + "negative")
   val grammarTagEssiveModal: String              = key(grammarTagPrefix + "essive-modal")
+  val grammarTagHistoric: String                 = key(grammarTagPrefix + "historic")
+  val grammarTagPersonal: String                 = key(grammarTagPrefix + "personal")
+  val grammarTagImpersonal: String               = key(grammarTagPrefix + "impersonal")
+  val grammarTagShortForm: String                = key(grammarTagPrefix + "short-form")
+  val grammarTagLongForm: String                 = key(grammarTagPrefix + "long-form")
+  val grammarTagBrazil: String                   = key(grammarTagPrefix + "brazil")
+  val grammarTagPortugal: String                 = key(grammarTagPrefix + "portugal")
 
   /** Every `WordLanguage`, `PartOfSpeech` and translation origin, resolved by suffix the way [[loginOutcomePrefix]] is.
     * The `<select>` values stay the wire codes.

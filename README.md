@@ -53,12 +53,12 @@ German–Hungarian translations are derived (no free source states them directly
 
 ## Dictionary data
 
-The vocabulary feature browses a shared dictionary of English, German, Spanish and Hungarian words. Each word has a
-part of speech. German and Spanish nouns also have a gender. Nothing in the application writes these rows: they are
-imported. All files below live under `data/`, which is git-ignored.
+The vocabulary feature browses a shared dictionary of English, German, Spanish, French, Portuguese and Hungarian
+words. Each word has a part of speech. German, Spanish, French and Portuguese nouns also have a gender. Nothing in the
+application writes these rows: they are imported. All files below live under `data/`, which is git-ignored.
 
-The code also knows French and Portuguese, but the seed does not hold them yet. A seed holds the languages in `LANGS`
-in `scripts/build-dictionary-seed.sh`. Adding a language there also needs its frequency list.
+A seed holds the languages in `LANGS` in `scripts/build-dictionary-seed.sh`. To add a language, add it there; the
+script then fetches its frequency list and cuts its shard.
 
 ### The sample
 
@@ -99,7 +99,7 @@ offer `Haus` before `Haubitze`, and only corpus frequency knows that. They live 
 
 ```
 BASE=https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018
-for lang in en de es hu; do curl -o data/frequency/${lang}_50k.txt $BASE/$lang/${lang}_50k.txt; done
+for lang in en de es fr hu pt; do curl -o data/frequency/${lang}_50k.txt $BASE/$lang/${lang}_50k.txt; done
 ```
 
 Each line is a `word count` pair, commonest first. The importer reads the line number as the rank and ignores the
@@ -124,14 +124,14 @@ is still kept when a word inside it translates to it. A word with no frequency e
 
 | `--limit` | Words (most are forms) | Translation pairs | Seed, gzipped | Export time |
 |---|---|---|---|---|
-| 20000 | 1.8 million | 147k | 23 MB | 2 min |
-| 999999999 (everything) | 5.0 million | 269k | 59 MB | 3 min |
+| 20000 | 2.1 million | 223k | 26 MB | 2 min |
+| 999999999 (everything) | 5.8 million | 419k | 67 MB | 4 min |
 
 #### Shards
 
 The export reads shards, not the dump. `--extract` cuts the dump into one gzipped file per language in
-`data/dictionary/shards/`. A shard holds the lines whose entry is in that language. The four shards are about
-585 MB, 406 MB of it English, and cutting them takes about four minutes. The script cuts a shard again when it is
+`data/dictionary/shards/`. A shard holds the lines whose entry is in that language. The six shards are about
+635 MB, 406 MB of it English, and cutting them takes about four minutes. The script cuts a shard again when it is
 missing or older than the dump, and leaves the others alone. So a new language costs one pass of the dump, and
 every later export skips it.
 
@@ -189,8 +189,8 @@ sudo sh -c 'set -a; . /var/lib/secrets/gathedge.env; set +a
 
 `--seed` takes an optional path. A bare `--seed` means the sample, which only a checkout has. The importer runs the
 Flyway migration itself and is idempotent. So it is safe against a live database, and a later run with a bigger seed
-inserts only the difference. The load streams the seed in under 1 GB of memory. The uncut seed takes about 40
-minutes.
+inserts only the difference. The load streams the seed in under 1 GB of memory. The uncut seed of four languages took
+about 40 minutes. Six languages have about a sixth more words. That load time is not measured yet.
 
 The seed carries the words and the translation pairs the dictionary *asserts*. The pivoted pairs are not in the
 file: the importer derives them again from those pairs as it stores. That is most of why the file is small.
@@ -200,7 +200,7 @@ file: the importer derives them again from those pairs as it stores. That is mos
 No free source states German–Hungarian translations directly. The English Wiktionary's translation tables are
 English→other, WikDict has no Hungarian, and neither FreeDict nor PONS covers the pair. So the importer derives
 them: two translations of the same English *sense* are translations of each other. This joins every pair of
-non-English languages (German–Hungarian, German–Spanish, Spanish–Hungarian). These rows have
+non-English languages (German–Hungarian, French–Portuguese, and the rest). These rows have
 `origin = 'pivot'`, so a screen can tell them apart from what the dictionary asserts.
 
 ### Word forms
@@ -211,7 +211,7 @@ form" placeholder. The importer stores each form as its own `words` row, linked 
 a relation tag (`plural`, `dative,definite,plural`, ...).
 
 A word's forms are imported whenever the word itself gets a `words` row: because it made the frequency cut, or
-because a translation pair names it. Forms have no limit of their own. German, Spanish and Hungarian nouns and verbs
+because a translation pair names it. Forms have no limit of their own. Nouns and verbs in every language but English
 can have dozens of forms each, so even `--limit 2000` brings in several hundred thousand form rows. Most of a
 seed's size is forms. A lower `--limit` does not shrink this much while it still keeps everyday words (`Haus`,
 `See`), since their own ranks and their pair partners' ranks set a floor.
