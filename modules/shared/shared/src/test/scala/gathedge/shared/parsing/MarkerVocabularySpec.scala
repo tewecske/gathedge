@@ -3,7 +3,7 @@ package gathedge.shared.parsing
 import gathedge.shared.domain.{Gender, WordLanguage}
 import zio.test.*
 
-/** The collisions between four languages' abbreviations are the whole reason [[MarkerVocabulary.forPair]] exists, so
+/** The collisions between the languages' abbreviations are the whole reason [[MarkerVocabulary.forPair]] exists, so
   * they are what this pins. Getting German's `w`/`s` wrong misreads gender on half of every German-written list.
   */
 object MarkerVocabularySpec extends ZIOSpecDefault {

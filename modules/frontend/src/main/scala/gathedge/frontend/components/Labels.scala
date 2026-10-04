@@ -64,8 +64,12 @@ object Labels {
         "GER"
       case WordLanguage.Es =>
         "SPA"
+      case WordLanguage.Fr =>
+        "FRE"
       case WordLanguage.Hu =>
         "HUN"
+      case WordLanguage.Pt =>
+        "POR"
     }
   }
 

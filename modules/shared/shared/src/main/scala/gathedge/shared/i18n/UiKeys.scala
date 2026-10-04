@@ -1026,7 +1026,9 @@ object UiKeys {
   val languageEn: String = key(languagePrefix + "en")
   val languageDe: String = key(languagePrefix + "de")
   val languageEs: String = key(languagePrefix + "es")
+  val languageFr: String = key(languagePrefix + "fr")
   val languageHu: String = key(languagePrefix + "hu")
+  val languagePt: String = key(languagePrefix + "pt")
 
   /** The parts of speech, spelled out rather than assembled from the wire code the way the two prefixes above are —
     * because one of those codes is `other`, and `ui.pos.other` would read to `MessagesSpec` as the plural half of a

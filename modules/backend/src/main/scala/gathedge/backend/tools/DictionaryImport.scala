@@ -119,9 +119,11 @@ object DictionaryImport extends ZIOAppDefault {
           loop(tail, options.copy(exportTo = Some(path)))
         case "--languages" :: value :: tail                     =>
           val parsed = value.split(',').toList.flatMap(code => WordLanguage.fromString(code.trim))
-          if (parsed.isEmpty)
-            Left(s"--languages needs codes out of en,de,es,hu; got '$value'")
-          else
+          if (parsed.isEmpty) {
+            Left(
+              s"--languages needs codes out of ${WordLanguage.all.map(WordLanguage.code).mkString(",")}; got '$value'"
+            )
+          } else
             loop(tail, options.copy(languages = parsed.toSet))
         case "--include-alt-of" :: tail                         =>
           loop(tail, options.copy(includeAltOf = true))

@@ -27,7 +27,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
       |"senses":[{"glosses":["a building for people to live in"]}],
       |"translations":[{"code":"de","lang":"German","word":"Haus","tags":["neuter"],"sense":"building"},
       |{"code":"hu","lang":"Hungarian","word":"ház","sense":"building"},
-      |{"code":"fr","lang":"French","word":"maison","sense":"building"}]}""".stripMargin.replace("\n", "")
+      |{"code":"it","lang":"Italian","word":"casa","sense":"building"}]}""".stripMargin.replace("\n", "")
   }
 
   private val plateLine = {
@@ -224,7 +224,7 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         val german = entry.pairs.find(_.target.language == WordLanguage.De)
         assertTrue(
           entry.word.map(_.text).contains("house"),
-          // French is in the line and dropped: the parser keeps only the three languages this application holds.
+          // Italian is in the line and dropped: the parser keeps only the languages this application holds.
           entry.pairs.map(_.target.text).toSet == Set("Haus", "ház"),
           german.flatMap(_.target.gender).contains(Gender.Neuter),
           // The target takes the headword's part of speech: Wiktionary does not repeat it per row.
@@ -252,9 +252,9 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         assertTrue(DictionaryImport.pivot(pairs).isEmpty)
       },
       test("a language not being imported contributes nothing, and a malformed line is skipped") {
-        val french = """{"word":"maison","lang_code":"fr","pos":"noun","senses":[{"glosses":["house"]}]}"""
+        val italian = """{"word":"casa","lang_code":"it","pos":"noun","senses":[{"glosses":["house"]}]}"""
         assertTrue(
-          !WiktextractParser.mayConcern(french, WordLanguage.all.toSet),
+          !WiktextractParser.mayConcern(italian, WordLanguage.all.toSet),
           WiktextractParser.mayConcern(hausLine, Set(WordLanguage.De)),
           !WiktextractParser.mayConcern(hausLine, Set(WordLanguage.Hu)),
           WiktextractParser.parse("{ not json").word.isEmpty,
@@ -869,12 +869,12 @@ object DictionaryImportSpec extends ZIOSpecDefault {
         assertTrue(
           WiktextractParser.languageOf(translationFirst).contains(WordLanguage.En),
           WiktextractParser.languageOf(hausLine).contains(WordLanguage.De),
-          WiktextractParser.languageOf("""{"word":"maison","lang_code":"fr"}""").isEmpty,
+          WiktextractParser.languageOf("""{"word":"casa","lang_code":"it"}""").isEmpty,
           WiktextractParser.languageOf("not json").isEmpty,
         )
       },
       test("extract writes one shard per language, holding the lines whose entry is in it") {
-        val dump = List(houseLine, hausLine, plateLine, """{"word":"maison","lang_code":"fr","pos":"noun"}""")
+        val dump = List(houseLine, hausLine, plateLine, """{"word":"casa","lang_code":"it","pos":"noun"}""")
         for {
           directory <- ZIO.attemptBlocking(java.nio.file.Files.createTempDirectory("shards"))
           dumpPath   = directory.resolve("dump.jsonl.gz")

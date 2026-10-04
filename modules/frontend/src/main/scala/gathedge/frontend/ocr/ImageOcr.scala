@@ -48,7 +48,9 @@ object ImageOcr {
       case WordLanguage.En => "eng"
       case WordLanguage.De => "deu"
       case WordLanguage.Es => "spa"
+      case WordLanguage.Fr => "fra"
       case WordLanguage.Hu => "hun"
+      case WordLanguage.Pt => "por"
     }
   }
 

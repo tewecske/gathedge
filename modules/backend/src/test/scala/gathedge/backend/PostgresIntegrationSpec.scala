@@ -1436,7 +1436,7 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           second == TabularImportResponse(rows = 4, pairs = 4, newWords = 0, forms = 0),
           after.map(_.source.text) == entries.map(_.source.text),
           languages.exists(row => row.sourceLanguage.contains("de") && row.targetLanguage.contains("hu")),
-          // Scored against all four languages, so a column can be named before anybody assigns it.
+          // Scored against every language, so a column can be named before anybody assigns it.
           guesses.columns.map(_.best) == List(Some(WordLanguage.De), Some(WordLanguage.Hu)),
         )
       },

@@ -48,6 +48,28 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           profile.capitalize("perro", Some(Gender.Masculine)) == "perro",
         )
       },
+      test("French has two genders, and its strip leaves the genderless plural and the elided article alone") {
+        val profile = LanguageProfile.of(WordLanguage.Fr)
+        assertTrue(
+          profile.genders.toSet == Set(Gender.Masculine, Gender.Feminine),
+          profile.display("chien", Some(Gender.Masculine)) == "le chien",
+          profile.strip("la maison") == ("maison", Some(Gender.Feminine)),
+          profile.strip("les chiens") == ("les chiens", None),
+          profile.strip("l'homme") == ("l'homme", None),
+          profile.capitalize("chien", Some(Gender.Masculine)) == "chien",
+        )
+      },
+      test("Portuguese has two genders, and its strip recognises the plural articles too") {
+        val profile = LanguageProfile.of(WordLanguage.Pt)
+        assertTrue(
+          profile.genders.toSet == Set(Gender.Masculine, Gender.Feminine),
+          profile.display("cão", Some(Gender.Masculine)) == "o cão",
+          profile.display("casa", Some(Gender.Feminine)) == "a casa",
+          profile.strip("os cães") == ("cães", Some(Gender.Masculine)),
+          profile.strip("as casas") == ("casas", Some(Gender.Feminine)),
+          profile.capitalize("casa", Some(Gender.Feminine)) == "casa",
+        )
+      },
       test("stripping a lone article with nothing after it leaves the text unchanged") {
         val profile = LanguageProfile.of(WordLanguage.De)
         assertTrue(profile.strip("der") == ("der", None))

@@ -239,8 +239,9 @@ object WordCell {
     * word column is the one place a marker abbreviation can also be a real word: German `es` is both a third-person
     * marker and the pronoun starting `es regnet`. Undecorated markers belong in the extra column, which [[parseExtra]]
     * reads with no such ambiguity. The one exception is a '''leading''' single letter that names a gender the language
-    * has — `e Suche`, the article abbreviation written into the word column rather than beside it. It is unambiguous
-    * because a one-letter word that is also a gender marker is not a word in any of the four languages.
+    * has — `e Suche`, the article abbreviation written into the word column rather than beside it. It is nearly
+    * unambiguous. The one clash is `e` ("and" in Spanish and Portuguese, feminine in German lists), and a word-list
+    * cell seldom starts with "and".
     *
     * Order matters. The article is stripped ''after'' the markers, so `der Hund (m)` loses both and reduces to one
     * word; and the word count that decides [[PartOfSpeech.Phrase]] runs ''after'' the article is gone, so `der Hund`
