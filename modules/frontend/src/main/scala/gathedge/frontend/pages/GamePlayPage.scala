@@ -5,7 +5,7 @@ import com.raquo.laminar.nodes.ReactiveHtmlElement
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, GameReplay}
 import gathedge.frontend.components.{
-  AchievementUnlocks,
+  AchievementUnlockDialog,
   Alert,
   AppShell,
   ArticlePicker,
@@ -41,12 +41,13 @@ import org.scalajs.dom
   */
 object GamePlayPage {
 
-  def render(slug: String, playId: Long): HtmlElement = {
-    AppShell.render(Page.GamePlay(slug, playId), new GamePlayPage(slug, playId).render())
+  /** `fireworks` is what the achievement dialog fires; see [[AchievementUnlockDialog.Fireworks]]. */
+  def render(slug: String, playId: Long, fireworks: AchievementUnlockDialog.Fireworks): HtmlElement = {
+    AppShell.render(Page.GamePlay(slug, playId), new GamePlayPage(slug, playId, fireworks).render())
   }
 }
 
-private class GamePlayPage(slug: String, playId: Long) {
+private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnlockDialog.Fireworks) {
 
   private sealed trait Phase
 
@@ -80,9 +81,11 @@ private class GamePlayPage(slug: String, playId: Long) {
   private val resultsVar  = Var(Option.empty[GameResults])
 
   /** The achievement tiers this play unlocked. Only the answer that finishes the play carries any, so this is filled
-    * once, just before the results screen shows it.
+    * once, just before the results arrive and [[unlockDialog]] opens on them.
     */
   private val unlocksVar = Var(List.empty[AchievementUnlock])
+
+  private val unlockDialog = new AchievementUnlockDialog(fireworks)
 
   /** The graded row for the word on screen, or `None` while it is still being answered. */
   private val feedbackVar = Var(Option.empty[GameAnswerResult])
@@ -133,6 +136,7 @@ private class GamePlayPage(slug: String, playId: Long) {
     div(
       cls := "max-w-xl mx-auto",
       Alert.maybeError(errorVar.signal),
+      unlockDialog.render(),
       div(
         cls := "card bg-base-100 shadow mt-4",
         div(
@@ -176,6 +180,7 @@ private class GamePlayPage(slug: String, playId: Long) {
       resultsStream --> Observer[Either[ApiError, GameResults]] {
         case Right(results) =>
           resultsVar.set(Some(results))
+          unlockDialog.open(unlocksVar.now())
         case Left(err)      =>
           errorVar.set(Some(err.message))
       },
@@ -493,7 +498,6 @@ private class GamePlayPage(slug: String, playId: Long) {
       cls := "flex flex-col gap-3",
       p(cls := "font-semibold text-lg", I18n.t(UiKeys.gameInstanceFinishedTitle)),
       p(cls := "text-xl font-bold", I18n.t(UiKeys.gameInstanceScore, results.score, results.maxScore)),
-      child.maybe <-- unlocksVar.signal.map(AchievementUnlocks.render),
       GameAnswersTable.render(results.answers),
       div(
         cls := "flex flex-wrap items-center gap-3 mt-1",

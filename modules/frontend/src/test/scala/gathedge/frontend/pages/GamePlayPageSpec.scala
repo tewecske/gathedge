@@ -17,7 +17,7 @@ object GamePlayPageSpec extends ZIOSpecDefault {
       test("mounts and unmounts cleanly with no pending hand-off") {
         val container = dom.document.createElement("div")
         dom.document.body.appendChild(container)
-        val rootNode  = L.render(container, GamePlayPage.render("no-such-slug", 1L))
+        val rootNode  = L.render(container, GamePlayPage.render("no-such-slug", 1L, () => () => ()))
         rootNode.unmount()
         dom.document.body.removeChild(container)
         assertTrue(true)

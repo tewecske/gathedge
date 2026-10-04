@@ -286,8 +286,12 @@ object UiKeys {
   val achievementsNotDone: String           = key("ui.achievements.notDone")
   val achievementsGamesPlayedInName: String = key("ui.achievements.gamesPlayedIn.name")
   val achievementsGamesPlayedInHint: String = key("ui.achievements.gamesPlayedIn.hint")
-  val achievementsUnlockedTitle: String     = key("ui.achievements.unlockedTitle")
-  val achievementsUnlockedTier: String      = key("ui.achievements.unlockedTier")
+  val achievementsDialogTitle: String       = key("ui.achievements.dialog.title")
+  val achievementsDialogReached: String     = key("ui.achievements.dialog.reached")
+  val achievementsDialogNextTier: String    = key("ui.achievements.dialog.nextTier")
+  val achievementsDialogPage: String        = key("ui.achievements.dialog.page")
+  val achievementsDialogNext: String        = key("ui.achievements.dialog.next")
+  val achievementsDialogClose: String       = key("ui.achievements.dialog.close")
   val achievementsViewAll: String           = key("ui.achievements.viewAll")
 
   /** The name of an achievement that is not per game type. */

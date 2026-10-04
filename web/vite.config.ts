@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
         // rather than Node's `url.fileURLToPath`, so this needs no `@types/node` for `npm run typecheck`.
         qrcode: new URL('./node_modules/qrcode', import.meta.url).pathname,
         'tesseract.js': new URL('./node_modules/tesseract.js', import.meta.url).pathname,
+        'canvas-confetti': new URL('./node_modules/canvas-confetti', import.meta.url).pathname,
       },
     },
     plugins: [

@@ -2,14 +2,14 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
-import gathedge.frontend.components.AchievementUnlocks
+import gathedge.frontend.components.AchievementUnlockDialog
 import gathedge.shared.domain.Achievements
 import gathedge.shared.dto.{AchievementProgress, AchievementUnlock}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 import zio.test._
 
-/** The achievements tab and the unlocks on the game result screen.
+/** The achievements tab and the unlock dialog of the game result screen.
   *
   * jsdom loads no catalog, so `I18n.t` renders the key itself, and the assertions are on keys. There is no backend
   * either: the tab's own request fails, so the rows are checked through `renderList` with a hand-made answer.
@@ -95,26 +95,81 @@ object AchievementsPageSpec extends ZIOSpecDefault {
           marathon.querySelectorAll("progress").length == 0,
         )
       },
-      test("the result screen shows the tiers a play unlocked, and nothing when it unlocked none") {
+      test("the unlock dialog shows one tier per page, with fireworks on open and on each Next") {
+        var started = 0
+        var stopped = 0
+        val dialog  = new AchievementUnlockDialog(() => {
+          started += 1
+          () => stopped += 1
+        })
         val unlocks = List(
           AchievementUnlock(Achievements.marathon.code, 1, 1000L),
+          AchievementUnlock("noSuchAchievement", 1, 1000L),
           AchievementUnlock(Achievements.gamesPlayed.code, 1, 1000L),
         )
-        val items   = withElement(AchievementUnlocks.render(unlocks).getOrElse(div())) { container =>
-          (
-            container.textContent,
-            container.querySelectorAll("li").toList.map(_.textContent),
+
+        withElement(dialog.render()) { container =>
+          def isOpen: Boolean            = container.querySelector(".modal").classList.contains("modal-open")
+          def text: String               = container.textContent
+          def buttons: List[String]      = container.querySelectorAll("button").toList.map(_.textContent)
+          def press(label: String): Unit = {
+            container
+              .querySelectorAll("button")
+              .toList
+              .find(_.textContent == label)
+              .foreach(_.asInstanceOf[dom.html.Element].click())
+          }
+
+          val closedAtFirst = !isOpen && started == 0
+          dialog.open(unlocks)
+          // Catalog order: the ladder first, with its tier and its counts, then the one-off.
+          val first         = (
+            isOpen,
+            text.contains(UiKeys.achievementsDialogTitle),
+            text.contains(UiKeys.achievementName(Achievements.gamesPlayed.code)),
+            text.contains(UiKeys.achievementsTier),
+            text.contains(UiKeys.achievementsDialogReached),
+            text.contains(UiKeys.achievementsDialogNextTier),
+            text.contains(UiKeys.achievementsDialogPage),
+            text.contains(UiKeys.achievementsViewAll),
+            buttons == List(UiKeys.achievementsDialogNext),
+            started == 1,
+          )
+          press(UiKeys.achievementsDialogNext)
+          val second        = (
+            text.contains(UiKeys.achievementName(Achievements.marathon.code)),
+            !text.contains(UiKeys.achievementsTier),
+            !text.contains(UiKeys.achievementsDialogNextTier),
+            buttons == List(UiKeys.achievementsDialogClose),
+            started == 2,
+            stopped == 1,
+          )
+          press(UiKeys.achievementsDialogClose)
+          val closed        = (!isOpen, stopped == 2)
+
+          assertTrue(
+            closedAtFirst,
+            first == (true, true, true, true, true, true, true, true, true, true),
+            second == (true, true, true, true, true, true),
+            closed == (true, true),
           )
         }
+      },
+      test("the unlock dialog stays shut when a play unlocked nothing this build knows") {
+        var started = 0
+        val dialog  = new AchievementUnlockDialog(() => {
+          started += 1
+          () => ()
+        })
 
-        assertTrue(
-          items._1.contains(UiKeys.achievementsUnlockedTitle),
-          items._1.contains(UiKeys.achievementsViewAll),
-          // Catalog order: the ladder first, then the one-off, which shows its name alone.
-          items._2 == List(UiKeys.achievementsUnlockedTier, UiKeys.achievementName(Achievements.marathon.code)),
-          AchievementUnlocks.render(Nil).isEmpty,
-          AchievementUnlocks.render(List(AchievementUnlock("noSuchAchievement", 1, 1000L))).isEmpty,
-        )
+        // Read inside `withElement`: the unmount at its end takes the modal out of the container.
+        val open = withElement(dialog.render()) { container =>
+          dialog.open(Nil)
+          dialog.open(List(AchievementUnlock("noSuchAchievement", 1, 1000L)))
+          container.querySelector(".modal").classList.contains("modal-open")
+        }
+
+        assertTrue(!open, started == 0)
       },
     )
   }

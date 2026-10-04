@@ -42,6 +42,7 @@ import gathedge.frontend.pages.{
   WordDetailPage,
   WordsPage,
 }
+import gathedge.frontend.celebration.Fireworks
 import gathedge.frontend.facades.QRCode
 import gathedge.frontend.i18n.{CurrentLocale, LocaleSync}
 import gathedge.frontend.listing.{
@@ -524,7 +525,7 @@ object App {
       // catch-all rebuilds on every distinct `(Gate, Page)` change, and two different `playId`s are different `Page`
       // values.
       case Page.GamePlay(slug, playId)                    =>
-        GamePlayPage.render(slug, playId)
+        GamePlayPage.render(slug, playId, Fireworks.launch)
       // Reached only before the session has loaded; the signal renderer above answers otherwise — same shape as
       // `Page.Words` below.
       case Page.GameResults(slug, query)                  =>
