@@ -3,7 +3,17 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiError, GameApiClient, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, Pagination, SortHeader, TagPicker, Tooltip}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  EmptyOption,
+  Formats,
+  Labels,
+  Pagination,
+  SortHeader,
+  TagPicker,
+  Tooltip,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.AllGameQuery
 import gathedge.frontend.state.AppState
@@ -300,7 +310,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         select(
           cls := "select select-sm w-28",
           disabled <-- locked,
-          option(value := "", I18n.t(UiKeys.allGamesLanguageAny)),
+          EmptyOption(I18n.t(UiKeys.allGamesLanguageAny)),
           WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
           controlled(
             value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),

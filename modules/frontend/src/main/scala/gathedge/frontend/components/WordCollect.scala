@@ -193,7 +193,7 @@ object WordCollect {
     else defaultTagName
   }
 
-  def emptyOption(tags: List[Tag]): HtmlElement = option(value := "", emptyOptionLabel(tags))
+  def emptyOption(tags: List[Tag]): HtmlElement = EmptyOption(emptyOptionLabel(tags))
 
   private def tagOption(tag: Tag): HtmlElement =
     option(value := tag.id.toString, s"${Labels.tagCodes(tag)} ${tag.name} (${tag.wordCount})")

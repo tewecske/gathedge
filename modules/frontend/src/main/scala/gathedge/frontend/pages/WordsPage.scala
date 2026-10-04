@@ -8,6 +8,7 @@ import gathedge.frontend.components.{
   Alert,
   AppShell,
   ArticleSelect,
+  EmptyOption,
   HelpIcon,
   Labels,
   Pagination,
@@ -357,7 +358,7 @@ private class WordsPage(
         select(
           cls    := "select select-sm w-28",
           // The option's `value` stays the wire code; only its label is translated.
-          option(value := "", I18n.t(UiKeys.wordsPosAny)),
+          EmptyOption(I18n.t(UiKeys.wordsPosAny)),
           PartOfSpeech.all.map(pos => option(value := PartOfSpeech.code(pos), Labels.partOfSpeech(pos))),
           controlled(
             value <-- querySignal.map(_.partOfSpeech.map(PartOfSpeech.code).getOrElse("")),
@@ -726,7 +727,7 @@ private class WordsPage(
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordsAddVariantTypeLabel)),
       select(
         cls    := "select select-sm w-40",
-        option(value := "", I18n.t(UiKeys.wordsAddVariantTypeNone)),
+        EmptyOption(I18n.t(UiKeys.wordsAddVariantTypeNone)),
         WordsPage.variantTypes.map(tag => option(value := tag, Labels.grammarTag(tag))),
         controlled(
           value <-- variantTypeVar.signal.map(_.getOrElse("")),
