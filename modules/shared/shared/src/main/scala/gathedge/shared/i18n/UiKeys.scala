@@ -911,6 +911,11 @@ object UiKeys {
   val wordDetailFormsCategoryAlternative: String = key("ui.word.forms.category.alternative")
   val wordDetailFormsCategoryOther: String       = key("ui.word.forms.category.otherKind")
 
+  /** Table titles `FormTemplates` uses where no grammar tag names the table. */
+  val wordFormsDeclension: String = key("ui.word.forms.table.declension")
+  val wordFormsNonFinite: String  = key("ui.word.forms.table.nonFinite")
+  val wordFormsComparison: String = key("ui.word.forms.table.comparison")
+
   /** Every individual `word_forms.relation` tag this catalog names — `Labels.grammarTag` resolves through these, one
     * suffix per canonical wiktextract tag, falling back to a plain humanized rendering of the tag itself for anything
     * not listed here (see `Labels.grammarTag`'s doc comment — that fallback is required, not a gap to close, since
@@ -1024,6 +1029,9 @@ object UiKeys {
   val grammarTagLongForm: String                 = key(grammarTagPrefix + "long-form")
   val grammarTagBrazil: String                   = key(grammarTagPrefix + "brazil")
   val grammarTagPortugal: String                 = key(grammarTagPrefix + "portugal")
+  // Header labels of the form tables: no relation carries these tags.
+  val grammarTagPositive: String                 = key(grammarTagPrefix + "positive")
+  val grammarTagAffirmative: String              = key(grammarTagPrefix + "affirmative")
 
   /** Every `WordLanguage`, `PartOfSpeech` and translation origin, resolved by suffix the way [[loginOutcomePrefix]] is.
     * The `<select>` values stay the wire codes.
