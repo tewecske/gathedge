@@ -4,11 +4,13 @@ import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, Labels, Pronunciation, WordCollect}
+import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, FormTables, Labels, Pronunciation, WordCollect}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{
+  FormTable,
+  FormTemplates,
   Gender,
   GrammarCategory,
   GrammarTag,
@@ -460,25 +462,50 @@ private class WordDetailPage(id: Long) {
     )
   }
 
+  /** As tables where the word's language and part of speech have a template (`FormTemplates`), with every form no cell
+    * shows listed below them. Otherwise, and when no form fits a table, as the grouped list.
+    */
+  private def renderForms(word: Word, forms: List[WordFormEntry]): HtmlElement = {
+    val layout = FormTemplates
+      .of(word.language, word.partOfSpeech)
+      .map(template => FormTable.layout(template, forms)(_.relation, _.word.id))
+      .filter(_.sections.nonEmpty)
+    div(
+      h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailFormsHeading)),
+      layout match {
+        case Some(tables) =>
+          div(
+            FormTables.render(word, tables),
+            Option.when(tables.rest.nonEmpty)({
+              renderFormGroup(word, Labels.grammarCategory(GrammarCategory.Other), tables.rest)
+            }),
+          )
+        case None         =>
+          renderFormList(word, forms)
+      },
+    )
+  }
+
+  private def renderFormGroup(word: Word, heading: String, entries: List[WordFormEntry]): HtmlElement = {
+    div(
+      cls := "mt-2",
+      div(cls := "badge badge-ghost badge-sm", heading),
+      div(cls := "flex flex-col gap-1 mt-1", entries.map(entry => renderFormEntry(word, entry))),
+    )
+  }
+
   /** Grouped by [[GrammarCategory]], in the same priority order `GrammarTag.priorityOf` sorts by, so this never
     * disagrees with the order `WordService.detailOf` already sorted `forms` into.
     */
-  private def renderForms(word: Word, forms: List[WordFormEntry]): HtmlElement = {
+  private def renderFormList(word: Word, forms: List[WordFormEntry]): HtmlElement = {
     val byCategory = forms.groupBy(entry => GrammarTag.categoryOf(entry.relation))
     div(
-      h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailFormsHeading)),
       GrammarCategory.values.toList.flatMap(category => {
         byCategory
           .get(category)
           .filter(_.nonEmpty)
-          .map(entries => {
-            div(
-              cls := "mt-2",
-              div(cls := "badge badge-ghost badge-sm", Labels.grammarCategory(category)),
-              div(cls := "flex flex-col gap-1 mt-1", entries.map(entry => renderFormEntry(word, entry))),
-            )
-          })
-      }),
+          .map(entries => renderFormGroup(word, Labels.grammarCategory(category), entries))
+      })
     )
   }
 
