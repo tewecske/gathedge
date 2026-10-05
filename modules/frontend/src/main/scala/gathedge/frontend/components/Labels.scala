@@ -6,6 +6,7 @@ import gathedge.shared.domain.{
   Achievements,
   AnswerOutcome,
   GameMode,
+  FormLabel,
   GrammarCategory,
   PartOfSpeech,
   Tag,
@@ -171,6 +172,15 @@ object Labels {
     */
   def grammarRelation(relation: String): String = {
     relation.split(',').iterator.filter(_.nonEmpty).map(grammarTag).mkString(" · ")
+  }
+
+  /** A header of a form table: its tags through [[grammarTag]], a literal as it stands, or a catalog key. */
+  def formLabel(label: FormLabel): String = {
+    label match {
+      case FormLabel.Tags(tags) => tags.map(grammarTag).mkString(" ")
+      case FormLabel.Text(text) => text
+      case FormLabel.Key(key)   => I18n.t(key)
+    }
   }
 
   /** The heading over one group of a lemma's Forms section. Matched exhaustively, like [[language]] — `GrammarCategory`
