@@ -1,9 +1,8 @@
 package gathedge.shared.domain
 
 /** The broad group a `word_forms.relation` tag belongs to — how the word detail page's Forms section groups a lemma's
-  * forms without needing a grammar-table layout for this pass. `Other` is the required fallback: `relation` is
-  * deliberately not a closed enum (see `WordFormRow`'s doc comment), so a wiktextract dump can carry a tag this file
-  * has never seen.
+  * forms when `FormTemplates` has no table for the word. `Other` is the required fallback: `relation` is deliberately
+  * not a closed enum (see `WordFormRow`'s doc comment), so a wiktextract dump can carry a tag this file has never seen.
   */
 enum GrammarCategory {
   case PluralCase, Tense, Comparison, Diminutive, AlternativeSpelling, Other
