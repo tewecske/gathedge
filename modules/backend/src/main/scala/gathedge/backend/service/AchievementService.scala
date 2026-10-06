@@ -8,13 +8,17 @@ import gathedge.backend.db.{
   UserAchievementRow,
   UserStreakRow,
 }
-import gathedge.shared.domain.{Achievements, GameMode, Streak}
-import gathedge.shared.dto.{AchievementProgress, AchievementUnlock, AchievementsResponse}
+import gathedge.shared.domain.{Achievements, AnswerOutcome, GameMode, Levels, Streak}
+import gathedge.shared.dto.{AchievementProgress, AchievementUnlock, AchievementsResponse, XpGain}
 import zio.*
 
 import java.util.concurrent.TimeUnit
 
-/** Achievements: the counts they measure, and the tiers an account unlocked.
+/** What a finished play earned: the tiers it unlocked, in catalog order, and the XP it gave. */
+final case class PlayReward(unlocks: List[AchievementUnlock], xp: XpGain)
+
+/** Achievements, XP and levels: the counts the achievements measure, the tiers an account unlocked, and the XP both of
+  * these and the account's qualifying plays give (see [[Levels]]).
   *
   * Each evaluation computes every count again from `game_plays` and `user_streaks`, and inserts each tier the counts
   * reach that has no row yet. So the first evaluation of an account is also its backfill: an existing player gets what
@@ -23,20 +27,22 @@ import java.util.concurrent.TimeUnit
   */
 trait AchievementService {
 
-  /** Brings the account's tiers up to date with its counts, and answers the tiers unlocked just now, in catalog order.
-    * Called when a play finishes, after the streak is written.
+  /** Brings the account's tiers up to date with its counts, and answers the tiers unlocked just now and the XP that
+    * `playId` gave. Called when a play finishes, after the streak is written. The XP of the play is its own play and
+    * answer XP, if it qualifies, plus the XP of every tier this evaluation added.
     */
-  def evaluate(userId: Long): Task[List[AchievementUnlock]]
+  def evaluate(userId: Long, playId: Long): Task[PlayReward]
 
-  /** Every achievement of the catalog, started or not, with its tier, count and next threshold. Evaluates first, so an
-    * account that has not finished a play since achievements arrived still sees what it earned.
+  /** Every achievement of the catalog, started or not, with its tier, count and next threshold, and the account's XP
+    * and level. Evaluates first, so an account that has not finished a play since achievements arrived still sees what
+    * it earned.
     */
   def overview(userId: Long): Task[AchievementsResponse]
 }
 
 object AchievementService {
-  def evaluate(userId: Long): RIO[AchievementService, List[AchievementUnlock]] =
-    ZIO.serviceWithZIO[AchievementService](_.evaluate(userId))
+  def evaluate(userId: Long, playId: Long): RIO[AchievementService, PlayReward] =
+    ZIO.serviceWithZIO[AchievementService](_.evaluate(userId, playId))
 
   def overview(userId: Long): RIO[AchievementService, AchievementsResponse] =
     ZIO.serviceWithZIO[AchievementService](_.overview(userId))
@@ -89,33 +95,60 @@ final case class AchievementServiceLive(
   streaks: StreakRepository,
 ) extends AchievementService {
 
-  /** What one evaluation found: the rows it added, every row the account now has, and the counts. */
+  /** What one evaluation found: the rows it added, every row the account now has, the counts, the qualifying plays and
+    * the account's total XP.
+    */
   private final case class Evaluation(
     added: List[UserAchievementRow],
     rows: List[UserAchievementRow],
     counts: Map[String, Int],
+    qualifying: List[GamePlayRow],
+    totalXp: Long,
   )
+
+  private def tierXp(rows: List[UserAchievementRow]): Long = {
+    rows.map(row => Achievements.byCode(row.code).map(_.xpFor(row.tier)).getOrElse(0).toLong).sum
+  }
 
   private def run(userId: Long): Task[Evaluation] = {
     for {
-      now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      plays  <- games.finishedPlaysOf(userId)
-      streak <- streaks.find(userId)
-      have   <- repo.forUser(userId)
-      counted = AchievementService.counts(plays, streak)
-      owned   = have.map(row => (row.code, row.tier)).toSet
-      due     = Achievements.all.flatMap { achievement =>
-                  val reached = achievement.ladder.tierFor(counted.getOrElse(achievement.code, 0))
-                  (1 to reached).toList
-                    .filterNot(tier => owned.contains((achievement.code, tier)))
-                    .map(tier => UserAchievementRow(userId, achievement.code, tier, now))
-                }
-      added  <- if (due.isEmpty) ZIO.succeed(Nil) else repo.insertNew(due)
-    } yield Evaluation(added, have ++ added, counted)
+      now       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      plays     <- games.finishedPlaysOf(userId)
+      streak    <- streaks.find(userId)
+      have      <- repo.forUser(userId)
+      counted    = AchievementService.counts(plays, streak)
+      owned      = have.map(row => (row.code, row.tier)).toSet
+      due        = Achievements.all.flatMap { achievement =>
+                     val reached = achievement.ladder.tierFor(counted.getOrElse(achievement.code, 0))
+                     (1 to reached).toList
+                       .filterNot(tier => owned.contains((achievement.code, tier)))
+                       .map(tier => UserAchievementRow(userId, achievement.code, tier, now))
+                   }
+      added     <- if (due.isEmpty) ZIO.succeed(Nil) else repo.insertNew(due)
+      correct   <- games.correctAnswersInPlaysOf(userId, Achievements.qualifyingWordCount)
+      qualifying = plays.filter(play => Achievements.isQualifying(play.finishedAt.isDefined, play.wordCount))
+      rows       = have ++ added
+    } yield Evaluation(added, rows, counted, qualifying, tierXp(rows) + Levels.playXp(qualifying.size, correct))
   }
 
-  def evaluate(userId: Long): Task[List[AchievementUnlock]] = {
-    run(userId).map(_.added.map(row => AchievementUnlock(row.code, row.tier, row.unlockedAt)))
+  def evaluate(userId: Long, playId: Long): Task[PlayReward] = {
+    for {
+      evaluation <- run(userId)
+      playXp     <- if (evaluation.qualifying.exists(_.id == playId)) {
+                      games
+                        .answersOf(playId)
+                        .map(answers => {
+                          val correct = answers.count(_.outcome == AnswerOutcome.code(AnswerOutcome.Correct))
+                          Levels.playXp(1, correct.toLong)
+                        })
+                    } else {
+                      ZIO.succeed(0L)
+                    }
+      gained      = playXp + tierXp(evaluation.added)
+    } yield PlayReward(
+      unlocks = evaluation.added.map(row => AchievementUnlock(row.code, row.tier, row.unlockedAt)),
+      xp = XpGain(gained, Levels.levelFor(evaluation.totalXp - gained), Levels.progress(evaluation.totalXp)),
+    )
   }
 
   def overview(userId: Long): Task[AchievementsResponse] = {
@@ -134,7 +167,8 @@ final case class AchievementServiceLive(
             nextThreshold = achievement.ladder.threshold(tier + 1),
             unlockedAt = rows.find(_.tier == tier).map(_.unlockedAt),
           )
-        }
+        },
+        Levels.progress(evaluation.totalXp),
       )
     }
   }

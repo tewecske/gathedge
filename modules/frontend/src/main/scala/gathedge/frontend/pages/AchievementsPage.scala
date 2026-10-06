@@ -5,7 +5,7 @@ import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiClient, ApiError}
 import gathedge.frontend.components.{Alert, AppShell, Formats, Labels, ProfileSubmenu, StreakIcons}
 import gathedge.frontend.i18n.I18n
-import gathedge.shared.domain.{Achievement, Achievements}
+import gathedge.shared.domain.{Achievement, Achievements, LevelProgress}
 import gathedge.shared.dto.{AchievementProgress, AchievementsResponse}
 import gathedge.shared.i18n.UiKeys
 
@@ -28,6 +28,34 @@ object AchievementsPage {
       cls := "list",
       Achievements.all.map(achievement =>
         renderRow(achievement, byCode.getOrElse(achievement.code, notStarted(achievement)))
+      ),
+    )
+  }
+
+  /** The account's level, its XP in this level against what the next level needs, and how much XP is still missing. */
+  private[frontend] def renderLevel(level: LevelProgress): HtmlElement = {
+    val into   = level.totalXp - level.levelStartXp
+    val needed = level.nextLevelXp - level.levelStartXp
+    div(
+      cls := "card bg-base-100 shadow",
+      div(
+        cls := "card-body flex-row flex-wrap items-center gap-4",
+        div(cls := "text-warning", StreakIcons.trophy("size-10")),
+        div(
+          cls   := "flex flex-col gap-1 grow",
+          h2(cls := "card-title", I18n.t(UiKeys.levelsLevel, level.level)),
+          div(
+            cls  := "flex items-center gap-3",
+            progressTag(
+              cls        := "progress progress-warning w-full max-w-xs",
+              value      := into.toString,
+              maxAttr    := needed.toString,
+              aria.label := I18n.t(UiKeys.levelsLevel, level.level),
+            ),
+            span(cls     := "text-sm tabular-nums whitespace-nowrap", I18n.t(UiKeys.levelsProgress, into, needed)),
+          ),
+          p(cls  := "text-sm opacity-70", I18n.t(UiKeys.levelsToNext, needed - into)),
+        ),
       ),
     )
   }
@@ -114,6 +142,7 @@ private class AchievementsPage {
     div(
       cls := "flex flex-col gap-4",
       Alert.maybeError(errorVar.signal),
+      child.maybe <-- responseVar.signal.map(_.map(response => AchievementsPage.renderLevel(response.level))),
       p(cls := "text-sm opacity-70", I18n.t(UiKeys.achievementsIntro, Achievements.qualifyingWordCount)),
       div(
         cls := "card bg-base-100 shadow",

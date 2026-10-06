@@ -3,8 +3,8 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import gathedge.frontend.components.AchievementUnlockDialog
-import gathedge.shared.domain.Achievements
-import gathedge.shared.dto.{AchievementProgress, AchievementUnlock}
+import gathedge.shared.domain.{Achievements, Levels}
+import gathedge.shared.dto.{AchievementProgress, AchievementUnlock, XpGain}
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
 import zio.test._
@@ -121,7 +121,7 @@ object AchievementsPageSpec extends ZIOSpecDefault {
           }
 
           val closedAtFirst = !isOpen && started == 0
-          dialog.open(unlocks)
+          dialog.open(unlocks, None)
           // Catalog order: the ladder first, with its tier and its counts, then the one-off.
           val first         = (
             isOpen,
@@ -164,12 +164,74 @@ object AchievementsPageSpec extends ZIOSpecDefault {
 
         // Read inside `withElement`: the unmount at its end takes the modal out of the container.
         val open = withElement(dialog.render()) { container =>
-          dialog.open(Nil)
-          dialog.open(List(AchievementUnlock("noSuchAchievement", 1, 1000L)))
+          dialog.open(Nil, None)
+          dialog.open(List(AchievementUnlock("noSuchAchievement", 1, 1000L)), None)
+          // XP alone, with no new level, is no reason to open it either.
+          dialog.open(Nil, Some(XpGain(40L, 1, Levels.progress(40L))))
           container.querySelector(".modal").classList.contains("modal-open")
         }
 
         assertTrue(!open, started == 0)
+      },
+      test("the unlock dialog shows the XP the play gave on every page, and ends on the new level") {
+        var started = 0
+        val dialog  = new AchievementUnlockDialog(() => {
+          started += 1
+          () => ()
+        })
+        val gain    = XpGain(120L, 1, Levels.progress(130L))
+
+        withElement(dialog.render()) { container =>
+          def text: String          = container.textContent
+          def buttons: List[String] = container.querySelectorAll("button").toList.map(_.textContent)
+
+          dialog.open(List(AchievementUnlock(Achievements.gamesPlayed.code, 1, 1000L)), Some(gain))
+          val first  = (
+            text.contains(UiKeys.achievementName(Achievements.gamesPlayed.code)),
+            text.contains(UiKeys.levelsGained),
+            buttons == List(UiKeys.achievementsDialogNext),
+          )
+          container
+            .querySelectorAll("button")
+            .toList
+            .find(_.textContent == UiKeys.achievementsDialogNext)
+            .foreach(_.asInstanceOf[dom.html.Element].click())
+          val second = (
+            text.contains(UiKeys.levelsLevelUpTitle),
+            text.contains(UiKeys.levelsLevelUpText),
+            text.contains(UiKeys.levelsGained),
+            buttons == List(UiKeys.achievementsDialogClose),
+            started == 2,
+          )
+
+          assertTrue(first == (true, true, true), second == (true, true, true, true, true))
+        }
+      },
+      test("a new level opens the dialog even when the play unlocked no tier") {
+        val dialog = new AchievementUnlockDialog(() => () => ())
+        val shown  = withElement(dialog.render()) { container =>
+          dialog.open(Nil, Some(XpGain(15L, 1, Levels.progress(105L))))
+          (
+            container.querySelector(".modal").classList.contains("modal-open"),
+            container.textContent.contains(UiKeys.levelsLevelUpTitle),
+          )
+        }
+
+        assertTrue(shown == (true, true))
+      },
+      test("the level card shows the level, the XP in it against what it needs, and the XP still missing") {
+        val (text, value, max) = withElement(AchievementsPage.renderLevel(Levels.progress(150L))) { container =>
+          val bar = container.querySelector("progress")
+          (container.textContent, bar.getAttribute("value"), bar.getAttribute("max"))
+        }
+
+        assertTrue(
+          text.contains(UiKeys.levelsLevel),
+          text.contains(UiKeys.levelsProgress),
+          text.contains(UiKeys.levelsToNext),
+          value == "50",
+          max == "200",
+        )
       },
     )
   }
