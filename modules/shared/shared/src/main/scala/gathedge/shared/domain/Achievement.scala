@@ -42,21 +42,14 @@ final case class TierLadder(opening: List[Int], step: Option[Int]) {
 /** One achievement of the catalog. `code` is what `user_achievements.code` stores, so it never changes. `mode` is set
   * only on the per-game-type "games played" achievements.
   *
-  * `xpWeight` is the XP one unit of the count is worth. A tier gives the XP of the work since the previous tier (see
-  * [[xpFor]]), so the first tiers give little and every later tier gives the same.
+  * `xpBase` is the XP of tier 1. Each tier gives `xpBase` times its number (see [[xpFor]]), so tier 1 gives little and
+  * a higher tier always gives more.
   */
-final case class Achievement(code: String, mode: Option[GameMode], ladder: TierLadder, xpWeight: Int) {
+final case class Achievement(code: String, mode: Option[GameMode], ladder: TierLadder, xpBase: Int) {
 
-  /** The XP that `tier` gives: [[xpWeight]] times the count between the previous tier's threshold and this one's. `0`
-    * for a tier the ladder does not have.
-    */
+  /** The XP that `tier` gives: [[xpBase]] times `tier`. `0` for a tier the ladder does not have. */
   def xpFor(tier: Int): Int = {
-    ladder.threshold(tier) match {
-      case Some(threshold) =>
-        xpWeight * (threshold - ladder.threshold(tier - 1).getOrElse(0))
-      case None            =>
-        0
-    }
+    if (ladder.threshold(tier).isDefined) xpBase * tier else 0
   }
 }
 
@@ -84,33 +77,33 @@ object Achievements {
   private def oneOff(threshold: Int): TierLadder = TierLadder(List(threshold), None)
 
   /** Qualifying plays of every game type. */
-  val gamesPlayed = Achievement("gamesPlayed", None, gamesLadder, xpWeight = 8)
+  val gamesPlayed = Achievement("gamesPlayed", None, gamesLadder, xpBase = 25)
 
   /** Qualifying plays of one game type. Built from [[GameMode.all]], so a new game type gets its own achievement. */
   def gamesPlayedIn(mode: GameMode): Achievement = {
-    Achievement(s"gamesPlayed.${GameMode.code(mode)}", Some(mode), gamesLadder, xpWeight = 4)
+    Achievement(s"gamesPlayed.${GameMode.code(mode)}", Some(mode), gamesLadder, xpBase = 25)
   }
 
   /** Qualifying plays with every point scored. */
   val perfectGames =
-    Achievement("perfectGames", None, TierLadder(List(1, 5, 10, 20, 30, 40, 50), Some(25)), xpWeight = 12)
+    Achievement("perfectGames", None, TierLadder(List(1, 5, 10, 20, 30, 40, 50), Some(25)), xpBase = 100)
 
   /** The account's longest daily streak, in days. */
-  val longestStreak = Achievement("longestStreak", None, TierLadder(List(3, 7, 14, 21, 30), Some(30)), xpWeight = 12)
+  val longestStreak = Achievement("longestStreak", None, TierLadder(List(3, 7, 14, 21, 30), Some(30)), xpBase = 100)
 
   /** The number of days the account played on. */
-  val daysPlayed = Achievement("daysPlayed", None, TierLadder(List(10, 25, 50), Some(50)), xpWeight = 8)
+  val daysPlayed = Achievement("daysPlayed", None, TierLadder(List(10, 25, 50), Some(50)), xpBase = 80)
 
   /** One qualifying play with at least [[marathonWordCount]] words. */
-  val marathon = Achievement("marathon", None, oneOff(1), xpWeight = 80)
+  val marathon = Achievement("marathon", None, oneOff(1), xpBase = 80)
 
   /** [[polyglotPlaysPerPair]] qualifying plays in each of two language pairs. A pair is unordered: English to German
     * and German to English are one pair.
     */
-  val polyglot = Achievement("polyglot", None, oneOff(2), xpWeight = 60)
+  val polyglot = Achievement("polyglot", None, oneOff(2), xpBase = 120)
 
   /** A qualifying play that continued a streak in its grace period (see [[Streak.graceDays]]). */
-  val comeback = Achievement("comeback", None, oneOff(1), xpWeight = 40)
+  val comeback = Achievement("comeback", None, oneOff(1), xpBase = 40)
 
   /** Every achievement, in the order the profile shows them. */
   val all: List[Achievement] = {

@@ -106,6 +106,13 @@ final case class AchievementServiceLive(
     totalXp: Long,
   )
 
+  /** Answer counts by stored outcome code, keyed by the outcome. A code this build does not know gives no XP. */
+  private def byOutcome(counts: Map[String, Long]): Map[AnswerOutcome, Long] = {
+    counts.toList
+      .flatMap { case (code, count) => AnswerOutcome.fromString(code).map(_ -> count) }
+      .groupMapReduce(_._1)(_._2)(_ + _)
+  }
+
   private def tierXp(rows: List[UserAchievementRow]): Long = {
     rows.map(row => Achievements.byCode(row.code).map(_.xpFor(row.tier)).getOrElse(0).toLong).sum
   }
@@ -125,10 +132,16 @@ final case class AchievementServiceLive(
                        .map(tier => UserAchievementRow(userId, achievement.code, tier, now))
                    }
       added     <- if (due.isEmpty) ZIO.succeed(Nil) else repo.insertNew(due)
-      correct   <- games.correctAnswersInPlaysOf(userId, Achievements.qualifyingWordCount)
+      answers   <- games.answerCountsInPlaysOf(userId, Achievements.qualifyingWordCount)
       qualifying = plays.filter(play => Achievements.isQualifying(play.finishedAt.isDefined, play.wordCount))
       rows       = have ++ added
-    } yield Evaluation(added, rows, counted, qualifying, tierXp(rows) + Levels.playXp(qualifying.size, correct))
+    } yield Evaluation(
+      added,
+      rows,
+      counted,
+      qualifying,
+      tierXp(rows) + Levels.playXp(qualifying.size, byOutcome(answers)),
+    )
   }
 
   def evaluate(userId: Long, playId: Long): Task[PlayReward] = {
@@ -138,8 +151,7 @@ final case class AchievementServiceLive(
                       games
                         .answersOf(playId)
                         .map(answers => {
-                          val correct = answers.count(_.outcome == AnswerOutcome.code(AnswerOutcome.Correct))
-                          Levels.playXp(1, correct.toLong)
+                          Levels.playXp(1, byOutcome(answers.groupMapReduce(_.outcome)(_ => 1L)(_ + _)))
                         })
                     } else {
                       ZIO.succeed(0L)

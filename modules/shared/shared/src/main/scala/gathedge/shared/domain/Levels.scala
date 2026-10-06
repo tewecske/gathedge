@@ -14,7 +14,7 @@ final case class LevelProgress(level: Int, totalXp: Long, levelStartXp: Long, ne
   *
   * XP comes from three places, and every one is derived from rows that already exist:
   *   - each qualifying play (see [[Achievements.isQualifying]]) gives [[xpPerPlay]];
-  *   - each correct answer in a qualifying play gives [[xpPerCorrectAnswer]]; a typo or a wrong answer gives nothing;
+  *   - each answer in a qualifying play gives [[xpForAnswer]]: most for a correct one, a little for a wrong one;
   *   - each unlocked achievement tier gives [[Achievement.xpFor]].
   *
   * Only qualifying plays give XP, for the reason they are the only plays an achievement counts: a one-word play is two
@@ -22,9 +22,18 @@ final case class LevelProgress(level: Int, totalXp: Long, levelStartXp: Long, ne
   */
 object Levels {
 
-  val xpPerPlay: Int = 5
+  val xpPerPlay: Int = 25
 
-  val xpPerCorrectAnswer: Int = 1
+  def xpForAnswer(outcome: AnswerOutcome): Int = {
+    outcome match {
+      case AnswerOutcome.Correct =>
+        4
+      case AnswerOutcome.Typo    =>
+        3
+      case AnswerOutcome.Wrong   =>
+        1
+    }
+  }
 
   /** Going from level `L` to `L + 1` costs `L` times this. */
   val xpPerLevelStep: Long = 100L
@@ -59,8 +68,8 @@ object Levels {
     LevelProgress(level, xp, totalFor(level), totalFor(level + 1))
   }
 
-  /** The XP that `plays` qualifying plays with `correctAnswers` correct answers between them give. */
-  def playXp(plays: Int, correctAnswers: Long): Long = {
-    xpPerPlay.toLong * plays.toLong + xpPerCorrectAnswer.toLong * correctAnswers
+  /** The XP that `plays` qualifying plays give, with `answers` the number of their answers by outcome. */
+  def playXp(plays: Int, answers: Map[AnswerOutcome, Long]): Long = {
+    xpPerPlay.toLong * plays.toLong + answers.map { case (outcome, count) => xpForAnswer(outcome).toLong * count }.sum
   }
 }

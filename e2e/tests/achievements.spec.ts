@@ -94,9 +94,9 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   await expect(dialog).toContainText('Tier 1');
   await expect(dialog).toContainText('Reached: 1');
   await expect(dialog).toContainText('Next tier: 5');
-  // A perfect 10-word play: 5 for the play, 10 correct answers, and tier 1 of games played (8), typing (4) and
-  // perfect games (12). Not enough for level 2, so no level-up page follows.
-  await expect(dialog).toContainText('+39 XP');
+  // A perfect 10-word play: 25 for the play, 10 correct answers (4 each), and tier 1 of games played (25), typing
+  // (25) and perfect games (100). Level 2 starts at 100 XP, so a level-up page ends the dialog.
+  await expect(dialog).toContainText('+215 XP');
 
   const seen: string[] = [];
   for (;;) {
@@ -108,6 +108,7 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   }
   expect(seen).toContain('Games played: Type the answer');
   expect(seen).toContain('Perfect games');
+  expect(seen).toContain('New level: 2');
 
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.locator('.modal-open')).toHaveCount(0);
@@ -121,6 +122,6 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   await expect(gamesPlayed).toContainText('Tier 1');
   await expect(gamesPlayed).toContainText('1 / 5');
   await expect(gamesPlayed.locator('progress')).toHaveAttribute('max', '5');
-  await expect(page.getByRole('heading', { name: 'Level 1' })).toBeVisible();
-  await expect(page.getByText('39 / 100 XP')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Level 2' })).toBeVisible();
+  await expect(page.getByText('115 / 200 XP')).toBeVisible();
 });
