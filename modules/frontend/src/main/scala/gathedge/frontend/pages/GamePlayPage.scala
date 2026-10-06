@@ -23,6 +23,7 @@ import gathedge.shared.dto.{
   GameResults,
   GameVariantDto,
   SubmitAnswerResponse,
+  XpGain,
 }
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -84,6 +85,9 @@ private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnl
     * once, just before the results arrive and [[unlockDialog]] opens on them.
     */
   private val unlocksVar = Var(List.empty[AchievementUnlock])
+
+  /** The XP this play gave and the level after it. Like [[unlocksVar]], only the finishing answer carries it. */
+  private val xpVar = Var(Option.empty[XpGain])
 
   private val unlockDialog = new AchievementUnlockDialog(fireworks)
 
@@ -161,6 +165,7 @@ private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnl
       submitStream --> Observer[Either[ApiError, SubmitAnswerResponse]] {
         case Right(response) =>
           unlocksVar.update(_ ++ response.achievements)
+          response.xp.foreach(gain => xpVar.set(Some(gain)))
           feedbackVar.set(Some(response.result))
         case Left(err)       =>
           Var.set(submittingVar -> false, errorVar -> Some(err.message))
@@ -180,7 +185,7 @@ private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnl
       resultsStream --> Observer[Either[ApiError, GameResults]] {
         case Right(results) =>
           resultsVar.set(Some(results))
-          unlockDialog.open(unlocksVar.now())
+          unlockDialog.open(unlocksVar.now(), xpVar.now())
         case Left(err)      =>
           errorVar.set(Some(err.message))
       },

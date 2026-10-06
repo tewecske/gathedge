@@ -162,11 +162,16 @@ final case class GameAnswerResult(
   partOfSpeech: Option[PartOfSpeech] = None,
 ) derives JsonCodec
 
-/** `POST /api/games/plays/{playId}/answers`'s answer: the graded row, plus the achievement tiers the answer unlocked.
-  * Only the answer that finishes a play can unlock a tier, so `achievements` is empty on every other answer. The row
-  * stays a [[GameAnswerResult]] of its own, so the results table never carries an unlock.
+/** `POST /api/games/plays/{playId}/answers`'s answer: the graded row, plus the achievement tiers the answer unlocked
+  * and the XP the play gave. Only the answer that finishes a play can unlock a tier or give XP, so `achievements` is
+  * empty and `xp` is `None` on every other answer. The row stays a [[GameAnswerResult]] of its own, so the results
+  * table never carries an unlock.
   */
-final case class SubmitAnswerResponse(result: GameAnswerResult, achievements: List[AchievementUnlock]) derives JsonCodec
+final case class SubmitAnswerResponse(
+  result: GameAnswerResult,
+  achievements: List[AchievementUnlock],
+  xp: Option[XpGain] = None,
+) derives JsonCodec
 
 /** `GET /api/games/plays/{playId}/results`'s answer: the finished play's score, full answer history, and the variant it
   * was played under.

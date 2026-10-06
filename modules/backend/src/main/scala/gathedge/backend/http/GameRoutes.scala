@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   StartPlayRequest,
   SubmitAnswerRequest,
   SubmitAnswerResponse,
+  XpGain,
 }
 import zio.*
 import zio.http.*
@@ -252,27 +253,28 @@ object GameRoutes {
     )
   }
 
-  /** What a finished play earns: the daily streak first, then the achievements, which read the streak. Only a finished
-    * play counts, and the last answer is what finishes it. A failure in any step is logged and never fails the answer;
-    * it only costs the unlocks this answer would have shown.
+  /** What a finished play earns: the daily streak first, then the achievements and the XP, which read the streak. Only
+    * a finished play counts, and the last answer is what finishes it. A failure in any step is logged and never fails
+    * the answer; it only costs the unlocks and the XP this answer would have shown.
     */
   private def afterAnswer(
     playId: Long,
     userId: Long,
-  ): URIO[GameService & StreakService & AchievementService, List[AchievementUnlock]] = {
+  ): URIO[GameService & StreakService & AchievementService, (List[AchievementUnlock], Option[XpGain])] = {
     GameService
       .isPlayFinished(playId, userId)
       .orElseSucceed(false)
       .flatMap { finished =>
         if (!finished) {
-          ZIO.succeed(Nil)
+          ZIO.succeed((Nil, None))
         } else {
           StreakService
             .recordPlay(userId)
             .catchAllCause(cause => ZIO.logWarningCause("streak write failed", cause)) *>
             AchievementService
-              .evaluate(userId)
-              .catchAllCause(cause => ZIO.logWarningCause("achievement evaluation failed", cause).as(Nil))
+              .evaluate(userId, playId)
+              .map(reward => (reward.unlocks, Some(reward.xp)))
+              .catchAllCause(cause => ZIO.logWarningCause("achievement evaluation failed", cause).as((Nil, None)))
         }
       }
   }
@@ -284,7 +286,9 @@ object GameRoutes {
           GameService
             .submitAnswer(playId, body.wordId, body.answerText, id)
             .mapError(ApiFailures.gamePlay)
-            .flatMap(result => afterAnswer(playId, id).map(unlocked => SubmitAnswerResponse(result, unlocked)))
+            .flatMap(result => {
+              afterAnswer(playId, id).map { case (unlocked, xp) => SubmitAnswerResponse(result, unlocked, xp) }
+            })
         })
       }
     )

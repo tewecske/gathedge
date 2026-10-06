@@ -56,6 +56,9 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   await expect(gamesPlayed).toContainText('Not started');
   await expect(gamesPlayed).toContainText('0 / 1');
   await expect(page.locator('li.list-row', { hasText: 'Marathon' })).toContainText('Not done yet');
+  // A new account starts at level 1 with no XP.
+  await expect(page.getByRole('heading', { name: 'Level 1' })).toBeVisible();
+  await expect(page.getByText('0 / 100 XP')).toBeVisible();
 
   // The play: every word of the wordlist, typed.
   await page.goto(`/en/g/${slug}`);
@@ -91,6 +94,9 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   await expect(dialog).toContainText('Tier 1');
   await expect(dialog).toContainText('Reached: 1');
   await expect(dialog).toContainText('Next tier: 5');
+  // A perfect 10-word play: 5 for the play, 10 correct answers, and tier 1 of games played (8), typing (4) and
+  // perfect games (12). Not enough for level 2, so no level-up page follows.
+  await expect(dialog).toContainText('+39 XP');
 
   const seen: string[] = [];
   for (;;) {
@@ -115,4 +121,6 @@ test('a qualifying play unlocks a tier, and the achievements tab shows it', asyn
   await expect(gamesPlayed).toContainText('Tier 1');
   await expect(gamesPlayed).toContainText('1 / 5');
   await expect(gamesPlayed.locator('progress')).toHaveAttribute('max', '5');
+  await expect(page.getByRole('heading', { name: 'Level 1' })).toBeVisible();
+  await expect(page.getByText('39 / 100 XP')).toBeVisible();
 });

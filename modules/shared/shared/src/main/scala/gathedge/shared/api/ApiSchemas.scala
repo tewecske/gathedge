@@ -8,6 +8,7 @@ import gathedge.shared.domain.{
   Group,
   GroupRef,
   GroupRole,
+  LevelProgress,
   Locale,
   OAuthProvider,
   PairMatch,
@@ -78,6 +79,7 @@ import gathedge.shared.dto.{
   AchievementProgress,
   AchievementsResponse,
   AchievementUnlock,
+  XpGain,
   SubmitAnswerResponse,
   GameCreated,
   GameDetail,
@@ -193,6 +195,8 @@ object ApiSchemas {
   given Schema[AchievementProgress]  = DeriveSchema.gen[AchievementProgress]
   given Schema[AchievementsResponse] = DeriveSchema.gen[AchievementsResponse]
   given Schema[AchievementUnlock]    = DeriveSchema.gen[AchievementUnlock]
+  given Schema[LevelProgress]        = DeriveSchema.gen[LevelProgress]
+  given Schema[XpGain]               = DeriveSchema.gen[XpGain]
 
   given Schema[Locale]         = DeriveSchema.gen[Locale]
   given Schema[OAuthProvider]  = DeriveSchema.gen[OAuthProvider]

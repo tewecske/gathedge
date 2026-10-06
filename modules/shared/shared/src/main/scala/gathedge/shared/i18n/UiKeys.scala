@@ -293,6 +293,12 @@ object UiKeys {
   val achievementsDialogNext: String        = key("ui.achievements.dialog.next")
   val achievementsDialogClose: String       = key("ui.achievements.dialog.close")
   val achievementsViewAll: String           = key("ui.achievements.viewAll")
+  val levelsLevel: String                   = key("ui.levels.level")
+  val levelsProgress: String                = key("ui.levels.progress")
+  val levelsToNext: String                  = key("ui.levels.toNext")
+  val levelsGained: String                  = key("ui.levels.gained")
+  val levelsLevelUpTitle: String            = key("ui.levels.levelUp.title")
+  val levelsLevelUpText: String             = key("ui.levels.levelUp.text")
 
   /** The name of an achievement that is not per game type. */
   def achievementName(code: String): String = s"ui.achievements.$code.name"
