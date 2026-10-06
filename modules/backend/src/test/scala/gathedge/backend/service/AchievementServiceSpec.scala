@@ -316,7 +316,7 @@ object AchievementServiceSpec extends ZIOSpecDefault {
           reward.xp.level == Levels.progress(0L),
         )
       },
-      test("a ten-word play gives its play XP, one per correct answer, and the XP of the tiers it unlocked") {
+      test("a ten-word play gives its play XP, its answers' XP, and the XP of the tiers it unlocked") {
         val outcomes = List.fill(7)(AnswerOutcome.Correct) ++ List.fill(2)(AnswerOutcome.Typo) :+ AnswerOutcome.Wrong
         for {
           ids         <- player()
@@ -326,14 +326,16 @@ object AchievementServiceSpec extends ZIOSpecDefault {
           reward      <- AchievementService.evaluate(user, playId)
           overview    <- AchievementService.overview(user)
         } yield {
-          // 5 for the play, 7 correct answers, and tier 1 of games played (8), typing (4) and perfect games (12).
-          val expected = 5L + 7L + 8L + 4L + 12L
+          // 25 for the play; 7 correct (4 each), 2 typos (3 each), 1 wrong (1); and tier 1 of games played (25),
+          // typing (25) and perfect games (100).
+          val expected = 25L + 28L + 6L + 1L + 25L + 25L + 100L
           assertTrue(
             reward.xp.gained == expected,
             reward.xp.level.totalXp == expected,
             reward.xp.levelBefore == 1,
+            reward.xp.level.level == 2,
             overview.level.totalXp == expected,
-            overview.level.level == 1,
+            overview.level.level == 2,
           )
         }
       },
@@ -346,14 +348,14 @@ object AchievementServiceSpec extends ZIOSpecDefault {
           fifth       <- play(user, game, words = 10)
           reward      <- AchievementService.evaluate(user, fifth)
         } yield {
-          // Four plays: 4 × 5 play XP + tier 1 of games played (8), typing (4) and perfect games (12) = 44.
-          // The fifth: 5 play XP + tier 2 of each: 8 × 4 + 4 × 4 + 12 × 4 = 101.
+          // Four plays: 4 × 25 play XP + tier 1 of games played (25), typing (25) and perfect games (100) = 250.
+          // The fifth: 25 play XP + tier 2 of each: 50 + 50 + 200 = 325. Level 3 starts at 300, level 4 at 600.
           assertTrue(
             before.nonEmpty,
-            reward.xp.gained == 101L,
-            reward.xp.level.totalXp == 145L,
-            reward.xp.levelBefore == 1,
-            reward.xp.level.level == 2,
+            reward.xp.gained == 325L,
+            reward.xp.level.totalXp == 575L,
+            reward.xp.levelBefore == 2,
+            reward.xp.level.level == 3,
           )
         }
       },

@@ -1,7 +1,6 @@
 package gathedge.backend.db
 
 import io.getquill.*
-import gathedge.shared.domain.AnswerOutcome
 import gathedge.shared.dto.{AllGameSort, GamePlaySort}
 import zio.*
 
@@ -125,10 +124,10 @@ trait GameRepository {
     */
   def finishedPlaysOf(playerUserId: Long): Task[List[GamePlayRow]]
 
-  /** How many `correct` answers the player gave in their finished plays of at least `minWordCount` words. Counted in
-    * SQL: an account's XP reads it, and a long-time player has too many answers to load.
+  /** How many answers of each stored outcome the player gave in their finished plays of at least `minWordCount` words.
+    * Counted in SQL: an account's XP reads it, and a long-time player has too many answers to load.
     */
-  def correctAnswersInPlaysOf(playerUserId: Long, minWordCount: Int): Task[Long]
+  def answerCountsInPlaysOf(playerUserId: Long, minWordCount: Int): Task[Map[String, Long]]
 
   /** Raw `(word_id, translation_word_id)` pairs for `gameId`'s tags, scoped to `sourceLanguage` -> `targetLanguage` —
     * the same join shape as [[eligibleTags]], through `game_tags` instead of a bare tag id list. Not deduped: a word
@@ -330,8 +329,8 @@ object GameRepository {
   def finishedPlaysOf(playerUserId: Long): RIO[GameRepository, List[GamePlayRow]] =
     ZIO.serviceWithZIO[GameRepository](_.finishedPlaysOf(playerUserId))
 
-  def correctAnswersInPlaysOf(playerUserId: Long, minWordCount: Int): RIO[GameRepository, Long] =
-    ZIO.serviceWithZIO[GameRepository](_.correctAnswersInPlaysOf(playerUserId, minWordCount))
+  def answerCountsInPlaysOf(playerUserId: Long, minWordCount: Int): RIO[GameRepository, Map[String, Long]] =
+    ZIO.serviceWithZIO[GameRepository](_.answerCountsInPlaysOf(playerUserId, minWordCount))
 
   def eligibleWordPairs(
     gameId: Long,
@@ -601,17 +600,18 @@ final class GameRepositoryLive(dataSource: DataSource)
     logged(run(ctx.run(q)))(found => s"games.finishedPlaysOf player=$playerUserId rows=${found.size}")
   }
 
-  def correctAnswersInPlaysOf(playerUserId: Long, minWordCount: Int): Task[Long] = {
-    val correct = AnswerOutcome.code(AnswerOutcome.Correct)
-    val q       = quote {
+  def answerCountsInPlaysOf(playerUserId: Long, minWordCount: Int): Task[Map[String, Long]] = {
+    val q = quote {
       (for {
         play   <- gamePlays.filter(p => {
                     p.playerUserId == lift(playerUserId) && p.finishedAt.isDefined && p.wordCount >= lift(minWordCount)
                   })
-        answer <- gamePlayAnswers.join(a => a.playId == play.id && a.outcome == lift(correct))
-      } yield answer.id).size
+        answer <- gamePlayAnswers.join(a => a.playId == play.id)
+      } yield answer).groupBy(_.outcome).map { case (outcome, answers) => (outcome, answers.size) }
     }
-    logged(run(ctx.run(q)))(count => s"games.correctAnswersInPlaysOf player=$playerUserId count=$count")
+    logged(run(ctx.run(q)).map(_.toMap)) { counts =>
+      s"games.answerCountsInPlaysOf player=$playerUserId outcomes=${counts.size}"
+    }
   }
 
   def eligibleWordPairs(gameId: Long, sourceLanguage: String, targetLanguage: String): Task[List[(Long, Long)]] = {
