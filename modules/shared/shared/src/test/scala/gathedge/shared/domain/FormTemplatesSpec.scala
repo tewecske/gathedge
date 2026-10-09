@@ -55,7 +55,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
       val rows    = table.rows.map(row => {
         val cells = row.cells.map(cell => {
           val texts = ((if (cell.lemma) List(s"[$lemma]") else Nil) ++ cell.forms.map(_.text))
-            .map(text => cell.prefix.fold(text)(prefix => profile.lead(prefix, text.stripPrefix("[")) + text))
+            .map(text => cell.prefix.fold(text)(prefix => profile.lead(prefix, text.stripPrefix("["), lemma) + text))
           if (texts.isEmpty) "-" else texts.mkString(" / ")
         })
         s"${label(row.label)}: ${cells.mkString(" | ")}"
@@ -77,7 +77,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
   ): String = {
     val template = FormTemplates.of(language, pos).getOrElse(throw new IllegalArgumentException("no template"))
     val profile  = LanguageProfile.of(language)
-    val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, gender, tags)
+    val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, gender, tags, lemma)
     render(lemma, FormTable.layout(template, forms(lemma, fixture), prefixes)(_.relation, _.id), profile)
   }
 
@@ -209,8 +209,20 @@ object FormTemplatesSpec extends ZIOSpecDefault {
         },
         test("Spanish noun") {
           assertTrue(
-            laidOut(WordLanguage.Es, PartOfSpeech.Noun, "casa", FormFixtures.esCasa) == Expected.esCasa,
-            laidOut(WordLanguage.Es, PartOfSpeech.Noun, "niño", FormFixtures.esNino) == Expected.esNino,
+            laidOut(
+              WordLanguage.Es,
+              PartOfSpeech.Noun,
+              "casa",
+              FormFixtures.esCasa,
+              Some(Gender.Feminine),
+            ) == Expected.esCasa,
+            laidOut(
+              WordLanguage.Es,
+              PartOfSpeech.Noun,
+              "niño",
+              FormFixtures.esNino,
+              Some(Gender.Masculine),
+            ) == Expected.esNino,
           )
         },
         test("Spanish adjective") {
@@ -232,7 +244,13 @@ object FormTemplatesSpec extends ZIOSpecDefault {
             laidOut(WordLanguage.Fr, PartOfSpeech.Verb, "parler", FormFixtures.frParler) == Expected.frParler,
             laidOut(WordLanguage.Fr, PartOfSpeech.Adjective, "grand", FormFixtures.frGrand) == Expected.frGrand,
             laidOut(WordLanguage.Fr, PartOfSpeech.Adjective, "beau", FormFixtures.frBeau) == Expected.frBeau,
-            laidOut(WordLanguage.Fr, PartOfSpeech.Noun, "chat", FormFixtures.frChat) == Expected.frChat,
+            laidOut(
+              WordLanguage.Fr,
+              PartOfSpeech.Noun,
+              "chat",
+              FormFixtures.frChat,
+              Some(Gender.Masculine),
+            ) == Expected.frChat,
           )
         },
         test("Portuguese verb, adjective and noun") {
@@ -240,7 +258,26 @@ object FormTemplatesSpec extends ZIOSpecDefault {
             laidOut(WordLanguage.Pt, PartOfSpeech.Verb, "falar", FormFixtures.ptFalar) == Expected.ptFalar,
             laidOut(WordLanguage.Pt, PartOfSpeech.Adjective, "bom", FormFixtures.ptBom) == Expected.ptBom,
             laidOut(WordLanguage.Pt, PartOfSpeech.Adjective, "feliz", FormFixtures.ptFeliz) == Expected.ptFeliz,
-            laidOut(WordLanguage.Pt, PartOfSpeech.Noun, "menino", FormFixtures.ptMenino) == Expected.ptMenino,
+            laidOut(
+              WordLanguage.Pt,
+              PartOfSpeech.Noun,
+              "menino",
+              FormFixtures.ptMenino,
+              Some(Gender.Masculine),
+            ) == Expected.ptMenino,
+          )
+        },
+        test("a Romance noun's article: `el agua` but `las aguas`, `l'homme`, but `le héros` before an aspirated h") {
+          val noun = (language: WordLanguage, lemma: String, plural: String, gender: Gender) => {
+            laidOut(language, PartOfSpeech.Noun, lemma, s"$plural;noun;;plural", Some(gender)).linesIterator.toList(2)
+          }
+          assertTrue(
+            noun(WordLanguage.Es, "agua", "aguas", Gender.Feminine) == ": el [agua] | las aguas",
+            noun(WordLanguage.Es, "abeja", "abejas", Gender.Feminine) == ": la [abeja] | las abejas",
+            noun(WordLanguage.Fr, "homme", "hommes", Gender.Masculine) == ": l'[homme] | les hommes",
+            noun(WordLanguage.Fr, "héros", "héros", Gender.Masculine) == ": le [héros] | les héros",
+            noun(WordLanguage.Fr, "haine", "haines", Gender.Feminine) == ": la [haine] | les haines",
+            noun(WordLanguage.Pt, "água", "águas", Gender.Feminine) == ": a [água] | as águas",
           )
         },
         test("an adverb, a phrase or an other word has no template, so it keeps the list") {
@@ -711,14 +748,14 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val esCasa: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |: [casa] | casas
+         |: la [casa] | las casas
          |## rest:""".stripMargin
     }
 
     val esNino: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |: [niño] | niños
+         |: el [niño] | los niños
          |## rest: niñas (feminine,plural)""".stripMargin
     }
 
@@ -831,7 +868,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val frChat: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |: [chat] | chats
+         |: le [chat] | les chats
          |## rest:""".stripMargin
     }
 
@@ -905,7 +942,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val ptMenino: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |: [menino] | meninos
+         |: o [menino] | os meninos
          |## rest: meninas (feminine,plural)""".stripMargin
     }
   }

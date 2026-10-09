@@ -443,8 +443,9 @@ object FormTemplates {
 
   // --- Spanish, French and Portuguese nouns and adjectives ------------------------------------------------------------
 
-  /** Singular and plural. The dump has no row for the headword itself, so the word fills its own cell. A gender
-    * counterpart's plural (`niñas` of `niño`) is not this word's plural, so it stays out.
+  /** Singular and plural, each after its definite article (`el niño`, `los niños`). The dump has no row for the
+    * headword itself, so the word fills its own cell. A gender counterpart's plural (`niñas` of `niño`) is not this
+    * word's plural, so it stays out.
     */
   val romanceNoun: FormTemplate = {
     FormTemplate(
@@ -458,6 +459,7 @@ object FormTemplates {
               numbers,
               List(FormAxis(None, FormMatch())),
               lemma = Map((0, 0) -> LemmaFill.Always),
+              prefix = Some(FormPrefix.Article),
             )
           ),
         )
