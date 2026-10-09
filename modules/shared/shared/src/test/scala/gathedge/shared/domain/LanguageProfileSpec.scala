@@ -37,6 +37,18 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           profile.capitalize("hund", Some(Gender.Masculine)) == "Hund",
         )
       },
+      test("German declines its definite article by case and number; the plural fits every gender") {
+        val profile = LanguageProfile.of(WordLanguage.De)
+        assertTrue(
+          profile.declinedArticle(Some(Gender.Masculine), Set("genitive", "singular")) == Some("des"),
+          profile.declinedArticle(Some(Gender.Feminine), Set("dative", "singular")) == Some("der"),
+          profile.declinedArticle(Some(Gender.Neuter), Set("weak", "accusative", "singular")) == Some("das"),
+          profile.declinedArticle(Some(Gender.Feminine), Set("dative", "plural")) == Some("den"),
+          profile.declinedArticle(None, Set("nominative", "plural")) == Some("die"),
+          profile.declinedArticle(None, Set("nominative", "singular")).isEmpty,
+          LanguageProfile.of(WordLanguage.Es).declinedArticle(Some(Gender.Masculine), Set("singular")).isEmpty,
+        )
+      },
       test("Spanish has two genders, does not capitalize, and its strip recognises the plural articles too") {
         val profile = LanguageProfile.of(WordLanguage.Es)
         assertTrue(

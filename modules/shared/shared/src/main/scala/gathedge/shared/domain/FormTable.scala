@@ -71,7 +71,8 @@ enum LemmaFill {
 }
 
 /** One table: rows times columns, each cell testing `base ++ row ++ column`. `lemma` names the cells the headword
-  * fills, by row and column index.
+  * fills, by row and column index. `articles` puts the definite article before each form, declined by the cell's case
+  * and number (`LanguageProfile.declinedArticle`).
   */
 final case class FormTable(
   title: Option[FormLabel],
@@ -79,6 +80,7 @@ final case class FormTable(
   columns: List[FormAxis],
   rows: List[FormAxis],
   lemma: Map[(Int, Int), LemmaFill] = Map.empty,
+  articles: Boolean = false,
 )
 
 /** A titled group of tables. The page draws a section with a title as a collapsible block, so a large template (the
@@ -88,8 +90,8 @@ final case class FormSection(title: Option[FormLabel], tables: List[FormTable])
 
 final case class FormTemplate(sections: List[FormSection])
 
-/** One cell as drawn: the forms it holds, and whether the headword goes first. */
-final case class FilledCell[A](forms: List[A], lemma: Boolean) {
+/** One cell as drawn: the forms it holds, whether the headword goes first, and the definite article each form takes. */
+final case class FilledCell[A](forms: List[A], lemma: Boolean, article: Option[String] = None) {
 
   def isEmpty: Boolean = forms.isEmpty && !lemma
 }
@@ -118,11 +120,16 @@ object FormTable {
     *
     * A form goes to `rest` when its word is in no cell. A word in a cell is not repeated below for its other relations:
     * German `kaufte` (`past`) is already in the preterite cells.
+    *
+    * A table marked `articles` gets each cell's article from `articles`, given the tags the cell requires.
     */
-  def layout[A](template: FormTemplate, forms: List[A])(relation: A => String, wordId: A => Long): FormLayout[A] = {
+  def layout[A](template: FormTemplate, forms: List[A], articles: Set[String] => Option[String] = _ => None)(
+    relation: A => String,
+    wordId: A => Long,
+  ): FormLayout[A] = {
     val tagged   = forms.map(form => (form, relation(form).split(',').iterator.filter(_.nonEmpty).toSet))
     val sections = template.sections.flatMap(section => {
-      val tables = section.tables.flatMap(table => fill(table, tagged, wordId))
+      val tables = section.tables.flatMap(table => fill(table, tagged, wordId, articles))
       Option.when(tables.nonEmpty)(FilledSection(section.title, tables))
     })
     val shown    = (for {
@@ -135,16 +142,22 @@ object FormTable {
     FormLayout(sections, forms.filterNot(form => shown.contains(wordId(form))))
   }
 
-  private def fill[A](table: FormTable, tagged: List[(A, Set[String])], wordId: A => Long): Option[FilledTable[A]] = {
+  private def fill[A](
+    table: FormTable,
+    tagged: List[(A, Set[String])],
+    wordId: A => Long,
+    articles: Set[String] => Option[String],
+  ): Option[FilledTable[A]] = {
     val rows    = table.rows.zipWithIndex.flatMap { case (row, r) =>
       val cells = table.columns.zipWithIndex.map { case (column, c) =>
-        val forms = cellForms(table.base ++ row.matcher ++ column.matcher, tagged, wordId)
-        val lemma = table.lemma.get((r, c)) match {
+        val matcher = table.base ++ row.matcher ++ column.matcher
+        val forms   = cellForms(matcher, tagged, wordId)
+        val lemma   = table.lemma.get((r, c)) match {
           case Some(LemmaFill.Always)    => true
           case Some(LemmaFill.WhenEmpty) => forms.isEmpty
           case None                      => false
         }
-        FilledCell(forms, lemma)
+        FilledCell(forms, lemma, if (table.articles) articles(matcher.include) else None)
       }
       Option.when(cells.exists(!_.isEmpty))(FilledRow(row.label, cells))
     }
