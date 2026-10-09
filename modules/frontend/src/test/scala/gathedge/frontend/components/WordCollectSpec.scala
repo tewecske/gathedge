@@ -168,6 +168,38 @@ object WordCollectSpec extends ZIOSpecDefault {
           WordCollect.tagOptionGroups(Nil).isEmpty,
         )
       },
+      // A pair goes only into a tag of its own two languages, so with no collect tag a chip that names its pair files
+      // into such a tag, or a new one, and never into the first tag the reader has.
+      test("with no collect tag a pair files into a tag of its own two languages, the reader's own first") {
+        val deEn     = Tag(10L, "words", 0L, ownedByMe = true, editableByMe = true, targetLanguage = WordLanguage.En)
+        val enDe     = deEn.copy(id = 11L, sourceLanguage = WordLanguage.En, targetLanguage = WordLanguage.De)
+        val deHu     = Tag(12L, "hungarian", 0L, ownedByMe = true, editableByMe = true)
+        val classTag = Tag(13L, "class", 0L, ownedByMe = false, Some(GroupRef(1L, "Period 3")), editableByMe = true)
+        val stranger = Tag(14L, "stranger", 0L, ownedByMe = false, editableByMe = true)
+        assertTrue(
+          WordCollect.tagForPair(List(deHu, deEn), (WordLanguage.De, WordLanguage.En)).map(_.id) == Some(10L),
+          // Either order: English to German is the same pair as German to English.
+          WordCollect.tagForPair(List(deHu, enDe), (WordLanguage.De, WordLanguage.En)).map(_.id) == Some(11L),
+          // The reader's own tag comes before a group's.
+          WordCollect.tagForPair(List(classTag, deHu), (WordLanguage.Hu, WordLanguage.De)).map(_.id) == Some(12L),
+          WordCollect.tagForPair(List(classTag), (WordLanguage.De, WordLanguage.Hu)).map(_.id) == Some(13L),
+          // No tag of the pair: a new one is made.
+          WordCollect.tagForPair(List(deHu), (WordLanguage.De, WordLanguage.En)).isEmpty,
+          // A tag the reader could write to only as an administrator is no collect tag.
+          WordCollect.tagForPair(List(stranger), (WordLanguage.De, WordLanguage.Hu)).isEmpty,
+        )
+      },
+      test("a new tag for a pair takes the default name, with the pair's codes when the reader already has that name") {
+        val default = Tag(10L, WordCollect.defaultTagName, 0L, ownedByMe = true, editableByMe = true)
+        val shared  = Tag(11L, WordCollect.defaultTagName.toLowerCase, 0L, ownedByMe = false, editableByMe = true)
+        val pair    = (WordLanguage.De, WordLanguage.En)
+        assertTrue(
+          WordCollect.defaultTagNameFor(Nil, pair) == WordCollect.defaultTagName,
+          // Names are unique per owner, so another reader's tag of that name is no clash.
+          WordCollect.defaultTagNameFor(List(shared), pair) == WordCollect.defaultTagName,
+          WordCollect.defaultTagNameFor(List(default), pair) == s"${WordCollect.defaultTagName} GER–ENG",
+        )
+      },
     )
   }
 }

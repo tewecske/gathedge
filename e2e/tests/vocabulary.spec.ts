@@ -278,9 +278,17 @@ test('a word the dictionary does not have can be added, with its article', async
 // so it is the one that has to be findable: a named form, and the missing language shown as missing.
 test('the detail page adds a translation in the language still missing', async () => {
   // One group per language the word is not, each shown even when empty. Scope by the group's own
-  // language badge: with three other languages, "No translations yet" stands in more than one group.
-  const englishGroup = page.locator('.badge', { hasText: 'English' }).locator('..');
-  // The word from the previous test, still open.
+  // language badge: with several other languages, "No translations yet" stands in more than one group.
+  const group = (language: string) =>
+    page.locator('.translation-group', { has: page.locator('.badge', { hasText: language }) });
+  const englishGroup = group('English');
+  // The word from the previous test, still open. The collect tag is `de → hu`, so only the Hungarian group
+  // is open and has the control that marks an answer; English starts closed, with nothing to mark.
+  await expect(group('Hungarian')).toBeVisible();
+  await expect(group('Hungarian').getByRole('button', { name: /^szilva/ })).toBeVisible();
+  expect(await englishGroup.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false);
+  await expect(englishGroup).toContainText('Not in the selected wordlist');
+  await englishGroup.locator('summary').click();
   await expect(englishGroup.getByText('No translations yet')).toBeVisible();
 
   const form = page.locator('form', { hasText: 'Translation' });
@@ -288,7 +296,9 @@ test('the detail page adds a translation in the language still missing', async (
   await form.getByLabel('Translation', { exact: true }).fill('plum');
   await form.getByRole('button', { name: 'Add' }).click();
 
-  await expect(page.getByText('plum')).toBeVisible();
+  // The group stays open on the translation just added, and it has no control to mark it.
+  await expect(englishGroup.getByRole('link', { name: 'plum' })).toBeVisible();
+  await expect(englishGroup.getByRole('button', { name: /^plum/ })).toHaveCount(0);
   await expect(englishGroup.getByText('No translations yet')).toHaveCount(0);
   // And the form is still there, on the same word, for whatever is added next.
   await expect(page.getByRole('heading', { name: 'Add a translation' })).toBeVisible();
