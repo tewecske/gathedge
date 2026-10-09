@@ -99,6 +99,9 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "agua") == Some("el"),
           spanish.declinedArticle(Some(Gender.Feminine), Set("plural"), "agua") == Some("las"),
           spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "harina") == Some("la"),
+          spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "átame") == Some("el"),
+          spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "hache") == Some("la"),
+          spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "árbitra") == Some("la"),
         )
       },
       test("Spanish has two genders, does not capitalize, and its strip recognises the plural articles too") {

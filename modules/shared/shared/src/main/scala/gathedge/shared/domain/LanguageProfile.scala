@@ -147,8 +147,9 @@ object LanguageProfile {
   }
 
   /** The Spanish feminine nouns that start with a stressed `a` or `ha`, so their singular takes `el` (`el agua`, `las
-    * aguas`). Taken from the dump: every feminine noun whose IPA starts with a stressed `a`. Left out, as the rule
-    * leaves them out: the letter names (`la a`, `la hache`, `la alfa`) and nouns for women (`la árbitra`).
+    * aguas`). Taken from the dump: every feminine noun whose IPA starts with a stressed `a`. Left out, by the RAE's
+    * Diccionario panhispánico de dudas ("el", 2.3; "alfa"): the letter names (`la a`, `la hache`, usually `la alfa`), a
+    * noun for women only recently used in the feminine (`la árbitra`), and an adjective used as a noun (`la ávara`).
     */
   private val spanishStressedA: Set[String] = {
     Set(
@@ -219,6 +220,7 @@ object LanguageProfile {
       "ánima",
       "ánsara",
       "área",
+      "átame",
     )
   }
 
