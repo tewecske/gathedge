@@ -10,6 +10,9 @@ import zio.test.*
   *   - Spanish `vos` has only the present forms, and no `los`/`las` form that names the object's gender;
   *   - the subordinate clause of a German separable verb has subjunctive I forms only where they differ from the
   *     indicative's.
+  *
+  * Some odd cells are odd in the dump too: French `paʁl` (a pronunciation imported as a form) beside `parle`, and
+  * English `be`'s person forms, which no principal part takes, in the list below the table.
   */
 object FormTemplatesSpec extends ZIOSpecDefault {
 
@@ -112,13 +115,14 @@ object FormTemplatesSpec extends ZIOSpecDefault {
           val layout = single(table, "1:present,singular", "1:indicative,present,singular", "1:past")
           assertTrue(cells(layout) == List(List(List(1L))), layout.rest.isEmpty)
         },
-        test("an empty row drops, and a table holding only the headword drops") {
-          val rows   = List(FormAxis.of("singular"), FormAxis.of("plural"))
+        test("an empty row drops, the headword keeps its row, and a table holding only the headword drops") {
+          val rows   = List(FormAxis.of("singular"), FormAxis.of("plural"), FormAxis.of("dual"))
           val table  = FormTable(None, FormMatch(), oneCell, rows, lemma = Map((0, 0) -> LemmaFill.Always))
           val filled = single(table, "1:plural")
           val bare   = single(table)
           assertTrue(
-            filled.sections.head.tables.head.rows.map(_.label) == List(Some(FormLabel.tags("plural"))),
+            filled.sections.head.tables.head.rows.map(_.label) ==
+              List(Some(FormLabel.tags("singular")), Some(FormLabel.tags("plural"))),
             bare.sections.isEmpty,
           )
         },
@@ -178,12 +182,37 @@ object FormTemplatesSpec extends ZIOSpecDefault {
             laidOut(WordLanguage.Es, PartOfSpeech.Adjective, "libre", FormFixtures.esLibre) == Expected.esLibre,
           )
         },
-        test("English, French and Portuguese have no template, so their words keep the list") {
+        test("English noun, verb and adjective") {
           assertTrue(
-            PartOfSpeech.values.toList.forall(pos => {
-              List(WordLanguage.En, WordLanguage.Fr, WordLanguage.Pt).forall(FormTemplates.of(_, pos).isEmpty)
-            }),
-            FormTemplates.of(WordLanguage.De, PartOfSpeech.Phrase).isEmpty,
+            laidOut(WordLanguage.En, PartOfSpeech.Verb, "go", FormFixtures.enGo) == Expected.enGo,
+            laidOut(WordLanguage.En, PartOfSpeech.Verb, "be", FormFixtures.enBe) == Expected.enBe,
+            laidOut(WordLanguage.En, PartOfSpeech.Noun, "child", FormFixtures.enChild) == Expected.enChild,
+            laidOut(WordLanguage.En, PartOfSpeech.Adjective, "good", FormFixtures.enGood) == Expected.enGood,
+          )
+        },
+        test("French verb, adjective and noun") {
+          assertTrue(
+            laidOut(WordLanguage.Fr, PartOfSpeech.Verb, "parler", FormFixtures.frParler) == Expected.frParler,
+            laidOut(WordLanguage.Fr, PartOfSpeech.Adjective, "grand", FormFixtures.frGrand) == Expected.frGrand,
+            laidOut(WordLanguage.Fr, PartOfSpeech.Adjective, "beau", FormFixtures.frBeau) == Expected.frBeau,
+            laidOut(WordLanguage.Fr, PartOfSpeech.Noun, "chat", FormFixtures.frChat) == Expected.frChat,
+          )
+        },
+        test("Portuguese verb, adjective and noun") {
+          assertTrue(
+            laidOut(WordLanguage.Pt, PartOfSpeech.Verb, "falar", FormFixtures.ptFalar) == Expected.ptFalar,
+            laidOut(WordLanguage.Pt, PartOfSpeech.Adjective, "bom", FormFixtures.ptBom) == Expected.ptBom,
+            laidOut(WordLanguage.Pt, PartOfSpeech.Adjective, "feliz", FormFixtures.ptFeliz) == Expected.ptFeliz,
+            laidOut(WordLanguage.Pt, PartOfSpeech.Noun, "menino", FormFixtures.ptMenino) == Expected.ptMenino,
+          )
+        },
+        test("an adverb, a phrase or an other word has no template, so it keeps the list") {
+          assertTrue(
+            WordLanguage.values.toList.forall(language => {
+              List(PartOfSpeech.Adverb, PartOfSpeech.Phrase, PartOfSpeech.Other).forall(
+                FormTemplates.of(language, _).isEmpty
+              )
+            })
           )
         },
       ),
@@ -662,6 +691,170 @@ object FormTemplatesSpec extends ZIOSpecDefault {
          |cols:
          |superlative: libérrimo
          |## rest:""".stripMargin
+    }
+
+    val enGo: String = {
+      """##  / ui.word.forms.table.principalParts
+       |cols:
+       |infinitive: [go]
+       |present third-person singular: goes
+       |past: went
+       |participle present: going
+       |participle past: gone
+       |## rest: geaux (defective,humorous,informal,louisiana,mainly), gwin (dialectal,informal,participle,present)""".stripMargin
+    }
+
+    val enBe: String = {
+      """##  / ui.word.forms.table.principalParts
+       |cols:
+       |infinitive: be
+       |present third-person singular: 's / is
+       |participle present: being
+       |participle past: been
+       |## rest: 'm (first-person,present,singular), 're (plural,present), 're (present,second-person,singular), 'rt (present,second-person,singular), am (first-person,indicative,present,singular), am (first-person,present,singular), are (east,midlands,present,yorkshire), are (first-person,plural,present), are (plural,present), are (plural,present,second-person), are (plural,present,third-person), are (present,second-person,singular), art (present,second-person,singular), bes (dialectal,indicative,present,singular,third-person), iz (indicative,present,singular,third-person), was (dialectal,past,plural), was (first-person,indicative,past,singular), was (first-person,past,singular), was (indicative,past,singular,third-person), was (past,singular,third-person), were (dialectal,first-person,past,singular), were (dialectal,past,singular,third-person), were (first-person,indicative,ireland,multicultural-london-english,northern-england,past,singular,third-person), were (indicative,past,plural), were (indicative,past,second-person,singular), were (past,plural), were (past,second-person,singular), were (past,subjunctive)""".stripMargin
+    }
+
+    val enChild: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |: [child] | children
+       |## rest: childer (ireland,plural)""".stripMargin
+    }
+
+    val enGood: String = {
+      """##  / ui.word.forms.table.comparison
+       |cols:
+       |positive: [good]
+       |comparative: better
+       |superlative: best
+       |## rest:""".stripMargin
+    }
+
+    val frParler: String = {
+      """##  / indicative
+       |cols: present | imperfect | historic past | future | conditional
+       |first-person singular: parle / paʁl | parlais | parlai | parlerai | parlerais
+       |second-person singular: parles | parlais | parlas | parleras | parlerais
+       |third-person singular: parle | parlait | parla | parlera | parlerait
+       |first-person plural: parlons | parlions | parlâmes | parlerons | parlerions
+       |second-person plural: parlez | parliez | parlâtes | parlerez | parleriez
+       |third-person plural: parlent | parlaient | parlèrent | parleront | parleraient
+       |##  / subjunctive
+       |cols: present | imperfect
+       |first-person singular: parle / paʁl | parlasse
+       |second-person singular: parles | parlasses
+       |third-person singular: parle | parlât
+       |first-person plural: parlions | parlassions
+       |second-person plural: parliez | parlassiez
+       |third-person plural: parlent | parlassent
+       |##  / imperative
+       |cols:
+       |second-person singular: parle
+       |first-person plural: parlons
+       |second-person plural: parlez
+       |##  / ui.word.forms.table.nonFinite
+       |cols:
+       |infinitive: parler
+       |participle present: parlant
+       |participle past: parlé
+       |## rest:""".stripMargin
+    }
+
+    val frGrand: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |masculine: [grand] | grands
+       |feminine: grande | grandes
+       |## rest:""".stripMargin
+    }
+
+    val frBeau: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |masculine: [beau] / bel | beaux
+       |feminine: belle | belles
+       |## rest:""".stripMargin
+    }
+
+    val frChat: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |: [chat] | chats
+       |## rest:""".stripMargin
+    }
+
+    val ptFalar: String = {
+      """##  / indicative
+       |cols: present | preterite | imperfect | pluperfect | future | conditional
+       |first-person singular: falo | falei | falava | falara | falarei | falaria
+       |second-person singular: falas | falaste | falavas | falaras | falarás | falarias
+       |third-person singular: fala | falou | falava | falara | falará | falaria
+       |first-person plural: falamos | falamos / falámos | falávamos | faláramos | falaremos | falaríamos
+       |second-person plural: falais | falastes | faláveis | faláreis | falareis | falaríeis
+       |third-person plural: falam | falaram | falavam | falaram | falarão | falariam
+       |##  / subjunctive
+       |cols: present | imperfect | future
+       |first-person singular: fale | falasse | falar
+       |second-person singular: fales | falasses | falares
+       |third-person singular: fale | falasse | falar
+       |first-person plural: falemos | falássemos | falarmos
+       |second-person plural: faleis | falásseis | falardes
+       |third-person plural: falem | falassem | falarem
+       |##  / imperative
+       |cols: affirmative | negative
+       |second-person singular: fala | não fales
+       |third-person singular: fale | não fale
+       |first-person plural: falemos | não falemos
+       |second-person plural: falai | não faleis
+       |third-person plural: falem | não falem
+       |##  / personal infinitive
+       |cols:
+       |first-person singular: falar
+       |second-person singular: falares
+       |third-person singular: falar
+       |first-person plural: falarmos
+       |second-person plural: falardes
+       |third-person plural: falarem
+       |##  / ui.word.forms.table.nonFinite
+       |cols:
+       |infinitive: falar
+       |gerund: falando
+       |participle past masculine singular: falado
+       |participle past feminine singular: falada
+       |participle past masculine plural: falados
+       |participle past feminine plural: faladas
+       |## rest:""".stripMargin
+    }
+
+    val ptBom: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |masculine: [bom] | bons
+       |feminine: boa | boas
+       |##  / ui.word.forms.table.comparison
+       |cols:
+       |comparative: melhor
+       |superlative: boníssimo / o melhor / ótimo
+       |## rest:""".stripMargin
+    }
+
+    val ptFeliz: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |masculine: [feliz] | felizes
+       |feminine: [feliz] | felizes
+       |##  / ui.word.forms.table.comparison
+       |cols:
+       |comparative: mais feliz
+       |superlative: felicíssimo / o mais feliz
+       |## rest:""".stripMargin
+    }
+
+    val ptMenino: String = {
+      """##  / ui.word.forms.table.declension
+       |cols: singular | plural
+       |: [menino] | meninos
+       |## rest: meninas (feminine,plural)""".stripMargin
     }
   }
 }

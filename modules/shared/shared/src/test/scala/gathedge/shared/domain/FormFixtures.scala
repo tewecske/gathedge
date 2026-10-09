@@ -1136,4 +1136,278 @@ object FormFixtures {
        |libres;adjective;;plural
        |libérrimo;adjective;;superlative""".stripMargin
   }
+
+  val enGo: String = {
+    """geaux;verb;;defective,humorous,informal,louisiana,mainly
+       |goes;verb;;indicative,present,singular,third-person
+       |goes;verb;;present,singular,third-person
+       |going;verb;;gerund,participle,present
+       |going;verb;;participle,present
+       |gone;verb;;participle,past
+       |gwin;verb;;dialectal,informal,participle,present
+       |went;verb;;past""".stripMargin
+  }
+
+  val enBe: String = {
+    """'m;verb;;first-person,present,singular
+       |'re;verb;;plural,present
+       |'re;verb;;present,second-person,singular
+       |'rt;verb;;present,second-person,singular
+       |'s;verb;;dialectal,first-person,past,singular
+       |'s;verb;;dialectal,past,plural
+       |'s;verb;;present,singular,third-person
+       |am;verb;;first-person,indicative,present,singular
+       |am;verb;;first-person,present,singular
+       |are;verb;;east,midlands,present,yorkshire
+       |are;verb;;first-person,plural,present
+       |are;verb;;plural,present
+       |are;verb;;plural,present,second-person
+       |are;verb;;plural,present,third-person
+       |are;verb;;present,second-person,singular
+       |art;verb;;present,second-person,singular
+       |be;verb;;imperative,present
+       |be;verb;;infinitive
+       |be;verb;;present,subjunctive
+       |been;verb;;participle,past
+       |being;verb;;gerund,participle,present
+       |being;verb;;participle,present
+       |bes;verb;;dialectal,indicative,present,singular,third-person
+       |is;verb;;dialectal,indicative,present
+       |is;verb;;indicative,present,singular,third-person
+       |is;verb;;present,singular,third-person
+       |iz;verb;;indicative,present,singular,third-person
+       |was;verb;;dialectal,past,plural
+       |was;verb;;first-person,indicative,past,singular
+       |was;verb;;first-person,past,singular
+       |was;verb;;indicative,past,singular,third-person
+       |was;verb;;past,singular,third-person
+       |were;verb;;dialectal,first-person,past,singular
+       |were;verb;;dialectal,past,singular,third-person
+       |were;verb;;first-person,indicative,ireland,multicultural-london-english,northern-england,past,singular,third-person
+       |were;verb;;indicative,past,plural
+       |were;verb;;indicative,past,second-person,singular
+       |were;verb;;past,plural
+       |were;verb;;past,second-person,singular
+       |were;verb;;past,subjunctive""".stripMargin
+  }
+
+  val enChild: String = {
+    """childer;noun;;ireland,plural
+       |children;noun;;plural""".stripMargin
+  }
+
+  val enGood: String = {
+    """best;adjective;;superlative
+       |better;adjective;;comparative""".stripMargin
+  }
+
+  val frParler: String = {
+    """parla;verb;;historic,indicative,past,singular,third-person
+       |parla;verb;;historic,past,singular,third-person
+       |parlai;verb;;first-person,historic,indicative,past,singular
+       |parlai;verb;;first-person,historic,past,singular
+       |parlaient;verb;;imperfect,indicative,plural,third-person
+       |parlais;verb;;first-person,imperfect,indicative,second-person,singular
+       |parlais;verb;;first-person,imperfect,indicative,singular
+       |parlais;verb;;imperfect,indicative,second-person,singular
+       |parlait;verb;;imperfect,indicative,singular,third-person
+       |parlant;verb;;gerund,participle,present
+       |parlant;verb;;participle,present
+       |parlas;verb;;historic,indicative,past,second-person,singular
+       |parlas;verb;;historic,past,second-person,singular
+       |parlasse;verb;;first-person,imperfect,singular,subjunctive
+       |parlassent;verb;;imperfect,plural,subjunctive,third-person
+       |parlasses;verb;;imperfect,second-person,singular,subjunctive
+       |parlassiez;verb;;imperfect,plural,second-person,subjunctive
+       |parlassions;verb;;first-person,imperfect,plural,subjunctive
+       |parle;verb;;first-person,indicative,present,singular
+       |parle;verb;;first-person,indicative,present,singular,subjunctive,third-person
+       |parle;verb;;first-person,present,singular,subjunctive
+       |parle;verb;;imperative,second-person,singular
+       |parle;verb;;indicative,present,singular,third-person
+       |parle;verb;;present,singular,subjunctive,third-person
+       |parlent;verb;;indicative,plural,present,subjunctive,third-person
+       |parlent;verb;;indicative,plural,present,third-person
+       |parlent;verb;;plural,present,subjunctive,third-person
+       |parler;verb;;infinitive
+       |parlera;verb;;future,indicative,singular,third-person
+       |parlera;verb;;future,singular,third-person
+       |parlerai;verb;;first-person,future,indicative,singular
+       |parlerai;verb;;first-person,future,singular
+       |parleraient;verb;;conditional,plural,third-person
+       |parlerais;verb;;conditional,first-person,second-person,singular
+       |parlerais;verb;;conditional,first-person,singular
+       |parlerais;verb;;conditional,second-person,singular
+       |parlerait;verb;;conditional,singular,third-person
+       |parleras;verb;;future,indicative,second-person,singular
+       |parleras;verb;;future,second-person,singular
+       |parlerez;verb;;future,indicative,plural,second-person
+       |parlerez;verb;;future,plural,second-person
+       |parleriez;verb;;conditional,plural,second-person
+       |parlerions;verb;;conditional,first-person,plural
+       |parlerons;verb;;first-person,future,indicative,plural
+       |parlerons;verb;;first-person,future,plural
+       |parleront;verb;;future,indicative,plural,third-person
+       |parleront;verb;;future,plural,third-person
+       |parles;verb;;indicative,present,second-person,singular
+       |parles;verb;;indicative,present,second-person,singular,subjunctive
+       |parles;verb;;present,second-person,singular,subjunctive
+       |parlez;verb;;imperative,plural,second-person
+       |parlez;verb;;indicative,plural,present,second-person
+       |parliez;verb;;imperfect,indicative,plural,second-person
+       |parliez;verb;;plural,present,second-person,subjunctive
+       |parlions;verb;;first-person,imperfect,indicative,plural
+       |parlions;verb;;first-person,plural,present,subjunctive
+       |parlons;verb;;first-person,imperative,plural
+       |parlons;verb;;first-person,indicative,plural,present
+       |parlâmes;verb;;first-person,historic,indicative,past,plural
+       |parlâmes;verb;;first-person,historic,past,plural
+       |parlât;verb;;imperfect,singular,subjunctive,third-person
+       |parlâtes;verb;;historic,indicative,past,plural,second-person
+       |parlâtes;verb;;historic,past,plural,second-person
+       |parlèrent;verb;;historic,indicative,past,plural,third-person
+       |parlèrent;verb;;historic,past,plural,third-person
+       |parlé;verb;;participle,past
+       |paʁl;verb;;first-person,indicative,present,singular
+       |paʁl;verb;;first-person,present,singular,subjunctive""".stripMargin
+  }
+
+  val frGrand: String = {
+    """grande;adjective;;feminine
+       |grande;adjective;;feminine,singular
+       |grandes;adjective;;feminine,plural
+       |grands;adjective;;masculine,plural""".stripMargin
+  }
+
+  val frBeau: String = {
+    """beaux;adjective;;masculine,plural
+       |bel;adjective;;before-vowel,masculine,singular
+       |belle;adjective;;feminine
+       |belle;adjective;;feminine,singular
+       |belles;adjective;;feminine,plural""".stripMargin
+  }
+
+  val frChat: String = {
+    """chats;noun;masculine;masculine,plural
+       |chats;noun;masculine;plural""".stripMargin
+  }
+
+  val ptFalar: String = {
+    """fala;verb;;imperative,second-person,singular
+       |fala;verb;;indicative,present,singular,third-person
+       |falada;verb;;feminine,participle,past,singular
+       |faladas;verb;;feminine,participle,past,plural
+       |falado;verb;;masculine,participle,past,singular
+       |falado;verb;;participle,past
+       |falados;verb;;masculine,participle,past,plural
+       |falai;verb;;imperative,plural,second-person
+       |falais;verb;;indicative,plural,present,second-person
+       |falam;verb;;indicative,plural,present,third-person
+       |falamos;verb;;brazil,first-person,indicative,plural,preterite
+       |falamos;verb;;first-person,indicative,plural,present
+       |falamos;verb;;first-person,indicative,plural,preterite
+       |falando;verb;;gerund
+       |falar;verb;;first-person,future,singular,subjunctive
+       |falar;verb;;first-person,infinitive,singular
+       |falar;verb;;future,singular,subjunctive,third-person
+       |falar;verb;;impersonal,infinitive
+       |falar;verb;;infinitive,singular,third-person
+       |falara;verb;;first-person,indicative,pluperfect,singular
+       |falara;verb;;first-person,indicative,pluperfect,singular,third-person
+       |falara;verb;;indicative,pluperfect,singular,third-person
+       |falaram;verb;;indicative,pluperfect,plural,third-person
+       |falaram;verb;;indicative,plural,preterite,third-person
+       |falaras;verb;;indicative,pluperfect,second-person,singular
+       |falardes;verb;;future,plural,second-person,subjunctive
+       |falardes;verb;;infinitive,personal,plural,second-person
+       |falardes;verb;;infinitive,plural,second-person
+       |falarei;verb;;first-person,future,indicative,singular
+       |falareis;verb;;future,indicative,plural,second-person
+       |falarem;verb;;future,plural,subjunctive,third-person
+       |falarem;verb;;infinitive,personal,plural,third-person
+       |falarem;verb;;infinitive,plural,third-person
+       |falaremos;verb;;first-person,future,indicative,plural
+       |falares;verb;;future,second-person,singular,subjunctive
+       |falares;verb;;infinitive,personal,second-person,singular
+       |falares;verb;;infinitive,second-person,singular
+       |falaria;verb;;conditional,first-person,singular
+       |falaria;verb;;conditional,first-person,singular,third-person
+       |falaria;verb;;conditional,singular,third-person
+       |falariam;verb;;conditional,plural,third-person
+       |falarias;verb;;conditional,second-person,singular
+       |falarmos;verb;;first-person,future,plural,subjunctive
+       |falarmos;verb;;first-person,infinitive,personal,plural
+       |falarmos;verb;;first-person,infinitive,plural
+       |falará;verb;;future,indicative,singular,third-person
+       |falarás;verb;;future,indicative,second-person,singular
+       |falarão;verb;;future,indicative,plural,third-person
+       |falaríamos;verb;;conditional,first-person,plural
+       |falaríeis;verb;;conditional,plural,second-person
+       |falas;verb;;indicative,present,second-person,singular
+       |falasse;verb;;first-person,imperfect,singular,subjunctive
+       |falasse;verb;;first-person,imperfect,singular,subjunctive,third-person
+       |falasse;verb;;imperfect,singular,subjunctive,third-person
+       |falassem;verb;;imperfect,plural,subjunctive,third-person
+       |falasses;verb;;imperfect,second-person,singular,subjunctive
+       |falaste;verb;;indicative,preterite,second-person,singular
+       |falastes;verb;;indicative,plural,preterite,second-person
+       |falava;verb;;first-person,imperfect,indicative,singular
+       |falava;verb;;first-person,imperfect,indicative,singular,third-person
+       |falava;verb;;imperfect,indicative,singular,third-person
+       |falavam;verb;;imperfect,indicative,plural,third-person
+       |falavas;verb;;imperfect,indicative,second-person,singular
+       |fale;verb;;first-person,present,singular,subjunctive
+       |fale;verb;;first-person,present,singular,subjunctive,third-person
+       |fale;verb;;imperative,singular,third-person
+       |fale;verb;;present,singular,subjunctive,third-person
+       |falei;verb;;first-person,indicative,preterite,singular
+       |falei;verb;;first-person,preterite,singular
+       |faleis;verb;;plural,present,second-person,subjunctive
+       |falem;verb;;imperative,plural,third-person
+       |falem;verb;;plural,present,subjunctive,third-person
+       |falemos;verb;;first-person,imperative,plural
+       |falemos;verb;;first-person,plural,present,subjunctive
+       |fales;verb;;present,second-person,singular,subjunctive
+       |falo;verb;;first-person,indicative,present,singular
+       |falo;verb;;first-person,present,singular
+       |falou;verb;;indicative,preterite,singular,third-person
+       |falámos;verb;;first-person,indicative,plural,preterite
+       |faláramos;verb;;first-person,indicative,pluperfect,plural
+       |faláreis;verb;;indicative,pluperfect,plural,second-person
+       |falásseis;verb;;imperfect,plural,second-person,subjunctive
+       |falássemos;verb;;first-person,imperfect,plural,subjunctive
+       |falávamos;verb;;first-person,imperfect,indicative,plural
+       |faláveis;verb;;imperfect,indicative,plural,second-person
+       |não fale;verb;;imperative,negative,singular,third-person
+       |não faleis;verb;;imperative,negative,plural,second-person
+       |não falem;verb;;imperative,negative,plural,third-person
+       |não falemos;verb;;first-person,imperative,negative,plural
+       |não fales;verb;;imperative,negative,second-person,singular""".stripMargin
+  }
+
+  val ptBom: String = {
+    """boa;adjective;;feminine
+       |boa;adjective;;feminine,singular
+       |boas;adjective;;feminine,plural
+       |bons;adjective;;masculine,plural
+       |boníssimo;adjective;;superlative
+       |melhor;adjective;;comparative
+       |melhor;adjective;;comparative,feminine,masculine
+       |melhor;adjective;;feminine,masculine,superlative,with-definite-article
+       |o melhor;adjective;;superlative
+       |ótimo;adjective;;superlative""".stripMargin
+  }
+
+  val ptFeliz: String = {
+    """felicíssimo;adjective;;superlative
+       |felizes;adjective;;feminine,masculine,plural
+       |felizes;adjective;;plural
+       |mais feliz;adjective;;comparative
+       |o mais feliz;adjective;;superlative""".stripMargin
+  }
+
+  val ptMenino: String = {
+    """meninas;noun;feminine;feminine,plural
+       |meninos;noun;;plural""".stripMargin
+  }
 }

@@ -6,21 +6,26 @@ import gathedge.shared.i18n.UiKeys
   * Each one is built from the tag sets the import writes into `word_forms.relation`; `FormTemplatesSpec` pins them
   * against real words.
   *
-  * English has too few forms for a table. French and Portuguese have no template yet. Those words keep the list.
+  * Any other part of speech keeps the list.
   */
 object FormTemplates {
 
   def of(language: WordLanguage, partOfSpeech: PartOfSpeech): Option[FormTemplate] = {
     (language, partOfSpeech) match {
-      case (WordLanguage.De, PartOfSpeech.Noun)      => Some(germanNoun)
-      case (WordLanguage.De, PartOfSpeech.Verb)      => Some(germanVerb)
-      case (WordLanguage.De, PartOfSpeech.Adjective) => Some(germanAdjective)
-      case (WordLanguage.Hu, PartOfSpeech.Noun)      => Some(hungarianNoun)
-      case (WordLanguage.Hu, PartOfSpeech.Verb)      => Some(hungarianVerb)
-      case (WordLanguage.Es, PartOfSpeech.Noun)      => Some(spanishNoun)
-      case (WordLanguage.Es, PartOfSpeech.Verb)      => Some(spanishVerb)
-      case (WordLanguage.Es, PartOfSpeech.Adjective) => Some(spanishAdjective)
-      case _                                         => None
+      case (WordLanguage.De, PartOfSpeech.Noun)                                          => Some(germanNoun)
+      case (WordLanguage.De, PartOfSpeech.Verb)                                          => Some(germanVerb)
+      case (WordLanguage.De, PartOfSpeech.Adjective)                                     => Some(germanAdjective)
+      case (WordLanguage.Hu, PartOfSpeech.Noun)                                          => Some(hungarianNoun)
+      case (WordLanguage.Hu, PartOfSpeech.Verb)                                          => Some(hungarianVerb)
+      case (WordLanguage.Es, PartOfSpeech.Verb)                                          => Some(spanishVerb)
+      case (WordLanguage.Fr, PartOfSpeech.Verb)                                          => Some(frenchVerb)
+      case (WordLanguage.Pt, PartOfSpeech.Verb)                                          => Some(portugueseVerb)
+      case (WordLanguage.En, PartOfSpeech.Noun)                                          => Some(englishNoun)
+      case (WordLanguage.En, PartOfSpeech.Verb)                                          => Some(englishVerb)
+      case (WordLanguage.En, PartOfSpeech.Adjective)                                     => Some(englishAdjective)
+      case (WordLanguage.Es | WordLanguage.Fr | WordLanguage.Pt, PartOfSpeech.Noun)      => Some(romanceNoun)
+      case (WordLanguage.Es | WordLanguage.Fr | WordLanguage.Pt, PartOfSpeech.Adjective) => Some(romanceAdjective)
+      case _                                                                             => None
     }
   }
 
@@ -402,10 +407,12 @@ object FormTemplates {
     )
   }
 
+  // --- Spanish, French and Portuguese nouns and adjectives ------------------------------------------------------------
+
   /** Singular and plural. The dump has no row for the headword itself, so the word fills its own cell. A gender
     * counterpart's plural (`niñas` of `niño`) is not this word's plural, so it stays out.
     */
-  val spanishNoun: FormTemplate = {
+  val romanceNoun: FormTemplate = {
     FormTemplate(
       List(
         FormSection(
@@ -426,9 +433,10 @@ object FormTemplates {
 
   /** Gender by number, then the comparative and superlative. The headword is the masculine singular. The dump tags a
     * feminine singular `feminine` alone (`buena`), so the singular column is "not plural". An adjective with one form
-    * for both genders (`libre`) has no feminine singular row, so the headword fills that cell too.
+    * for both genders (`libre`) has no feminine singular row, so the headword fills that cell too. French `bel`, the
+    * form before a vowel, shares the masculine singular cell with `beau`.
     */
-  val spanishAdjective: FormTemplate = {
+  val romanceAdjective: FormTemplate = {
     FormTemplate(
       List(
         FormSection(
@@ -450,6 +458,197 @@ object FormTemplates {
               one,
               List(axis("comparative"), axis("superlative")),
             ),
+          ),
+        )
+      )
+    )
+  }
+
+  /** A column for one indicative tense, labelled by the tense alone: the table's title already says "indicative". */
+  private def indicativeTense(tense: String): FormAxis = {
+    FormAxis(FormLabel.tags(tense), FormMatch("indicative", tense))
+  }
+
+  // --- French --------------------------------------------------------------------------------------------------------
+
+  /** The indicative tenses and the conditional by person, then the subjunctive, the imperative and the non-finite
+    * forms. The dump has no compound tenses (`j'ai parlé`).
+    */
+  val frenchVerb: FormTemplate = {
+    FormTemplate(
+      List(
+        FormSection(
+          None,
+          List(
+            table(
+              FormLabel.tags("indicative"),
+              FormMatch(),
+              List(
+                indicativeTense("present"),
+                indicativeTense("imperfect"),
+                axis("historic", "past"),
+                indicativeTense("future"),
+                axis("conditional"),
+              ),
+              persons,
+            ),
+            table(
+              FormLabel.tags("subjunctive"),
+              FormMatch("subjunctive"),
+              List(axis("present"), axis("imperfect")),
+              persons,
+            ),
+            table(
+              FormLabel.tags("imperative"),
+              FormMatch("imperative"),
+              one,
+              List(axis("second-person", "singular"), axis("first-person", "plural"), axis("second-person", "plural")),
+            ),
+            table(
+              FormLabel.Key(UiKeys.wordFormsNonFinite),
+              FormMatch(),
+              one,
+              List(axis("infinitive"), axis("participle", "present"), axis("participle", "past")),
+            ),
+          ),
+        )
+      )
+    )
+  }
+
+  // --- Portuguese ----------------------------------------------------------------------------------------------------
+
+  /** The indicative tenses and the conditional by person, the subjunctive, the imperative, then the personal infinitive
+    * (`falarmos`) and the non-finite forms. A Brazilian and a European spelling of one cell are both shown (`falamos /
+    * falámos`).
+    */
+  val portugueseVerb: FormTemplate = {
+    FormTemplate(
+      List(
+        FormSection(
+          None,
+          List(
+            table(
+              FormLabel.tags("indicative"),
+              FormMatch(),
+              List(
+                indicativeTense("present"),
+                indicativeTense("preterite"),
+                indicativeTense("imperfect"),
+                indicativeTense("pluperfect"),
+                indicativeTense("future"),
+                axis("conditional"),
+              ),
+              persons,
+            ),
+            table(
+              FormLabel.tags("subjunctive"),
+              FormMatch("subjunctive"),
+              List(axis("present"), axis("imperfect"), axis("future")),
+              persons,
+            ),
+            table(
+              FormLabel.tags("imperative"),
+              FormMatch("imperative"),
+              List(FormAxis(FormLabel.tags("affirmative"), FormMatch(exclude = Set("negative"))), axis("negative")),
+              persons.tail,
+            ),
+            table(
+              FormLabel.tags("personal", "infinitive"),
+              FormMatch(include = Set("infinitive"), exclude = Set("impersonal")),
+              one,
+              persons,
+            ),
+            table(
+              FormLabel.Key(UiKeys.wordFormsNonFinite),
+              FormMatch(exclude = Set("first-person", "second-person", "third-person")),
+              one,
+              List(
+                axis("infinitive"),
+                axis("gerund"),
+                axis("participle", "past", "masculine", "singular"),
+                axis("participle", "past", "feminine", "singular"),
+                axis("participle", "past", "masculine", "plural"),
+                axis("participle", "past", "feminine", "plural"),
+              ),
+            ),
+          ),
+        )
+      )
+    )
+  }
+
+  // --- English -------------------------------------------------------------------------------------------------------
+
+  /** No relation carries this tag, so a row testing for it takes no form and holds only the headword. */
+  private val headwordOnly: FormMatch = FormMatch("headword-only")
+
+  /** Singular and plural. The headword is the singular. */
+  val englishNoun: FormTemplate = {
+    FormTemplate(
+      List(
+        FormSection(
+          None,
+          List(
+            FormTable(
+              Some(FormLabel.Key(UiKeys.wordFormsDeclension)),
+              FormMatch(),
+              List(FormAxis(FormLabel.tags("singular"), headwordOnly), axis("plural")),
+              List(FormAxis(None, FormMatch())),
+              lemma = Map((0, 0) -> LemmaFill.Always),
+            )
+          ),
+        )
+      )
+    )
+  }
+
+  /** The principal parts. The past row takes only a plain past, with no person, number or mood, so `be` keeps `was` and
+    * `were` for the list below rather than one of them standing for both.
+    */
+  val englishVerb: FormTemplate = {
+    val personal = Set("first-person", "second-person", "third-person", "singular", "plural")
+    FormTemplate(
+      List(
+        FormSection(
+          None,
+          List(
+            FormTable(
+              Some(FormLabel.Key(UiKeys.wordFormsPrincipalParts)),
+              FormMatch(),
+              one,
+              List(
+                axis("infinitive"),
+                axis("present", "third-person", "singular"),
+                FormAxis(
+                  FormLabel.tags("past"),
+                  FormMatch(include = Set("past"), exclude = personal ++ Set("participle", "subjunctive")),
+                ),
+                axis("participle", "present"),
+                axis("participle", "past"),
+              ),
+              lemma = Map((0, 0) -> LemmaFill.WhenEmpty),
+            )
+          ),
+        )
+      )
+    )
+  }
+
+  /** The three degrees. The headword is the positive. */
+  val englishAdjective: FormTemplate = {
+    FormTemplate(
+      List(
+        FormSection(
+          None,
+          List(
+            FormTable(
+              Some(FormLabel.Key(UiKeys.wordFormsComparison)),
+              FormMatch(),
+              one,
+              List(FormAxis(FormLabel.tags("positive"), headwordOnly), axis("comparative"), axis("superlative")),
+              lemma = Map((0, 0) -> LemmaFill.Always),
+            )
           ),
         )
       )

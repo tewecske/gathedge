@@ -912,9 +912,10 @@ object UiKeys {
   val wordDetailFormsCategoryOther: String       = key("ui.word.forms.category.otherKind")
 
   /** Table titles `FormTemplates` uses where no grammar tag names the table. */
-  val wordFormsDeclension: String = key("ui.word.forms.table.declension")
-  val wordFormsNonFinite: String  = key("ui.word.forms.table.nonFinite")
-  val wordFormsComparison: String = key("ui.word.forms.table.comparison")
+  val wordFormsDeclension: String     = key("ui.word.forms.table.declension")
+  val wordFormsNonFinite: String      = key("ui.word.forms.table.nonFinite")
+  val wordFormsComparison: String     = key("ui.word.forms.table.comparison")
+  val wordFormsPrincipalParts: String = key("ui.word.forms.table.principalParts")
 
   /** Every individual `word_forms.relation` tag this catalog names — `Labels.grammarTag` resolves through these, one
     * suffix per canonical wiktextract tag, falling back to a plain humanized rendering of the tag itself for anything

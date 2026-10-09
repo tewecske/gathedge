@@ -971,6 +971,7 @@
   "ui.word.forms.table.declension": "Ragozás",
   "ui.word.forms.table.nonFinite": "Igenevek",
   "ui.word.forms.table.comparison": "Fokozás",
+  "ui.word.forms.table.principalParts": "Alapalakok",
   "ui.grammarTag.positive": "alapfok",
   "ui.grammarTag.affirmative": "állító",
   "field.groupName": "Tanulócsoport neve",
