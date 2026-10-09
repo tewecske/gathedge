@@ -10,6 +10,7 @@ import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.{
+  FormPrefix,
   FormTable,
   FormTemplates,
   Gender,
@@ -512,11 +513,12 @@ private class WordDetailPage(id: Long) {
     * shows listed below them. Otherwise, and when no form fits a table, as the grouped list.
     */
   private def renderForms(word: Word, forms: List[WordFormEntry]): HtmlElement = {
-    val layout = FormTemplates
+    val profile = LanguageProfile.of(word.language)
+    val layout  = FormTemplates
       .of(word.language, word.partOfSpeech)
       .map(template => {
-        val articles = (tags: Set[String]) => LanguageProfile.of(word.language).declinedArticle(word.gender, tags)
-        FormTable.layout(template, forms, articles)(_.relation, _.word.id)
+        val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, word.gender, tags)
+        FormTable.layout(template, forms, prefixes)(_.relation, _.word.id)
       })
       .filter(_.sections.nonEmpty)
     div(

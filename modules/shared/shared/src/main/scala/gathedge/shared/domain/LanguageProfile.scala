@@ -16,6 +16,10 @@ package gathedge.shared.domain
   *
   * `declinedArticles` are the definite article by case and number, for the noun form tables (`dem Haus`, `der Häuser`).
   * A language whose article does not change by case has none, and its tables show bare forms.
+  *
+  * `subjectPronouns` go before each form of a verb's person tables (`ich rufe an`). `subordinator` goes before the
+  * pronoun in a subordinate clause, where the form is wrong without it (`dass ich anrufe`). `elisions` shorten a prefix
+  * before a vowel and join it to the form (`j'aime`).
   */
 final case class LanguageProfile(
   genders: List[Gender],
@@ -23,7 +27,10 @@ final case class LanguageProfile(
   articleForms: Map[String, Gender],
   capitalizesNouns: Boolean,
   reflexivePronouns: Set[String] = Set.empty,
-  declinedArticles: List[DeclinedArticle] = Nil,
+  declinedArticles: List[TaggedWord] = Nil,
+  subjectPronouns: List[TaggedWord] = Nil,
+  subordinator: Option[String] = None,
+  elisions: Map[String, String] = Map.empty,
 ) {
 
   def hasGenders: Boolean = genders.nonEmpty
@@ -39,9 +46,36 @@ final case class LanguageProfile(
     * whose gender is the noun's (or any gender) wins. A noun with no gender gets only the plural's.
     */
   def declinedArticle(gender: Option[Gender], tags: Set[String]): Option[String] = {
-    declinedArticles
-      .find(entry => entry.tags.subsetOf(tags) && entry.gender.forall(gender.contains))
-      .map(_.article)
+    TaggedWord.find(declinedArticles, gender, tags)
+  }
+
+  /** The subject pronoun of a form table cell that requires `tags`: the first entry whose tags the cell requires. */
+  def subjectPronoun(tags: Set[String]): Option[String] = TaggedWord.find(subjectPronouns, None, tags)
+
+  /** What goes before each form of a form table cell that requires `tags`. */
+  def prefix(kind: FormPrefix, gender: Option[Gender], tags: Set[String]): Option[String] = {
+    kind match {
+      case FormPrefix.Article            => declinedArticle(gender, tags)
+      case FormPrefix.Pronoun            => subjectPronoun(tags)
+      case FormPrefix.SubordinatePronoun =>
+        subjectPronoun(tags).map(pronoun => subordinator.fold(pronoun)(conjunction => s"$conjunction $pronoun"))
+    }
+  }
+
+  /** `prefix` as written before `text`: elided and joined where the form starts with a vowel or `h` (`j'`), followed by
+    * a space otherwise. Only the last word of the prefix elides (`que je` becomes `que j'`).
+    */
+  def lead(prefix: String, text: String): String = {
+    val (head, last) = prefix.lastIndexOf(' ') match {
+      case -1    => ("", prefix)
+      case space => (prefix.take(space + 1), prefix.drop(space + 1))
+    }
+    elisions.get(last) match {
+      case Some(elided) if text.headOption.exists(c => LanguageProfile.elidesBefore.contains(c.toLower)) =>
+        head + elided
+      case _                                                                                             =>
+        s"$prefix "
+    }
   }
 
   /** Splits a leading article off `text`, answering the bare word and the gender it names. Recognises every form in
@@ -65,14 +99,39 @@ final case class LanguageProfile(
   }
 }
 
-/** One definite article of [[LanguageProfile.declinedArticles]]: the case and number tags it goes with, and the gender
-  * it needs. `gender = None` fits every gender: the German plural.
+/** One article or pronoun of a [[LanguageProfile]]: the tags of the cells it goes with, and the gender it needs.
+  * `gender = None` fits every gender: the German plural.
   */
-final case class DeclinedArticle(tags: Set[String], gender: Option[Gender], article: String)
+final case class TaggedWord(tags: Set[String], gender: Option[Gender], text: String)
+
+object TaggedWord {
+
+  /** The first of `words` whose tags the cell requires and whose gender is the noun's (or any gender). */
+  def find(words: List[TaggedWord], gender: Option[Gender], tags: Set[String]): Option[String] = {
+    words.find(word => word.tags.subsetOf(tags) && word.gender.forall(gender.contains)).map(_.text)
+  }
+}
 
 object LanguageProfile {
 
+  /** The letters an elided prefix joins: vowels, with and without accents, and `h`. */
+  private val elidesBefore: Set[Char] = "aeiouyàâäéèêëîïôöùûüœæh".toSet
+
+  /** The six persons in order: first, second and third singular, then plural. */
+  private def persons(pronouns: String*): List[TaggedWord] = {
+    val tags = for {
+      number <- List("singular", "plural")
+      person <- List("first-person", "second-person", "third-person")
+    } yield Set(person, number)
+    tags.zip(pronouns).map { case (tags, pronoun) => TaggedWord(tags, None, pronoun) }
+  }
+
   val ungendered: LanguageProfile = LanguageProfile(Nil, Map.empty, Map.empty, capitalizesNouns = false)
+
+  /** No genders, but its verbs have pronouns. */
+  private val hungarian: LanguageProfile = {
+    ungendered.copy(subjectPronouns = persons("én", "te", "ő", "mi", "ti", "ők"))
+  }
 
   private val german: LanguageProfile = LanguageProfile(
     genders = List(Gender.Masculine, Gender.Feminine, Gender.Neuter),
@@ -89,10 +148,10 @@ object LanguageProfile {
     declinedArticles = {
       val singular = (grammarCase: String, masculine: String, feminine: String, neuter: String) => {
         List(Gender.Masculine -> masculine, Gender.Feminine -> feminine, Gender.Neuter -> neuter).map {
-          case (gender, article) => DeclinedArticle(Set(grammarCase, "singular"), Some(gender), article)
+          case (gender, article) => TaggedWord(Set(grammarCase, "singular"), Some(gender), article)
         }
       }
-      val plural   = (grammarCase: String, article: String) => DeclinedArticle(Set(grammarCase, "plural"), None, article)
+      val plural   = (grammarCase: String, article: String) => TaggedWord(Set(grammarCase, "plural"), None, article)
       singular("nominative", "der", "die", "das") ++
         singular("genitive", "des", "der", "des") ++
         singular("dative", "dem", "der", "dem") ++
@@ -104,6 +163,8 @@ object LanguageProfile {
           plural("accusative", "die"),
         )
     },
+    subjectPronouns = persons("ich", "du", "er", "wir", "ihr", "sie"),
+    subordinator = Some("dass"),
   )
 
   private val spanish: LanguageProfile = LanguageProfile(
@@ -117,6 +178,8 @@ object LanguageProfile {
     ),
     capitalizesNouns = false,
     reflexivePronouns = Set("me", "te", "se", "nos", "os"),
+    subjectPronouns = TaggedWord(Set("second-person", "singular", "vos-form"), None, "vos") ::
+      persons("yo", "tú", "él", "nosotros", "vosotros", "ellos"),
   )
 
   /** `les` is left out of [[LanguageProfile.articleForms]]: it is the plural of both genders, so it names none. `l'` is
@@ -131,6 +194,8 @@ object LanguageProfile {
     ),
     capitalizesNouns = false,
     reflexivePronouns = Set("me", "te", "se", "nous", "vous"),
+    subjectPronouns = persons("je", "tu", "il", "nous", "vous", "ils"),
+    elisions = Map("je" -> "j'"),
   )
 
   /** The reflexive pronouns are the ones written before the verb (`me lavo`). A pronoun joined after it with a hyphen
@@ -147,19 +212,22 @@ object LanguageProfile {
     ),
     capitalizesNouns = false,
     reflexivePronouns = Set("me", "te", "se", "nos", "vos"),
+    subjectPronouns = persons("eu", "tu", "ele", "nós", "vós", "eles"),
   )
 
   def of(language: WordLanguage): LanguageProfile = {
     language match {
-      case WordLanguage.De                   =>
+      case WordLanguage.De =>
         german
-      case WordLanguage.Es                   =>
+      case WordLanguage.Es =>
         spanish
-      case WordLanguage.Fr                   =>
+      case WordLanguage.Fr =>
         french
-      case WordLanguage.Pt                   =>
+      case WordLanguage.Pt =>
         portuguese
-      case WordLanguage.En | WordLanguage.Hu =>
+      case WordLanguage.Hu =>
+        hungarian
+      case WordLanguage.En =>
         ungendered
     }
   }
