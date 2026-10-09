@@ -601,6 +601,8 @@
   "ui.word.tags": "My wordlists",
   "ui.word.noTranslations": "No translations yet",
   "ui.word.notInWordlist": "Not in the selected wordlist",
+  "ui.word.showMore": "Show {0} more",
+  "ui.word.showFewer": "Show fewer",
   "ui.word.noTags": "Not in a wordlist yet",
   "ui.word.back": "Back to words",
   "ui.word.notFound": "No such word",

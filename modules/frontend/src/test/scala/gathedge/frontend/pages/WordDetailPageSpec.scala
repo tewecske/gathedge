@@ -120,6 +120,15 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           WordDetailPage.inCollectTag(WordLanguage.De, WordLanguage.En, None),
         )
       },
+      test("the languages the collect tag can take come first, each half in its usual order") {
+        val others = List(WordLanguage.En, WordLanguage.Es, WordLanguage.Fr, WordLanguage.Hu, WordLanguage.Pt)
+        assertTrue(
+          WordDetailPage.orderedLanguages(WordLanguage.De, others, Some(tag(WordLanguage.De, WordLanguage.Hu))) ==
+            List(WordLanguage.Hu, WordLanguage.En, WordLanguage.Es, WordLanguage.Fr, WordLanguage.Pt),
+          // With no collect tag the order stays as it is.
+          WordDetailPage.orderedLanguages(WordLanguage.De, others, None) == others,
+        )
+      },
       // A wordlist the word is on is a way to that wordlist, not a label.
       test("each wordlist at the foot of the page links to that wordlist") {
         val tags      = List(tag(WordLanguage.De, WordLanguage.Hu), tag(WordLanguage.En, WordLanguage.Hu).copy(id = 7L))

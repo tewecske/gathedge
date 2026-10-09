@@ -285,6 +285,8 @@ test('the detail page adds a translation in the language still missing', async (
   // The word from the previous test, still open. The collect tag is `de → hu`, so only the Hungarian group
   // is open and has the control that marks an answer; English starts closed, with nothing to mark.
   await expect(group('Hungarian')).toBeVisible();
+  // The wordlist's language comes first, above the closed ones.
+  await expect(page.locator('.translation-group').first()).toContainText('Hungarian');
   await expect(group('Hungarian').getByRole('button', { name: /^szilva/ })).toBeVisible();
   expect(await englishGroup.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(false);
   await expect(englishGroup).toContainText('Not in the selected wordlist');

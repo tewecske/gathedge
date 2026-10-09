@@ -31,3 +31,22 @@ test('marking a translation with no wordlist chosen makes a wordlist of that lan
   await expect(hungarian).toContainText('Not in the selected wordlist');
   await expect(hungarian.locator('button[aria-pressed]')).toHaveCount(0);
 });
+
+// A language with many translations shows five, and a button for the rest.
+test('a group shows five translations and a button for the rest', async ({ page }) => {
+  await page.goto('/en/words?lang=de&target=en&q=machen');
+  await page.locator('a.link.font-medium', { hasText: /^machen$/ }).first().click();
+  await expect(page).toHaveURL(/\/en\/words\/\d+$/);
+
+  const english = group(page, 'English');
+  const marks = english.locator('button[aria-pressed]');
+  await expect(marks).toHaveCount(5);
+  const more = english.getByRole('button', { name: /^Show \d+ more$/ });
+  const hidden = Number((await more.textContent())!.match(/\d+/)![0]);
+  expect(hidden).toBeGreaterThan(0);
+
+  await more.click();
+  await expect(marks).toHaveCount(5 + hidden);
+  await english.getByRole('button', { name: 'Show fewer' }).click();
+  await expect(marks).toHaveCount(5);
+});
