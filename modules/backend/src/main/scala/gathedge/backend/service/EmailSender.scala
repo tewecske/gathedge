@@ -38,6 +38,10 @@ final case class SmtpEmailSender(config: AppConfig) extends EmailSender {
     props.put("mail.smtp.host", smtp.host)
     props.put("mail.smtp.port", smtp.port.toString)
     props.put("mail.smtp.starttls.enable", smtp.startTls.toString)
+    // Jakarta Mail waits forever by default, so a silent relay would hold a blocking thread for good.
+    props.put("mail.smtp.connectiontimeout", SmtpEmailSender.timeoutMillis.toString)
+    props.put("mail.smtp.timeout", SmtpEmailSender.timeoutMillis.toString)
+    props.put("mail.smtp.writetimeout", SmtpEmailSender.timeoutMillis.toString)
     if (smtp.username.nonEmpty) {
       props.put("mail.smtp.auth", "true")
       Session.getInstance(
@@ -64,6 +68,12 @@ final case class SmtpEmailSender(config: AppConfig) extends EmailSender {
       Transport.send(message)
     }
   }
+}
+
+object SmtpEmailSender {
+
+  /** Applies to the connect, each read, and each write. */
+  val timeoutMillis: Int = 10000
 }
 
 object EmailSender {
