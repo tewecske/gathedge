@@ -68,7 +68,7 @@ object FormTables {
   private def renderCell(word: Word, cell: FilledCell[WordFormEntry]): List[HtmlElement] = {
     val profile    = LanguageProfile.of(word.language)
     val withPrefix = (text: String, form: HtmlElement) => {
-      span(cell.prefix.map(prefix => span(cls := "opacity-60", profile.lead(prefix, text))), form)
+      span(cell.prefix.map(prefix => span(cls := "opacity-60", profile.lead(prefix, text, word.text))), form)
     }
     val lemma      = Option.when(cell.lemma)(withPrefix(word.text, span(word.text)))
     val forms      = cell.forms.map(entry => {

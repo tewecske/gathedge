@@ -37,7 +37,9 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           profile.capitalize("hund", Some(Gender.Masculine)) == "Hund",
         )
       },
-      test("German declines its definite article by case and number; the plural fits every gender") {
+      test(
+        "German declines its definite article by case and number, Spanish by number; a German plural fits every gender"
+      ) {
         val profile = LanguageProfile.of(WordLanguage.De)
         assertTrue(
           profile.declinedArticle(Some(Gender.Masculine), Set("genitive", "singular")) == Some("des"),
@@ -46,7 +48,8 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           profile.declinedArticle(Some(Gender.Feminine), Set("dative", "plural")) == Some("den"),
           profile.declinedArticle(None, Set("nominative", "plural")) == Some("die"),
           profile.declinedArticle(None, Set("nominative", "singular")).isEmpty,
-          LanguageProfile.of(WordLanguage.Es).declinedArticle(Some(Gender.Masculine), Set("singular")).isEmpty,
+          LanguageProfile.of(WordLanguage.Es).declinedArticle(Some(Gender.Masculine), Set("singular")) == Some("el"),
+          LanguageProfile.of(WordLanguage.En).declinedArticle(None, Set("singular")).isEmpty,
         )
       },
       test(
@@ -82,6 +85,20 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           french.lead("tu", "aimes") == "tu ",
           french.lead("que je", "aime") == "que j'",
           LanguageProfile.of(WordLanguage.De).lead("ich", "esse") == "ich ",
+        )
+      },
+      test("French keeps `je` and `le` whole before an aspirated h, and Spanish gives `el` to a stressed-a feminine") {
+        val french  = LanguageProfile.of(WordLanguage.Fr)
+        val spanish = LanguageProfile.of(WordLanguage.Es)
+        assertTrue(
+          french.lead("je", "hais", "haïr") == "je ",
+          french.lead("je", "habite", "habiter") == "j'",
+          french.lead("le", "héros", "héros") == "le ",
+          french.lead("la", "heure", "heure") == "l'",
+          french.lead("le", "yaourt", "yaourt") == "le ",
+          spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "agua") == Some("el"),
+          spanish.declinedArticle(Some(Gender.Feminine), Set("plural"), "agua") == Some("las"),
+          spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "harina") == Some("la"),
         )
       },
       test("Spanish has two genders, does not capitalize, and its strip recognises the plural articles too") {

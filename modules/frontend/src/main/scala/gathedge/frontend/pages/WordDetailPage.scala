@@ -517,7 +517,7 @@ private class WordDetailPage(id: Long) {
     val layout  = FormTemplates
       .of(word.language, word.partOfSpeech)
       .map(template => {
-        val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, word.gender, tags)
+        val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, word.gender, tags, word.text)
         FormTable.layout(template, forms, prefixes)(_.relation, _.word.id)
       })
       .filter(_.sections.nonEmpty)
