@@ -62,14 +62,20 @@ object FormTables {
     )
   }
 
-  /** The headword and its own self-links are plain text; any other form links to its own page. */
+  /** The headword and its own self-links are plain text; any other form links to its own page. The cell's article goes
+    * before each form, outside the link.
+    */
   private def renderCell(word: Word, cell: FilledCell[WordFormEntry]): List[HtmlElement] = {
-    val lemma = Option.when(cell.lemma)(span(word.text))
-    val forms = cell.forms.map(entry => {
+    val withArticle = (text: HtmlElement) => span(cell.article.map(article => s"$article "), text)
+    val lemma       = Option.when(cell.lemma)(withArticle(span(word.text)))
+    val forms       = cell.forms.map(entry => {
       if (entry.word.id == word.id)
-        span(entry.word.text)
-      else
-        a(cls := "link link-hover", AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)), entry.word.text)
+        withArticle(span(entry.word.text))
+      else {
+        withArticle(
+          a(cls := "link link-hover", AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)), entry.word.text)
+        )
+      }
     })
     (lemma.toList ++ forms) match {
       case Nil      => List(span(cls := "opacity-40", "—"))

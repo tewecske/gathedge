@@ -514,7 +514,10 @@ private class WordDetailPage(id: Long) {
   private def renderForms(word: Word, forms: List[WordFormEntry]): HtmlElement = {
     val layout = FormTemplates
       .of(word.language, word.partOfSpeech)
-      .map(template => FormTable.layout(template, forms)(_.relation, _.word.id))
+      .map(template => {
+        val articles = (tags: Set[String]) => LanguageProfile.of(word.language).declinedArticle(word.gender, tags)
+        FormTable.layout(template, forms, articles)(_.relation, _.word.id)
+      })
       .filter(_.sections.nonEmpty)
     div(
       h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailFormsHeading)),

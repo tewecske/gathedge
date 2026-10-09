@@ -54,7 +54,8 @@ object FormTemplatesSpec extends ZIOSpecDefault {
       val columns = table.columns.map(label).mkString(" | ")
       val rows    = table.rows.map(row => {
         val cells = row.cells.map(cell => {
-          val texts = (if (cell.lemma) List(s"[$lemma]") else Nil) ++ cell.forms.map(_.text)
+          val texts = ((if (cell.lemma) List(s"[$lemma]") else Nil) ++ cell.forms.map(_.text))
+            .map(text => cell.article.fold(text)(article => s"$article $text"))
           if (texts.isEmpty) "-" else texts.mkString(" / ")
         })
         s"${label(row.label)}: ${cells.mkString(" | ")}"
@@ -65,9 +66,17 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     (tables :+ s"## rest: $rest").mkString("\n").linesIterator.map(_.stripTrailing).mkString("\n")
   }
 
-  def laidOut(language: WordLanguage, pos: PartOfSpeech, lemma: String, fixture: String): String = {
+  /** As the word page lays it out: the articles come from the language and the noun's `gender`. */
+  def laidOut(
+    language: WordLanguage,
+    pos: PartOfSpeech,
+    lemma: String,
+    fixture: String,
+    gender: Option[Gender] = None,
+  ): String = {
     val template = FormTemplates.of(language, pos).getOrElse(throw new IllegalArgumentException("no template"))
-    render(lemma, FormTable.layout(template, forms(lemma, fixture))(_.relation, _.id))
+    val articles = (tags: Set[String]) => LanguageProfile.of(language).declinedArticle(gender, tags)
+    render(lemma, FormTable.layout(template, forms(lemma, fixture), articles)(_.relation, _.id))
   }
 
   /** A one-table template over `forms` written as `id:relation`, for the rules on their own. */
@@ -145,9 +154,35 @@ object FormTemplatesSpec extends ZIOSpecDefault {
       ),
       suite("templates against real words")(
         test("German noun") {
+          val masculine = Some(Gender.Masculine)
+          val neuter    = Some(Gender.Neuter)
           assertTrue(
-            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Künstler", FormFixtures.deKunstler) == Expected.deKunstler,
-            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Haus", FormFixtures.deHaus) == Expected.deHaus,
+            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Künstler", FormFixtures.deKunstler, masculine) ==
+              Expected.deKunstler,
+            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Haus", FormFixtures.deHaus, neuter) == Expected.deHaus,
+          )
+        },
+        test("German noun declined like an adjective: only the weak table takes the definite article") {
+          val fixture = List(
+            "Beamter;noun;masculine;strong,nominative,singular",
+            "Beamten;noun;masculine;strong,genitive,singular",
+            "Beamte;noun;masculine;weak,nominative,singular",
+            "Beamten;noun;masculine;weak,dative,plural",
+            "Beamter;noun;masculine;mixed,nominative,singular",
+          ).mkString("\n")
+          assertTrue(
+            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Beamte", fixture, Some(Gender.Masculine)) == Expected.deBeamte
+          )
+        },
+        test("a German noun with no gender takes only the plural's article") {
+          val fixture = "Leute;noun;;nominative,plural\nLeuten;noun;;dative,plural"
+          assertTrue(
+            laidOut(WordLanguage.De, PartOfSpeech.Noun, "Leute", fixture) ==
+              """##  / ui.word.forms.table.declension
+                 |cols: singular | plural
+                 |nominative: - | die Leute
+                 |dative: - | den Leuten
+                 |## rest:""".stripMargin
           )
         },
         test("German verb, and a separable one") {
@@ -224,20 +259,35 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val deKunstler: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |nominative: Künstler | Künstler
-         |genitive: Künstlers | Künstler
-         |dative: Künstler | Künstlern
-         |accusative: Künstler | Künstler
+         |nominative: der Künstler | die Künstler
+         |genitive: des Künstlers | der Künstler
+         |dative: dem Künstler | den Künstlern
+         |accusative: den Künstler | die Künstler
          |## rest:""".stripMargin
     }
 
     val deHaus: String = {
       """##  / ui.word.forms.table.declension
          |cols: singular | plural
-         |nominative: Haus | Häuser
-         |genitive: Hauses | Häuser
-         |dative: Haus / Hause | Häusern
-         |accusative: Haus | Häuser
+         |nominative: das Haus | die Häuser
+         |genitive: des Hauses | der Häuser
+         |dative: dem Haus / dem Hause | den Häusern
+         |accusative: das Haus | die Häuser
+         |## rest:""".stripMargin
+    }
+
+    val deBeamte: String = {
+      """##  / strong
+         |cols: singular | plural
+         |nominative: Beamter | -
+         |genitive: Beamten | -
+         |##  / weak
+         |cols: singular | plural
+         |nominative: der Beamte | -
+         |dative: - | den Beamten
+         |##  / mixed
+         |cols: singular | plural
+         |nominative: Beamter | -
          |## rest:""".stripMargin
     }
 

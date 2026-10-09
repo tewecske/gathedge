@@ -13,6 +13,9 @@ package gathedge.shared.domain
   *
   * `reflexivePronouns` are the pronouns a reflexive verb form is written with: Spanish `me quejo`, `se compra`. The
   * dictionary import tags a form that starts with one as `reflexive`, since the dump gives it the plain form's tags.
+  *
+  * `declinedArticles` are the definite article by case and number, for the noun form tables (`dem Haus`, `der Häuser`).
+  * A language whose article does not change by case has none, and its tables show bare forms.
   */
 final case class LanguageProfile(
   genders: List[Gender],
@@ -20,6 +23,7 @@ final case class LanguageProfile(
   articleForms: Map[String, Gender],
   capitalizesNouns: Boolean,
   reflexivePronouns: Set[String] = Set.empty,
+  declinedArticles: List[DeclinedArticle] = Nil,
 ) {
 
   def hasGenders: Boolean = genders.nonEmpty
@@ -29,6 +33,15 @@ final case class LanguageProfile(
   /** A gendered noun with its article in front, anything else (or a genderless language) as it stands. */
   def display(text: String, gender: Option[Gender]): String = {
     gender.flatMap(article).map(a => s"$a $text").getOrElse(text)
+  }
+
+  /** The definite article of a form table cell that requires `tags`. The first entry whose tags the cell requires and
+    * whose gender is the noun's (or any gender) wins. A noun with no gender gets only the plural's.
+    */
+  def declinedArticle(gender: Option[Gender], tags: Set[String]): Option[String] = {
+    declinedArticles
+      .find(entry => entry.tags.subsetOf(tags) && entry.gender.forall(gender.contains))
+      .map(_.article)
   }
 
   /** Splits a leading article off `text`, answering the bare word and the gender it names. Recognises every form in
@@ -52,6 +65,11 @@ final case class LanguageProfile(
   }
 }
 
+/** One definite article of [[LanguageProfile.declinedArticles]]: the case and number tags it goes with, and the gender
+  * it needs. `gender = None` fits every gender: the German plural.
+  */
+final case class DeclinedArticle(tags: Set[String], gender: Option[Gender], article: String)
+
 object LanguageProfile {
 
   val ungendered: LanguageProfile = LanguageProfile(Nil, Map.empty, Map.empty, capitalizesNouns = false)
@@ -68,6 +86,24 @@ object LanguageProfile {
       "das" -> Gender.Neuter,
     ),
     capitalizesNouns = true,
+    declinedArticles = {
+      val singular = (grammarCase: String, masculine: String, feminine: String, neuter: String) => {
+        List(Gender.Masculine -> masculine, Gender.Feminine -> feminine, Gender.Neuter -> neuter).map {
+          case (gender, article) => DeclinedArticle(Set(grammarCase, "singular"), Some(gender), article)
+        }
+      }
+      val plural   = (grammarCase: String, article: String) => DeclinedArticle(Set(grammarCase, "plural"), None, article)
+      singular("nominative", "der", "die", "das") ++
+        singular("genitive", "des", "der", "des") ++
+        singular("dative", "dem", "der", "dem") ++
+        singular("accusative", "den", "die", "das") ++
+        List(
+          plural("nominative", "die"),
+          plural("genitive", "der"),
+          plural("dative", "den"),
+          plural("accusative", "die"),
+        )
+    },
   )
 
   private val spanish: LanguageProfile = LanguageProfile(

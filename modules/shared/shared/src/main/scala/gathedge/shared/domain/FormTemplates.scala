@@ -58,8 +58,9 @@ object FormTemplates {
 
   // --- German --------------------------------------------------------------------------------------------------------
 
-  /** Four cases by two numbers. A noun declined like an adjective (`Beamte`) also has its strong, weak and mixed
-    * tables; any other noun has no form for them, so they drop.
+  /** Four cases by two numbers, each form after its definite article (`dem Haus`). A noun declined like an adjective
+    * (`Beamte`) also has its strong, weak and mixed tables; any other noun has no form for them, so they drop. Only the
+    * weak one takes the definite article (`der Beamte`): the strong one has none and the mixed one follows `ein`.
     */
   val germanNoun: FormTemplate = {
     val declensions = List("strong", "weak", "mixed")
@@ -68,9 +69,11 @@ object FormTemplates {
         FormSection(
           None,
           table(FormLabel.Key(UiKeys.wordFormsDeclension), FormMatch(exclude = declensions.toSet), numbers, germanCases)
-            :: declensions.map(declension =>
+            .copy(articles = true)
+            :: declensions.map(declension => {
               table(FormLabel.tags(declension), FormMatch(declension), numbers, germanCases)
-            ),
+                .copy(articles = declension == "weak")
+            }),
         )
       )
     )
