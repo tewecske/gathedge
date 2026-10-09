@@ -253,6 +253,12 @@ object App {
       .collectSignalPF[GroupQuery] { case (gate, page: Page.Groups) if gate.loaded => page.query }(query =>
         GroupsPage.render(query, onGroupsQuery)
       )
+      // The word page has no gate either, and its first tick or chip mints a guest for a visitor with no session. The
+      // mint flips the gate, so the catch-all would rebuild the page and cancel the write waiting on the new session —
+      // the reason `WordsPage` is pulled out too. A different word is a different page, so each id gets its own.
+      .collectSignalPF[Long] { case (gate, page: Page.WordDetail) if gate.loaded => page.id }(id =>
+        div(cls := "contents", child <-- id.distinct.map(WordDetailPage.render))
+      )
       .collectStaticPF { case gateAndPage => renderFor(gateAndPage) }
   }
 
