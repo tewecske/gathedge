@@ -106,6 +106,20 @@ object WordDetailPageSpec extends ZIOSpecDefault {
           alsoDe.contains(WordLanguage.De),
         )
       },
+      // A collect tag can take only translations that make its own language pair with the word.
+      test("a translation belongs to the collect tag only when it and the word are the tag's two languages") {
+        val deHu = Some(tag(WordLanguage.De, WordLanguage.Hu))
+        assertTrue(
+          WordDetailPage.inCollectTag(WordLanguage.De, WordLanguage.Hu, deHu),
+          // Either order.
+          WordDetailPage.inCollectTag(WordLanguage.Hu, WordLanguage.De, deHu),
+          !WordDetailPage.inCollectTag(WordLanguage.De, WordLanguage.En, deHu),
+          // A word in neither of the tag's languages: none of its translations fit.
+          !WordDetailPage.inCollectTag(WordLanguage.En, WordLanguage.Hu, deHu),
+          // With no collect tag, every language is open.
+          WordDetailPage.inCollectTag(WordLanguage.De, WordLanguage.En, None),
+        )
+      },
       // A wordlist the word is on is a way to that wordlist, not a label.
       test("each wordlist at the foot of the page links to that wordlist") {
         val tags      = List(tag(WordLanguage.De, WordLanguage.Hu), tag(WordLanguage.En, WordLanguage.Hu).copy(id = 7L))

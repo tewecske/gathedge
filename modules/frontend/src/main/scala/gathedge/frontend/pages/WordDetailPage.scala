@@ -1,6 +1,7 @@
 package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
+import com.raquo.laminar.codecs.Codec
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
@@ -30,6 +31,7 @@ import gathedge.shared.dto.{
   WordLinkEntry,
 }
 import gathedge.shared.i18n.UiKeys
+import org.scalajs.dom
 
 /** One word: what it is, what it means in the other two languages, and which of the reader's tags it carries.
   *
@@ -75,6 +77,14 @@ object WordDetailPage {
   }
 
   /** Each wordlist is a link to its own page, the way the game pages name theirs. */
+  /** Whether the translations into `language` belong to the collect tag: always with no tag, and with one only when the
+    * word's language and `language` are the tag's two languages, in either order. Those are the only translations the
+    * tag can take, so only they keep their chip and stay open.
+    */
+  private[pages] def inCollectTag(wordLanguage: WordLanguage, language: WordLanguage, tag: Option[Tag]): Boolean = {
+    tag.forall(t => Set(t.sourceLanguage, t.targetLanguage) == Set(wordLanguage, language))
+  }
+
   private[pages] def renderTags(tags: List[Tag]): HtmlElement = {
     if (tags.isEmpty)
       p(cls := "text-sm opacity-60", I18n.t(UiKeys.wordDetailNoTags))
@@ -168,6 +178,15 @@ private class WordDetailPage(id: Long) {
   /** Mirrors the tag list so applyChange can read it when adding a tag. */
   private val tagsVar = Var(List.empty[Tag])
 
+  /** The closed language groups the reader opened: by hand, or by adding a translation in that language, which must not
+    * land out of sight. Held for the page, so a redraw does not close them again.
+    */
+  private val openGroupsVar = Var(Set.empty[WordLanguage])
+
+  private val openAttr = htmlAttr("open", Codec.booleanAsAttrPresence)
+
+  private val onToggle = eventProp[dom.Event]("toggle")
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-2xl mx-auto",
@@ -202,6 +221,7 @@ private class WordDetailPage(id: Long) {
       addStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // The form stays where it is and keeps its language: adding one translation is usually the first of two.
+          languageVar.now().foreach(language => openGroupsVar.update(_ + language))
           Var.set(detailVar -> Some(detail), textVar -> "", genderVar -> None, inFlightVar -> false, errorVar -> None)
         case Left(err)     =>
           Var.set(inFlightVar -> false, errorVar -> Some(err.message))
@@ -363,7 +383,10 @@ private class WordDetailPage(id: Long) {
         // Shown only when this word is itself an inflected/declined form of another — see `dto.WordDetail.mainWords`.
         child.maybe <-- Val(Option.when(detail.mainWords.nonEmpty)(renderMainWords(detail.mainWords))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTranslations)),
-        renderTranslations(detail.word, detail.translations),
+        // Drawn again only when the tag's language pair changes, not when its word count does.
+        child <-- collectTagSignal
+          .distinctBy(_.map(tag => (tag.sourceLanguage, tag.targetLanguage)))
+          .map(tag => renderTranslations(detail.word, detail.translations, tag)),
         child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
         // Shown only when another word is linked to this one — see `dto.WordDetail.links`.
         child.maybe <-- Val(Option.when(detail.links.nonEmpty)(renderLinks(detail.links))),
@@ -538,23 +561,47 @@ private class WordDetailPage(id: Long) {
     )
   }
 
-  /** Grouped by language, with both other languages shown even when one of them is empty.
+  /** Grouped by language, with every other language shown even when it is empty.
     *
     * The empty one is the point: a word that has a Hungarian translation and no English one used to render as a list
     * with nothing to say that English was missing, and the form below reads as "add another Hungarian one".
+    *
+    * With a collect tag, a language the tag cannot take (see [[WordDetailPage.inCollectTag]]) starts closed, behind a
+    * toggle, and its translations have no chip: marking one would only fail. The reader can still open it to read.
     */
-  private def renderTranslations(word: Word, entries: List[TranslationEntry]): HtmlElement = {
+  private def renderTranslations(word: Word, entries: List[TranslationEntry], tag: Option[Tag]): HtmlElement = {
     div(
       cls := "flex flex-col gap-3",
       otherLanguages(word).map(language => {
-        val group = entries.filter(_.word.language == language)
-        div(
-          div(cls := "badge badge-ghost badge-sm", Labels.language(language)),
+        val group   = entries.filter(_.word.language == language)
+        val inTag   = WordDetailPage.inCollectTag(word.language, language, tag)
+        val content = {
           if (group.isEmpty)
             p(cls   := "text-sm opacity-60 mt-1", I18n.t(UiKeys.wordDetailNoTranslations))
           else
-            div(cls := "flex flex-col gap-1 mt-1", group.map(entry => renderEntry(word, entry))),
-        )
+            div(cls := "flex flex-col gap-1 mt-1", group.map(entry => renderEntry(word, entry, chip = inTag)))
+        }
+        if (inTag) {
+          div(cls := "translation-group", div(cls := "badge badge-ghost badge-sm", Labels.language(language)), content)
+        } else {
+          detailsTag(
+            cls      := "translation-group collapse collapse-arrow border border-base-300 rounded-box",
+            openAttr := openGroupsVar.now().contains(language),
+            inContext(el => {
+              onToggle --> Observer[dom.Event] { _ =>
+                val open = el.ref.hasAttribute("open")
+                openGroupsVar.update(groups => if (open) groups + language else groups - language)
+              }
+            }),
+            summaryTag(
+              cls   := "collapse-title min-h-0 py-2 flex flex-wrap items-center gap-2",
+              span(cls := "badge badge-ghost badge-sm", Labels.language(language)),
+              span(cls := "badge badge-sm", group.size.toString),
+              span(cls := "text-xs opacity-60", I18n.t(UiKeys.wordDetailNotInWordlist)),
+            ),
+            div(cls := "collapse-content", content),
+          )
+        }
       }),
     )
   }
@@ -565,10 +612,24 @@ private class WordDetailPage(id: Long) {
     * Two edges may point at the same word (one from the dictionary, one somebody typed), which renders two chips that
     * mark and unmark together. They say the same thing about the same pair, so that is what they should do.
     */
-  private def renderEntry(word: Word, entry: TranslationEntry): HtmlElement = {
+  private def renderEntry(word: Word, entry: TranslationEntry, chip: Boolean): HtmlElement = {
     div(
       cls := "flex items-center gap-2",
-      collect.renderChip(word.id, entry.word.id, Val(Word.display(entry.word)), pairsSignal),
+      if (chip) {
+        collect.renderChip(
+          word.id,
+          entry.word.id,
+          Val(Word.display(entry.word)),
+          pairsSignal,
+          Some((word.language, entry.word.language)),
+        )
+      } else {
+        a(
+          cls := "link link-hover text-sm",
+          AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)),
+          Word.display(entry.word),
+        )
+      },
       // Marked rather than hidden: a pair inferred through English is worth having and worth knowing about.
       span(cls := "text-xs opacity-60", Labels.translationOrigin(entry.origin)),
       if (entry.ownedByMe) {

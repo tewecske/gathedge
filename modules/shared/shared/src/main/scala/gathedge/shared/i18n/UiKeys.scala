@@ -864,6 +864,7 @@ object UiKeys {
   val wordDetailTranslations: String      = key("ui.word.translations")
   val wordDetailTags: String              = key("ui.word.tags")
   val wordDetailNoTranslations: String    = key("ui.word.noTranslations")
+  val wordDetailNotInWordlist: String     = key("ui.word.notInWordlist")
   val wordDetailNoTags: String            = key("ui.word.noTags")
   val wordDetailBack: String              = key("ui.word.back")
   val wordDetailNotFound: String          = key("ui.word.notFound")

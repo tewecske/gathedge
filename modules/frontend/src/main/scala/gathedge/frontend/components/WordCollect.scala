@@ -140,6 +140,24 @@ object WordCollect {
     */
   def collectable(tag: Tag): Boolean = tag.editableByMe && (tag.ownedByMe || tag.group.isDefined)
 
+  /** The tag a click files under when the reader chose none and the click is about one language pair: a tag they may
+    * collect into whose two languages are the pair's, in either order — their own first, then a group's. A pair can go
+    * only into a tag of its own two languages, so any other tag would refuse the write.
+    */
+  def tagForPair(tags: List[Tag], pair: (WordLanguage, WordLanguage)): Option[Tag] = {
+    val wanted   = Set(pair._1, pair._2)
+    val matching = tags.filter(tag => collectable(tag) && Set(tag.sourceLanguage, tag.targetLanguage) == wanted)
+    matching.find(_.ownedByMe).orElse(matching.headOption)
+  }
+
+  /** The name of a default tag made for `pair`. [[defaultTagName]], unless the reader already owns a tag of that name —
+    * names are unique per owner — and then that name with the pair's codes after it.
+    */
+  def defaultTagNameFor(tags: List[Tag], pair: (WordLanguage, WordLanguage)): String = {
+    val taken = tags.exists(tag => tag.ownedByMe && tag.name.equalsIgnoreCase(defaultTagName))
+    if (taken) s"$defaultTagName ${Labels.tagCodes(pair._1, pair._2)}" else defaultTagName
+  }
+
   /** Folds a tag the reader just gained into a list they already had, replacing any existing entry for the same id
     * rather than appending beside it.
     *
@@ -266,7 +284,7 @@ final class WordCollect(
   /** A translation chip the reader clicked: which word, which translation, and whether it was already marked. Its own
     * bus for the reason [[toggleBus]] is one — the guest detour hangs off the stream, not off the click.
     */
-  private val pairBus = new EventBus[(Long, Long, Boolean)]()
+  private val pairBus = new EventBus[(Long, Long, Boolean, Option[(WordLanguage, WordLanguage)])]()
 
   /** Everything that has to be running for a click to do anything. Spliced into the page's root element as
     * `collect.bindings*`, because a Laminar stream is only subscribed while the element holding it is mounted.
@@ -361,8 +379,8 @@ final class WordCollect(
   }
 
   private def pairStream: EventStream[Either[ApiError, WordCollect.Change]] = {
-    pairBus.events.flatMapSwitch { case (wordId, translationWordId, marked) =>
-      asReader(() => writePair(wordId, translationWordId, marked))
+    pairBus.events.flatMapSwitch { case (wordId, translationWordId, marked, pair) =>
+      asReader(() => writePair(wordId, translationWordId, marked, pair))
     }
   }
 
@@ -396,14 +414,16 @@ final class WordCollect(
   }
 
   /** Marks or unmarks the translation under the collect tag — the same `collectTagOrDefault` path a tick takes, so a
-    * first-ever click on a chip mints a tag the same way a first-ever tick does.
+    * first-ever click on a chip mints a tag the same way a first-ever tick does. A chip that names its language `pair`
+    * goes through [[collectTagFor]] instead, so with no collect tag it files into a tag of that pair.
     */
   private def writePair(
     wordId: Long,
     translationWordId: Long,
     marked: Boolean,
+    pair: Option[(WordLanguage, WordLanguage)],
   ): EventStream[Either[ApiError, WordCollect.Change]] = {
-    collectTagOrDefault.flatMapSwitch {
+    collectTagFor(pair).flatMapSwitch {
       case Left(err)    =>
         EventStream.fromValue(Left(err))
       case Right(tagId) =>
@@ -434,9 +454,15 @@ final class WordCollect(
     * may not edit here would write against an id that fails with `TagNotFound`. Public because adding a word is filed
     * the same way.
     */
-  def collectTagOrDefault: EventStream[Either[ApiError, Long]] = {
+  def collectTagOrDefault: EventStream[Either[ApiError, Long]] = collectTagFor(None)
+
+  /** [[collectTagOrDefault]] for a click about one language `pair`. With no collect tag it falls back only to a tag of
+    * that pair (see [[WordCollect.tagForPair]]), and a fresh tag is made with that pair rather than the page's own
+    * direction. With a collect tag it is that tag, as always.
+    */
+  def collectTagFor(pair: Option[(WordLanguage, WordLanguage)]): EventStream[Either[ApiError, Long]] = {
     if (tagsLoadedVar.now()) {
-      resolvedCollectTag
+      resolvedCollectTag(pair)
     } else {
       // The remembered id has not been checked against this account yet — see [[tagsLoadedVar]]. A click landing in
       // that window (the moment after a page load, or right after a guest was minted) must not write against it.
@@ -445,26 +471,34 @@ final class WordCollect(
           setTags(tags)
           tagsLoadedVar.set(true)
           reconcileCollectTag(tags)
-          resolvedCollectTag
+          resolvedCollectTag(pair)
         case Left(err)   =>
           EventStream.fromValue(Left(err))
       }
     }
   }
 
-  /** [[collectTagOrDefault]] once the tag list is known to be this account's. */
-  private def resolvedCollectTag: EventStream[Either[ApiError, Long]] = {
+  /** [[collectTagFor]] once the tag list is known to be this account's. */
+  private def resolvedCollectTag(pair: Option[(WordLanguage, WordLanguage)]): EventStream[Either[ApiError, Long]] = {
     collectTagVar.now() match {
       case Some(id) =>
         EventStream.fromValue(Right(id))
       case None     =>
-        tagsVar.now().find(_.ownedByMe).orElse(tagsVar.now().find(WordCollect.collectable)) match {
+        val tags     = tagsVar.now()
+        val existing = pair match {
+          case Some(languages) =>
+            WordCollect.tagForPair(tags, languages)
+          case None            =>
+            tags.find(_.ownedByMe).orElse(tags.find(WordCollect.collectable))
+        }
+        existing match {
           case Some(tag) =>
             EventStream.fromValue(Right(tag.id))
           case None      =>
-            val (source, target) = collectLanguagesVar.now()
+            val (source, target) = pair.getOrElse(collectLanguagesVar.now())
+            val name             = pair.map(WordCollect.defaultTagNameFor(tags, _)).getOrElse(WordCollect.defaultTagName)
             WordApiClient
-              .createTag(WordCollect.defaultTagName, source, target)
+              .createTag(name, source, target)
               .map(_.map(response => {
                 response.warning.foreach(warning => onWarning.onNext(I18n.resolve(warning)))
                 // Held locally as well: the select has the tag at once, and a tag list fetched a moment later cannot
@@ -660,12 +694,16 @@ final class WordCollect(
     * The toggle says "this is the answer I want to be asked for", which also files both words under the collect tag —
     * the tick files one word, this files a pair. The word itself is only a link, so reading a translation and choosing
     * it are two separate clicks.
+    *
+    * `languages` is the pair's two languages, where the page knows them. With no collect tag, the click then files into
+    * a tag of that pair, or makes one (see [[collectTagFor]]).
     */
   def renderChip(
     wordId: Long,
     translationWordId: Long,
     text: Signal[String],
     pairs: Signal[List[TaggedPair]],
+    languages: Option[(WordLanguage, WordLanguage)] = None,
   ): HtmlElement = {
     // The marks, not a ready-made "is this one selected", for the reason [[renderTick]] takes the tags.
     val markedSignal = selectedSignal(pairs).map(_.contains(translationWordId)).distinct
@@ -690,7 +728,7 @@ final class WordCollect(
         },
       ).amend(
         onClick.compose(_.sample(markedSignal)) -->
-          Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked)))
+          Observer[Boolean](marked => pairBus.emit((wordId, translationWordId, marked, languages)))
       ),
     )
   }
