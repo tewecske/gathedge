@@ -112,8 +112,9 @@ object FormTable {
     * row of Spanish `compra` also names the reflexive `cómprate`. A word that passes through two relations is shown
     * once.
     *
-    * A row with no form in it is dropped, then a table with no row left, then a section with no table left. A cell the
-    * headword fills does not keep a row or table alive on its own, since it says nothing the page title does not.
+    * A row with nothing in it is dropped. A table with no form in any cell is dropped, then a section with no table
+    * left. The headword's own cell keeps its row (`go` beside `went`), but not a table: alone it says nothing the page
+    * title does not.
     *
     * A form goes to `rest` when its word is in no cell. A word in a cell is not repeated below for its other relations:
     * German `kaufte` (`past`) is already in the preterite cells.
@@ -135,7 +136,7 @@ object FormTable {
   }
 
   private def fill[A](table: FormTable, tagged: List[(A, Set[String])], wordId: A => Long): Option[FilledTable[A]] = {
-    val rows = table.rows.zipWithIndex.flatMap { case (row, r) =>
+    val rows    = table.rows.zipWithIndex.flatMap { case (row, r) =>
       val cells = table.columns.zipWithIndex.map { case (column, c) =>
         val forms = cellForms(table.base ++ row.matcher ++ column.matcher, tagged, wordId)
         val lemma = table.lemma.get((r, c)) match {
@@ -145,9 +146,10 @@ object FormTable {
         }
         FilledCell(forms, lemma)
       }
-      Option.when(cells.exists(_.forms.nonEmpty))(FilledRow(row.label, cells))
+      Option.when(cells.exists(!_.isEmpty))(FilledRow(row.label, cells))
     }
-    Option.when(rows.nonEmpty)(FilledTable(table.title, table.columns.map(_.label), rows))
+    val anyForm = rows.exists(_.cells.exists(_.forms.nonEmpty))
+    Option.when(anyForm)(FilledTable(table.title, table.columns.map(_.label), rows))
   }
 
   private def cellForms[A](matcher: FormMatch, tagged: List[(A, Set[String])], wordId: A => Long): List[A] = {
