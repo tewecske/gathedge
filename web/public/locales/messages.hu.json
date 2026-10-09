@@ -601,6 +601,8 @@
   "ui.word.tags": "Szógyűjteményeim",
   "ui.word.noTranslations": "Még nincs fordítás",
   "ui.word.notInWordlist": "Nincs a kiválasztott szólistában",
+  "ui.word.showMore": "Még {0} mutatása",
+  "ui.word.showFewer": "Kevesebb mutatása",
   "ui.word.noTags": "Még egyetlen szógyűjteményben sincs",
   "ui.word.back": "Vissza a szavakhoz",
   "ui.word.notFound": "Nincs ilyen szó",

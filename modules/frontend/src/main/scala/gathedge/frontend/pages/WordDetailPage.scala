@@ -85,6 +85,19 @@ object WordDetailPage {
     tag.forall(t => Set(t.sourceLanguage, t.targetLanguage) == Set(wordLanguage, language))
   }
 
+  /** How many translations a language group shows before its "show more" button. */
+  private[pages] val translationsShown = 5
+
+  /** The word's other languages, those the collect tag can take first, each half in its usual order. */
+  private[pages] def orderedLanguages(
+    wordLanguage: WordLanguage,
+    languages: List[WordLanguage],
+    tag: Option[Tag],
+  ): List[WordLanguage] = {
+    val (inTag, rest) = languages.partition(language => inCollectTag(wordLanguage, language, tag))
+    inTag ++ rest
+  }
+
   private[pages] def renderTags(tags: List[Tag]): HtmlElement = {
     if (tags.isEmpty)
       p(cls := "text-sm opacity-60", I18n.t(UiKeys.wordDetailNoTags))
@@ -187,6 +200,11 @@ private class WordDetailPage(id: Long) {
 
   private val onToggle = eventProp[dom.Event]("toggle")
 
+  /** The language groups whose every translation the reader asked to see, past [[WordDetailPage.translationsShown]].
+    * Held for the page like [[openGroupsVar]]. Adding a translation shows its whole group, so the new one is in sight.
+    */
+  private val expandedGroupsVar = Var(Set.empty[WordLanguage])
+
   def render(): HtmlElement = {
     div(
       cls := "max-w-2xl mx-auto",
@@ -221,7 +239,12 @@ private class WordDetailPage(id: Long) {
       addStream --> Observer[Either[ApiError, WordDetail]] {
         case Right(detail) =>
           // The form stays where it is and keeps its language: adding one translation is usually the first of two.
-          languageVar.now().foreach(language => openGroupsVar.update(_ + language))
+          languageVar
+            .now()
+            .foreach(language => {
+              openGroupsVar.update(_ + language)
+              expandedGroupsVar.update(_ + language)
+            })
           Var.set(detailVar -> Some(detail), textVar -> "", genderVar -> None, inFlightVar -> false, errorVar -> None)
         case Left(err)     =>
           Var.set(inFlightVar -> false, errorVar -> Some(err.message))
@@ -567,42 +590,83 @@ private class WordDetailPage(id: Long) {
     * with nothing to say that English was missing, and the form below reads as "add another Hungarian one".
     *
     * With a collect tag, a language the tag cannot take (see [[WordDetailPage.inCollectTag]]) starts closed, behind a
-    * toggle, and its translations have no chip: marking one would only fail. The reader can still open it to read.
+    * toggle, below the languages it can take, and its translations have no chip: marking one would only fail. The
+    * reader can still open it to read.
     */
   private def renderTranslations(word: Word, entries: List[TranslationEntry], tag: Option[Tag]): HtmlElement = {
     div(
       cls := "flex flex-col gap-3",
-      otherLanguages(word).map(language => {
-        val group   = entries.filter(_.word.language == language)
-        val inTag   = WordDetailPage.inCollectTag(word.language, language, tag)
-        val content = {
-          if (group.isEmpty)
-            p(cls   := "text-sm opacity-60 mt-1", I18n.t(UiKeys.wordDetailNoTranslations))
-          else
-            div(cls := "flex flex-col gap-1 mt-1", group.map(entry => renderEntry(word, entry, chip = inTag)))
-        }
-        if (inTag) {
-          div(cls := "translation-group", div(cls := "badge badge-ghost badge-sm", Labels.language(language)), content)
-        } else {
-          detailsTag(
-            cls      := "translation-group collapse collapse-arrow border border-base-300 rounded-box",
-            openAttr := openGroupsVar.now().contains(language),
-            inContext(el => {
-              onToggle --> Observer[dom.Event] { _ =>
-                val open = el.ref.hasAttribute("open")
-                openGroupsVar.update(groups => if (open) groups + language else groups - language)
-              }
-            }),
-            summaryTag(
-              cls   := "collapse-title min-h-0 py-2 flex flex-wrap items-center gap-2",
-              span(cls := "badge badge-ghost badge-sm", Labels.language(language)),
-              span(cls := "badge badge-sm", group.size.toString),
-              span(cls := "text-xs opacity-60", I18n.t(UiKeys.wordDetailNotInWordlist)),
-            ),
-            div(cls := "collapse-content", content),
-          )
-        }
+      WordDetailPage
+        .orderedLanguages(word.language, otherLanguages(word), tag)
+        .map(language => {
+          val group   = entries.filter(_.word.language == language)
+          val inTag   = WordDetailPage.inCollectTag(word.language, language, tag)
+          val content = {
+            if (group.isEmpty)
+              p(cls := "text-sm opacity-60 mt-1", I18n.t(UiKeys.wordDetailNoTranslations))
+            else
+              renderGroupEntries(word, language, group, chip = inTag)
+          }
+          if (inTag) {
+            div(
+              cls := "translation-group",
+              div(cls := "badge badge-ghost badge-sm", Labels.language(language)),
+              content,
+            )
+          } else {
+            detailsTag(
+              cls      := "translation-group collapse collapse-arrow border border-base-300 rounded-box",
+              openAttr := openGroupsVar.now().contains(language),
+              inContext(el => {
+                onToggle --> Observer[dom.Event] { _ =>
+                  val open = el.ref.hasAttribute("open")
+                  openGroupsVar.update(groups => if (open) groups + language else groups - language)
+                }
+              }),
+              summaryTag(
+                cls   := "collapse-title min-h-0 py-2 flex flex-wrap items-center gap-2",
+                span(cls := "badge badge-ghost badge-sm", Labels.language(language)),
+                span(cls := "badge badge-sm", group.size.toString),
+                span(cls := "text-xs opacity-60", I18n.t(UiKeys.wordDetailNotInWordlist)),
+              ),
+              div(cls := "collapse-content", content),
+            )
+          }
+        }),
+    )
+  }
+
+  /** A group's translations, the first [[WordDetailPage.translationsShown]] of them until the reader asks for the rest.
+    * The button says how many are hidden, and turns into "show fewer" once they are shown.
+    */
+  private def renderGroupEntries(
+    word: Word,
+    language: WordLanguage,
+    group: List[TranslationEntry],
+    chip: Boolean,
+  ): HtmlElement = {
+    val expanded = expandedGroupsVar.signal.map(_.contains(language)).distinct
+    val hidden   = group.size - WordDetailPage.translationsShown
+    div(
+      cls := "flex flex-col gap-1 mt-1",
+      children <-- expanded.map(all => {
+        val shown = if (all) group else group.take(WordDetailPage.translationsShown)
+        shown.map(entry => renderEntry(word, entry, chip))
       }),
+      if (hidden > 0) {
+        button(
+          cls := "btn btn-ghost btn-xs self-start",
+          typ := "button",
+          child.text <-- expanded.map(all => {
+            if (all) I18n.t(UiKeys.wordDetailShowFewer) else I18n.t(UiKeys.wordDetailShowMore, hidden)
+          }),
+          onClick.mapToUnit --> Observer[Unit](_ => {
+            expandedGroupsVar.update(groups => if (groups.contains(language)) groups - language else groups + language)
+          }),
+        )
+      } else {
+        emptyNode
+      },
     )
   }
 
