@@ -70,9 +70,18 @@ enum LemmaFill {
   case Always, WhenEmpty
 }
 
+/** What a table puts before each of its forms, chosen by the cell's tags (`LanguageProfile.prefix`).
+  *
+  *   - `Article` is the definite article, declined by case and number (`dem Haus`).
+  *   - `Pronoun` is the subject pronoun (`ich rufe an`).
+  *   - `SubordinatePronoun` is the pronoun after the language's subordinator (`dass ich anrufe`).
+  */
+enum FormPrefix {
+  case Article, Pronoun, SubordinatePronoun
+}
+
 /** One table: rows times columns, each cell testing `base ++ row ++ column`. `lemma` names the cells the headword
-  * fills, by row and column index. `articles` puts the definite article before each form, declined by the cell's case
-  * and number (`LanguageProfile.declinedArticle`).
+  * fills, by row and column index. `prefix` names what goes before each form.
   */
 final case class FormTable(
   title: Option[FormLabel],
@@ -80,7 +89,7 @@ final case class FormTable(
   columns: List[FormAxis],
   rows: List[FormAxis],
   lemma: Map[(Int, Int), LemmaFill] = Map.empty,
-  articles: Boolean = false,
+  prefix: Option[FormPrefix] = None,
 )
 
 /** A titled group of tables. The page draws a section with a title as a collapsible block, so a large template (the
@@ -90,8 +99,8 @@ final case class FormSection(title: Option[FormLabel], tables: List[FormTable])
 
 final case class FormTemplate(sections: List[FormSection])
 
-/** One cell as drawn: the forms it holds, whether the headword goes first, and the definite article each form takes. */
-final case class FilledCell[A](forms: List[A], lemma: Boolean, article: Option[String] = None) {
+/** One cell as drawn: the forms it holds, whether the headword goes first, and what goes before each form. */
+final case class FilledCell[A](forms: List[A], lemma: Boolean, prefix: Option[String] = None) {
 
   def isEmpty: Boolean = forms.isEmpty && !lemma
 }
@@ -121,15 +130,19 @@ object FormTable {
     * A form goes to `rest` when its word is in no cell. A word in a cell is not repeated below for its other relations:
     * German `kaufte` (`past`) is already in the preterite cells.
     *
-    * A table marked `articles` gets each cell's article from `articles`, given the tags the cell requires.
+    * A table with a `prefix` gets each cell's prefix from `prefixes`, given the tags the cell requires.
     */
-  def layout[A](template: FormTemplate, forms: List[A], articles: Set[String] => Option[String] = _ => None)(
+  def layout[A](
+    template: FormTemplate,
+    forms: List[A],
+    prefixes: (FormPrefix, Set[String]) => Option[String] = (_, _) => None,
+  )(
     relation: A => String,
     wordId: A => Long,
   ): FormLayout[A] = {
     val tagged   = forms.map(form => (form, relation(form).split(',').iterator.filter(_.nonEmpty).toSet))
     val sections = template.sections.flatMap(section => {
-      val tables = section.tables.flatMap(table => fill(table, tagged, wordId, articles))
+      val tables = section.tables.flatMap(table => fill(table, tagged, wordId, prefixes))
       Option.when(tables.nonEmpty)(FilledSection(section.title, tables))
     })
     val shown    = (for {
@@ -146,7 +159,7 @@ object FormTable {
     table: FormTable,
     tagged: List[(A, Set[String])],
     wordId: A => Long,
-    articles: Set[String] => Option[String],
+    prefixes: (FormPrefix, Set[String]) => Option[String],
   ): Option[FilledTable[A]] = {
     val rows    = table.rows.zipWithIndex.flatMap { case (row, r) =>
       val cells = table.columns.zipWithIndex.map { case (column, c) =>
@@ -157,7 +170,8 @@ object FormTable {
           case Some(LemmaFill.WhenEmpty) => forms.isEmpty
           case None                      => false
         }
-        FilledCell(forms, lemma, if (table.articles) articles(matcher.include) else None)
+        val tags    = matcher.include ++ matcher.anyOf.flatten
+        FilledCell(forms, lemma, table.prefix.flatMap(kind => prefixes(kind, tags)))
       }
       Option.when(cells.exists(!_.isEmpty))(FilledRow(row.label, cells))
     }

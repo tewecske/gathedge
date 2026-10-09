@@ -35,6 +35,9 @@ object FormTemplates {
     FormTable(Some(title), base, columns, rows)
   }
 
+  /** A table of persons with the subject pronoun before each form (`ich rufe an`). */
+  private def pronouns(table: FormTable): FormTable = table.copy(prefix = Some(FormPrefix.Pronoun))
+
   /** A single unlabelled column: the table's rows say everything. */
   private val one: List[FormAxis] = List(FormAxis(None, FormMatch()))
 
@@ -69,69 +72,85 @@ object FormTemplates {
         FormSection(
           None,
           table(FormLabel.Key(UiKeys.wordFormsDeclension), FormMatch(exclude = declensions.toSet), numbers, germanCases)
-            .copy(articles = true)
+            .copy(prefix = Some(FormPrefix.Article))
             :: declensions.map(declension => {
               table(FormLabel.tags(declension), FormMatch(declension), numbers, germanCases)
-                .copy(articles = declension == "weak")
+                .copy(prefix = Option.when(declension == "weak")(FormPrefix.Article))
             }),
         )
       )
     )
   }
 
-  /** One table per tense, with its moods as columns. A separable verb's subordinate-clause forms (`dass ich einkaufe`)
-    * get a section of their own, so they never share a cell with the main clause's `kaufe ein`.
+  /** One table per tense, with its moods as columns and the subject pronoun before each form. A separable verb's
+    * subordinate-clause forms (`dass ich einkaufe`) get a section of their own, so they never share a cell with the
+    * main clause's `kaufe ein`. They take `dass` before the pronoun, since `ich einkaufe` alone is wrong.
     */
   val germanVerb: FormTemplate = {
     val mainClause  = FormMatch(exclude = Set("subordinate-clause", "dependent"))
     val indicative  = (tense: String) => FormAxis.of("indicative", tense)
     val tenses      = List(
-      table(
-        FormLabel.tags("present"),
-        mainClause,
-        List(indicative("present"), FormAxis(FormLabel.tags("subjunctive-i"), FormMatch("subjunctive-i") ++ noFuture)),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("present"),
+          mainClause,
+          List(
+            indicative("present"),
+            FormAxis(FormLabel.tags("subjunctive-i"), FormMatch("subjunctive-i") ++ noFuture),
+          ),
+          persons,
+        )
       ),
-      table(
-        FormLabel.tags("preterite"),
-        mainClause,
-        List(
-          indicative("preterite"),
-          FormAxis(FormLabel.tags("subjunctive-ii"), FormMatch("subjunctive-ii") ++ noFuture),
-        ),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("preterite"),
+          mainClause,
+          List(
+            indicative("preterite"),
+            FormAxis(FormLabel.tags("subjunctive-ii"), FormMatch("subjunctive-ii") ++ noFuture),
+          ),
+          persons,
+        )
       ),
-      table(
-        FormLabel.tags("perfect"),
-        mainClause,
-        List(indicative("perfect"), FormAxis.of("subjunctive", "perfect")),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("perfect"),
+          mainClause,
+          List(indicative("perfect"), FormAxis.of("subjunctive", "perfect")),
+          persons,
+        )
       ),
-      table(
-        FormLabel.tags("pluperfect"),
-        mainClause,
-        List(indicative("pluperfect"), FormAxis.of("subjunctive", "pluperfect")),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("pluperfect"),
+          mainClause,
+          List(indicative("pluperfect"), FormAxis.of("subjunctive", "pluperfect")),
+          persons,
+        )
       ),
-      table(
-        FormLabel.tags("future-i"),
-        mainClause,
-        List(
-          indicative("future-i"),
-          FormAxis.of("subjunctive-i", "future-i"),
-          FormAxis.of("subjunctive-ii", "future-i"),
-        ),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("future-i"),
+          mainClause,
+          List(
+            indicative("future-i"),
+            FormAxis.of("subjunctive-i", "future-i"),
+            FormAxis.of("subjunctive-ii", "future-i"),
+          ),
+          persons,
+        )
       ),
-      table(
-        FormLabel.tags("future-ii"),
-        mainClause,
-        List(
-          indicative("future-ii"),
-          FormAxis.of("subjunctive-i", "future-ii"),
-          FormAxis.of("subjunctive-ii", "future-ii"),
-        ),
-        persons,
+      pronouns(
+        table(
+          FormLabel.tags("future-ii"),
+          mainClause,
+          List(
+            indicative("future-ii"),
+            FormAxis.of("subjunctive-i", "future-ii"),
+            FormAxis.of("subjunctive-ii", "future-ii"),
+          ),
+          persons,
+        )
       ),
       table(FormLabel.tags("imperative"), mainClause ++ FormMatch("imperative"), one, numbers),
       table(
@@ -154,9 +173,9 @@ object FormTemplates {
     val subordinate = table(
       FormLabel.tags("subordinate-clause"),
       FormMatch("subordinate-clause"),
-      List(axis("present"), axis("preterite"), axis("subjunctive-i")),
+      List(axis("present"), axis("preterite"), axis("subjunctive-i"), axis("subjunctive-ii")),
       persons,
-    )
+    ).copy(prefix = Some(FormPrefix.SubordinatePronoun))
     FormTemplate(
       List(FormSection(None, tenses), FormSection(Some(FormLabel.tags("subordinate-clause")), List(subordinate)))
     )
@@ -249,15 +268,23 @@ object FormTemplates {
     def tables(base: FormMatch): List[FormTable] = {
       val finite = base ++ FormMatch(exclude = Set("object-second-person"))
       List(
-        table(
-          FormLabel.tags("present", "indicative"),
-          finite ++ FormMatch("indicative", "present"),
-          conjugations,
-          persons,
+        pronouns(
+          table(
+            FormLabel.tags("present", "indicative"),
+            finite ++ FormMatch("indicative", "present"),
+            conjugations,
+            persons,
+          )
         ),
-        table(FormLabel.tags("past", "indicative"), finite ++ FormMatch("indicative", "past"), conjugations, persons),
-        table(FormLabel.tags("conditional"), finite ++ FormMatch("conditional", "present"), conjugations, persons),
-        table(FormLabel.tags("subjunctive"), finite ++ FormMatch("subjunctive", "present"), conjugations, persons),
+        pronouns(
+          table(FormLabel.tags("past", "indicative"), finite ++ FormMatch("indicative", "past"), conjugations, persons)
+        ),
+        pronouns(
+          table(FormLabel.tags("conditional"), finite ++ FormMatch("conditional", "present"), conjugations, persons)
+        ),
+        pronouns(
+          table(FormLabel.tags("subjunctive"), finite ++ FormMatch("subjunctive", "present"), conjugations, persons)
+        ),
         table(
           FormLabel.tags("first-person", "singular", "object-second-person"),
           base ++ FormMatch("first-person", "singular", "object-second-person"),
@@ -331,24 +358,28 @@ object FormTemplates {
   val spanishVerb: FormTemplate = {
     def moods(base: FormMatch): List[FormTable] = {
       List(
-        table(
-          FormLabel.tags("indicative"),
-          base ++ FormMatch("indicative"),
-          List(axis("present"), axis("imperfect"), axis("preterite"), axis("future"), axis("conditional")),
-          spanishPersons,
+        pronouns(
+          table(
+            FormLabel.tags("indicative"),
+            base ++ FormMatch("indicative"),
+            List(axis("present"), axis("imperfect"), axis("preterite"), axis("future"), axis("conditional")),
+            spanishPersons,
+          )
         ),
-        table(
-          FormLabel.tags("subjunctive"),
-          base ++ FormMatch("subjunctive"),
-          List(
-            axis("present"),
-            FormAxis(
-              FormLabel.tags("imperfect"),
-              FormMatch(include = Set("imperfect"), optional = Set("imperfect-se")),
+        pronouns(
+          table(
+            FormLabel.tags("subjunctive"),
+            base ++ FormMatch("subjunctive"),
+            List(
+              axis("present"),
+              FormAxis(
+                FormLabel.tags("imperfect"),
+                FormMatch(include = Set("imperfect"), optional = Set("imperfect-se")),
+              ),
+              axis("future"),
             ),
-            axis("future"),
-          ),
-          spanishPersons,
+            spanishPersons,
+          )
         ),
         table(
           FormLabel.tags("imperative"),
@@ -483,23 +514,27 @@ object FormTemplates {
         FormSection(
           None,
           List(
-            table(
-              FormLabel.tags("indicative"),
-              FormMatch(),
-              List(
-                indicativeTense("present"),
-                indicativeTense("imperfect"),
-                axis("historic", "past"),
-                indicativeTense("future"),
-                axis("conditional"),
-              ),
-              persons,
+            pronouns(
+              table(
+                FormLabel.tags("indicative"),
+                FormMatch(),
+                List(
+                  indicativeTense("present"),
+                  indicativeTense("imperfect"),
+                  axis("historic", "past"),
+                  indicativeTense("future"),
+                  axis("conditional"),
+                ),
+                persons,
+              )
             ),
-            table(
-              FormLabel.tags("subjunctive"),
-              FormMatch("subjunctive"),
-              List(axis("present"), axis("imperfect")),
-              persons,
+            pronouns(
+              table(
+                FormLabel.tags("subjunctive"),
+                FormMatch("subjunctive"),
+                List(axis("present"), axis("imperfect")),
+                persons,
+              )
             ),
             table(
               FormLabel.tags("imperative"),
@@ -531,24 +566,28 @@ object FormTemplates {
         FormSection(
           None,
           List(
-            table(
-              FormLabel.tags("indicative"),
-              FormMatch(),
-              List(
-                indicativeTense("present"),
-                indicativeTense("preterite"),
-                indicativeTense("imperfect"),
-                indicativeTense("pluperfect"),
-                indicativeTense("future"),
-                axis("conditional"),
-              ),
-              persons,
+            pronouns(
+              table(
+                FormLabel.tags("indicative"),
+                FormMatch(),
+                List(
+                  indicativeTense("present"),
+                  indicativeTense("preterite"),
+                  indicativeTense("imperfect"),
+                  indicativeTense("pluperfect"),
+                  indicativeTense("future"),
+                  axis("conditional"),
+                ),
+                persons,
+              )
             ),
-            table(
-              FormLabel.tags("subjunctive"),
-              FormMatch("subjunctive"),
-              List(axis("present"), axis("imperfect"), axis("future")),
-              persons,
+            pronouns(
+              table(
+                FormLabel.tags("subjunctive"),
+                FormMatch("subjunctive"),
+                List(axis("present"), axis("imperfect"), axis("future")),
+                persons,
+              )
             ),
             table(
               FormLabel.tags("imperative"),

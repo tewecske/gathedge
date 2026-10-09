@@ -49,6 +49,41 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           LanguageProfile.of(WordLanguage.Es).declinedArticle(Some(Gender.Masculine), Set("singular")).isEmpty,
         )
       },
+      test(
+        "each verb language puts its subject pronoun before a person's form; German adds `dass` in a subordinate clause"
+      ) {
+        val firstSingular = Set("first-person", "singular", "present")
+        val pronoun       = (language: WordLanguage) => {
+          LanguageProfile.of(language).prefix(FormPrefix.Pronoun, None, firstSingular)
+        }
+        assertTrue(
+          pronoun(WordLanguage.De) == Some("ich"),
+          pronoun(WordLanguage.Hu) == Some("én"),
+          pronoun(WordLanguage.Es) == Some("yo"),
+          pronoun(WordLanguage.Fr) == Some("je"),
+          pronoun(WordLanguage.Pt) == Some("eu"),
+          pronoun(WordLanguage.En).isEmpty,
+          LanguageProfile
+            .of(WordLanguage.De)
+            .prefix(FormPrefix.SubordinatePronoun, None, Set("third-person", "plural")) == Some("dass sie"),
+          LanguageProfile.of(WordLanguage.Es).subjectPronoun(Set("second-person", "singular", "vos-form")) == Some(
+            "vos"
+          ),
+          LanguageProfile.of(WordLanguage.Es).subjectPronoun(Set("second-person", "singular")) == Some("tú"),
+          LanguageProfile.of(WordLanguage.De).subjectPronoun(Set("imperative", "singular")).isEmpty,
+        )
+      },
+      test("French `je` elides before a vowel or `h`, and only the last word of a prefix does") {
+        val french = LanguageProfile.of(WordLanguage.Fr)
+        assertTrue(
+          french.lead("je", "aime") == "j'",
+          french.lead("je", "habite") == "j'",
+          french.lead("je", "parle") == "je ",
+          french.lead("tu", "aimes") == "tu ",
+          french.lead("que je", "aime") == "que j'",
+          LanguageProfile.of(WordLanguage.De).lead("ich", "esse") == "ich ",
+        )
+      },
       test("Spanish has two genders, does not capitalize, and its strip recognises the plural articles too") {
         val profile = LanguageProfile.of(WordLanguage.Es)
         assertTrue(

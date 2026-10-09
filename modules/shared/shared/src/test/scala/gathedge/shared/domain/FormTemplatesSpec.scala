@@ -45,7 +45,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
   /** A layout as plain text: one block per table, one line per row, cells split by `|`, `-` for an empty cell, the
     * headword in brackets.
     */
-  def render(lemma: String, layout: FormLayout[Form]): String = {
+  def render(lemma: String, layout: FormLayout[Form], profile: LanguageProfile): String = {
     val tables = for {
       section <- layout.sections
       table   <- section.tables
@@ -55,7 +55,7 @@ object FormTemplatesSpec extends ZIOSpecDefault {
       val rows    = table.rows.map(row => {
         val cells = row.cells.map(cell => {
           val texts = ((if (cell.lemma) List(s"[$lemma]") else Nil) ++ cell.forms.map(_.text))
-            .map(text => cell.article.fold(text)(article => s"$article $text"))
+            .map(text => cell.prefix.fold(text)(prefix => profile.lead(prefix, text.stripPrefix("[")) + text))
           if (texts.isEmpty) "-" else texts.mkString(" / ")
         })
         s"${label(row.label)}: ${cells.mkString(" | ")}"
@@ -66,7 +66,8 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     (tables :+ s"## rest: $rest").mkString("\n").linesIterator.map(_.stripTrailing).mkString("\n")
   }
 
-  /** As the word page lays it out: the articles come from the language and the noun's `gender`. */
+  /** As the word page lays it out: the articles and pronouns come from the language, the articles also from `gender`.
+    */
   def laidOut(
     language: WordLanguage,
     pos: PartOfSpeech,
@@ -75,8 +76,9 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     gender: Option[Gender] = None,
   ): String = {
     val template = FormTemplates.of(language, pos).getOrElse(throw new IllegalArgumentException("no template"))
-    val articles = (tags: Set[String]) => LanguageProfile.of(language).declinedArticle(gender, tags)
-    render(lemma, FormTable.layout(template, forms(lemma, fixture), articles)(_.relation, _.id))
+    val profile  = LanguageProfile.of(language)
+    val prefixes = (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, gender, tags)
+    render(lemma, FormTable.layout(template, forms(lemma, fixture), prefixes)(_.relation, _.id), profile)
   }
 
   /** A one-table template over `forms` written as `id:relation`, for the rules on their own. */
@@ -294,52 +296,52 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val deKaufen: String = {
       """##  / present
          |cols: indicative present | subjunctive-i
-         |first-person singular: kaufe | kaufe
-         |second-person singular: kaufst | kaufest
-         |third-person singular: kauft | kaufe
-         |first-person plural: kaufen | kaufen
-         |second-person plural: kauft | kaufet
-         |third-person plural: kaufen | kaufen
+         |first-person singular: ich kaufe | ich kaufe
+         |second-person singular: du kaufst | du kaufest
+         |third-person singular: er kauft | er kaufe
+         |first-person plural: wir kaufen | wir kaufen
+         |second-person plural: ihr kauft | ihr kaufet
+         |third-person plural: sie kaufen | sie kaufen
          |##  / preterite
          |cols: indicative preterite | subjunctive-ii
-         |first-person singular: kaufte | kaufte
-         |second-person singular: kauftest | kauftest
-         |third-person singular: kaufte | kaufte
-         |first-person plural: kauften | kauften
-         |second-person plural: kauftet | kauftet
-         |third-person plural: kauften | kauften
+         |first-person singular: ich kaufte | ich kaufte
+         |second-person singular: du kauftest | du kauftest
+         |third-person singular: er kaufte | er kaufte
+         |first-person plural: wir kauften | wir kauften
+         |second-person plural: ihr kauftet | ihr kauftet
+         |third-person plural: sie kauften | sie kauften
          |##  / perfect
          |cols: indicative perfect | subjunctive perfect
-         |first-person singular: habe gekauft | habe gekauft
-         |second-person singular: hast gekauft | habest gekauft
-         |third-person singular: hat gekauft | habe gekauft
-         |first-person plural: haben gekauft | haben gekauft
-         |second-person plural: habt gekauft | habet gekauft
-         |third-person plural: haben gekauft | haben gekauft
+         |first-person singular: ich habe gekauft | ich habe gekauft
+         |second-person singular: du hast gekauft | du habest gekauft
+         |third-person singular: er hat gekauft | er habe gekauft
+         |first-person plural: wir haben gekauft | wir haben gekauft
+         |second-person plural: ihr habt gekauft | ihr habet gekauft
+         |third-person plural: sie haben gekauft | sie haben gekauft
          |##  / pluperfect
          |cols: indicative pluperfect | subjunctive pluperfect
-         |first-person singular: hatte gekauft | hätte gekauft
-         |second-person singular: hattest gekauft | hättest gekauft
-         |third-person singular: hatte gekauft | hätte gekauft
-         |first-person plural: hatten gekauft | hätten gekauft
-         |second-person plural: hattet gekauft | hättet gekauft
-         |third-person plural: hatten gekauft | hätten gekauft
+         |first-person singular: ich hatte gekauft | ich hätte gekauft
+         |second-person singular: du hattest gekauft | du hättest gekauft
+         |third-person singular: er hatte gekauft | er hätte gekauft
+         |first-person plural: wir hatten gekauft | wir hätten gekauft
+         |second-person plural: ihr hattet gekauft | ihr hättet gekauft
+         |third-person plural: sie hatten gekauft | sie hätten gekauft
          |##  / future-i
          |cols: indicative future-i | subjunctive-i future-i | subjunctive-ii future-i
-         |first-person singular: werde kaufen | werde kaufen | würde kaufen
-         |second-person singular: wirst kaufen | werdest kaufen | würdest kaufen
-         |third-person singular: wird kaufen | werde kaufen | würde kaufen
-         |first-person plural: werden kaufen | werden kaufen | würden kaufen
-         |second-person plural: werdet kaufen | werdet kaufen | würdet kaufen
-         |third-person plural: werden kaufen | werden kaufen | würden kaufen
+         |first-person singular: ich werde kaufen | ich werde kaufen | ich würde kaufen
+         |second-person singular: du wirst kaufen | du werdest kaufen | du würdest kaufen
+         |third-person singular: er wird kaufen | er werde kaufen | er würde kaufen
+         |first-person plural: wir werden kaufen | wir werden kaufen | wir würden kaufen
+         |second-person plural: ihr werdet kaufen | ihr werdet kaufen | ihr würdet kaufen
+         |third-person plural: sie werden kaufen | sie werden kaufen | sie würden kaufen
          |##  / future-ii
          |cols: indicative future-ii | subjunctive-i future-ii | subjunctive-ii future-ii
-         |first-person singular: werde gekauft haben | werde gekauft haben | würde gekauft haben
-         |second-person singular: wirst gekauft haben | werdest gekauft haben | würdest gekauft haben
-         |third-person singular: wird gekauft haben | werde gekauft haben | würde gekauft haben
-         |first-person plural: werden gekauft haben | werden gekauft haben | würden gekauft haben
-         |second-person plural: werdet gekauft haben | werdet gekauft haben | würdet gekauft haben
-         |third-person plural: werden gekauft haben | werden gekauft haben | würden gekauft haben
+         |first-person singular: ich werde gekauft haben | ich werde gekauft haben | ich würde gekauft haben
+         |second-person singular: du wirst gekauft haben | du werdest gekauft haben | du würdest gekauft haben
+         |third-person singular: er wird gekauft haben | er werde gekauft haben | er würde gekauft haben
+         |first-person plural: wir werden gekauft haben | wir werden gekauft haben | wir würden gekauft haben
+         |second-person plural: ihr werdet gekauft haben | ihr werdet gekauft haben | ihr würdet gekauft haben
+         |third-person plural: sie werden gekauft haben | sie werden gekauft haben | sie würden gekauft haben
          |##  / imperative
          |cols:
          |singular: kauf / kaufe
@@ -357,52 +359,52 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val deEinkaufen: String = {
       """##  / present
          |cols: indicative present | subjunctive-i
-         |first-person singular: kaufe ein | kaufe ein
-         |second-person singular: kaufst ein | kaufest ein
-         |third-person singular: kauft ein | kaufe ein
-         |first-person plural: kaufen ein | kaufen ein
-         |second-person plural: kauft ein | kaufet ein
-         |third-person plural: kaufen ein | kaufen ein
+         |first-person singular: ich kaufe ein | ich kaufe ein
+         |second-person singular: du kaufst ein | du kaufest ein
+         |third-person singular: er kauft ein | er kaufe ein
+         |first-person plural: wir kaufen ein | wir kaufen ein
+         |second-person plural: ihr kauft ein | ihr kaufet ein
+         |third-person plural: sie kaufen ein | sie kaufen ein
          |##  / preterite
          |cols: indicative preterite | subjunctive-ii
-         |first-person singular: kaufte ein | kaufte ein
-         |second-person singular: kauftest ein | kauftest ein
-         |third-person singular: kaufte ein | kaufte ein
-         |first-person plural: kauften ein | kauften ein
-         |second-person plural: kauftet ein | kauftet ein
-         |third-person plural: kauften ein | kauften ein
+         |first-person singular: ich kaufte ein | ich kaufte ein
+         |second-person singular: du kauftest ein | du kauftest ein
+         |third-person singular: er kaufte ein | er kaufte ein
+         |first-person plural: wir kauften ein | wir kauften ein
+         |second-person plural: ihr kauftet ein | ihr kauftet ein
+         |third-person plural: sie kauften ein | sie kauften ein
          |##  / perfect
          |cols: indicative perfect | subjunctive perfect
-         |first-person singular: habe eingekauft | habe eingekauft
-         |second-person singular: hast eingekauft | habest eingekauft
-         |third-person singular: hat eingekauft | habe eingekauft
-         |first-person plural: haben eingekauft | haben eingekauft
-         |second-person plural: habt eingekauft | habet eingekauft
-         |third-person plural: haben eingekauft | haben eingekauft
+         |first-person singular: ich habe eingekauft | ich habe eingekauft
+         |second-person singular: du hast eingekauft | du habest eingekauft
+         |third-person singular: er hat eingekauft | er habe eingekauft
+         |first-person plural: wir haben eingekauft | wir haben eingekauft
+         |second-person plural: ihr habt eingekauft | ihr habet eingekauft
+         |third-person plural: sie haben eingekauft | sie haben eingekauft
          |##  / pluperfect
          |cols: indicative pluperfect | subjunctive pluperfect
-         |first-person singular: hatte eingekauft | hätte eingekauft
-         |second-person singular: hattest eingekauft | hättest eingekauft
-         |third-person singular: hatte eingekauft | hätte eingekauft
-         |first-person plural: hatten eingekauft | hätten eingekauft
-         |second-person plural: hattet eingekauft | hättet eingekauft
-         |third-person plural: hatten eingekauft | hätten eingekauft
+         |first-person singular: ich hatte eingekauft | ich hätte eingekauft
+         |second-person singular: du hattest eingekauft | du hättest eingekauft
+         |third-person singular: er hatte eingekauft | er hätte eingekauft
+         |first-person plural: wir hatten eingekauft | wir hätten eingekauft
+         |second-person plural: ihr hattet eingekauft | ihr hättet eingekauft
+         |third-person plural: sie hatten eingekauft | sie hätten eingekauft
          |##  / future-i
          |cols: indicative future-i | subjunctive-i future-i | subjunctive-ii future-i
-         |first-person singular: werde einkaufen | werde einkaufen | würde einkaufen
-         |second-person singular: wirst einkaufen | werdest einkaufen | würdest einkaufen
-         |third-person singular: wird einkaufen | werde einkaufen | würde einkaufen
-         |first-person plural: werden einkaufen | werden einkaufen | würden einkaufen
-         |second-person plural: werdet einkaufen | werdet einkaufen | würdet einkaufen
-         |third-person plural: werden einkaufen | werden einkaufen | würden einkaufen
+         |first-person singular: ich werde einkaufen | ich werde einkaufen | ich würde einkaufen
+         |second-person singular: du wirst einkaufen | du werdest einkaufen | du würdest einkaufen
+         |third-person singular: er wird einkaufen | er werde einkaufen | er würde einkaufen
+         |first-person plural: wir werden einkaufen | wir werden einkaufen | wir würden einkaufen
+         |second-person plural: ihr werdet einkaufen | ihr werdet einkaufen | ihr würdet einkaufen
+         |third-person plural: sie werden einkaufen | sie werden einkaufen | sie würden einkaufen
          |##  / future-ii
          |cols: indicative future-ii | subjunctive-i future-ii | subjunctive-ii future-ii
-         |first-person singular: werde eingekauft haben | werde eingekauft haben | würde eingekauft haben
-         |second-person singular: wirst eingekauft haben | werdest eingekauft haben | würdest eingekauft haben
-         |third-person singular: wird eingekauft haben | werde eingekauft haben | würde eingekauft haben
-         |first-person plural: werden eingekauft haben | werden eingekauft haben | würden eingekauft haben
-         |second-person plural: werdet eingekauft haben | werdet eingekauft haben | würdet eingekauft haben
-         |third-person plural: werden eingekauft haben | werden eingekauft haben | würden eingekauft haben
+         |first-person singular: ich werde eingekauft haben | ich werde eingekauft haben | ich würde eingekauft haben
+         |second-person singular: du wirst eingekauft haben | du werdest eingekauft haben | du würdest eingekauft haben
+         |third-person singular: er wird eingekauft haben | er werde eingekauft haben | er würde eingekauft haben
+         |first-person plural: wir werden eingekauft haben | wir werden eingekauft haben | wir würden eingekauft haben
+         |second-person plural: ihr werdet eingekauft haben | ihr werdet eingekauft haben | ihr würdet eingekauft haben
+         |third-person plural: sie werden eingekauft haben | sie werden eingekauft haben | sie würden eingekauft haben
          |##  / imperative
          |cols:
          |singular: kauf ein / kaufe ein
@@ -416,13 +418,13 @@ object FormTemplatesSpec extends ZIOSpecDefault {
          |future-i infinitive: einkaufen werden
          |future-ii infinitive: eingekauft haben werden
          |## subordinate-clause / subordinate-clause
-         |cols: present | preterite | subjunctive-i
-         |first-person singular: einkaufe | einkaufte | einkaufe
-         |second-person singular: einkaufst | einkauftest | einkaufest
-         |third-person singular: einkauft | einkaufte | einkaufe
-         |first-person plural: einkaufen | einkauften | einkaufen
-         |second-person plural: einkauft | einkauftet | einkaufet
-         |third-person plural: einkaufen | einkauften | einkaufen
+         |cols: present | preterite | subjunctive-i | subjunctive-ii
+         |first-person singular: dass ich einkaufe | dass ich einkaufte | dass ich einkaufe | dass ich einkaufte
+         |second-person singular: dass du einkaufst | dass du einkauftest | dass du einkaufest | dass du einkauftest
+         |third-person singular: dass er einkauft | dass er einkaufte | dass er einkaufe | dass er einkaufte
+         |first-person plural: dass wir einkaufen | dass wir einkauften | dass wir einkaufen | dass wir einkauften
+         |second-person plural: dass ihr einkauft | dass ihr einkauftet | dass ihr einkaufet | dass ihr einkauftet
+         |third-person plural: dass sie einkaufen | dass sie einkauften | dass sie einkaufen | dass sie einkauften
          |## rest:""".stripMargin
     }
 
@@ -526,36 +528,36 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val huAd: String = {
       """##  / present indicative
          |cols: indefinite | definite
-         |first-person singular: adok | adom
-         |second-person singular: adsz | adod
-         |third-person singular: ad | adja
-         |first-person plural: adunk | adjuk
-         |second-person plural: adtok | adjátok
-         |third-person plural: adnak | adják
+         |first-person singular: én adok | én adom
+         |second-person singular: te adsz | te adod
+         |third-person singular: ő ad | ő adja
+         |first-person plural: mi adunk | mi adjuk
+         |second-person plural: ti adtok | ti adjátok
+         |third-person plural: ők adnak | ők adják
          |##  / past indicative
          |cols: indefinite | definite
-         |first-person singular: adtam | adtam
-         |second-person singular: adtál | adtad
-         |third-person singular: adott | adta
-         |first-person plural: adtunk | adtuk
-         |second-person plural: adtatok | adtátok
-         |third-person plural: adtak | adták
+         |first-person singular: én adtam | én adtam
+         |second-person singular: te adtál | te adtad
+         |third-person singular: ő adott | ő adta
+         |first-person plural: mi adtunk | mi adtuk
+         |second-person plural: ti adtatok | ti adtátok
+         |third-person plural: ők adtak | ők adták
          |##  / conditional
          |cols: indefinite | definite
-         |first-person singular: adnék | adnám
-         |second-person singular: adnál | adnád
-         |third-person singular: adna | adná
-         |first-person plural: adnánk | adnánk / adnók
-         |second-person plural: adnátok | adnátok
-         |third-person plural: adnának | adnák
+         |first-person singular: én adnék | én adnám
+         |second-person singular: te adnál | te adnád
+         |third-person singular: ő adna | ő adná
+         |first-person plural: mi adnánk | mi adnánk / mi adnók
+         |second-person plural: ti adnátok | ti adnátok
+         |third-person plural: ők adnának | ők adnák
          |##  / subjunctive
          |cols: indefinite | definite
-         |first-person singular: adjak | adjam
-         |second-person singular: adj / adjál | add
-         |third-person singular: adjon | adja
-         |first-person plural: adjunk | adjuk
-         |second-person plural: adjatok | adjátok
-         |third-person plural: adjanak | adják
+         |first-person singular: én adjak | én adjam
+         |second-person singular: te adj / te adjál | te add
+         |third-person singular: ő adjon | ő adja
+         |first-person plural: mi adjunk | mi adjuk
+         |second-person plural: ti adjatok | ti adjátok
+         |third-person plural: ők adjanak | ők adják
          |##  / first-person singular object-second-person
          |cols:
          |present indicative: adlak
@@ -579,36 +581,36 @@ object FormTemplatesSpec extends ZIOSpecDefault {
          |participle adverbial: adva / adván
          |## potential / present indicative
          |cols: indefinite | definite
-         |first-person singular: adhatok | adhatom
-         |second-person singular: adhatsz | adhatod
-         |third-person singular: adhat | adhatja
-         |first-person plural: adhatunk | adhatjuk
-         |second-person plural: adhattok | adhatjátok
-         |third-person plural: adhatnak | adhatják
+         |first-person singular: én adhatok | én adhatom
+         |second-person singular: te adhatsz | te adhatod
+         |third-person singular: ő adhat | ő adhatja
+         |first-person plural: mi adhatunk | mi adhatjuk
+         |second-person plural: ti adhattok | ti adhatjátok
+         |third-person plural: ők adhatnak | ők adhatják
          |## potential / past indicative
          |cols: indefinite | definite
-         |first-person singular: adhattam | adhattam
-         |second-person singular: adhattál | adhattad
-         |third-person singular: adhatott | adhatta
-         |first-person plural: adhattunk | adhattuk
-         |second-person plural: adhattatok | adhattátok
-         |third-person plural: adhattak | adhatták
+         |first-person singular: én adhattam | én adhattam
+         |second-person singular: te adhattál | te adhattad
+         |third-person singular: ő adhatott | ő adhatta
+         |first-person plural: mi adhattunk | mi adhattuk
+         |second-person plural: ti adhattatok | ti adhattátok
+         |third-person plural: ők adhattak | ők adhatták
          |## potential / conditional
          |cols: indefinite | definite
-         |first-person singular: adhatnék | adhatnám
-         |second-person singular: adhatnál | adhatnád
-         |third-person singular: adhatna | adhatná
-         |first-person plural: adhatnánk | adhatnánk / adhatnók
-         |second-person plural: adhatnátok | adhatnátok
-         |third-person plural: adhatnának | adhatnák
+         |first-person singular: én adhatnék | én adhatnám
+         |second-person singular: te adhatnál | te adhatnád
+         |third-person singular: ő adhatna | ő adhatná
+         |first-person plural: mi adhatnánk | mi adhatnánk / mi adhatnók
+         |second-person plural: ti adhatnátok | ti adhatnátok
+         |third-person plural: ők adhatnának | ők adhatnák
          |## potential / subjunctive
          |cols: indefinite | definite
-         |first-person singular: adhassak | adhassam
-         |second-person singular: adhass / adhassál | adhasd / adhassad
-         |third-person singular: adhasson | adhassa
-         |first-person plural: adhassunk | adhassuk
-         |second-person plural: adhassatok | adhassátok
-         |third-person plural: adhassanak | adhassák
+         |first-person singular: én adhassak | én adhassam
+         |second-person singular: te adhass / te adhassál | te adhasd / te adhassad
+         |third-person singular: ő adhasson | ő adhassa
+         |first-person plural: mi adhassunk | mi adhassuk
+         |second-person plural: ti adhassatok | ti adhassátok
+         |third-person plural: ők adhassanak | ők adhassák
          |## potential / first-person singular object-second-person
          |cols:
          |present indicative: adhatlak
@@ -632,22 +634,22 @@ object FormTemplatesSpec extends ZIOSpecDefault {
     val esComprar: String = {
       """##  / indicative
          |cols: present | imperfect | preterite | future | conditional
-         |first-person singular: compro | compraba | compré | compraré | compraría
-         |second-person singular: compras | comprabas | compraste | comprarás | comprarías
-         |vos: comprás | - | - | - | -
-         |third-person singular: compra | compraba | compró | comprará | compraría
-         |first-person plural: compramos | comprábamos | compramos | compraremos | compraríamos
-         |second-person plural: compráis | comprabais | comprasteis | compraréis | compraríais
-         |third-person plural: compran | compraban | compraron | comprarán | comprarían
+         |first-person singular: yo compro | yo compraba | yo compré | yo compraré | yo compraría
+         |second-person singular: tú compras | tú comprabas | tú compraste | tú comprarás | tú comprarías
+         |vos: vos comprás | - | - | - | -
+         |third-person singular: él compra | él compraba | él compró | él comprará | él compraría
+         |first-person plural: nosotros compramos | nosotros comprábamos | nosotros compramos | nosotros compraremos | nosotros compraríamos
+         |second-person plural: vosotros compráis | vosotros comprabais | vosotros comprasteis | vosotros compraréis | vosotros compraríais
+         |third-person plural: ellos compran | ellos compraban | ellos compraron | ellos comprarán | ellos comprarían
          |##  / subjunctive
          |cols: present | imperfect | future
-         |first-person singular: compre | comprara / comprase | comprare
-         |second-person singular: compres | compraras / comprases | comprares
-         |vos: comprés | - | -
-         |third-person singular: compre | comprara / comprase | comprare
-         |first-person plural: compremos | compráramos / comprásemos | compráremos
-         |second-person plural: compréis | comprarais / compraseis | comprareis
-         |third-person plural: compren | compraran / comprasen | compraren
+         |first-person singular: yo compre | yo comprara / yo comprase | yo comprare
+         |second-person singular: tú compres | tú compraras / tú comprases | tú comprares
+         |vos: vos comprés | - | -
+         |third-person singular: él compre | él comprara / él comprase | él comprare
+         |first-person plural: nosotros compremos | nosotros compráramos / nosotros comprásemos | nosotros compráremos
+         |second-person plural: vosotros compréis | vosotros comprarais / vosotros compraseis | vosotros comprareis
+         |third-person plural: ellos compren | ellos compraran / ellos comprasen | ellos compraren
          |##  / imperative
          |cols: affirmative | negative
          |second-person singular: compra | compres
@@ -666,22 +668,22 @@ object FormTemplatesSpec extends ZIOSpecDefault {
          |participle past feminine plural: compradas
          |## reflexive / indicative
          |cols: present | imperfect | preterite | future | conditional
-         |first-person singular: me compro | me compraba | me compré | me compraré | me compraría
-         |second-person singular: te compras | te comprabas | te compraste | te comprarás | te comprarías
-         |vos: te comprás | - | - | - | -
-         |third-person singular: se compra | se compraba | se compró | se comprará | se compraría
-         |first-person plural: nos compramos | nos comprábamos | nos compramos | nos compraremos | nos compraríamos
-         |second-person plural: os compráis | os comprabais | os comprasteis | os compraréis | os compraríais
-         |third-person plural: se compran | se compraban | se compraron | se comprarán | se comprarían
+         |first-person singular: yo me compro | yo me compraba | yo me compré | yo me compraré | yo me compraría
+         |second-person singular: tú te compras | tú te comprabas | tú te compraste | tú te comprarás | tú te comprarías
+         |vos: vos te comprás | - | - | - | -
+         |third-person singular: él se compra | él se compraba | él se compró | él se comprará | él se compraría
+         |first-person plural: nosotros nos compramos | nosotros nos comprábamos | nosotros nos compramos | nosotros nos compraremos | nosotros nos compraríamos
+         |second-person plural: vosotros os compráis | vosotros os comprabais | vosotros os comprasteis | vosotros os compraréis | vosotros os compraríais
+         |third-person plural: ellos se compran | ellos se compraban | ellos se compraron | ellos se comprarán | ellos se comprarían
          |## reflexive / subjunctive
          |cols: present | imperfect | future
-         |first-person singular: me compre | me comprara / me comprase | me comprare
-         |second-person singular: te compres | te compraras / te comprases | te comprares
-         |vos: te comprés | - | -
-         |third-person singular: se compre | se comprara / se comprase | se comprare
-         |first-person plural: nos compremos | nos compráramos / nos comprásemos | nos compráremos
-         |second-person plural: os compréis | os comprarais / os compraseis | os comprareis
-         |third-person plural: se compren | se compraran / se comprasen | se compraren
+         |first-person singular: yo me compre | yo me comprara / yo me comprase | yo me comprare
+         |second-person singular: tú te compres | tú te compraras / tú te comprases | tú te comprares
+         |vos: vos te comprés | - | -
+         |third-person singular: él se compre | él se comprara / él se comprase | él se comprare
+         |first-person plural: nosotros nos compremos | nosotros nos compráramos / nosotros nos comprásemos | nosotros nos compráremos
+         |second-person plural: vosotros os compréis | vosotros os comprarais / vosotros os compraseis | vosotros os comprareis
+         |third-person plural: ellos se compren | ellos se compraran / ellos se comprasen | ellos se compraren
          |## reflexive / imperative
          |cols: affirmative | negative
          |second-person singular: - | te compres
@@ -745,166 +747,166 @@ object FormTemplatesSpec extends ZIOSpecDefault {
 
     val enGo: String = {
       """##  / ui.word.forms.table.principalParts
-       |cols:
-       |infinitive: [go]
-       |present third-person singular: goes
-       |past: went
-       |participle present: going
-       |participle past: gone
-       |## rest: geaux (defective,humorous,informal,louisiana,mainly), gwin (dialectal,informal,participle,present)""".stripMargin
+         |cols:
+         |infinitive: [go]
+         |present third-person singular: goes
+         |past: went
+         |participle present: going
+         |participle past: gone
+         |## rest: geaux (defective,humorous,informal,louisiana,mainly), gwin (dialectal,informal,participle,present)""".stripMargin
     }
 
     val enBe: String = {
       """##  / ui.word.forms.table.principalParts
-       |cols:
-       |infinitive: be
-       |present third-person singular: 's / is
-       |participle present: being
-       |participle past: been
-       |## rest: 'm (first-person,present,singular), 're (plural,present), 're (present,second-person,singular), 'rt (present,second-person,singular), am (first-person,indicative,present,singular), am (first-person,present,singular), are (east,midlands,present,yorkshire), are (first-person,plural,present), are (plural,present), are (plural,present,second-person), are (plural,present,third-person), are (present,second-person,singular), art (present,second-person,singular), bes (dialectal,indicative,present,singular,third-person), iz (indicative,present,singular,third-person), was (dialectal,past,plural), was (first-person,indicative,past,singular), was (first-person,past,singular), was (indicative,past,singular,third-person), was (past,singular,third-person), were (dialectal,first-person,past,singular), were (dialectal,past,singular,third-person), were (first-person,indicative,ireland,multicultural-london-english,northern-england,past,singular,third-person), were (indicative,past,plural), were (indicative,past,second-person,singular), were (past,plural), were (past,second-person,singular), were (past,subjunctive)""".stripMargin
+         |cols:
+         |infinitive: be
+         |present third-person singular: 's / is
+         |participle present: being
+         |participle past: been
+         |## rest: 'm (first-person,present,singular), 're (plural,present), 're (present,second-person,singular), 'rt (present,second-person,singular), am (first-person,indicative,present,singular), am (first-person,present,singular), are (east,midlands,present,yorkshire), are (first-person,plural,present), are (plural,present), are (plural,present,second-person), are (plural,present,third-person), are (present,second-person,singular), art (present,second-person,singular), bes (dialectal,indicative,present,singular,third-person), iz (indicative,present,singular,third-person), was (dialectal,past,plural), was (first-person,indicative,past,singular), was (first-person,past,singular), was (indicative,past,singular,third-person), was (past,singular,third-person), were (dialectal,first-person,past,singular), were (dialectal,past,singular,third-person), were (first-person,indicative,ireland,multicultural-london-english,northern-england,past,singular,third-person), were (indicative,past,plural), were (indicative,past,second-person,singular), were (past,plural), were (past,second-person,singular), were (past,subjunctive)""".stripMargin
     }
 
     val enChild: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |: [child] | children
-       |## rest: childer (ireland,plural)""".stripMargin
+         |cols: singular | plural
+         |: [child] | children
+         |## rest: childer (ireland,plural)""".stripMargin
     }
 
     val enGood: String = {
       """##  / ui.word.forms.table.comparison
-       |cols:
-       |positive: [good]
-       |comparative: better
-       |superlative: best
-       |## rest:""".stripMargin
+         |cols:
+         |positive: [good]
+         |comparative: better
+         |superlative: best
+         |## rest:""".stripMargin
     }
 
     val frParler: String = {
       """##  / indicative
-       |cols: present | imperfect | historic past | future | conditional
-       |first-person singular: parle / paʁl | parlais | parlai | parlerai | parlerais
-       |second-person singular: parles | parlais | parlas | parleras | parlerais
-       |third-person singular: parle | parlait | parla | parlera | parlerait
-       |first-person plural: parlons | parlions | parlâmes | parlerons | parlerions
-       |second-person plural: parlez | parliez | parlâtes | parlerez | parleriez
-       |third-person plural: parlent | parlaient | parlèrent | parleront | parleraient
-       |##  / subjunctive
-       |cols: present | imperfect
-       |first-person singular: parle / paʁl | parlasse
-       |second-person singular: parles | parlasses
-       |third-person singular: parle | parlât
-       |first-person plural: parlions | parlassions
-       |second-person plural: parliez | parlassiez
-       |third-person plural: parlent | parlassent
-       |##  / imperative
-       |cols:
-       |second-person singular: parle
-       |first-person plural: parlons
-       |second-person plural: parlez
-       |##  / ui.word.forms.table.nonFinite
-       |cols:
-       |infinitive: parler
-       |participle present: parlant
-       |participle past: parlé
-       |## rest:""".stripMargin
+         |cols: present | imperfect | historic past | future | conditional
+         |first-person singular: je parle / je paʁl | je parlais | je parlai | je parlerai | je parlerais
+         |second-person singular: tu parles | tu parlais | tu parlas | tu parleras | tu parlerais
+         |third-person singular: il parle | il parlait | il parla | il parlera | il parlerait
+         |first-person plural: nous parlons | nous parlions | nous parlâmes | nous parlerons | nous parlerions
+         |second-person plural: vous parlez | vous parliez | vous parlâtes | vous parlerez | vous parleriez
+         |third-person plural: ils parlent | ils parlaient | ils parlèrent | ils parleront | ils parleraient
+         |##  / subjunctive
+         |cols: present | imperfect
+         |first-person singular: je parle / je paʁl | je parlasse
+         |second-person singular: tu parles | tu parlasses
+         |third-person singular: il parle | il parlât
+         |first-person plural: nous parlions | nous parlassions
+         |second-person plural: vous parliez | vous parlassiez
+         |third-person plural: ils parlent | ils parlassent
+         |##  / imperative
+         |cols:
+         |second-person singular: parle
+         |first-person plural: parlons
+         |second-person plural: parlez
+         |##  / ui.word.forms.table.nonFinite
+         |cols:
+         |infinitive: parler
+         |participle present: parlant
+         |participle past: parlé
+         |## rest:""".stripMargin
     }
 
     val frGrand: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |masculine: [grand] | grands
-       |feminine: grande | grandes
-       |## rest:""".stripMargin
+         |cols: singular | plural
+         |masculine: [grand] | grands
+         |feminine: grande | grandes
+         |## rest:""".stripMargin
     }
 
     val frBeau: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |masculine: [beau] / bel | beaux
-       |feminine: belle | belles
-       |## rest:""".stripMargin
+         |cols: singular | plural
+         |masculine: [beau] / bel | beaux
+         |feminine: belle | belles
+         |## rest:""".stripMargin
     }
 
     val frChat: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |: [chat] | chats
-       |## rest:""".stripMargin
+         |cols: singular | plural
+         |: [chat] | chats
+         |## rest:""".stripMargin
     }
 
     val ptFalar: String = {
       """##  / indicative
-       |cols: present | preterite | imperfect | pluperfect | future | conditional
-       |first-person singular: falo | falei | falava | falara | falarei | falaria
-       |second-person singular: falas | falaste | falavas | falaras | falarás | falarias
-       |third-person singular: fala | falou | falava | falara | falará | falaria
-       |first-person plural: falamos | falamos / falámos | falávamos | faláramos | falaremos | falaríamos
-       |second-person plural: falais | falastes | faláveis | faláreis | falareis | falaríeis
-       |third-person plural: falam | falaram | falavam | falaram | falarão | falariam
-       |##  / subjunctive
-       |cols: present | imperfect | future
-       |first-person singular: fale | falasse | falar
-       |second-person singular: fales | falasses | falares
-       |third-person singular: fale | falasse | falar
-       |first-person plural: falemos | falássemos | falarmos
-       |second-person plural: faleis | falásseis | falardes
-       |third-person plural: falem | falassem | falarem
-       |##  / imperative
-       |cols: affirmative | negative
-       |second-person singular: fala | não fales
-       |third-person singular: fale | não fale
-       |first-person plural: falemos | não falemos
-       |second-person plural: falai | não faleis
-       |third-person plural: falem | não falem
-       |##  / personal infinitive
-       |cols:
-       |first-person singular: falar
-       |second-person singular: falares
-       |third-person singular: falar
-       |first-person plural: falarmos
-       |second-person plural: falardes
-       |third-person plural: falarem
-       |##  / ui.word.forms.table.nonFinite
-       |cols:
-       |infinitive: falar
-       |gerund: falando
-       |participle past masculine singular: falado
-       |participle past feminine singular: falada
-       |participle past masculine plural: falados
-       |participle past feminine plural: faladas
-       |## rest:""".stripMargin
+         |cols: present | preterite | imperfect | pluperfect | future | conditional
+         |first-person singular: eu falo | eu falei | eu falava | eu falara | eu falarei | eu falaria
+         |second-person singular: tu falas | tu falaste | tu falavas | tu falaras | tu falarás | tu falarias
+         |third-person singular: ele fala | ele falou | ele falava | ele falara | ele falará | ele falaria
+         |first-person plural: nós falamos | nós falamos / nós falámos | nós falávamos | nós faláramos | nós falaremos | nós falaríamos
+         |second-person plural: vós falais | vós falastes | vós faláveis | vós faláreis | vós falareis | vós falaríeis
+         |third-person plural: eles falam | eles falaram | eles falavam | eles falaram | eles falarão | eles falariam
+         |##  / subjunctive
+         |cols: present | imperfect | future
+         |first-person singular: eu fale | eu falasse | eu falar
+         |second-person singular: tu fales | tu falasses | tu falares
+         |third-person singular: ele fale | ele falasse | ele falar
+         |first-person plural: nós falemos | nós falássemos | nós falarmos
+         |second-person plural: vós faleis | vós falásseis | vós falardes
+         |third-person plural: eles falem | eles falassem | eles falarem
+         |##  / imperative
+         |cols: affirmative | negative
+         |second-person singular: fala | não fales
+         |third-person singular: fale | não fale
+         |first-person plural: falemos | não falemos
+         |second-person plural: falai | não faleis
+         |third-person plural: falem | não falem
+         |##  / personal infinitive
+         |cols:
+         |first-person singular: falar
+         |second-person singular: falares
+         |third-person singular: falar
+         |first-person plural: falarmos
+         |second-person plural: falardes
+         |third-person plural: falarem
+         |##  / ui.word.forms.table.nonFinite
+         |cols:
+         |infinitive: falar
+         |gerund: falando
+         |participle past masculine singular: falado
+         |participle past feminine singular: falada
+         |participle past masculine plural: falados
+         |participle past feminine plural: faladas
+         |## rest:""".stripMargin
     }
 
     val ptBom: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |masculine: [bom] | bons
-       |feminine: boa | boas
-       |##  / ui.word.forms.table.comparison
-       |cols:
-       |comparative: melhor
-       |superlative: boníssimo / o melhor / ótimo
-       |## rest:""".stripMargin
+         |cols: singular | plural
+         |masculine: [bom] | bons
+         |feminine: boa | boas
+         |##  / ui.word.forms.table.comparison
+         |cols:
+         |comparative: melhor
+         |superlative: boníssimo / o melhor / ótimo
+         |## rest:""".stripMargin
     }
 
     val ptFeliz: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |masculine: [feliz] | felizes
-       |feminine: [feliz] | felizes
-       |##  / ui.word.forms.table.comparison
-       |cols:
-       |comparative: mais feliz
-       |superlative: felicíssimo / o mais feliz
-       |## rest:""".stripMargin
+         |cols: singular | plural
+         |masculine: [feliz] | felizes
+         |feminine: [feliz] | felizes
+         |##  / ui.word.forms.table.comparison
+         |cols:
+         |comparative: mais feliz
+         |superlative: felicíssimo / o mais feliz
+         |## rest:""".stripMargin
     }
 
     val ptMenino: String = {
       """##  / ui.word.forms.table.declension
-       |cols: singular | plural
-       |: [menino] | meninos
-       |## rest: meninas (feminine,plural)""".stripMargin
+         |cols: singular | plural
+         |: [menino] | meninos
+         |## rest: meninas (feminine,plural)""".stripMargin
     }
   }
 }

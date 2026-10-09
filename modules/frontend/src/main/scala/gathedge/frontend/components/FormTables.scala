@@ -3,7 +3,7 @@ package gathedge.frontend.components
 import com.raquo.laminar.api.L._
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
-import gathedge.shared.domain.{FilledCell, FilledSection, FilledTable, FormLayout, Word}
+import gathedge.shared.domain.{FilledCell, FilledSection, FilledTable, FormLayout, LanguageProfile, Word}
 import gathedge.shared.dto.WordFormEntry
 
 /** A word's forms as conjugation and declension tables (`FormTable.layout`). The caller draws `layout.rest`.
@@ -62,18 +62,22 @@ object FormTables {
     )
   }
 
-  /** The headword and its own self-links are plain text; any other form links to its own page. The cell's article goes
-    * before each form, outside the link.
+  /** The headword and its own self-links are plain text; any other form links to its own page. The cell's prefix (an
+    * article or a pronoun) goes before each form, dimmed and outside the link.
     */
   private def renderCell(word: Word, cell: FilledCell[WordFormEntry]): List[HtmlElement] = {
-    val withArticle = (text: HtmlElement) => span(cell.article.map(article => s"$article "), text)
-    val lemma       = Option.when(cell.lemma)(withArticle(span(word.text)))
-    val forms       = cell.forms.map(entry => {
+    val profile    = LanguageProfile.of(word.language)
+    val withPrefix = (text: String, form: HtmlElement) => {
+      span(cell.prefix.map(prefix => span(cls := "opacity-60", profile.lead(prefix, text))), form)
+    }
+    val lemma      = Option.when(cell.lemma)(withPrefix(word.text, span(word.text)))
+    val forms      = cell.forms.map(entry => {
       if (entry.word.id == word.id)
-        withArticle(span(entry.word.text))
+        withPrefix(entry.word.text, span(entry.word.text))
       else {
-        withArticle(
-          a(cls := "link link-hover", AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)), entry.word.text)
+        withPrefix(
+          entry.word.text,
+          a(cls := "link link-hover", AppRouter.router.navigateTo(Page.WordDetail(entry.word.id)), entry.word.text),
         )
       }
     })
