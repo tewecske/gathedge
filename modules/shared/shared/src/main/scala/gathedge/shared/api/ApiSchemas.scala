@@ -135,6 +135,7 @@ import gathedge.shared.dto.{
   TagImportResult,
   TagEntry,
   TagEntryPage,
+  FormDrillWord,
   TagEntryResponse,
   PairRef,
   BulkDeletePairsRequest,
@@ -246,6 +247,7 @@ object ApiSchemas {
   given Schema[WordSummary]                   = DeriveSchema.gen[WordSummary]
   given Schema[TranslationEntry]              = DeriveSchema.gen[TranslationEntry]
   given Schema[WordDetail]                    = DeriveSchema.gen[WordDetail]
+  given Schema[FormDrillWord]                 = DeriveSchema.gen[FormDrillWord]
   given Schema[NewTranslation]                = DeriveSchema.gen[NewTranslation]
   given Schema[CreateWordRequest]             = DeriveSchema.gen[CreateWordRequest]
   given Schema[AddTranslationRequest]         = DeriveSchema.gen[AddTranslationRequest]

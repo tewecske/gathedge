@@ -1023,9 +1023,9 @@ private final class TagEditorPage(
 
   /** The row of buttons under the title: "Export" (saves the whole tag as a JSON file through [[exportBus]]), the game
     * control — "Play game" where this wordlist already has a game of its own, "Create game" where it does not, the same
-    * pair `TagsPage.renderGameCell` draws per row — and "View games" (the [[Page.AllGames]] catalog pre-filtered to
-    * this wordlist, `TagsPage.renderViewGamesCell`'s counterpart). All are shown to every reader, since none of them is
-    * gated by ownership.
+    * pair `TagsPage.renderGameCell` draws per row —, "View games" (the [[Page.AllGames]] catalog pre-filtered to this
+    * wordlist, `TagsPage.renderViewGamesCell`'s counterpart) and "Practise forms" (the [[Page.FormDrill]] on this
+    * wordlist). All are shown to every reader, since none of them is gated by ownership.
     */
   private def renderActionButtons(tag: Tag): HtmlElement = {
     div(
@@ -1060,6 +1060,11 @@ private final class TagEditorPage(
         cls := "btn btn-sm btn-soft",
         AppRouter.router.navigateTo(Page.AllGames(AllGameQuery.default.copy(tagId = Some(tag.id)))),
         I18n.t(UiKeys.tagsListViewGames),
+      ),
+      a(
+        cls := "btn btn-sm btn-soft",
+        AppRouter.router.navigateTo(Page.FormDrill(tag.id)),
+        I18n.t(UiKeys.formDrillOpen),
       ),
     )
   }

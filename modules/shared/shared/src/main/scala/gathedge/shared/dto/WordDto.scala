@@ -49,6 +49,12 @@ final case class WordFormPreview(word: Word, relation: String, matched: Boolean)
   */
 final case class WordFormEntry(word: Word, relation: String, tagIds: List[Long]) derives JsonCodec
 
+/** One word of `GET /api/tags/{tagId}/forms`: a wordlist's noun or verb with every form the dictionary has for it. The
+  * form drill lays `forms` out with `FormTable.layout`, the same way the word page does. `tagIds` is always empty here,
+  * since the drill draws no ticks.
+  */
+final case class FormDrillWord(word: Word, forms: List[WordFormEntry]) derives JsonCodec
+
 /** One row of the browse-and-tag listing.
   *
   * Carries its translations already rendered into the target language the caller asked for, the ids of the reader's own

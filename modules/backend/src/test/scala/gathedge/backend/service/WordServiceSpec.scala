@@ -2895,6 +2895,39 @@ object WordServiceSpec extends ZIOSpecDefault {
           .either
           .map(result => assertTrue(result == Left(WordFailure.TagNotFound)))
       },
+      test("tagForms answers the wordlist's words of one language and part of speech, in order, with their forms") {
+        for {
+          kaufen <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "kaufen", PartOfSpeech.Verb))
+          kaufe  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "kaufe", PartOfSpeech.Verb))
+          kauft  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "kauft", PartOfSpeech.Verb))
+          gehen  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "gehen", PartOfSpeech.Verb))
+          haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))
+          venni  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "venni", PartOfSpeech.Verb))
+          _      <- WordRepository.insertForms(
+                      List(
+                        WordFormRow(0L, kaufen.id, kauft.id, "indicative,present,singular,third-person", 0L),
+                        WordFormRow(0L, kaufen.id, kaufe.id, "first-person,indicative,present,singular", 0L),
+                      )
+                    )
+          tag    <- createTag("formdrill1", 1L, WordLanguage.De, WordLanguage.Hu)
+          _      <- ZIO.foreachDiscard(List(gehen, haus, venni, kaufen))(word => {
+                      WordService.attachWord(tag.id, TagWordInput(TagPairWord.Existing(word.id)), 1L)
+                    })
+          verbs  <- WordService.tagForms(tag.id, WordLanguage.De, PartOfSpeech.Verb)
+          nouns  <- WordService.tagForms(tag.id, WordLanguage.De, PartOfSpeech.Noun)
+        } yield assertTrue(
+          verbs.map(_.word.text) == List("gehen", "kaufen"),
+          verbs.find(_.word.text == "kaufen").map(_.forms.map(_.word.text)) == Some(List("kaufe", "kauft")),
+          verbs.find(_.word.text == "gehen").map(_.forms) == Some(Nil),
+          nouns.map(_.word.text) == List("Haus"),
+        )
+      },
+      test("tagForms answers TagNotFound for a tag that does not exist") {
+        WordService
+          .tagForms(9999L, WordLanguage.De, PartOfSpeech.Verb)
+          .either
+          .map(result => assertTrue(result == Left(WordFailure.TagNotFound)))
+      },
       test("tagEntries flags createdByMe for a source word the reader minted, not a dictionary word") {
         for {
           haz  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "ház"))
