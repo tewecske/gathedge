@@ -446,8 +446,6 @@
   "ui.gameInstance.wordLimit.all": "All",
   "ui.gameInstance.wordLimit.custom": "Custom",
   "ui.gameInstance.wordLimit.count": "Number of words",
-  "ui.gameInstance.includeArticles.label": "Include definite articles",
-  "ui.gameInstance.includeArticles.hint": "Show the definite article with a gendered noun in the quiz",
   "ui.gameInstance.preference.label": "Which words",
   "ui.gameInstance.preference.all": "All words",
   "ui.gameInstance.preference.leastPlayed": "Words I played the least",

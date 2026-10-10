@@ -446,8 +446,6 @@
   "ui.gameInstance.wordLimit.all": "Alle",
   "ui.gameInstance.wordLimit.custom": "Eigene Anzahl",
   "ui.gameInstance.wordLimit.count": "Anzahl der Wörter",
-  "ui.gameInstance.includeArticles.label": "Bestimmte Artikel einbeziehen",
-  "ui.gameInstance.includeArticles.hint": "Zeigt im Quiz den bestimmten Artikel bei einem Substantiv mit Genus",
   "ui.gameInstance.preference.label": "Welche Wörter",
   "ui.gameInstance.preference.all": "Alle Wörter",
   "ui.gameInstance.preference.leastPlayed": "Wörter, die ich am wenigsten gespielt habe",

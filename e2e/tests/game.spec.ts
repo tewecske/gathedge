@@ -145,9 +145,9 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // The quiz itself renders with no session at all — GameEndpoints.get mints nobody.
   await expect(guestPage.getByRole('button', { name: 'Start' })).toBeVisible();
 
-  // The play-time variant picker, in full: direction swap, the All/10/20/Custom word-count radios, an articles
-  // toggle (both languages of this pair include German, since the pair is German<->Hungarian), and the
-  // three-way preference select — none of which appeared on the setup screen above.
+  // The play-time variant picker, in full: direction swap, the answer-mode radios, the All/10/20/Custom
+  // word-count radios, and the three-way preference select — none of which appeared on the setup screen above.
+  // There is no articles toggle: a play always shows the definite articles.
   await expect(guestPage.getByRole('button', { name: 'Swap languages', exact: true })).toBeVisible();
   const langSpans = guestPage.locator('span.font-medium');
   await expect(langSpans).toHaveCount(2);
@@ -157,14 +157,15 @@ test('a stranger with no account plays the shared link, exercising the variant p
   await expect(guestPage.getByText('How many words')).toBeVisible();
   const allWordsRadio = guestPage.getByRole('radio', { name: 'All' });
   const customWordsRadio = guestPage.getByRole('radio', { name: 'Custom' });
+  // The default is 10, but only 4 words are eligible: the 10 and 20 presets are out of range and disabled, so the
+  // picker falls back to All.
   await expect(allWordsRadio).toBeChecked();
-  // Only 4 words are eligible, so the 10 and 20 presets are out of range and disabled.
   await expect(guestPage.getByRole('radio', { name: '10' })).toBeDisabled();
   await expect(guestPage.getByRole('radio', { name: '20' })).toBeDisabled();
 
-  const articlesRow = guestPage.locator('label', { hasText: 'Include definite articles' });
-  await expect(articlesRow).toBeVisible();
-  await expect(articlesRow).toContainText('Show the definite article with a gendered noun in the quiz');
+  await expect(guestPage.getByText('Include definite articles')).toHaveCount(0);
+  await expect(guestPage.getByText('How to answer')).toBeVisible();
+  await expect(guestPage.getByRole('radio', { name: 'Type the answer' })).toBeChecked();
 
   await expect(guestPage.getByText('Which words')).toBeVisible();
   await expect(guestPage.locator('select option', { hasText: 'All words' })).toHaveCount(1);
@@ -269,8 +270,6 @@ test('a stranger with no account plays the shared link, exercising the variant p
   // sampling, not a hard filter — see the design doc), so the preview's own count stays at the pool size (4)
   // regardless of which preference is picked; `renderPreviewList` never lists individual words, only the count.
   // The one place the least-played narrowing is actually observable is the sampled prompt itself, below.
-  // Two selects share this card now (the play mode and the word preference), so this one is picked by an
-  // option only it carries.
   // The option's value is still `unplayed`: that is the wire code `WordPreference.code` writes and
   // `game_plays.word_preference` stores, kept across the rename so recorded plays still read back.
   await guestPage.locator('select').filter({ hasText: 'All words' }).selectOption('unplayed');
@@ -363,7 +362,7 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
 
   // The mode control is part of the play-time picker, not the setup screen — the game itself is unchanged.
   await expect(clickPage.getByText('How to answer')).toBeVisible();
-  await clickPage.locator('select').filter({ hasText: 'Pick from four' }).selectOption('multipleChoice');
+  await clickPage.getByRole('radio', { name: 'Pick from four' }).click();
   await clickPage.getByRole('button', { name: 'Start' }).click();
   await expect(clickPage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
 

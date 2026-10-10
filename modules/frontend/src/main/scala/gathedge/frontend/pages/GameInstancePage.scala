@@ -6,7 +6,7 @@ import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList, Tooltip}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
-import gathedge.shared.domain.{GameMode, LanguageProfile, User, WordPreference}
+import gathedge.shared.domain.{GameMode, User, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import org.scalajs.dom
@@ -106,26 +106,16 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
   private val gameModeVar = Var[GameMode](GameMode.Typing)
 
   /** The word-count radio row's state — All / 10 / 20 / Custom — plus the number typed when `Custom` is picked.
-    * Defaults to `All`: "use every eligible word".
+    * Defaults to `Ten`. A pool too small for it falls back to `All` (see the `totalAvailableSignal` observer in
+    * [[render]]).
     */
-  private val wordLimitChoiceVar = Var[WordLimitChoice](WordLimitChoice.All)
+  private val wordLimitChoiceVar = Var[WordLimitChoice](WordLimitChoice.Ten)
   private val customLimitTextVar = Var("")
 
   private val wordLimitSignal: Signal[Option[Int]] = {
     wordLimitChoiceVar.signal.combineWith(customLimitTextVar.signal).map { case (choice, text) =>
       WordLimitChoice.toLimit(choice, text)
     }
-  }
-
-  private val includeArticlesVar = Var(true)
-
-  /** Whether *either* resolved direction of the current pair has gendered nouns — the swap arrow flips which language
-    * is source, but gendered-either-way is symmetric, so this does not need to depend on [[swapDirectionVar]].
-    */
-  private val germanInvolvedSignal: Signal[Boolean] = {
-    gameVar.signal.map(
-      _.exists(g => LanguageProfile.of(g.sourceLanguage).hasGenders || LanguageProfile.of(g.targetLanguage).hasGenders)
-    )
   }
 
   private val wordPreferenceVar = Var[WordPreference](WordPreference.All)
@@ -242,7 +232,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       gameModeVar        -> variant.mode,
       wordLimitChoiceVar -> choice,
       customLimitTextVar -> customText,
-      includeArticlesVar -> variant.includeDefiniteArticles,
       wordPreferenceVar  -> variant.wordPreference,
     )
   }
@@ -276,16 +265,16 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         .withCurrentValueOf(
           swapDirectionVar.signal,
           wordLimitSignal,
-          includeArticlesVar.signal,
           wordPreferenceVar.signal,
           gameModeVar.signal,
         )
-        .flatMapSwitch { case (swap, limit, articles, preference, mode) =>
-          asReader(() => GameApiClient.startPlay(slug, swap, limit, articles, preference, mode))
-            .map(_.map(started => (started, swap, limit, articles, preference, mode)))
+        .flatMapSwitch { case (swap, limit, preference, mode) =>
+          // A play always shows the definite articles; the picker no longer offers to turn them off.
+          asReader(() => GameApiClient.startPlay(slug, swap, limit, includeDefiniteArticles = true, preference, mode))
+            .map(_.map(started => (started, swap, limit, preference, mode)))
         } -->
-        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], Boolean, WordPreference, GameMode)]] {
-          case Right((started, swap, limit, articles, preference, mode)) =>
+        Observer[Either[ApiError, (PlayStarted, Boolean, Option[Int], WordPreference, GameMode)]] {
+          case Right((started, swap, limit, preference, mode)) =>
             // Only reachable once `renderStart`'s button exists, which itself only renders inside `renderGameCard` —
             // `gameVar` is always loaded by the time `startBus` can fire, same assumption `renderGameCard` makes.
             val game       = gameVar
@@ -293,10 +282,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
               .getOrElse(throw new IllegalStateException("startBus fired before the game finished loading"))
             val (src, tgt) =
               if (swap) (game.targetLanguage, game.sourceLanguage) else (game.sourceLanguage, game.targetLanguage)
-            val variant    = GameVariantDto(src, tgt, limit, articles, preference, mode)
+            val variant    = GameVariantDto(src, tgt, limit, includeDefiniteArticles = true, preference, mode)
             PendingPlay.set(started.playId, PlayHandoff(game.name, started.wordCount, variant))
             AppRouter.router.pushState(Page.GamePlay(slug, started.playId))
-          case Left(err)                                                 =>
+          case Left(err)                                       =>
             Var.set(startingVar -> false, errorVar -> Some(err.message))
         },
       // A direction swap can shrink the eligible pool under a preset the player already picked (say "20" with only 8
@@ -495,7 +484,6 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       renderDirectionSwap(),
       renderModeControl(),
       renderWordLimitControls(),
-      renderIncludeArticlesControl(),
       renderPreferenceControl(),
       renderPreviewList(),
       button(
@@ -616,48 +604,32 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
     )
   }
 
-  private def renderIncludeArticlesControl(): HtmlElement = {
-    div(
-      child.maybe <-- germanInvolvedSignal.map { involved =>
-        Option.when(involved)(
-          label(
-            cls := "flex items-center gap-2 cursor-pointer",
-            input(
-              typ := "checkbox",
-              cls := "checkbox checkbox-sm",
-              controlled(checked <-- includeArticlesVar.signal, onClick.mapToChecked --> includeArticlesVar.writer),
-            ),
-            div(
-              span(cls := "label-text text-sm", I18n.t(UiKeys.gameInstanceIncludeArticlesLabel)),
-              p(cls    := "text-xs opacity-60", I18n.t(UiKeys.gameInstanceIncludeArticlesHint)),
-            ),
-          )
-        )
-      }
-    )
-  }
-
-  /** The play-mode picker, built like [[renderPreferenceControl]]: a `<select>` whose option values are the stored
-    * `GameMode` codes and whose labels are the only translated half, per `Labels`' "translate labels, never values"
-    * rule.
+  /** The play-mode picker, built like [[renderWordLimitControls]]: a daisyUI `join` of btn-styled radios, one per
+    * `GameMode`. Only the label is translated, per `Labels`' "translate labels, never values" rule.
     */
   private def renderModeControl(): HtmlElement = {
+    val groupName = s"game-mode-$slug"
     div(
-      cls := "flex flex-col gap-1",
+      cls := "flex flex-col gap-2",
       div(
         cls := "flex items-center gap-1",
         span(cls := "label-text text-xs", I18n.t(UiKeys.gameInstanceModeLabel)),
         HelpIcon.render(I18n.t(UiKeys.helpGameMode)),
       ),
-      select(
-        cls := "select select-sm w-full max-w-xs",
-        GameMode.all.map(mode => option(value := GameMode.code(mode), Labels.gameMode(mode))),
-        controlled(
-          value <-- gameModeVar.signal.map(GameMode.code),
-          onChange.mapToValue --> gameModeVar.writer.contramap[String](code =>
-            GameMode.fromString(code).getOrElse(GameMode.Typing)
-          ),
-        ),
+      div(
+        cls := "join",
+        GameMode.all.map { mode =>
+          input(
+            typ        := "radio",
+            cls        := "join-item btn btn-xs",
+            nameAttr   := groupName,
+            aria.label := Labels.gameMode(mode),
+            controlled(
+              checked <-- gameModeVar.signal.map(_ == mode),
+              onClick.mapToUnit --> Observer[Unit](_ => gameModeVar.set(mode)),
+            ),
+          )
+        },
       ),
     )
   }
