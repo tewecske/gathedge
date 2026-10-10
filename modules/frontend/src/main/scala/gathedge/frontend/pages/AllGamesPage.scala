@@ -233,18 +233,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         ),
       ),
       renderTagFilter(),
-      languageSelect(
-        UiKeys.allGamesSourceCol,
-        querySignal.map(_.language1).distinct,
-        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
-        languagesLockedSignal,
-      ),
-      languageSelect(
-        UiKeys.allGamesTargetCol,
-        querySignal.map(_.language2).distinct,
-        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language2 = language)))),
-        languagesLockedSignal,
-      ),
+      renderLanguageFilter(),
       // Favoriting needs an account, so the filter is offered only to a signed-in visitor.
       child.maybe <-- signedInSignal.map(Option.when(_)(renderFavoritesToggle())),
     )
@@ -292,35 +281,47 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
     )
   }
 
-  /** Every `<select>` here carries a literal width, the same reason `WordsPage.languageSelect` gives for its own.
-    * Unlike that one, `None` is a real option ("Any"), since this is an ordinary listing filter rather than a mandatory
-    * browsing direction.
+  /** The two language selects under one title, the same as `TagsPage.renderLanguageFilter`: either order matches, so
+    * neither select names a direction. Every `<select>` here carries a literal width, the same reason
+    * `WordsPage.languageSelect` gives for its own. Unlike that one, `None` is a real option ("Any"), since this is an
+    * ordinary listing filter rather than a mandatory browsing direction.
     */
-  private def languageSelect(
-    labelKey: String,
-    selected: Signal[Option[WordLanguage]],
-    onPick: Observer[Option[WordLanguage]],
-    locked: Signal[Boolean],
-  ): HtmlElement = {
-    label(
+  private def renderLanguageFilter(): HtmlElement = {
+    fieldSet(
       cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(labelKey)),
+      legend(cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
       span(
-        Tooltip.signal(locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else "")),
-        select(
-          cls := "select select-sm w-28",
-          disabled <-- locked,
-          EmptyOption(I18n.t(UiKeys.allGamesLanguageAny)),
-          WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
-          controlled(
-            value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),
-            onChange.mapToValue --> onPick.contramap[String](code => WordLanguage.fromString(code)),
-          ),
+        cls      := "flex gap-2",
+        Tooltip.signal(languagesLockedSignal.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else "")),
+        languageSelect(
+          querySignal.map(_.language1).distinct,
+          Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
+        ),
+        languageSelect(
+          querySignal.map(_.language2).distinct,
+          Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language2 = language)))),
         ),
       ),
       span(
-        cls    := "sr-only",
-        child.text <-- locked.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
+        cls      := "sr-only",
+        child.text <-- languagesLockedSignal.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
+      ),
+    )
+  }
+
+  private def languageSelect(
+    selected: Signal[Option[WordLanguage]],
+    onPick: Observer[Option[WordLanguage]],
+  ): HtmlElement = {
+    select(
+      cls        := "select select-sm w-28",
+      aria.label := I18n.t(UiKeys.filterLanguages),
+      disabled <-- languagesLockedSignal,
+      EmptyOption(I18n.t(UiKeys.allGamesLanguageAny)),
+      WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+      controlled(
+        value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),
+        onChange.mapToValue --> onPick.contramap[String](code => WordLanguage.fromString(code)),
       ),
     )
   }

@@ -31,10 +31,6 @@ final case class TagQuery(
     */
   def reset(change: TagQuery => TagQuery): TagQuery = change(this).copy(page = Paging.firstPage)
 
-  /** Whether a filter narrows the listing — what shows "Reset filters". The search term is not one: it has its own box.
-    */
-  def narrowed: Boolean = scope != TagScope.All || language1.isDefined || language2.isDefined
-
   /** Whether this query is the previous one with the search term typed out further — the same rule
     * [[UserQuery.refines]] follows.
     */

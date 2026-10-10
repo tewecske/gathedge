@@ -30,9 +30,9 @@ import zio.json._
   * is the one the table's old section headings used to carry — a signed-in reader's own wordlists, then any a group
   * they belong to has opened to them, then everyone else's — see `TagQuery`'s and `WordService.listTagsPaged`'s doc
   * comments; `scope` is the filter that replaces picking a section by eye. A signed-out visitor sees the same table
-  * with the scope filter hidden, since none of it is theirs to narrow by. The two language filters are shown to
-  * everyone. The "New wordlist", "Export all" and "Import" controls are shown only when signed in ("New wordlist"
-  * always, since it mints a guest). A global administrator also gets "Export every wordlist", which takes everyone's.
+  * with the scope filter hidden, since none of it is theirs to narrow by. The language filter is shown to everyone. The
+  * "New wordlist", "Export all" and "Import" controls are shown only when signed in ("New wordlist" always, since it
+  * mints a guest). A global administrator also gets "Export every wordlist", which takes everyone's.
   */
 object TagsPage {
 
@@ -311,21 +311,8 @@ private class TagsPage(
           onInput.mapToValue --> searchTypedBus.writer,
         ),
       ),
-      languageSelect(
-        UiKeys.tagsListLanguage1Label,
-        querySignal.map(_.language1).distinct,
-        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
-      ),
-      languageSelect(
-        UiKeys.tagsListLanguage2Label,
-        querySignal.map(_.language2).distinct,
-        Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language2 = language)))),
-      ),
+      renderLanguageFilter(),
       child.maybe <-- signedInSignal.map(Option.when(_)(renderScopeFilter())),
-      child.maybe <-- querySignal
-        .map(_.narrowed)
-        .distinct
-        .map(Option.when(_)(renderResetFilters())),
     )
   }
 
@@ -363,40 +350,41 @@ private class TagsPage(
     }
   }
 
-  /** One language filter. `None` is a real option ("Any"), the same as `AllGamesPage.languageSelect`; the literal width
-    * follows the reason `WordsPage.languageSelect` gives for its own.
+  /** The two language selects under one title. `None` is a real option ("Any"), the same as
+    * `AllGamesPage.renderLanguageFilter`; the literal width follows the reason `WordsPage.languageSelect` gives for its
+    * own.
     */
-  private def languageSelect(
-    labelKey: String,
-    selected: Signal[Option[WordLanguage]],
-    onPick: Observer[Option[WordLanguage]],
-  ): HtmlElement = {
-    label(
+  private def renderLanguageFilter(): HtmlElement = {
+    fieldSet(
       cls := "flex flex-col gap-1",
-      span(cls := "label-text text-xs", I18n.t(labelKey)),
-      select(
-        cls    := "select select-sm w-32",
-        EmptyOption(I18n.t(UiKeys.allGamesLanguageAny)),
-        WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
-        controlled(
-          value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),
-          onChange.mapToValue --> onPick.contramap[String](code => WordLanguage.fromString(code)),
+      legend(cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
+      div(
+        cls      := "flex gap-2",
+        languageSelect(
+          querySignal.map(_.language1).distinct,
+          Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
+        ),
+        languageSelect(
+          querySignal.map(_.language2).distinct,
+          Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language2 = language)))),
         ),
       ),
     )
   }
 
-  /** Shown only once a filter narrows the listing — the scope away from [[TagScope.All]], or a language chosen. A
-    * listing already unfiltered has nothing to reset. Keeps the search term, like `WordsPage.renderResetFilters` does.
-    */
-  private def renderResetFilters(): HtmlElement = {
-    button(
-      typ := "button",
-      cls := "btn btn-soft btn-sm",
-      I18n.t(UiKeys.tagsListResetFilters),
-      onClick.mapToUnit --> Observer[Unit] { _ =>
-        change(_.reset(current => TagQuery.default.copy(search = current.search)))
-      },
+  private def languageSelect(
+    selected: Signal[Option[WordLanguage]],
+    onPick: Observer[Option[WordLanguage]],
+  ): HtmlElement = {
+    select(
+      cls        := "select select-sm w-32",
+      aria.label := I18n.t(UiKeys.filterLanguages),
+      EmptyOption(I18n.t(UiKeys.allGamesLanguageAny)),
+      WordLanguage.all.map(language => option(value := WordLanguage.code(language), Labels.language(language))),
+      controlled(
+        value <-- selected.map(_.map(WordLanguage.code).getOrElse("")),
+        onChange.mapToValue --> onPick.contramap[String](code => WordLanguage.fromString(code)),
+      ),
     )
   }
 
