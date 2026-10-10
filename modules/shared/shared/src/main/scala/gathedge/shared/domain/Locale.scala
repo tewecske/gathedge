@@ -8,12 +8,13 @@ import zio.json.*
   * `users.locale` column, the URL prefix the SPA is served under (`/hu/settings`), the catalog filename the frontend
   * fetches and the backend reads off its classpath, and the `Locale` field on the wire-safe [[User]].
   *
-  * Adding a third language is this enum plus a `messages.<code>.json`; `MessagesSpec` then fails until the new catalog
-  * has every key.
+  * Adding a language is this enum plus a `messages.<code>.json`; `MessagesSpec` then fails until the new catalog has
+  * every key.
   */
 enum Locale derives JsonCodec, CanEqual {
   case En,
-    Hu
+    Hu,
+    De
 }
 
 object Locale {
@@ -23,7 +24,7 @@ object Locale {
     */
   val default: Locale = En
 
-  val all: List[Locale] = List(En, Hu)
+  val all: List[Locale] = List(En, De, Hu)
 
   /** Lower-case ISO 639-1 form. The URL prefix, the `users.locale` column, the `lang` attribute and the catalog
     * filename all use this. Kept explicit rather than derived from `toString` so renaming a case cannot silently orphan
@@ -35,6 +36,8 @@ object Locale {
         "en"
       case Hu =>
         "hu"
+      case De =>
+        "de"
     }
   }
 
@@ -44,6 +47,8 @@ object Locale {
         Some(En)
       case "hu" =>
         Some(Hu)
+      case "de" =>
+        Some(De)
       case _    =>
         None
     }
@@ -58,6 +63,8 @@ object Locale {
         "English"
       case Hu =>
         "Magyar"
+      case De =>
+        "Deutsch"
     }
   }
 

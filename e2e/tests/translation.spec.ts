@@ -1,23 +1,23 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Every screen, in both languages, checked for the two ways a translation goes missing.
+// Every screen, in every language, checked for the two ways a translation goes missing.
 //
 // The catalogs are JSON, so a key that no catalog defines is a runtime bug rather than a compile
 // error. `MessagesSpec` covers the half it can see — that every `UiKeys`/`MessageKeys` constant
-// exists in `en` and `hu` — but it cannot see a page that passes a key nobody registered, or one
+// exists in every catalog — but it cannot see a page that passes a key nobody registered, or one
 // built by string concatenation. Those show up here in exactly two ways, and this suite watches for
 // both: the key renders as itself (`ui.…` on screen), and `I18n.t` writes `i18n: no '…'` to the
 // console. The frontend's jsdom specs cannot do this — they load no catalog at all, so *every*
 // message resolves to its key there.
 //
-// Hungarian is the point of the exercise, but English is walked too: a key missing from both
-// catalogs is invisible if only the translated language is checked.
+// The translations are the point of the exercise, but English is walked too: a key missing from
+// every catalog is invisible if only the translated languages are checked.
 
 const adminEmail = process.env.BOOTSTRAP_ADMIN_EMAIL ?? 'admin@example.com';
 const adminPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'changeme123';
 
-// Signed-out pages first, then the ones behind a session. `/en` and `/hu` are the same list: the
-// prefix is the only thing that decides the language.
+// Signed-out pages first, then the ones behind a session. `/en`, `/de` and `/hu` are the same list:
+// the prefix is the only thing that decides the language.
 const publicPaths = [
   '/sign-in',
   '/sign-up',
@@ -55,7 +55,7 @@ async function signIn(page: Page, prefix: string): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`${prefix}/games/all$`));
 }
 
-for (const prefix of ['/en', '/hu']) {
+for (const prefix of ['/en', '/de', '/hu']) {
   test.describe(`${prefix} renders no untranslated copy`, () => {
     test.describe.configure({ mode: 'serial' });
 

@@ -33,8 +33,8 @@ final case class MessageCatalog(locale: Locale, entries: Map[String, String]) {
   /** A count-sensitive message, looked up as `baseKey.one` / `baseKey.other`, with the count as `{0}` and any extra
     * arguments following it.
     *
-    * The selection is per-language and not a generic CLDR rule, because the two languages here disagree in the one way
-    * that matters: English needs "1 session" against "5 sessions", while Hungarian takes the singular after *any*
+    * The selection is per-language and not a generic CLDR rule, because the languages here disagree in the one way that
+    * matters: English and German need "1 session" against "5 sessions", while Hungarian takes the singular after *any*
     * numeral — "1 munkamenet", "5 munkamenet". The codebase's old `"session(s)"` idiom cannot express either properly.
     *
     * Both keys must exist in every catalog even where a language only ever uses one of them; that is what keeps the
@@ -44,9 +44,9 @@ final case class MessageCatalog(locale: Locale, entries: Map[String, String]) {
   def plural(baseKey: String, count: Long, args: String*): String = {
     val suffix = {
       locale match {
-        case Locale.En =>
+        case Locale.En | Locale.De =>
           if (count == 1) ".one" else ".other"
-        case Locale.Hu =>
+        case Locale.Hu             =>
           ".other"
       }
     }
