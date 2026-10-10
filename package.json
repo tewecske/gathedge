@@ -2,7 +2,7 @@
   "name": "gathedge",
   "private": true,
   "devDependencies": {
-    "concurrently": "^10.0.3",
+    "concurrently": "^10.0.6",
     "jsdom": "^30.0.1",
     "typescript": "^5.9.3"
   },

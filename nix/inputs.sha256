@@ -4,4 +4,4 @@
 # This is the only way to notice a stale hash without building: Nix evaluation accepts a wrong
 # fixed-output hash quite happily and fails much later, in the build that needs it.
 depsSha256 da8eb86979ca61c5772b3b2997ae7f524df4d946cac737f855122b82e51b9d81
-npmDepsHash ef1a01ff5fcb3216b25bdf471e0281a8b4a5e857e2ab37b9143d75dfeda612fc
+npmDepsHash cb1814c5e321a3de394b6d2321afabf7fce5534ae1b944eae355c060b5a7c496
