@@ -3,6 +3,7 @@ package gathedge.frontend.pages
 import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import org.scalajs.dom
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
@@ -429,6 +430,27 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
+      // A word in a row that is not being edited is a way to its details page, not a label.
+      test("a row's word links to its details page, and its note stays outside the link") {
+        val noOcr: ImageOcr.Recognize = (_, _, _, _) => Future.successful("")
+        val page                      = new TagEditorPage(1L, noOcr, Val(TagEntryQuery.default), Observer.empty)
+        val container                 = dom.document.createElement("div")
+        dom.document.body.appendChild(container)
+        val rootNode                  =
+          L.render(container, page.renderWordCell(Some(sideOf(entry(5, None, comment = Some("note"))))))
+        try {
+          val links = container.querySelectorAll("a").toList
+          val text  = container.textContent
+          assertTrue(
+            links.map(_.textContent) == List("w5"),
+            links.map(_.getAttribute("href")) == List(AppRouter.router.absoluteUrlForPage(Page.WordDetail(5L))),
+            text.contains("(note)"),
+          )
+        } finally {
+          rootNode.unmount()
+          dom.document.body.removeChild(container)
+        }
+      },
       suite("worksheet")(
         test("asks each row's word in the left language, in row order, and follows the swap") {
           val rows = List(entry(1, Some(2)), entry(3, Some(4)))
