@@ -287,11 +287,15 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
     * ordinary listing filter rather than a mandatory browsing direction.
     */
   private def renderLanguageFilter(): HtmlElement = {
-    fieldSet(
-      cls := "flex flex-col gap-1",
-      legend(cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
+    // A `div` with a group role, not a `fieldset`: a `legend` sits on the fieldset's border, outside the flex layout,
+    // so `gap-1` did not reach it and the selects ran into the title.
+    div(
+      cls             := "flex flex-col gap-1",
+      role            := "group",
+      aria.labelledBy := "all-games-languages-label",
+      span(idAttr := "all-games-languages-label", cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
       span(
-        cls      := "flex gap-2",
+        cls       := "flex gap-2",
         Tooltip.signal(languagesLockedSignal.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else "")),
         languageSelect(
           querySignal.map(_.language1).distinct,
@@ -303,7 +307,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
         ),
       ),
       span(
-        cls      := "sr-only",
+        cls       := "sr-only",
         child.text <-- languagesLockedSignal.map(on => if (on) I18n.t(UiKeys.allGamesLanguageLockedHint) else ""),
       ),
     )
