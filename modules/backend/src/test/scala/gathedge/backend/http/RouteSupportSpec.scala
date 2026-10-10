@@ -202,14 +202,14 @@ object RouteSupportSpec extends ZIOSpecDefault {
         assertTrue(RouteSupport.localeOf(request) == Locale.Hu)
       },
       test("the first understood language wins, not the first listed") {
-        val request = Request.get("/api/auth/signup").addHeader("Accept-Language", "de-DE,fr;q=0.9,hu;q=0.8")
+        val request = Request.get("/api/auth/signup").addHeader("Accept-Language", "it-IT,fr;q=0.9,hu;q=0.8")
         assertTrue(RouteSupport.localeOf(request) == Locale.Hu)
       },
       test("neither header, or one naming a language we do not have, falls back to the default") {
         assertTrue(
           RouteSupport.localeOf(Request.get("/api/auth/signup")) == Locale.default,
           RouteSupport.localeOf(Request.get("/api/auth/signup").addHeader("X-Locale", "kl")) == Locale.default,
-          RouteSupport.localeOf(Request.get("/api/auth/signup").addHeader("Accept-Language", "de,fr")) == Locale.default,
+          RouteSupport.localeOf(Request.get("/api/auth/signup").addHeader("Accept-Language", "it,fr")) == Locale.default,
         )
       },
     )

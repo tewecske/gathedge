@@ -33,7 +33,7 @@ object CurrentLocaleSpec extends ZIOSpecDefault {
         )
       },
       test("an unknown language is not a locale") {
-        assertTrue(CurrentLocale.fromPath("/de/groups") == None)
+        assertTrue(CurrentLocale.fromPath("/it/groups") == None)
       },
     )
   }

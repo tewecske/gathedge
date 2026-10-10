@@ -276,9 +276,9 @@ Two consequences of the editor holding one page rather than the whole wordlist: 
 
 ### Internationalization
 
-English and Hungarian. A third language needs `Locale`'s enum, a `messages.<code>.json`, and a `plural` match in `MessageCatalog`.
+English, German and Hungarian. Another language needs `Locale`'s enum, a `messages.<code>.json`, a `plural` match in `MessageCatalog`, a flag in `LanguagePicker`, and its code in `web/index.html`'s `supported` list.
 
-**The URL decides the language** (every SPA route is under `/en/` or `/hu/`; Waypoint's `basePath` handles it):
+**The URL decides the language** (every SPA route is under `/en/`, `/de/` or `/hu/`; Waypoint's `basePath` handles it):
 
 - `I18n.t` is synchronous.
 - **Switching language is a full page navigation** (`LanguagePicker` is plain anchors).
@@ -288,7 +288,7 @@ English and Hungarian. A third language needs `Locale`'s enum, a `messages.<code
 
 **Server-side, messages are codes, not prose.** Every `ApiFailure` carries a `MessageRef` plus an English fallback `message`. `shared/validation/Validation.scala` fails with `MessageRef` too.
 
-**The catalogs are one JSON file per language** — `web/public/locales/messages.{en,hu}.json`. The backend loads them at boot and fails the boot if one is missing or malformed. `MessagesSpec` enforces identical key sets, all `MessageKeys`/`UiKeys` present, matching placeholders, complete plural pairs.
+**The catalogs are one JSON file per language** — `web/public/locales/messages.{en,de,hu}.json`. The backend loads them at boot and fails the boot if one is missing or malformed. `MessagesSpec` enforces identical key sets, all `MessageKeys`/`UiKeys` present, matching placeholders, complete plural pairs.
 
 Two Hungarian gotchas:
 

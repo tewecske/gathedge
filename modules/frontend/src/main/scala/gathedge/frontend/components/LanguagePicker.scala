@@ -110,6 +110,12 @@ private class LanguagePicker {
           svg.rect(svg.x := "0", svg.y := "10", svg.width := "60", svg.height := "10", svg.fill := "#FFFFFF"),
           svg.rect(svg.x := "0", svg.y := "20", svg.width := "60", svg.height := "10", svg.fill := "#436F4D"),
         )
+      case Locale.De =>
+        List(
+          svg.rect(svg.x := "0", svg.y := "0", svg.width  := "60", svg.height := "10", svg.fill := "#000000"),
+          svg.rect(svg.x := "0", svg.y := "10", svg.width := "60", svg.height := "10", svg.fill := "#DD0000"),
+          svg.rect(svg.x := "0", svg.y := "20", svg.width := "60", svg.height := "10", svg.fill := "#FFCE00"),
+        )
       case Locale.En =>
         List(
           svg.rect(svg.x := "0", svg.y                            := "0", svg.width             := "60", svg.height := "30", svg.fill := "#012169"),

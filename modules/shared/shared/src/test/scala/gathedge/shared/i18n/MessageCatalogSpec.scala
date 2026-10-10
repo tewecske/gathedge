@@ -50,15 +50,18 @@ object MessageCatalogSpec extends ZIOSpecDefault {
             "field.email is required",
         )
       },
-      // English distinguishes 1 from everything else; Hungarian takes the singular after any
-      // numeral, so it renders the `.other` template for a count of 1 too.
+      // English and German distinguish 1 from everything else; Hungarian takes the singular after
+      // any numeral, so it renders the `.other` template for a count of 1 too.
       test("selects the plural form per language") {
         val en = catalog(Locale.En, "n.one" -> "{0} session", "n.other" -> "{0} sessions")
+        val de = catalog(Locale.De, "n.one" -> "{0} Sitzung", "n.other" -> "{0} Sitzungen")
         val hu = catalog(Locale.Hu, "n.one" -> "{0} munkamenet", "n.other" -> "{0} munkamenet")
         assertTrue(
           en.plural("n", 1) == "1 session",
           en.plural("n", 0) == "0 sessions",
           en.plural("n", 5) == "5 sessions",
+          de.plural("n", 1) == "1 Sitzung",
+          de.plural("n", 0) == "0 Sitzungen",
           hu.plural("n", 1) == "1 munkamenet",
           hu.plural("n", 5) == "5 munkamenet",
         )
