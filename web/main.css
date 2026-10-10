@@ -18,3 +18,25 @@
     padding-inline: 0.5rem;
   }
 }
+
+/* The wordlist worksheet (`TagEditorPage`). Its host is a direct child of `body` and draws nothing on screen. While
+   it holds a sheet, the paper copy is that sheet alone: every other child of `body` is left off. Black on white
+   whatever the theme, since a dark theme's light text is close to invisible on paper. */
+.worksheet-host {
+  display: none;
+}
+
+@media print {
+  body:has(.worksheet) > :not(.worksheet-host) {
+    display: none !important;
+  }
+
+  body:has(.worksheet) > .worksheet-host {
+    display: block;
+  }
+
+  .worksheet {
+    color: #000;
+    background: #fff;
+  }
+}

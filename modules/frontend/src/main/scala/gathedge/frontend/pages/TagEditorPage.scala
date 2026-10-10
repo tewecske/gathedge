@@ -1,5 +1,6 @@
 package gathedge.frontend.pages
 
+import com.raquo.laminar.api.L
 import com.raquo.laminar.api.L._
 import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient, WordApiClient}
@@ -101,6 +102,77 @@ object TagEditorPage {
         if (entry.source.language == right && left != right) (None, Some(source))
         else (Some(source), None)
     }
+  }
+
+  // -- Worksheet ------------------------------------------------------------------------------
+
+  /** Where the worksheet's words come from: the rows the reader ticked, or a random pick from the whole wordlist. */
+  private[pages] enum PrintSource derives CanEqual {
+    case Selected, Random
+  }
+
+  /** What one paper worksheet holds: the wordlist's name, the two languages in the order the page shows them, and the
+    * words of the left one.
+    */
+  private[pages] final case class Worksheet(
+    title: String,
+    left: WordLanguage,
+    right: WordLanguage,
+    words: List[Side],
+  )
+
+  /** The words a worksheet asks about: each row's word in the left language, the one the page shows first. A row with
+    * no word on that side has nothing to ask, so it is left out. A word with two answers is two rows but one question.
+    */
+  private[pages] def worksheetWords(
+    entries: List[TagEntry],
+    left: WordLanguage,
+    right: WordLanguage,
+  ): List[Side] = {
+    entries.flatMap(entry => orient(entry, left, right)._1).distinctBy(_.word.id)
+  }
+
+  /** `count` of `words` in random order, without repeats; all of them when the wordlist holds fewer. */
+  private[pages] def pickRandom[A](words: List[A], count: Int, random: scala.util.Random): List[A] = {
+    random.shuffle(words).take(count.max(0))
+  }
+
+  /** How many words a random worksheet asks for before the reader changes it. */
+  private[pages] val defaultPrintCount = 20
+
+  /** The paper copy: the wordlist's name, then one numbered line per word — the word and its note on the left, an empty
+    * line under the other language's heading for the reader to write the translation on. A table, so the heading row
+    * repeats on every page and no line is split across two.
+    */
+  private[pages] def renderWorksheet(sheet: Worksheet): HtmlElement = {
+    div(
+      cls := "worksheet p-8",
+      h1(cls := "text-2xl font-bold", sheet.title),
+      table(
+        cls  := "mt-6 w-full border-collapse",
+        thead(
+          tr(
+            th(cls := "w-10"),
+            th(cls := "w-2/5 pb-2 text-left text-sm font-semibold", Labels.language(sheet.left)),
+            th(cls := "pb-2 text-left text-sm font-semibold", Labels.language(sheet.right)),
+          )
+        ),
+        tbody(
+          sheet.words.zipWithIndex.map { case (side, index) =>
+            tr(
+              cls := "break-inside-avoid",
+              td(cls := "pt-6 pr-2 text-right align-bottom opacity-70", s"${index + 1}."),
+              td(
+                cls  := "pt-6 pr-4 align-bottom text-lg",
+                Word.display(side.word),
+                side.comment.map(note => span(cls := "ml-1 text-sm opacity-70", s"($note)")),
+              ),
+              td(cls := "pt-6 align-bottom", div(cls := "h-6 border-b border-black")),
+            )
+          }
+        ),
+      ),
+    )
   }
 
   // -- Tabular import --------------------------------------------------------------------------
@@ -339,6 +411,21 @@ private final class TagEditorPage(
     */
   private val exportBus = new EventBus[Unit]()
 
+  /** "Print" — a paper worksheet, open to any reader like "Export". The dialog picks the words: the ticked rows, or a
+    * random count from the whole wordlist. The page holds one page of rows, so the whole wordlist is read each time the
+    * dialog opens; `allEntriesVar` is `None` while it loads.
+    */
+  private val printOpenVar   = Var(false)
+  private val printOpenBus   = new EventBus[Unit]()
+  private val printSourceVar = Var(TagEditorPage.PrintSource.Random)
+  private val printCountVar  = Var(TagEditorPage.defaultPrintCount)
+  private val allEntriesVar  = Var(Option.empty[List[TagEntry]])
+
+  /** The sheet on paper. It is drawn into a host outside the app's tree, and `web/main.css` makes that host the whole
+    * printed copy while it holds a sheet. It is cleared after printing, so the browser's own print prints the page.
+    */
+  private val worksheetVar = Var(Option.empty[TagEditorPage.Worksheet])
+
   /** "Create game"/"View games" — the same pair of buttons `TagsPage` offers on every row, copied here since this page
     * *is* one row's detail. Offered to every reader, editor or not, for the same reason `TagsPage` offers them
     * unconditionally: a game is built from the wordlist, not owned through it, and the catalog it links to is public.
@@ -432,11 +519,11 @@ private final class TagEditorPage(
   /** Whether multiselect is on: tick boxes instead of each row's edit and delete icons. */
   private val selectingVar = Var(false)
 
-  /** The tick-box column shows only while an editor selects; the icon column only while an editor does not. A reader
-    * who cannot edit gets neither, so an empty cell takes no width at either end of the row.
+  /** The tick-box column shows only while the reader selects — any reader, since a worksheet prints the ticked rows.
+    * The icon column shows only while an editor does not select. A reader who cannot edit never gets it, so an empty
+    * cell takes no width at the end of the row.
     */
-  private val tickColumnHidden: Signal[Boolean]   =
-    canEditSignal.combineWith(selectingVar.signal).map { case (can, selecting) => !can || !selecting }
+  private val tickColumnHidden: Signal[Boolean]   = selectingVar.signal.map(!_)
   private val actionColumnHidden: Signal[Boolean] =
     canEditSignal.combineWith(selectingVar.signal).map { case (can, selecting) => !can || selecting }
   private val bulkDeleteOpen                      = Var(false)
@@ -491,6 +578,40 @@ private final class TagEditorPage(
 
   private def toggleSelected(key: (Long, Option[Long])): Unit =
     selectedVar.update(s => if (s.contains(key)) s - key else s + key)
+
+  /** Opens the print dialog on the ticked rows when there are any, and on a random pick otherwise. */
+  private def openPrint(): Unit = {
+    val source =
+      if (selectedVar.now().isEmpty) TagEditorPage.PrintSource.Random else TagEditorPage.PrintSource.Selected
+    Var.set(printSourceVar -> source, allEntriesVar -> None, printOpenVar -> true)
+    printOpenBus.emit(())
+  }
+
+  /** Builds the sheet the dialog asks for and hands it to the browser's print. */
+  private def printWorksheet(): Unit = {
+    val left  = sourceLangVar.now()
+    val right = targetLangVar.now()
+    val words = printSourceVar.now() match {
+      case TagEditorPage.PrintSource.Selected =>
+        val selected = selectedVar.now()
+        TagEditorPage.worksheetWords(
+          entriesVar.now().filter(entry => selected.contains(TagEditorPage.rowKey(entry))),
+          left,
+          right,
+        )
+      case TagEditorPage.PrintSource.Random   =>
+        TagEditorPage.pickRandom(
+          TagEditorPage.worksheetWords(allEntriesVar.now().getOrElse(Nil), left, right),
+          printCountVar.now(),
+          new scala.util.Random(),
+        )
+    }
+    val title = tagVar.now().map(_.name).getOrElse("")
+    Var.set(worksheetVar -> Some(TagEditorPage.Worksheet(title, left, right, words)), printOpenVar -> false)
+    // A `Var` set inside a click handler reaches the DOM only when the handler's transaction ends, so the print waits
+    // one turn for the sheet to be there.
+    dom.window.setTimeout(() => dom.window.print(), 0)
+  }
 
   private def startEdit(entry: TagEntry): Unit = {
     val key                                                       = TagEditorPage.rowKey(entry)
@@ -757,12 +878,13 @@ private final class TagEditorPage(
           ),
           child.maybe <-- tagVar.signal.map(_.map(renderActionButtons)),
           child.maybe <-- tagVar.signal.map(_.map(renderDeleteModal)),
+          renderPrintModal(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderBulkDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderRowDeleteModal())),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderDeleteWordsModal())),
           renderLanguages(),
           renderFilters(),
-          child.maybe <-- canEditSignal.map(Option.when(_)(renderSelectionBar())),
+          renderSelectionBar(),
           renderRows(),
           renderPagination(),
           child.maybe <-- canEditSignal.map(Option.when(_)(renderAddRow())),
@@ -1005,7 +1127,119 @@ private final class TagEditorPage(
             deleteWordsOpen.set(false)
             errorVar.set(Some(err.message))
         },
+      printOpenBus.events.flatMapSwitch(_ => WordApiClient.tagEntries(tagId)) -->
+        Observer[Either[ApiError, List[TagEntry]]] {
+          case Right(rows) => allEntriesVar.set(Some(rows))
+          case Left(err)   => Var.set(printOpenVar -> false, errorVar -> Some(err.message))
+        },
+      // The worksheet's host hangs off `body`, outside the app's tree, so the print stylesheet can leave every other
+      // child of `body` off the paper. It lives as long as the page does.
+      onMountUnmountCallbackWithState[HtmlElement, (dom.Element, com.raquo.laminar.nodes.RootNode)](
+        mount = _ => {
+          val host = dom.document.createElement("div")
+          host.classList.add("worksheet-host")
+          dom.document.body.appendChild(host)
+          (host, L.render(host, div(child.maybe <-- worksheetVar.signal.map(_.map(TagEditorPage.renderWorksheet)))))
+        },
+        unmount = (_, state) => {
+          val (host, root) = state
+          root.unmount()
+          host.remove()
+        },
+      ),
+      windowEvents(_.onAfterPrint) --> Observer[dom.Event](_ => worksheetVar.set(None)),
       onMountCallback(_ => { reloadBus.emit(()); entriesBus.emit(()) }),
+    )
+  }
+
+  /** The print dialog: the ticked rows, or a random count from the whole wordlist. The ticked rows are this page's only
+    * — a selection never spans a page turn.
+    */
+  private def renderPrintModal(): HtmlElement = {
+    val selectedCount: Signal[Int]                                                                           = selectedVar.signal.map(_.size).distinct
+    val available: Signal[Option[Int]]                                                                       = {
+      Signal.combine(allEntriesVar.signal, sourceLangVar.signal, targetLangVar.signal).map { case (rows, left, right) =>
+        rows.map(TagEditorPage.worksheetWords(_, left, right).size)
+      }
+    }
+    val isRandom: Signal[Boolean]                                                                            = printSourceVar.signal.map(_ == TagEditorPage.PrintSource.Random)
+    val canPrint: Signal[Boolean]                                                                            = {
+      Signal.combine(printSourceVar.signal, selectedCount, available, printCountVar.signal).map {
+        case (TagEditorPage.PrintSource.Selected, ticked, _, _)  => ticked > 0
+        case (TagEditorPage.PrintSource.Random, _, words, count) => words.exists(_ > 0) && count > 0
+      }
+    }
+    def choice(source: TagEditorPage.PrintSource, text: Mod[HtmlElement], off: Signal[Boolean]): HtmlElement = {
+      label(
+        cls := "flex items-center gap-2 cursor-pointer",
+        input(
+          typ      := "radio",
+          cls      := "radio radio-sm",
+          nameAttr := "print-source",
+          checked <-- printSourceVar.signal.map(_ == source),
+          disabled <-- off,
+          onChange.mapToUnit --> Observer[Unit](_ => printSourceVar.set(source)),
+        ),
+        span(text),
+      )
+    }
+    div(
+      cls := "modal",
+      cls("modal-open") <-- printOpenVar.signal,
+      div(
+        cls   := "modal-box w-full max-w-sm",
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.tagsPrintTitle)),
+        div(
+          cls  := "flex flex-col gap-2 py-4",
+          choice(
+            TagEditorPage.PrintSource.Selected,
+            child.text <-- selectedCount.map(n => I18n.t(UiKeys.tagsPrintSelected, n.toString)),
+            selectedCount.map(_ == 0),
+          ),
+          child.maybe <-- selectedCount.map(n =>
+            Option.when(n == 0)(p(cls := "text-xs opacity-70 ml-7", I18n.t(UiKeys.tagsPrintNoneSelected)))
+          ),
+          choice(TagEditorPage.PrintSource.Random, I18n.t(UiKeys.tagsPrintRandom), Val(false)),
+          div(
+            cls := "ml-7 flex flex-col gap-1",
+            label(
+              cls := "flex items-center gap-2 text-sm",
+              span(I18n.t(UiKeys.tagsPrintCount)),
+              input(
+                typ     := "number",
+                cls     := "input input-sm w-24",
+                minAttr := "1",
+                maxAttr <-- available.map(_.fold("")(_.toString)),
+                disabled <-- isRandom.map(!_),
+                value <-- printCountVar.signal.map(_.toString),
+                onInput.mapToValue --> Observer[String](text => text.toIntOption.foreach(printCountVar.set)),
+              ),
+            ),
+            child <-- available.map {
+              case Some(words) =>
+                span(cls := "text-xs opacity-70", I18n.plural(UiKeys.tagsPrintAvailable, words.toLong))
+              case None        => span(cls := "loading loading-spinner loading-xs", role := "status")
+            },
+          ),
+        ),
+        div(
+          cls  := "modal-action",
+          button(
+            cls := "btn btn-sm",
+            typ := "button",
+            I18n.t(UiKeys.commonCancel),
+            onClick.mapToUnit --> Observer[Unit](_ => printOpenVar.set(false)),
+          ),
+          button(
+            cls := "btn btn-sm btn-primary",
+            typ := "button",
+            disabled <-- canPrint.map(!_),
+            I18n.t(UiKeys.tagsPrintButton),
+            onClick.mapToUnit --> Observer[Unit](_ => printWorksheet()),
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> Observer[Unit](_ => printOpenVar.set(false))),
     )
   }
 
@@ -1035,6 +1269,16 @@ private final class TagEditorPage(
         typ := "button",
         I18n.t(UiKeys.tagsExportButton),
         onClick.mapToUnit --> exportBus.writer,
+      ),
+      span(
+        cls := "flex items-center gap-1",
+        button(
+          cls := "btn btn-sm",
+          typ := "button",
+          I18n.t(UiKeys.tagsPrintButton),
+          onClick.mapToUnit --> Observer[Unit](_ => openPrint()),
+        ),
+        HelpIcon.render(I18n.t(UiKeys.helpTagsPrint)),
       ),
       tag.soloGame match {
         case Some(game) =>
@@ -1168,9 +1412,9 @@ private final class TagEditorPage(
     )
   }
 
-  /** Select all / deselect all over the visible rows, and the bulk-delete trigger. Shown only to an editor. */
   /** Multiselect is off until the reader turns it on: the tick boxes and the bulk buttons then take the place of each
-    * row's edit and delete icons, and "Done" brings the icons back and drops the selection.
+    * row's edit and delete icons, and "Done" brings the icons back and drops the selection. Every reader may select,
+    * since "Print" prints the ticked rows; the two bulk deletes are an editor's alone.
     */
   private def renderSelectionBar(): HtmlElement = {
     div(
@@ -1205,6 +1449,18 @@ private final class TagEditorPage(
         I18n.t(UiKeys.tagsEditorDeselectAll),
         onClick.mapToUnit --> Observer[Unit](_ => selectedVar.set(Set.empty)),
       ),
+      children <-- canEditSignal.map(can => if (can) renderBulkDeleteButtons() else Nil),
+      button(
+        typ := "button",
+        cls := "btn btn-xs btn-ghost",
+        I18n.t(UiKeys.tagsEditorSelectDone),
+        onClick.mapToUnit --> Observer[Unit](_ => Var.set(selectingVar -> false, selectedVar -> Set.empty)),
+      ),
+    )
+  }
+
+  private def renderBulkDeleteButtons(): List[HtmlElement] = {
+    List(
       button(
         typ := "button",
         cls := "btn btn-xs btn-error",
@@ -1218,12 +1474,6 @@ private final class TagEditorPage(
         disabled <-- eligibleWordIds.map(_.isEmpty),
         child.text <-- eligibleWordIds.map(ids => I18n.t(UiKeys.tagsEditorDeleteWords, ids.size.toString)),
         onClick.mapToUnit --> Observer[Unit](_ => deleteWordsOpen.set(true)),
-      ),
-      button(
-        typ := "button",
-        cls := "btn btn-xs btn-ghost",
-        I18n.t(UiKeys.tagsEditorSelectDone),
-        onClick.mapToUnit --> Observer[Unit](_ => Var.set(selectingVar -> false, selectedVar -> Set.empty)),
       ),
     )
   }
@@ -1273,17 +1523,13 @@ private final class TagEditorPage(
                 th(
                   cls  := "w-4",
                   cls("hidden") <-- tickColumnHidden,
-                  child.maybe <-- canEditSignal.map(
-                    Option.when(_)(
-                      input(
-                        typ := "checkbox",
-                        cls := "checkbox checkbox-xs",
-                        checked <-- selectedVar.signal.map(s => pageKeys.nonEmpty && pageKeys.subsetOf(s)),
-                        onInput.mapToChecked --> Observer[Boolean](on =>
-                          selectedVar.update(s => if (on) s ++ pageKeys else s -- pageKeys)
-                        ),
-                      )
-                    )
+                  input(
+                    typ := "checkbox",
+                    cls := "checkbox checkbox-xs",
+                    checked <-- selectedVar.signal.map(s => pageKeys.nonEmpty && pageKeys.subsetOf(s)),
+                    onInput.mapToChecked --> Observer[Boolean](on =>
+                      selectedVar.update(s => if (on) s ++ pageKeys else s -- pageKeys)
+                    ),
                   ),
                 ),
                 th(child.text <-- sourceLangVar.signal.map(Labels.language)),
@@ -1359,15 +1605,11 @@ private final class TagEditorPage(
       td(
         cls := "w-4",
         cls("hidden") <-- tickColumnHidden,
-        child.maybe <-- canEditSignal.map(
-          Option.when(_)(
-            input(
-              typ := "checkbox",
-              cls := "checkbox checkbox-xs",
-              checked <-- selectedVar.signal.map(_.contains(rowKey)),
-              onClick.mapToUnit --> Observer[Unit](_ => toggleSelected(rowKey)),
-            )
-          )
+        input(
+          typ := "checkbox",
+          cls := "checkbox checkbox-xs",
+          checked <-- selectedVar.signal.map(_.contains(rowKey)),
+          onClick.mapToUnit --> Observer[Unit](_ => toggleSelected(rowKey)),
         ),
       ),
       td(

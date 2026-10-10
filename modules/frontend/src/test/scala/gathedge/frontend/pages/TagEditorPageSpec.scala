@@ -429,6 +429,64 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           )
         },
       ),
+      suite("worksheet")(
+        test("asks each row's word in the left language, in row order, and follows the swap") {
+          val rows = List(entry(1, Some(2)), entry(3, Some(4)))
+          assertTrue(
+            TagEditorPage.worksheetWords(rows, WordLanguage.De, WordLanguage.Hu).map(_.word.id) == List(1L, 3L),
+            TagEditorPage.worksheetWords(rows, WordLanguage.Hu, WordLanguage.De).map(_.word.id) == List(2L, 4L),
+          )
+        },
+        test("a word with two answers is asked once, and a row with nothing on the left is left out") {
+          val rows = List(entry(1, Some(2)), entry(1, Some(5)), entry(9, None, sourceLang = WordLanguage.Hu))
+          assertTrue(TagEditorPage.worksheetWords(rows, WordLanguage.De, WordLanguage.Hu).map(_.word.id) == List(1L))
+        },
+        test("the word keeps its note") {
+          val rows = List(entry(1, Some(2), comment = Some("Gebäude")))
+          assertTrue(
+            TagEditorPage.worksheetWords(rows, WordLanguage.De, WordLanguage.Hu).map(_.comment) == List(Some("Gebäude"))
+          )
+        },
+        test("a random pick takes the count asked, without repeats, and all of them when there are fewer") {
+          val words  = (1 to 30).toList
+          val random = new scala.util.Random(7L)
+          val five   = TagEditorPage.pickRandom(words, 5, random)
+          assertTrue(
+            five.size == 5,
+            five.distinct == five,
+            five.forall(words.contains),
+            TagEditorPage.pickRandom(words, 50, random).sorted == words,
+            TagEditorPage.pickRandom(words, 0, random).isEmpty,
+          )
+        },
+        test("the sheet numbers each word and gives it an empty line") {
+          val sheet     = TagEditorPage.Worksheet(
+            "Animals",
+            WordLanguage.De,
+            WordLanguage.Hu,
+            TagEditorPage.worksheetWords(List(entry(1, Some(2)), entry(3, Some(4))), WordLanguage.De, WordLanguage.Hu),
+          )
+          val container = dom.document.createElement("div")
+          dom.document.body.appendChild(container)
+          val rootNode  = L.render(container, TagEditorPage.renderWorksheet(sheet))
+          val text      = container.textContent
+          val lines     = container.querySelectorAll("tbody .border-b").length
+          rootNode.unmount()
+          dom.document.body.removeChild(container)
+          assertTrue(
+            text.contains("Animals"),
+            text.contains("1.w1"),
+            text.contains("2.w3"),
+            !text.contains("t2"),
+            lines == 2,
+          )
+        },
+      ),
+      test("any reader may tick rows, since a worksheet prints them") {
+        // No backend answer, so the tag never proves editable — the selection control shows all the same.
+        val text = withPage(_.textContent)
+        assertTrue(text.contains(UiKeys.tagsEditorSelectRows))
+      },
     )
   }
 
