@@ -34,6 +34,12 @@ object GameScoringSpec extends ZIOSpecDefault {
         test("surrounding whitespace alone still counts as an exact match") {
           assertTrue(GameScoring.score("Haus", "  haus  ") == ScoredAnswer(AnswerOutcome.Correct, 2))
         },
+        test("a phone's typographic apostrophe matches a plain one") {
+          assertTrue(
+            GameScoring.score("l'homme", "l’homme").outcome == AnswerOutcome.Correct,
+            GameScoring.scoreChoice("l'homme", "L’homme").outcome == AnswerOutcome.Correct,
+          )
+        },
         test("a one-letter insertion typo is worth one point") {
           assertTrue(GameScoring.score("Haus", "Hause") == ScoredAnswer(AnswerOutcome.Typo, 1))
         },

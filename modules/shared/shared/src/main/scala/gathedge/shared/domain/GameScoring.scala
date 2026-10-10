@@ -100,13 +100,18 @@ object GameScoring {
     previousRow(shorter.length)
   }
 
+  /** An answer as compared: trimmed, case-folded, and with a phone's typographic apostrophe as a plain one, so
+    * `l’homme` is `l'homme`.
+    */
+  private def normalize(answer: String): String = LanguageProfile.apostrophes(answer.trim.toLowerCase)
+
   /** Normalizes both sides (trim + case-fold) before comparing: an exact match after normalizing is worth
     * [[maxPointsPerWord]], an edit distance of exactly one (a single typo) is worth [[typoPoints]], anything else is
     * worth nothing.
     */
   def score(expected: String, submitted: String): ScoredAnswer = {
-    val normalizedExpected = expected.trim.toLowerCase
-    val normalizedGiven    = submitted.trim.toLowerCase
+    val normalizedExpected = normalize(expected)
+    val normalizedGiven    = normalize(submitted)
     if (normalizedExpected == normalizedGiven)
       ScoredAnswer(AnswerOutcome.Correct, maxPointsPerWord)
     else if (levenshtein(normalizedExpected, normalizedGiven) == 1)
@@ -123,7 +128,7 @@ object GameScoring {
     * the wrong button.
     */
   def scoreChoice(expected: String, submitted: String): ScoredAnswer = {
-    if (expected.trim.toLowerCase == submitted.trim.toLowerCase)
+    if (normalize(expected) == normalize(submitted))
       ScoredAnswer(AnswerOutcome.Correct, choicePoints)
     else
       ScoredAnswer(AnswerOutcome.Wrong, 0)

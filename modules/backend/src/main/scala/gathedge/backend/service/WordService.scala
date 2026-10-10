@@ -2769,16 +2769,19 @@ final case class WordServiceLive(
     * own dedup is.
     */
   private def dedupeArticledVariants(tokens: List[String], languages: List[WordLanguage]): List[String] = {
-    val forms = articleForms(languages)
+    val forms  = articleForms(languages)
+    val elided = languages.flatMap(language => LanguageProfile.of(language).elidedArticles).toSet
 
     def split(token: String): (String, Option[String]) = {
-      if (forms.isEmpty)
-        (token, None)
-      else {
-        token.trim.split("\\s+", 2) match {
-          case Array(article, rest) if forms.contains(article.toLowerCase) => (rest, Some(article.toLowerCase))
-          case _                                                           => (token, None)
-        }
+      val folded = LanguageProfile.apostrophes(token.trim.toLowerCase)
+      elided.find(article => folded.startsWith(article) && folded.length > article.length) match {
+        case Some(article) =>
+          (token.trim.drop(article.length), Some(article))
+        case None          =>
+          token.trim.split("\\s+", 2) match {
+            case Array(article, rest) if forms.contains(article.toLowerCase) => (rest, Some(article.toLowerCase))
+            case _                                                           => (token, None)
+          }
       }
     }
 
@@ -2796,8 +2799,10 @@ final case class WordServiceLive(
       .sortBy { case (_, group) => tokens.indexOf(group.head._1) }
       .map { case (bare, group) =>
         group.collectFirst { case (_, (_, Some(article))) => article } match {
-          case Some(article) => article + " " + (if (capitalizes(article)) bare.capitalize else bare)
-          case None          => bare
+          case Some(article) if elided.contains(article) => article + bare
+          case Some(article)                             =>
+            article + " " + (if (capitalizes(article)) bare.capitalize else bare)
+          case None                                      => bare
         }
       }
   }

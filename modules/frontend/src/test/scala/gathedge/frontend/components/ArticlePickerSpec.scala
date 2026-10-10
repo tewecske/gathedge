@@ -16,11 +16,14 @@ object ArticlePickerSpec extends ZIOSpecDefault {
 
   private val german = LanguageProfile.of(WordLanguage.De)
 
-  private def withPicker[A](start: String)(use: (dom.Element, Var[String]) => A): A = {
+  private def withPicker[A](
+    start: String,
+    profile: LanguageProfile = german,
+  )(use: (dom.Element, Var[String]) => A): A = {
     val container = dom.document.createElement("div")
     dom.document.body.appendChild(container)
     val textVar   = Var(start)
-    val root      = L.render(container, ArticlePicker.render("grp", german, textVar, () => ()))
+    val root      = L.render(container, ArticlePicker.render("grp", profile, textVar, () => ()))
     try use(container, textVar)
     finally {
       root.unmount()
@@ -50,6 +53,22 @@ object ArticlePickerSpec extends ZIOSpecDefault {
           clickArticle(c, "das")
           assertTrue(textVar.now() == "das ")
         }
+      },
+      test("a French article elides as the game's answer does, and replaces an elided one") {
+        val french = LanguageProfile.of(WordLanguage.Fr)
+        val heure  = withPicker("heure", french) { (c, textVar) =>
+          clickArticle(c, "la")
+          textVar.now()
+        }
+        val homme  = withPicker("l’homme", french) { (c, textVar) =>
+          clickArticle(c, "le")
+          textVar.now()
+        }
+        val heros  = withPicker("la héros", french) { (c, textVar) =>
+          clickArticle(c, "le")
+          textVar.now()
+        }
+        assertTrue(heure == "l'heure", homme == "l'homme", heros == "le héros")
       },
       test("a declined article form is still recognised and replaced, not stacked") {
         withPicker("den Hund") { (c, textVar) =>

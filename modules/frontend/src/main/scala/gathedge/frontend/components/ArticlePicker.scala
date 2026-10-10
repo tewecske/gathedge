@@ -31,9 +31,11 @@ object ArticlePicker {
                 // `strip` leaves a lone article untouched (by design — "der" alone is not a gendered word), so switching
                 // articles on a field that holds only one has to drop it here, or the new one lands in front of the old.
                 val current = textVar.now().trim
-                val bare    =
-                  if (profile.articleForms.contains(current.toLowerCase)) "" else profile.strip(current)._1
-                textVar.set(s"$article $bare")
+                val lone    = profile.articleForms.contains(current.toLowerCase) ||
+                  profile.elidedArticles.contains(LanguageProfile.apostrophes(current.toLowerCase))
+                val bare    = if (lone) "" else profile.strip(current)._1
+                // Written as the word page writes it: French `la` before `heure` is `l'heure`.
+                textVar.set(profile.lead(article, bare, bare) + bare)
                 refocus()
               },
             ),
