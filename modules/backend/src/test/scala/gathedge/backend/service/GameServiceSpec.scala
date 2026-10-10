@@ -1004,6 +1004,23 @@ object GameServiceSpec extends ZIOSpecDefault {
           fullResults.answers.head.outcome == AnswerOutcome.Correct,
         )
       },
+      test("a French answer is the elided `l'homme`, typed with either apostrophe") {
+        for {
+          owner   <- newUser()
+          tag     <- WordRepository.insertTag(owner, "elided", "elided", 0L, "fr", "hu")
+          source  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "férfi"))
+          target  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Fr, "homme", gender = Some(Gender.Masculine)))
+          _       <- WordRepository.pairTranslation(source.id, tag.id, target.id, 0L)
+          created <- GameService.createGame(owner, WordLanguage.Hu, WordLanguage.Fr, List(tag.id))
+          started <- GameService.startPlay(created.slug, owner)
+          prompt  <- GameService.nextPrompt(started.playId, owner)
+          _       <- GameService.submitAnswer(started.playId, prompt.wordId.get, "l’homme", owner)
+          results <- GameService.getResults(started.playId, owner)
+        } yield assertTrue(
+          results.answers.head.expectedTexts == List("l'homme"),
+          results.answers.head.outcome == AnswerOutcome.Correct,
+        )
+      },
       test("includeDefiniteArticles defaults to true and, when false, strips the article everywhere") {
         for {
           owner          <- newUser()

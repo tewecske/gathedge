@@ -15,15 +15,16 @@ package gathedge.shared.domain
   * dictionary import tags a form that starts with one as `reflexive`, since the dump gives it the plain form's tags.
   *
   * `declinedArticles` are the definite article by number, and by case where the language has cases, for the noun form
-  * tables (`dem Haus`, `der Häuser`, `los niños`). `singularArticleGender` names the nouns whose singular takes another
-  * gender's article: Spanish `el agua`, a feminine noun.
+  * tables (`dem Haus`, `der Häuser`, `los niños`). `takesMasculineArticle` names the feminine nouns whose singular
+  * takes the masculine article's form: Spanish `el agua`, `las aguas`.
   *
   * `subjectPronouns` go before each form of a verb's person tables (`ich rufe an`). `subordinator` goes before the
   * pronoun in a subordinate clause, where the form is wrong without it (`dass ich anrufe`). `elisions` shorten a prefix
   * before a vowel or `h` and join it to the form (`j'aime`, `l'homme`). `keepsPrefix` names the words that start with
-  * an aspirated `h`, before which nothing elides (`le héros`, `je hais`).
+  * an aspirated `h`, before which nothing elides (`le héros`, `je hais`). `elidedArticles` are the elided forms
+  * [[strip]] reads back (`l'homme`); one names no gender, since `le` and `la` both elide to it.
   *
-  * The tables use these, but [[display]] does not yet: it still writes `la agua` and `le homme`.
+  * [[display]] and the form tables follow the same rules, so a word page writes `el agua` in its title and its table.
   */
 final case class LanguageProfile(
   genders: List[Gender],
@@ -35,25 +36,32 @@ final case class LanguageProfile(
   subjectPronouns: List[TaggedWord] = Nil,
   subordinator: Option[String] = None,
   elisions: Map[String, String] = Map.empty,
-  singularArticleGender: Map[String, Gender] = Map.empty,
+  takesMasculineArticle: Set[String] = Set.empty,
   keepsPrefix: Set[String] = Set.empty,
+  elidedArticles: Set[String] = Set.empty,
 ) {
 
   def hasGenders: Boolean = genders.nonEmpty
 
   def article(gender: Gender): Option[String] = definiteArticles.get(gender)
 
-  /** A gendered noun with its article in front, anything else (or a genderless language) as it stands. */
+  /** A gendered noun with its singular nominative article in front (`der Hund`, `el agua`, `l'homme`), anything else
+    * (or a genderless language) as it stands.
+    */
   def display(text: String, gender: Option[Gender]): String = {
-    gender.flatMap(article).map(a => s"$a $text").getOrElse(text)
+    gender
+      .flatMap(own => declinedArticle(Some(own), Set("singular", "nominative"), text).orElse(article(own)))
+      .map(article => lead(article, text, text) + text)
+      .getOrElse(text)
   }
 
   /** The definite article of a form table cell of `lemma` that requires `tags`. The first entry whose tags the cell
     * requires and whose gender is the noun's (or any gender) wins. A noun with no gender gets only the plural's.
     */
   def declinedArticle(gender: Option[Gender], tags: Set[String], lemma: String = ""): Option[String] = {
-    val asGender = singularArticleGender.get(lemma.toLowerCase).filter(_ => tags.contains("singular"))
-    TaggedWord.find(declinedArticles, asGender.orElse(gender), tags)
+    val borrows = gender.contains(Gender.Feminine) && tags.contains("singular") &&
+      takesMasculineArticle.contains(lemma.toLowerCase)
+    TaggedWord.find(declinedArticles, if (borrows) Some(Gender.Masculine) else gender, tags)
   }
 
   /** The subject pronoun of a form table cell that requires `tags`: the first entry whose tags the cell requires. */
@@ -91,15 +99,25 @@ final case class LanguageProfile(
   /** Splits a leading article off `text`, answering the bare word and the gender it names. Recognises every form in
     * [[articleForms]], not only the ones [[display]] shows — so a plural or declined article a reader typed still
     * strips correctly. A token with no such prefix (or a lone article with nothing after it) passes through unchanged.
+    *
+    * It undoes [[display]]: `el agua` is feminine, since `agua` takes the masculine form, and an elided article
+    * (`l'homme`, or `l’homme` as a phone types it) comes off with no gender, since it names none.
     */
   def strip(text: String): (String, Option[Gender]) = {
-    if (articleForms.isEmpty)
-      (text, None)
-    else {
-      text.trim.split("\\s+", 2) match {
-        case Array(head, rest) if articleForms.contains(head.toLowerCase) => (rest, articleForms.get(head.toLowerCase))
-        case _                                                            => (text, None)
-      }
+    val trimmed = text.trim
+    val elided  = elidedArticles.find(article => LanguageProfile.apostrophes(trimmed.toLowerCase).startsWith(article))
+    elided.map(article => trimmed.drop(article.length).trim).filter(_.nonEmpty) match {
+      case Some(rest) =>
+        (rest, None)
+      case None       =>
+        trimmed.split("\\s+", 2) match {
+          case Array(head, rest) if articleForms.contains(head.toLowerCase) =>
+            val named = articleForms(head.toLowerCase)
+            val owned = named == Gender.Masculine && takesMasculineArticle.contains(rest.toLowerCase)
+            (rest, Some(if (owned) Gender.Feminine else named))
+          case _                                                            =>
+            (text, None)
+        }
     }
   }
 
@@ -123,6 +141,9 @@ object TaggedWord {
 }
 
 object LanguageProfile {
+
+  /** `text` with each typographic apostrophe (`’`, which a phone keyboard writes) as a plain one. */
+  def apostrophes(text: String): String = text.replace('’', '\'')
 
   /** The letters an elided prefix joins: vowels, with and without accents, and `h`. Not `y`: `le yaourt`. */
   private val elidesBefore: Set[Char] = "aeiouàâäéèêëîïôöùûüœæh".toSet
@@ -461,13 +482,13 @@ object LanguageProfile {
     capitalizesNouns = false,
     reflexivePronouns = Set("me", "te", "se", "nos", "os"),
     declinedArticles = byNumber("el", "la", "los", "las"),
-    singularArticleGender = spanishStressedA.map(_ -> Gender.Masculine).toMap,
+    takesMasculineArticle = spanishStressedA,
     subjectPronouns = TaggedWord(Set("second-person", "singular", "vos-form"), None, "vos") ::
       persons("yo", "tú", "él", "nosotros", "vosotros", "ellos"),
   )
 
-  /** `les` is left out of [[LanguageProfile.articleForms]]: it is the plural of both genders, so it names none. `l'` is
-    * left out too: it joins the noun with no space (`l'homme`), and [[LanguageProfile.strip]] splits on a space.
+  /** `les` is left out of [[LanguageProfile.articleForms]]: it is the plural of both genders, so it names none. `l'`
+    * names none either, and joins the noun with no space, so it is an [[LanguageProfile.elidedArticles]] entry instead.
     */
   private val french: LanguageProfile = LanguageProfile(
     genders = List(Gender.Masculine, Gender.Feminine),
@@ -481,6 +502,7 @@ object LanguageProfile {
     declinedArticles = byNumber("le", "la", "les", "les"),
     subjectPronouns = persons("je", "tu", "il", "nous", "vous", "ils"),
     elisions = Map("je" -> "j'", "le" -> "l'", "la" -> "l'"),
+    elidedArticles = Set("l'"),
     keepsPrefix = frenchAspiratedH,
   )
 

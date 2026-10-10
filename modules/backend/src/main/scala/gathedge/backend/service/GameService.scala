@@ -1115,7 +1115,7 @@ final case class GameServiceLive(
   /** How an option is compared for uniqueness and for exclusion — the same trim/case-fold `GameScoring` grades by, so
     * two options can never be one click apart from the same answer.
     */
-  private def optionKey(text: String): String = text.trim.toLowerCase
+  private def optionKey(text: String): String = LanguageProfile.apostrophes(text.trim.toLowerCase)
 
   /** The clickable options for one [[GameMode.MultipleChoice]] prompt: `translationId`'s text, plus up to three
     * distractors, shuffled.
@@ -1179,9 +1179,11 @@ final case class GameServiceLive(
   }
 
   /** The accepted answer under each of its language's other articles — `die Hund`, `das Hund` for `der Hund`; `la
-    * perro` for `el perro`. The last-resort confusable, used when the dictionary holds no real sibling or form to
-    * offer: the article is the half of a gendered noun a learner has to memorise, so a prompt whose only distinction is
-    * the article is still the right question. Never produced for anything but a gendered noun shown with its article.
+    * perro` for `el perro`. Written as [[LanguageProfile.display]] writes it, so a variant the same as the answer
+    * (`l'homme` under either article) drops out with the answer's own key. The last-resort confusable, used when the
+    * dictionary holds no real sibling or form to offer: the article is the half of a gendered noun a learner has to
+    * memorise, so a prompt whose only distinction is the article is still the right question. Never produced for
+    * anything but a gendered noun shown with its article.
     */
   private def articleVariantsOf(play: GamePlayRow, correctRow: Option[WordRow]): List[String] = {
     correctRow.toList.flatMap { row =>
@@ -1189,7 +1191,7 @@ final case class GameServiceLive(
       val profile        = LanguageProfile.of(targetLanguage)
       if (play.includeDefiniteArticles && profile.hasGenders) {
         Gender.fromColumn(row.gender).toList.flatMap { own =>
-          profile.genders.filterNot(_ == own).flatMap(profile.article).map(article => article + " " + row.text)
+          profile.genders.filterNot(_ == own).map(other => profile.display(row.text, Some(other)))
         }
       } else
         Nil

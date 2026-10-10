@@ -104,6 +104,63 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           spanish.declinedArticle(Some(Gender.Feminine), Set("singular"), "árbitra") == Some("la"),
         )
       },
+      test("display writes the article each noun takes: `el agua`, `l'homme`, but `le héros`") {
+        val spanish = LanguageProfile.of(WordLanguage.Es)
+        val french  = LanguageProfile.of(WordLanguage.Fr)
+        assertTrue(
+          spanish.display("agua", Some(Gender.Feminine)) == "el agua",
+          spanish.display("abeja", Some(Gender.Feminine)) == "la abeja",
+          spanish.display("hache", Some(Gender.Feminine)) == "la hache",
+          spanish.display("perro", Some(Gender.Masculine)) == "el perro",
+          french.display("homme", Some(Gender.Masculine)) == "l'homme",
+          french.display("heure", Some(Gender.Feminine)) == "l'heure",
+          french.display("héros", Some(Gender.Masculine)) == "le héros",
+          french.display("haine", Some(Gender.Feminine)) == "la haine",
+          french.display("chat", Some(Gender.Masculine)) == "le chat",
+          LanguageProfile.of(WordLanguage.Pt).display("água", Some(Gender.Feminine)) == "a água",
+          LanguageProfile.of(WordLanguage.De).display("Hund", Some(Gender.Masculine)) == "der Hund",
+        )
+      },
+      test("strip undoes display: `el agua` is feminine, `l'homme` and `l’homme` name no gender") {
+        val spanish = LanguageProfile.of(WordLanguage.Es)
+        val french  = LanguageProfile.of(WordLanguage.Fr)
+        assertTrue(
+          spanish.strip("el agua") == ("agua", Some(Gender.Feminine)),
+          spanish.strip("El Agua") == ("Agua", Some(Gender.Feminine)),
+          spanish.strip("el perro") == ("perro", Some(Gender.Masculine)),
+          french.strip("l'homme") == ("homme", None),
+          french.strip("L’homme") == ("homme", None),
+          french.strip("le héros") == ("héros", Some(Gender.Masculine)),
+          french.strip("l'") == ("l'", None),
+        )
+      },
+      test(
+        "every language's display reads back through strip: the same word, and the gender unless an article elided"
+      ) {
+        val samples = List(
+          (WordLanguage.De, "Hund", Gender.Masculine),
+          (WordLanguage.De, "Katze", Gender.Feminine),
+          (WordLanguage.De, "Haus", Gender.Neuter),
+          (WordLanguage.Es, "agua", Gender.Feminine),
+          (WordLanguage.Es, "águila", Gender.Feminine),
+          (WordLanguage.Es, "casa", Gender.Feminine),
+          (WordLanguage.Es, "perro", Gender.Masculine),
+          (WordLanguage.Fr, "chat", Gender.Masculine),
+          (WordLanguage.Fr, "maison", Gender.Feminine),
+          (WordLanguage.Fr, "héros", Gender.Masculine),
+          (WordLanguage.Fr, "homme", Gender.Masculine),
+          (WordLanguage.Fr, "heure", Gender.Feminine),
+          (WordLanguage.Pt, "menino", Gender.Masculine),
+          (WordLanguage.Pt, "água", Gender.Feminine),
+        )
+        assertTrue(samples.forall { case (language, text, gender) =>
+          val profile          = LanguageProfile.of(language)
+          val shown            = profile.display(text, Some(gender))
+          val (bare, readBack) = profile.strip(shown)
+          val elided           = profile.elidedArticles.exists(shown.startsWith)
+          bare == text && readBack == (if (elided) None else Some(gender))
+        })
+      },
       test("Spanish has two genders, does not capitalize, and its strip recognises the plural articles too") {
         val profile = LanguageProfile.of(WordLanguage.Es)
         assertTrue(
@@ -115,14 +172,14 @@ object LanguageProfileSpec extends ZIOSpecDefault {
           profile.capitalize("perro", Some(Gender.Masculine)) == "perro",
         )
       },
-      test("French has two genders, and its strip leaves the genderless plural and the elided article alone") {
+      test("French has two genders; its strip leaves the genderless plural alone and takes off a genderless `l'`") {
         val profile = LanguageProfile.of(WordLanguage.Fr)
         assertTrue(
           profile.genders.toSet == Set(Gender.Masculine, Gender.Feminine),
           profile.display("chien", Some(Gender.Masculine)) == "le chien",
           profile.strip("la maison") == ("maison", Some(Gender.Feminine)),
           profile.strip("les chiens") == ("les chiens", None),
-          profile.strip("l'homme") == ("l'homme", None),
+          profile.strip("l'homme") == ("homme", None),
           profile.capitalize("chien", Some(Gender.Masculine)) == "chien",
         )
       },

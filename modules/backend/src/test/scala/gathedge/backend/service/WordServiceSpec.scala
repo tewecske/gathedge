@@ -391,6 +391,16 @@ object WordServiceSpec extends ZIOSpecDefault {
           asWell.items.map(_.word.text) == List("as well"),
         )
       }.provide(layer),
+      test("a search strips an elided French article, typed with either apostrophe") {
+        for {
+          _     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Fr, "homme", gender = Some(Gender.Masculine)))
+          plain <- list(search = Some("l'hom"), language = WordLanguage.Fr, target = WordLanguage.En)
+          phone <- list(search = Some("L’homme"), language = WordLanguage.Fr, target = WordLanguage.En)
+        } yield assertTrue(
+          plain.items.map(_.word.text) == List("homme"),
+          phone.items.map(_.word.text) == List("homme"),
+        )
+      }.provide(layer),
       test("the translation filter narrows to words with a translation, in the target language or in any") {
         for {
           haus   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Haus", gender = Some(Gender.Neuter)))

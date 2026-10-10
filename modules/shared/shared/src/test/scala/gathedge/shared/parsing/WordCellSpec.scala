@@ -15,6 +15,10 @@ object WordCellSpec extends ZIOSpecDefault {
   private def german(raw: String)    = WordCell.parseWord(raw, WordLanguage.De, deMarkers)
   private def hungarian(raw: String) = WordCell.parseWord(raw, WordLanguage.Hu, huMarkers)
   private def english(raw: String)   = WordCell.parseWord(raw, WordLanguage.En, enMarkers)
+  private def spanish(raw: String)   =
+    WordCell.parseWord(raw, WordLanguage.Es, MarkerVocabulary.forPair(WordLanguage.Es, WordLanguage.En))
+  private def french(raw: String)    =
+    WordCell.parseWord(raw, WordLanguage.Fr, MarkerVocabulary.forPair(WordLanguage.Fr, WordLanguage.En))
 
   private def one(cell: WordCell): ParsedWord = cell.words.head
 
@@ -29,6 +33,22 @@ object WordCellSpec extends ZIOSpecDefault {
             word.text == "Hund",
             word.gender.contains(Gender.Masculine),
             word.partOfSpeech == PartOfSpeech.Noun,
+          )
+        },
+        test(
+          "`el agua` is a feminine noun, and an elided `l'` leaves the noun with no gender rather than in its text"
+        ) {
+          val agua  = one(spanish("el agua"))
+          val perro = one(spanish("el perro"))
+          val homme = one(french("l'homme"))
+          val heure = one(french("l’heure"))
+          assertTrue(
+            agua.text == "agua",
+            agua.gender.contains(Gender.Feminine),
+            perro.gender.contains(Gender.Masculine),
+            homme.text == "homme",
+            homme.gender.isEmpty,
+            heure.text == "heure",
           )
         },
         test("a signed government marker is stripped off the text and not stored") {

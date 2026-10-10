@@ -1008,15 +1008,15 @@ final class WordRepositoryLive(dataSource: DataSource)
   }
 
   /** A leading article of any of `languages`, longest first so `"los"` is not shadowed by a shorter form that happens
-    * to be a prefix of it. Built from [[LanguageProfile]] rather than naming an article here, so a new language's
-    * articles are stripped by the search box with no change to this file.
+    * to be a prefix of it. An elided article (`l'`) needs no space after it. Built from [[LanguageProfile]] rather than
+    * naming an article here, so a new language's articles are stripped by the search box with no change to this file.
     */
   private def leadingArticleOf(languages: List[WordLanguage]): Option[Regex] = {
-    val forms = languages
-      .flatMap(language => LanguageProfile.of(language).articleForms.keys)
-      .distinct
-      .sortBy(-_.length)
-    if (forms.isEmpty) None else Some(("^(?:" + forms.mkString("|") + ")\\s+").r)
+    val profiles = languages.map(LanguageProfile.of)
+    val spaced   = profiles.flatMap(_.articleForms.keys).distinct.sortBy(-_.length).map(form => form + "\\s+")
+    val elided   = profiles.flatMap(_.elidedArticles).distinct.map(form => Regex.quote(form) + "\\s*")
+    val forms    = elided ++ spaced
+    if (forms.isEmpty) None else Some(("^(?:" + forms.mkString("|") + ")").r)
   }
 
   /** Every language's articles, for a search with no `language` filter. */
@@ -1039,7 +1039,8 @@ final class WordRepositoryLive(dataSource: DataSource)
   private def searchPattern(search: Option[String], language: Option[String]): Option[String] = {
     val article = language.fold(anyLeadingArticle)(code => leadingArticle.getOrElse(code, None))
     search
-      .map(needle => article.fold(needle.trim.toLowerCase)(_.replaceFirstIn(needle.trim.toLowerCase, "")))
+      .map(needle => LanguageProfile.apostrophes(needle.trim.toLowerCase))
+      .map(needle => article.fold(needle)(_.replaceFirstIn(needle, "")))
       .map(needle => TextSearch.fold(needle))
       .filter(_.nonEmpty)
       .map(needle => s"$needle%")
