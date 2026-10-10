@@ -1177,5 +1177,12 @@
   "ui.formDrill.finish": "Beenden",
   "ui.formDrill.score": "Formen beim ersten Versuch in der richtigen Zelle: {0} von {1}.",
   "ui.formDrill.again": "Noch einmal üben",
-  "ui.formDrill.back": "Zurück zur Wortliste"
+  "ui.formDrill.back": "Zurück zur Wortliste",
+  "ui.formDrill.articles": "Auch die Artikel wählen",
+  "ui.formDrill.article": "Artikel",
+  "ui.formDrill.hint": "Tipp",
+  "ui.formDrill.hintHelp": "Setzt eine Form in ihre Zelle. Ein Tipp pro Wort. Ist eine Form ausgewählt, zeigt er, wohin diese Form gehört.",
+  "ui.formDrill.skip": "Wort überspringen",
+  "ui.formDrill.skipped.one": "Du hast {0} Wort übersprungen.",
+  "ui.formDrill.skipped.other": "Du hast {0} Wörter übersprungen."
 }
