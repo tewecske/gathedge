@@ -618,6 +618,13 @@ object UiKeys {
   val adminWordFormsDelete: String        = key("ui.admin.wordForms.delete")
   val adminWordFormsDeleteConfirm: String = key("ui.admin.wordForms.deleteConfirm")
   val adminWordFormsDeleted: String       = key("ui.admin.wordForms.deleted")
+  val adminWordFormsScan: String          = key("ui.admin.wordForms.scan")
+  val adminWordFormsCancel: String        = key("ui.admin.wordForms.cancel")
+  val adminWordFormsRunning: String       = key("ui.admin.wordForms.running")
+  val adminWordFormsNotScanned: String    = key("ui.admin.wordForms.notScanned")
+  val adminWordFormsCancelled: String     = key("ui.admin.wordForms.cancelled")
+  val adminWordFormsFailed: String        = key("ui.admin.wordForms.failed")
+  val adminWordFormsFinishedAt: String    = key("ui.admin.wordForms.finishedAt")
 
   // -- Administration: games built from the same wordlists ---------------------------------------
   // One game per wordlist set is a recommendation, not a rule — a multi-wordlist game is allowed. This screen is where

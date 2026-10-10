@@ -512,8 +512,14 @@ trait WordRepository {
   /** Every `(form word, relation)` pair claiming more than `threshold` distinct lemmas -- the shape of the bug where a
     * mislabeled wiktextract tag (e.g. a German conjugation table's `auxiliary` note) turns one common word into a
     * "form" of hundreds of others, which then floods every listing page that word appears on with context rows.
+    *
+    * Only form words with `fromFormWordId <= id < toFormWordId` are read, so a caller can walk the table in chunks (see
+    * [[formWordIdRange]]) and report progress between them.
     */
-  def formFanOutAnomalies(threshold: Int): Task[List[(WordRow, String, Long)]]
+  def formFanOutAnomalies(threshold: Int, fromFormWordId: Long, toFormWordId: Long): Task[List[(WordRow, String, Long)]]
+
+  /** The lowest and highest `form_word_id` in `word_forms`, or `None` when the table is empty. */
+  def formWordIdRange: Task[Option[(Long, Long)]]
 
   /** Deletes every `word_forms` row for one `(form word, relation)` pair -- the cleanup action for
     * [[formFanOutAnomalies]].
@@ -927,8 +933,15 @@ object WordRepository {
   def audioOf(wordId: Long): RIO[WordRepository, List[WordAudioRow]] =
     ZIO.serviceWithZIO[WordRepository](_.audioOf(wordId))
 
-  def formFanOutAnomalies(threshold: Int): RIO[WordRepository, List[(WordRow, String, Long)]] =
-    ZIO.serviceWithZIO[WordRepository](_.formFanOutAnomalies(threshold))
+  def formFanOutAnomalies(
+    threshold: Int,
+    fromFormWordId: Long,
+    toFormWordId: Long,
+  ): RIO[WordRepository, List[(WordRow, String, Long)]] =
+    ZIO.serviceWithZIO[WordRepository](_.formFanOutAnomalies(threshold, fromFormWordId, toFormWordId))
+
+  def formWordIdRange: RIO[WordRepository, Option[(Long, Long)]] =
+    ZIO.serviceWithZIO[WordRepository](_.formWordIdRange)
 
   def deleteWordForm(lemmaWordId: Long, formWordId: Long, relation: String): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteWordForm(lemmaWordId, formWordId, relation))
@@ -2682,29 +2695,43 @@ final class WordRepositoryLive(dataSource: DataSource)
     }
   }
 
-  // No `HAVING` here: Quill's Dynamic Query has no clause for it in this codebase's usage, and `listTags`' own
-  // count-then-filter-in-Scala is the established shape for it -- `word_forms` is small enough that pulling every
-  // edge for an admin-only, on-demand diagnostic costs nothing worth a second query.
-  def formFanOutAnomalies(threshold: Int): Task[List[(WordRow, String, Long)]] = {
-    val edges   = quote(wordForms.map(row => (row.formWordId, row.relation, row.lemmaWordId)))
+  // The database counts. `UNIQUE (lemma_word_id, form_word_id, relation)` makes a group's row count its number of
+  // distinct lemmas, and the filter over the grouped subquery is the `HAVING`. Pulling every edge into the JVM to count
+  // there stopped being cheap once the dictionary held every form of six languages.
+  def formFanOutAnomalies(
+    threshold: Int,
+    fromFormWordId: Long,
+    toFormWordId: Long,
+  ): Task[List[(WordRow, String, Long)]] = {
+    val grouped = quote {
+      wordForms
+        .filter(row => row.formWordId >= lift(fromFormWordId) && row.formWordId < lift(toFormWordId))
+        .groupBy(row => (row.formWordId, row.relation))
+        .map { case ((formWordId, relation), rows) => (formWordId, relation, rows.size) }
+        .filter { case (_, _, count) => count > lift(threshold.toLong) }
+    }
     val flagged = for {
-      rows      <- run(ctx.run(edges))
-      counted    = rows
-                     .groupBy { case (formWordId, relation, _) => (formWordId, relation) }
-                     .view
-                     .mapValues { group => group.map { case (_, _, lemmaWordId) => lemmaWordId }.distinct.size.toLong }
-                     .filter { case (_, count) => count > threshold }
-                     .toList
-      formIds    = counted.map { case ((formWordId, _), _) => formWordId }.distinct
+      counted   <- run(ctx.run(grouped))
+      formIds    = counted.map { case (formWordId, _, _) => formWordId }.distinct
       formWords <- if (formIds.isEmpty)
                      ZIO.succeed(Nil)
                    else
                      run(ctx.run(quote(words.filter(word => liftQuery(formIds).contains(word.id)))))
       byId       = formWords.map(word => word.id -> word).toMap
-    } yield counted.flatMap { case ((formWordId, relation), count) =>
+    } yield counted.flatMap { case (formWordId, relation, count) =>
       byId.get(formWordId).map(word => (word, relation, count))
     }
-    logged(flagged)(rows => s"wordForms.fanOutAnomalies threshold=$threshold rows=${rows.size}")
+    logged(flagged) { rows =>
+      s"wordForms.fanOutAnomalies threshold=$threshold from=$fromFormWordId to=$toFormWordId rows=${rows.size}"
+    }
+  }
+
+  def formWordIdRange: Task[Option[(Long, Long)]] = {
+    val range = for {
+      low  <- run(ctx.run(quote(wordForms.map(_.formWordId).min)))
+      high <- run(ctx.run(quote(wordForms.map(_.formWordId).max)))
+    } yield low.zip(high)
+    logged(range)(found => s"wordForms.formWordIdRange range=${found.getOrElse("-")}")
   }
 
   def deleteWordForms(formWordId: Long, relation: String): Task[Long] = {

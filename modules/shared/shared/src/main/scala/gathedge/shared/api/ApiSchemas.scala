@@ -166,6 +166,7 @@ import gathedge.shared.dto.{
   VerifyEmailRequest,
   WordDetail,
   WordFormAnomaly,
+  WordFormScanStatus,
   WordPage,
   WordSummary,
 }
@@ -327,6 +328,7 @@ object ApiSchemas {
 
   given Schema[WordFormAnomaly]       = DeriveSchema.gen[WordFormAnomaly]
   given Schema[DeleteWordFormRequest] = DeriveSchema.gen[DeleteWordFormRequest]
+  given Schema[WordFormScanStatus]    = DeriveSchema.gen[WordFormScanStatus]
 
   given Schema[ConfigSummary]  = DeriveSchema.gen[ConfigSummary]
   given Schema[MigrationInfo]  = DeriveSchema.gen[MigrationInfo]

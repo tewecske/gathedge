@@ -37,6 +37,7 @@ import gathedge.shared.dto.{
   RateLimitEntry,
   UserPage,
   WordFormAnomaly,
+  WordFormScanStatus,
 }
 import gathedge.shared.validation.Validation
 import zio.*
@@ -159,12 +160,27 @@ trait AdminService {
   /** Clears one key, or every key when `key` is empty. */
   def clearRateLimits(actor: AdminActor, key: Option[String]): UIO[Unit]
 
-  /** Every `word_forms` fan-out anomaly past [[AdminService.wordFormAnomalyThreshold]]. Reads `WordRepository`, so
-    * cannot fail beyond a defect.
+  /** Every `word_forms` fan-out anomaly past [[AdminService.wordFormAnomalyThreshold]], scanned in the caller's fiber.
+    * Over the whole dictionary this outlasts a request; the admin page goes through [[startWordFormScan]] instead.
+    * Reads `WordRepository`, so cannot fail beyond a defect.
     */
   def wordFormAnomalies: UIO[List[WordFormAnomaly]]
 
-  /** Deletes every `word_forms` row for one anomaly's `(form word, relation)` pair. */
+  /** Where the background anomaly scan stands, with the last finished scan's result. Reads a `Ref`. */
+  def wordFormScanStatus: UIO[WordFormScanStatus]
+
+  /** Starts the anomaly scan on a daemon fiber and answers at once. While a scan runs, this starts nothing and answers
+    * the running scan's status. A scan started just after a cancel waits for the cancelled one to stop first, so two
+    * never read the table at the same time.
+    */
+  def startWordFormScan: UIO[WordFormScanStatus]
+
+  /** Interrupts the running scan, if any. The scan stops at the end of the chunk it is reading. */
+  def cancelWordFormScan: UIO[WordFormScanStatus]
+
+  /** Deletes every `word_forms` row for one anomaly's `(form word, relation)` pair, and drops it from the last scan's
+    * result.
+    */
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit]
 
   /** Every set of wordlists more than one game was built from — the duplicate report, delegated to `GameService` the
@@ -261,6 +277,15 @@ object AdminService {
   def wordFormAnomalies: URIO[AdminService, List[WordFormAnomaly]] =
     ZIO.serviceWithZIO[AdminService](_.wordFormAnomalies)
 
+  def wordFormScanStatus: URIO[AdminService, WordFormScanStatus] =
+    ZIO.serviceWithZIO[AdminService](_.wordFormScanStatus)
+
+  def startWordFormScan: URIO[AdminService, WordFormScanStatus] =
+    ZIO.serviceWithZIO[AdminService](_.startWordFormScan)
+
+  def cancelWordFormScan: URIO[AdminService, WordFormScanStatus] =
+    ZIO.serviceWithZIO[AdminService](_.cancelWordFormScan)
+
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): URIO[AdminService, Unit] =
     ZIO.serviceWithZIO[AdminService](_.deleteWordFormAnomaly(actor, request))
 
@@ -271,6 +296,11 @@ object AdminService {
     * see `WordRepository.formFanOutAnomalies`.
     */
   val wordFormAnomalyThreshold: Int = 50
+
+  /** How many `form_word_id` ranges a scan reads, one query each. Each one is a step of the progress bar and a point
+    * where a cancel takes effect.
+    */
+  val wordFormScanChunks: Int = 100
 
   /** The window `clearLockout` looks back over when collecting the origins to unblock. The limiter's own window is 15
     * minutes, so an hour comfortably covers every key that could still be holding a failure while leaving out addresses
@@ -283,12 +313,27 @@ object AdminService {
     */
   val recentAttemptLimit: Int = 25
 
-  val live: URLayer[
-    UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
-      LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService &
-      GameService & WordRepository,
-    AdminService,
-  ] = ZLayer.fromFunction(AdminServiceLive.apply)
+  type Dependencies = UserRepository & SessionRepository & OAuthIdentityRepository & EmailVerificationTokenRepository &
+    LoginAttemptRepository & AuditLogRepository & AuditTrail & PasswordHasher & RateLimiter & AuthService &
+    GameService & WordRepository
+
+  // The scan's state is made here, not taken as a dependency, so no other wiring has to know it exists.
+  val live: URLayer[Dependencies, AdminService] =
+    (ZLayer.environment[Dependencies] ++ WordFormScan.live) >>> ZLayer.fromFunction(AdminServiceLive.apply)
+}
+
+/** The background `word_forms` anomaly scan: its status, and the fiber running it. Per process, a `Ref` like
+  * [[BackgroundJobs]]. `generation` counts scans, so a cancelled scan that is still finishing its last chunk cannot
+  * write over the status of the scan started after it.
+  */
+final case class WordFormScan(state: Ref.Synchronized[WordFormScan.State])
+
+object WordFormScan {
+  final case class State(status: WordFormScanStatus, generation: Long, fiber: Option[Fiber.Runtime[Nothing, Unit]])
+
+  val live: ULayer[WordFormScan] = ZLayer.fromZIO(
+    Ref.Synchronized.make(State(WordFormScanStatus.idle, 0L, None)).map(WordFormScan(_))
+  )
 }
 
 /** Every administrator action that changes an account is recorded twice: once to the `security` slf4j logger, which is
@@ -312,6 +357,7 @@ final case class AdminServiceLive(
   authService: AuthService,
   gameService: GameService,
   wordRepo: WordRepository,
+  wordFormScan: WordFormScan,
 ) extends AdminService {
 
   private def toDomain(row: UserRow): User = {
@@ -711,20 +757,101 @@ final case class AdminServiceLive(
     }
   }
 
-  def wordFormAnomalies: UIO[List[WordFormAnomaly]] = {
-    wordRepo
-      .formFanOutAnomalies(AdminService.wordFormAnomalyThreshold)
-      .orDie
-      .map(_.map { case (word, relation, count) =>
-        WordFormAnomaly(word.id, word.text, word.language, relation, count)
-      })
+  /** Walks `word_forms` in [[AdminService.wordFormScanChunks]] ranges of `form_word_id`, reporting the share done after
+    * each. Ids are not spread evenly, so the share is rough.
+    */
+  private def scanWordForms(progress: Int => UIO[Unit]): Task[List[WordFormAnomaly]] = {
+    wordRepo.formWordIdRange.flatMap {
+      case None              =>
+        ZIO.succeed(Nil)
+      case Some((low, high)) =>
+        val chunks = AdminService.wordFormScanChunks
+        val step   = math.max(1L, (high - low + chunks) / chunks)
+        val starts = (low to high by step).toList
+        ZIO.foldLeft(starts.zipWithIndex)(List.empty[WordFormAnomaly]) { case (found, (from, index)) =>
+          wordRepo
+            .formFanOutAnomalies(AdminService.wordFormAnomalyThreshold, from, from + step)
+            .map(rows => {
+              found ++ rows.map { case (word, relation, count) =>
+                WordFormAnomaly(word.id, word.text, word.language, relation, count)
+              }
+            })
+            .tap(_ => progress((index + 1) * 100 / starts.size))
+        }
+    }
+  }
+
+  def wordFormAnomalies: UIO[List[WordFormAnomaly]] = scanWordForms(_ => ZIO.unit).orDie
+
+  def wordFormScanStatus: UIO[WordFormScanStatus] = wordFormScan.state.get.map(_.status)
+
+  def startWordFormScan: UIO[WordFormScanStatus] = {
+    Clock.currentTime(TimeUnit.MILLISECONDS).flatMap { now =>
+      wordFormScan.state.modifyZIO { current =>
+        if (current.status.running) {
+          ZIO.succeed((current.status, current))
+        } else {
+          val generation = current.generation + 1
+          val running    = WordFormScanStatus(WordFormScanStatus.Running, 0, Some(now), None, Nil)
+
+          def write(f: (WordFormScanStatus, Long) => WordFormScanStatus): UIO[Unit] = {
+            Clock.currentTime(TimeUnit.MILLISECONDS).flatMap { at =>
+              wordFormScan.state.update { state =>
+                if (state.generation == generation) state.copy(status = f(state.status, at)) else state
+              }
+            }
+          }
+
+          val previous = current.fiber.fold(ZIO.unit)(_.await.unit)
+          val job      = previous *> scanWordForms(percent => write((status, _) => status.copy(progressPercent = percent)))
+            .foldCauseZIO(
+              cause => {
+                ZIO.logErrorCause("word_forms anomaly scan failed", cause) *>
+                  write((status, at) => status.copy(state = WordFormScanStatus.Failed, finishedAt = Some(at)))
+              },
+              found => {
+                write((status, at) => {
+                  status.copy(
+                    state = WordFormScanStatus.Done,
+                    progressPercent = 100,
+                    finishedAt = Some(at),
+                    anomalies = found,
+                  )
+                })
+              },
+            )
+          job.forkDaemon.map(fiber => (running, WordFormScan.State(running, generation, Some(fiber))))
+        }
+      }
+    }
+  }
+
+  // `interruptFork`, not `interrupt`: the fiber may be blocked in a JDBC call, and the answer should not wait for it.
+  // The fiber is kept, so the next start waits for it to stop.
+  def cancelWordFormScan: UIO[WordFormScanStatus] = {
+    Clock.currentTime(TimeUnit.MILLISECONDS).flatMap { now =>
+      wordFormScan.state.modifyZIO { current =>
+        if (!current.status.running) {
+          ZIO.succeed((current.status, current))
+        } else {
+          val cancelled = current.status.copy(state = WordFormScanStatus.Cancelled, finishedAt = Some(now))
+          current.fiber.fold(ZIO.unit)(_.interruptFork).as((cancelled, current.copy(status = cancelled)))
+        }
+      }
+    }
   }
 
   def duplicateGames: UIO[List[DuplicateGameGroup]] = gameService.duplicateTagGames
 
   def deleteWordFormAnomaly(actor: AdminActor, request: DeleteWordFormRequest): UIO[Unit] = {
+    val forget = wordFormScan.state.update { state =>
+      val kept = state.status.anomalies.filterNot(anomaly => {
+        anomaly.formWordId == request.formWordId && anomaly.relation == request.relation
+      })
+      state.copy(status = state.status.copy(anomalies = kept))
+    }
     wordRepo.deleteWordForms(request.formWordId, request.relation).orDie.flatMap { rows =>
-      auditTrail.recordSystem(
+      forget *> auditTrail.recordSystem(
         actor,
         AuditAction.systemWordFormAnomalyDeleted,
         s"deleted $rows word_forms row(s) for form word id=${request.formWordId} relation=${request.relation}",

@@ -21,7 +21,7 @@ import gathedge.shared.dto.{
   TagExportFile,
   UpdateUserRequest,
   UserPage,
-  WordFormAnomaly,
+  WordFormScanStatus,
 }
 import zio.json._
 
@@ -176,8 +176,17 @@ object AdminApiClient {
     HttpClient.call[PruneResult](AdminPaths.systemPrune())
   }
 
-  def wordFormAnomalies: EventStream[Either[ApiError, List[WordFormAnomaly]]] = {
-    HttpClient.call[List[WordFormAnomaly]](AdminPaths.wordFormAnomalies())
+  /** Where the background anomaly scan stands. The page polls this while a scan runs. */
+  def wordFormScanStatus: EventStream[Either[ApiError, WordFormScanStatus]] = {
+    HttpClient.call[WordFormScanStatus](AdminPaths.wordFormAnomalies())
+  }
+
+  def startWordFormScan: EventStream[Either[ApiError, WordFormScanStatus]] = {
+    HttpClient.call[WordFormScanStatus](AdminPaths.startWordFormScan())
+  }
+
+  def cancelWordFormScan: EventStream[Either[ApiError, WordFormScanStatus]] = {
+    HttpClient.call[WordFormScanStatus](AdminPaths.cancelWordFormScan())
   }
 
   def deleteWordFormAnomaly(formWordId: Long, relation: String): EventStream[Either[ApiError, Unit]] = {

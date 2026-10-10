@@ -23,7 +23,7 @@ import gathedge.backend.db.{
 import gathedge.backend.security.PasswordHasher
 import gathedge.shared.domain.{Gender, PartOfSpeech, WordLanguage}
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{AuditAction, DeleteWordFormRequest, LoginOutcome, Paging}
+import gathedge.shared.dto.{AuditAction, DeleteWordFormRequest, LoginOutcome, Paging, WordFormScanStatus}
 import zio._
 import zio.json._
 import zio.test._
@@ -367,6 +367,53 @@ object AdminServiceSpec extends ZIOSpecDefault {
           audit.items.size == 1,
         )
       },
+      test("the background scan finds what the direct scan finds, and a delete drops the row from its result") {
+        for {
+          admin    <-
+            AdminService.createUser(AdminActor.system, "wordscan-admin@example.com", "password123", isAdmin = true)
+          bleiben  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "bleiben", pos = PartOfSpeech.Verb))
+          lemmas   <- ZIO.foreach((1 to AdminService.wordFormAnomalyThreshold + 1).toList)(n =>
+                        WordRepository.ensureWord(dictionaryWord(WordLanguage.De, s"scanverb$n", pos = PartOfSpeech.Verb))
+                      )
+          _        <-
+            WordRepository.insertForms(lemmas.map(lemma => WordFormRow(0L, lemma.id, bleiben.id, "auxiliary", 0L)))
+          direct   <- AdminService.wordFormAnomalies
+          started  <- AdminService.startWordFormScan
+          finished <- awaitScan
+          _        <-
+            AdminService.deleteWordFormAnomaly(AdminActor(admin.id), DeleteWordFormRequest(bleiben.id, "auxiliary"))
+          after    <- AdminService.wordFormScanStatus
+        } yield assertTrue(
+          started.state == WordFormScanStatus.Running,
+          finished.state == WordFormScanStatus.Done,
+          finished.progressPercent == 100,
+          finished.anomalies.toSet == direct.toSet,
+          finished.anomalies.exists(_.formWordId == bleiben.id),
+          !after.anomalies.exists(_.formWordId == bleiben.id),
+        )
+      },
+      test("a second start while one runs starts nothing; a cancelled scan stops and a new one can follow") {
+        for {
+          first     <- AdminService.startWordFormScan
+          second    <- AdminService.startWordFormScan
+          cancelled <- AdminService.cancelWordFormScan
+          again     <- AdminService.cancelWordFormScan
+          restarted <- AdminService.startWordFormScan
+          finished  <- awaitScan
+        } yield assertTrue(
+          first.state == WordFormScanStatus.Running,
+          second == first,
+          cancelled.state == WordFormScanStatus.Cancelled,
+          again == cancelled,
+          restarted.state == WordFormScanStatus.Running,
+          finished.state == WordFormScanStatus.Done,
+        )
+      },
     ),
   ).provideShared(layer) @@ TestAspect.sequential
+
+  /** Polls until the background scan stops. The test clock does not move, so this yields rather than sleeps. */
+  private def awaitScan: URIO[AdminService, WordFormScanStatus] = {
+    (ZIO.yieldNow *> AdminService.wordFormScanStatus).repeatUntil(!_.running)
+  }
 }

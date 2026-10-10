@@ -19,7 +19,7 @@ import gathedge.shared.dto.{
   TagExportFile,
   UpdateUserRequest,
   UserPage,
-  WordFormAnomaly,
+  WordFormScanStatus,
 }
 import zio.http.Status
 import zio.http.codec.{HttpCodec, PathCodec}
@@ -54,6 +54,8 @@ object AdminPaths {
   val systemPrune            = ApiPath0(POST, "/api/admin/system/prune")
   val wordFormAnomalies      = ApiPath0(GET, "/api/admin/word-forms/anomalies")
   val deleteWordFormAnomaly  = ApiPath0(POST, "/api/admin/word-forms/anomalies/delete")
+  val startWordFormScan      = ApiPath0(POST, "/api/admin/word-forms/anomalies/scan")
+  val cancelWordFormScan     = ApiPath0(POST, "/api/admin/word-forms/anomalies/cancel")
   val duplicateGames         = ApiPath0(GET, "/api/admin/games/same-tags")
   val exportAllTags          = ApiPath0(GET, "/api/admin/tags/export")
   val usageRoutes            = ApiPath0(GET, "/api/admin/usage/routes")
@@ -81,6 +83,8 @@ object AdminPaths {
     systemPrune,
     wordFormAnomalies,
     deleteWordFormAnomaly,
+    startWordFormScan,
+    cancelWordFormScan,
     duplicateGames,
     exportAllTags,
     usageRoutes,
@@ -299,12 +303,29 @@ object AdminEndpoints {
     Endpoint(ApiRoutes.route0(paths.systemPrune)).out[PruneResult].outFailure(failure.unauthorized)
   }
 
-  /** Every `word_forms` `(form word, relation)` pair claiming more than the anomaly threshold's worth of distinct
-    * lemmas — see `gathedge.shared.dto.WordFormAnomaly`. `AdminService.wordFormAnomalies` is a `UIO`.
+  /** Where the `word_forms` anomaly scan stands, with the last finished scan's result — see
+    * `gathedge.shared.dto.WordFormScanStatus`. The page polls this while a scan runs. A read of a `Ref`; it cannot
+    * fail.
     */
   val wordFormAnomalies = {
     Endpoint(ApiRoutes.route0(paths.wordFormAnomalies))
-      .out[List[WordFormAnomaly]]
+      .out[WordFormScanStatus]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** Starts a scan in the background and answers its status at once. While one runs, a second start starts nothing and
+    * answers the running scan's status.
+    */
+  val startWordFormScan = {
+    Endpoint(ApiRoutes.route0(paths.startWordFormScan))
+      .out[WordFormScanStatus]
+      .outFailure(failure.unauthorized)
+  }
+
+  /** Stops the running scan, if any, and answers the new status. */
+  val cancelWordFormScan = {
+    Endpoint(ApiRoutes.route0(paths.cancelWordFormScan))
+      .out[WordFormScanStatus]
       .outFailure(failure.unauthorized)
   }
 
@@ -410,6 +431,8 @@ object AdminEndpoints {
       systemPrune,
       wordFormAnomalies,
       deleteWordFormAnomaly,
+      startWordFormScan,
+      cancelWordFormScan,
       duplicateGames,
       exportAllTags,
       usageRoutes,

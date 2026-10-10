@@ -207,6 +207,33 @@ final case class WordFormAnomaly(
   lemmaCount: Long,
 ) derives JsonCodec
 
+/** Where the `word_forms` anomaly scan stands. The scan runs in the background, since over the whole dictionary it
+  * takes longer than a request may. One scan runs at a time; `anomalies` holds the last finished scan's result, less
+  * the rows deleted since; a running or cancelled scan holds none. `state` is one of [[WordFormScanStatus.states]].
+  * `progressPercent` is rough: it is the share of the form-word id range scanned so far, and ids are not spread evenly.
+  */
+final case class WordFormScanStatus(
+  state: String,
+  progressPercent: Int,
+  startedAt: Option[Long],
+  finishedAt: Option[Long],
+  anomalies: List[WordFormAnomaly],
+) derives JsonCodec {
+  def running: Boolean = state == WordFormScanStatus.Running
+}
+
+object WordFormScanStatus {
+  val Idle: String      = "idle"
+  val Running: String   = "running"
+  val Done: String      = "done"
+  val Failed: String    = "failed"
+  val Cancelled: String = "cancelled"
+
+  val states: List[String] = List(Idle, Running, Done, Failed, Cancelled)
+
+  val idle: WordFormScanStatus = WordFormScanStatus(Idle, 0, None, None, Nil)
+}
+
 /** Deletes every `word_forms` row for one `(form word, relation)` pair -- the cleanup action for a [[WordFormAnomaly]].
   */
 final case class DeleteWordFormRequest(formWordId: Long, relation: String) derives JsonCodec

@@ -267,7 +267,15 @@ object AdminRoutes {
   }
 
   private val wordFormAnomaliesRoute = {
-    AdminEndpoints.wordFormAnomalies.implementHandler(handler((_: Unit) => AdminService.wordFormAnomalies))
+    AdminEndpoints.wordFormAnomalies.implementHandler(handler((_: Unit) => AdminService.wordFormScanStatus))
+  }
+
+  private val startWordFormScanRoute = {
+    AdminEndpoints.startWordFormScan.implementHandler(handler((_: Unit) => AdminService.startWordFormScan))
+  }
+
+  private val cancelWordFormScanRoute = {
+    AdminEndpoints.cancelWordFormScan.implementHandler(handler((_: Unit) => AdminService.cancelWordFormScan))
   }
 
   private val deleteWordFormAnomalyRoute = {
@@ -335,6 +343,8 @@ object AdminRoutes {
       systemPruneRoute,
       wordFormAnomaliesRoute,
       deleteWordFormAnomalyRoute,
+      startWordFormScanRoute,
+      cancelWordFormScanRoute,
       duplicateGamesRoute,
       exportAllTagsRoute,
       usageRoutesRoute,

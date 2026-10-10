@@ -155,6 +155,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/games/same-tags",
               "/api/admin/tags/export",
               "/api/admin/word-forms/anomalies/delete",
+              "/api/admin/word-forms/anomalies/scan",
+              "/api/admin/word-forms/anomalies/cancel",
               "/api/admin/usage/routes",
               "/api/admin/usage/suspicious",
               "/api/progress-shares/code",
@@ -479,6 +481,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               ("POST", "/api/admin/system/prune")                                         -> Set(Ok, Unauthorized),
               ("GET", "/api/admin/word-forms/anomalies")                                  -> Set(Ok, Unauthorized),
               ("POST", "/api/admin/word-forms/anomalies/delete")                          -> Set(NoContent, BadRequest, Unauthorized),
+              ("POST", "/api/admin/word-forms/anomalies/scan")                            -> Set(Ok, Unauthorized),
+              ("POST", "/api/admin/word-forms/anomalies/cancel")                          -> Set(Ok, Unauthorized),
               // The duplicate-game report reads games and answers; it takes no input and refuses nothing.
               ("GET", "/api/admin/games/same-tags")                                       -> Set(Ok, Unauthorized),
               ("GET", "/api/admin/tags/export")                                           -> Set(Ok, Unauthorized),
@@ -554,7 +558,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 338,
+          declared == 340,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
