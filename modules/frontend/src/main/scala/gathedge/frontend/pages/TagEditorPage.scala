@@ -1585,14 +1585,19 @@ private final class TagEditorPage(
 
   /** One word column of a row: the word with its note and badge, or the "no answer" placeholder when the row has
     * nothing on this side. Below `sm` the note goes under the word and the badges are not shown: a phone has no room
-    * for them, and the badge column is hidden there too.
+    * for them, and the badge column is hidden there too. The word links to its details page, so a reader can check it
+    * without leaving the list for a search. A row being edited is its editor instead, so it shows no link.
     */
-  private def renderWordCell(side: Option[TagEditorPage.Side]): HtmlElement = {
+  private[pages] def renderWordCell(side: Option[TagEditorPage.Side]): HtmlElement = {
     side match {
       case Some(s) =>
         div(
           cls := "flex flex-col items-start gap-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-0",
-          span(Word.display(s.word)),
+          a(
+            cls := "link link-hover",
+            AppRouter.router.navigateTo(Page.WordDetail(s.word.id)),
+            Word.display(s.word),
+          ),
           renderComment(s.comment),
           Option.when(s.isNew)(newBadge()),
         )
