@@ -1315,19 +1315,17 @@ object UiKeys {
 
   // -- Games ------------------------------------------------------------------------------------
 
-  /** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
-    * and when it was created. Paged/sorted/filtered the same way the play history is, plus a per-row favorite toggle
-    * and a "my favorites" filter.
+  /** Every account's games: name, tags, language pair, how many times each was played, and how many accounts favorited
+    * it. Paged/sorted/filtered the same way the play history is, plus a per-row favorite toggle and a "my favorites"
+    * filter.
     */
   val allGamesTitle: String             = key("ui.allGames.title")
   val allGamesEmpty: String             = key("ui.allGames.empty")
   val allGamesNameCol: String           = key("ui.allGames.nameCol")
   val allGamesTagsCol: String           = key("ui.allGames.tagsCol")
-  val allGamesSourceCol: String         = key("ui.allGames.sourceCol")
-  val allGamesTargetCol: String         = key("ui.allGames.targetCol")
+  val allGamesLanguagesCol: String      = key("ui.allGames.languagesCol")
   val allGamesPlaysCol: String          = key("ui.allGames.playsCol")
   val allGamesLikesCol: String          = key("ui.allGames.likesCol")
-  val allGamesCreatedCol: String        = key("ui.allGames.createdCol")
   val allGamesFilterLabel: String       = key("ui.allGames.filterLabel")
   val allGamesFilterPlaceholder: String = key("ui.allGames.filterPlaceholder")
   val allGamesFavoritesFilter: String   = key("ui.allGames.favoritesFilter")
@@ -1683,4 +1681,5 @@ object UiKeys {
   val helpWords: String           = key("ui.help.words")
   val helpWordsCollect: String    = key("ui.help.wordsCollect")
   val helpWordsAddMissing: String = key("ui.help.wordsAddMissing")
+  val helpGames: String           = key("ui.help.games")
 }

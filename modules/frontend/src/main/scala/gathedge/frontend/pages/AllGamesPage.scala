@@ -7,7 +7,7 @@ import gathedge.frontend.components.{
   Alert,
   AppShell,
   EmptyOption,
-  Formats,
+  HelpIcon,
   Labels,
   Pagination,
   SortHeader,
@@ -21,14 +21,15 @@ import gathedge.shared.domain.{Tag, WordLanguage}
 import gathedge.shared.dto.{AllGamePage, AllGameSort, AllGameSummary, GameTagRef}
 import gathedge.shared.i18n.UiKeys
 
-/** Every account's games: name, tags, language pair, how many times each was played, how many accounts favorited it,
-  * and when it was created — see `GameService.allGames`.
+/** Every account's games: name, tags, language pair, how many times each was played, and how many accounts favorited it
+  * — see `GameService.allGames`.
   *
   * Built to the same shape as `GameResultsPage`/`MyPlayHistoryPage`: a card table with sortable headings, a filter box
   * (here a substring of the game's name), a "my favorites" toggle, and server-side paging. It carries its whole listing
   * state in the URL, so it takes a `Signal[AllGameQuery]` and an `Observer[AllGameQuery]` the same way those pages do;
   * `App` supplies both. Each row's heart button toggles the caller's favorite mark — patched optimistically, reverted
-  * if the call fails. There is no per-row detail modal — a game's own page is one click away on its name.
+  * if the call fails. There is no per-row detail modal — a game's own page is one click away on its name. The name is
+  * underlined and carries a play mark, so it reads as a link without a hover.
   *
   * Public: a signed-out visitor reads the catalog to find a game to play. Favoriting needs an account, so the heart
   * button and the "my favorites" toggle are drawn only when signed in — the same way `WordsPage` hides its tag
@@ -132,9 +133,11 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
 
   def render(): HtmlElement = {
     div(
+      // The help mark sits beside the heading, not in it, so the heading's name stays the page title.
       div(
-        cls := "mb-4",
+        cls := "mb-4 flex items-center gap-1",
         h1(cls := "text-2xl font-bold", I18n.t(UiKeys.allGamesTitle)),
+        HelpIcon.render(I18n.t(UiKeys.helpGames)),
       ),
       Alert.maybeError(errorVar.signal),
       renderSearch(),
@@ -344,10 +347,8 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
             SortHeader.render(I18n.t(UiKeys.allGamesNameCol), AllGameSort.name, sortSignal, onSort),
             // Tags, the language pair and the play count are filterable/readable but not sortable — see `AllGameSort`.
             th(I18n.t(UiKeys.allGamesTagsCol)),
-            th(I18n.t(UiKeys.allGamesSourceCol)),
-            th(I18n.t(UiKeys.allGamesTargetCol)),
+            th(I18n.t(UiKeys.allGamesLanguagesCol)),
             th(I18n.t(UiKeys.allGamesPlaysCol)),
-            SortHeader.render(I18n.t(UiKeys.allGamesCreatedCol), AllGameSort.createdAt, sortSignal, onSort),
           )
         ),
         tbody(
@@ -369,12 +370,17 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           span(cls := "tabular-nums", game.likeCount.toString),
         )
       ),
-      td(a(cls := "link link-hover", AppRouter.router.navigateTo(Page.GameInstance(game.slug)), game.name)),
+      td(
+        a(
+          cls := "link",
+          AppRouter.router.navigateTo(Page.GameInstance(game.slug)),
+          playMark(),
+          game.name,
+        )
+      ),
       td(renderTags(game.tags)),
-      td(Labels.language(game.sourceLanguage)),
-      td(Labels.language(game.targetLanguage)),
+      td(s"${Labels.language(game.sourceLanguage)}, ${Labels.language(game.targetLanguage)}"),
       td(game.playCount.toString),
-      td(Formats.dateTime(game.createdAt)),
     )
   }
 
@@ -386,6 +392,19 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
       aria.label        := I18n.t(if (game.favoritedByMe) UiKeys.allGamesFavoriteRemove else UiKeys.allGamesFavoriteAdd),
       if (game.favoritedByMe) heartSolid() else heartOutline(),
       onClick.mapTo(game) --> favoriteToggleBus.writer,
+    )
+  }
+
+  /** Heroicons' solid `play`. Purely an affordance: it has no title, so the link's name stays the game's name. */
+  private def playMark(): SvgElement = {
+    svg.svg(
+      svg.cls     := "inline h-4 w-4 mr-1 align-text-bottom text-primary",
+      svg.viewBox := "0 0 24 24",
+      svg.fill    := "currentColor",
+      svg.path(
+        svg.d :=
+          "M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z"
+      ),
     )
   }
 
