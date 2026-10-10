@@ -769,10 +769,11 @@ private class WordsPage(
             SortHeader.render(I18n.t(UiKeys.wordsColPos), WordSort.pos, sortSignal, onSort),
             th(I18n.t(UiKeys.wordsColTranslations)),
             // Main word/Variant type/Variants are all a list or a single link rendered into one cell, so there is no
-            // `ORDER BY` that produces them — the same reason Translations carries no sort either.
-            th(I18n.t(UiKeys.wordsColMainWord)),
-            th(I18n.t(UiKeys.wordsColVariantType)),
-            th(I18n.t(UiKeys.wordsColVariants)),
+            // `ORDER BY` that produces them — the same reason Translations carries no sort either. On a small screen
+            // they are hidden: the word page shows the same links.
+            th(cls := variantColumn, I18n.t(UiKeys.wordsColMainWord)),
+            th(cls := variantColumn, I18n.t(UiKeys.wordsColVariantType)),
+            th(cls := variantColumn, I18n.t(UiKeys.wordsColVariants)),
           )
         ),
         tbody(children <-- wordsSignal.splitSeq(_.word.id)(row => renderRow(row.key, row))),
@@ -835,10 +836,13 @@ private class WordsPage(
     )
   }
 
+  /** The three variant columns' cells and headings: shown from the `sm` breakpoint up, hidden below it. */
+  private val variantColumn = "hidden sm:table-cell"
+
   /** Populated only when this row is itself an inflected/declined form of another word — links back to the lemma. */
   private def renderMainWordCell(row: Signal[WordSummary]): HtmlElement = {
     td(
-      cls := "text-sm",
+      cls := s"$variantColumn text-sm",
       child.maybe <-- row
         .map(_.mainWord)
         .distinct
@@ -855,7 +859,7 @@ private class WordsPage(
   /** Populated only alongside [[renderMainWordCell]] — the relation that word is a form of, worded for the reader. */
   private def renderVariantTypeCell(row: Signal[WordSummary]): HtmlElement = {
     td(
-      cls := "text-sm opacity-70",
+      cls := s"$variantColumn text-sm opacity-70",
       child.maybe <-- row.map(_.mainWord).distinct.map(_.map(ref => Labels.grammarRelation(ref.relation))),
     )
   }
@@ -866,6 +870,7 @@ private class WordsPage(
     */
   private def renderVariantsCell(row: Signal[WordSummary]): HtmlElement = {
     td(
+      cls := variantColumn,
       div(
         cls := "flex flex-col gap-0.5 text-sm",
         children <-- row.map(_.variants).distinct.splitSeq(_.word.id)(preview => renderVariantEntry(preview)),
@@ -875,7 +880,7 @@ private class WordsPage(
           )
           .distinct
           .map(_.map(more => span(cls := "opacity-60", I18n.plural(UiKeys.wordsVariantsMore, more)))),
-      )
+      ),
     )
   }
 
