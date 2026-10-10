@@ -1424,6 +1424,19 @@ object UiKeys {
   val tagsExportAllButton: String   = key("ui.tags.export.allButton")
   val tagsExportEveryButton: String = key("ui.tags.export.everyButton")
 
+  // -- Tag worksheet ---------------------------------------------------------------------------
+  // "Print" on `TagEditorPage`: a paper worksheet of the wordlist's first-language words, each with an empty line for
+  // the translation. The dialog picks the ticked rows or a random count; `{0}` in `printSelected` is how many rows are
+  // ticked, and `printAvailable` counts the words a random pick draws from.
+
+  val tagsPrintButton: String       = key("ui.tags.print.button")
+  val tagsPrintTitle: String        = key("ui.tags.print.title")
+  val tagsPrintSelected: String     = key("ui.tags.print.selected")
+  val tagsPrintNoneSelected: String = key("ui.tags.print.noneSelected")
+  val tagsPrintRandom: String       = key("ui.tags.print.random")
+  val tagsPrintCount: String        = key("ui.tags.print.count")
+  val tagsPrintAvailable: String    = pluralKey("ui.tags.print.available")
+
   val tagsImportButton: String     = key("ui.tags.import.button")
   val tagsImportTitle: String      = key("ui.tags.import.title")
   val tagsImportChooseFile: String = key("ui.tags.import.chooseFile")
@@ -1672,6 +1685,7 @@ object UiKeys {
 
   val helpTags: String            = key("ui.help.tags")
   val helpBulkImport: String      = key("ui.help.bulkImport")
+  val helpTagsPrint: String       = key("ui.help.tagsPrint")
   val helpGameWordlists: String   = key("ui.help.gameWordlists")
   val helpTagsAddPair: String     = key("ui.help.tagsAddPair")
   val helpTagsEditPair: String    = key("ui.help.tagsEditPair")
