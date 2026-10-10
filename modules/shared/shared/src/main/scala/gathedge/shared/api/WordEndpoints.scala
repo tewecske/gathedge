@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   BulkUploadPreviewResponse,
   ColumnLanguageCheckRequest,
   ColumnLanguageCheckResponse,
+  FormDrillWord,
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
@@ -76,6 +77,7 @@ object WordPaths {
   val deselectPair        = ApiPath3[Long, Long, Long](DELETE, "/api/words/{id}/tags/{tagId}/translations/{translationWordId}")
   val tagEntries          = ApiPath1[Long](GET, "/api/tags/{tagId}/entries")
   val tagEntriesPage      = ApiPath1[Long](GET, "/api/tags/{tagId}/entries/page")
+  val tagForms            = ApiPath1[Long](GET, "/api/tags/{tagId}/forms")
   val addEntry            = ApiPath1[Long](POST, "/api/tags/{tagId}/entries")
   val editEntry           = ApiPath1[Long](PUT, "/api/tags/{tagId}/entries")
   val formRelations       = ApiPath0(GET, "/api/words/form-relations")
@@ -114,6 +116,7 @@ object WordPaths {
     deselectPair,
     tagEntries,
     tagEntriesPage,
+    tagForms,
     addEntry,
     editEntry,
     formRelations,
@@ -497,6 +500,20 @@ object WordEndpoints {
       .outErrors(failure.badRequest, failure.notFound)
   }
 
+  /** A wordlist's words of one language and part of speech, each with all its forms — what the form drill builds its
+    * tables from. Public, like [[tagEntries]]. The words come in the order they were added to the wordlist. An
+    * unrecognised `lang` or `pos` answers an empty list, the lenient rule [[formRelations]] follows; a missing one is
+    * the codec's 400. 404 is an id that names no tag.
+    */
+  val tagForms = {
+    Endpoint(ApiRoutes.route1(paths.tagForms, PathCodec.long))
+      .query(requiredLangQuery)
+      .query(requiredPosQuery)
+      .withCodecError
+      .out[List[FormDrillWord]]
+      .outErrors(failure.badRequest, failure.notFound)
+  }
+
   /** The same rows, paged, ordered and narrowed by the database — what the editor itself reads, leaving [[tagEntries]]
     * above as the unpaged read of a whole wordlist, the same split [[listTags]]/[[listTagsPage]] draw.
     *
@@ -737,6 +754,7 @@ object WordEndpoints {
       deselectPair,
       tagEntries,
       tagEntriesPage,
+      tagForms,
       addEntry,
       editEntry,
       formRelations,
@@ -756,5 +774,5 @@ object WordEndpoints {
     * every other operation as needing the session cookie, and `OpenApiSpec` pins both halves of that split.
     */
   val public: List[Endpoint[?, ?, ?, ?, ?]] =
-    List(list, get, listTags, getTag, listTagsPage, tagEntries, tagEntriesPage)
+    List(list, get, listTags, getTag, listTagsPage, tagEntries, tagEntriesPage, tagForms)
 }

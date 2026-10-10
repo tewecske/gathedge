@@ -1696,4 +1696,28 @@ object UiKeys {
   val helpWordsCollect: String    = key("ui.help.wordsCollect")
   val helpWordsAddMissing: String = key("ui.help.wordsAddMissing")
   val helpGames: String           = key("ui.help.games")
+
+  // -- Form drill ----------------------------------------------------------------------------
+
+  val formDrillOpen: String          = key("ui.formDrill.open")
+  val formDrillTitle: String         = key("ui.formDrill.title")
+  val formDrillIntro: String         = key("ui.formDrill.intro")
+  val formDrillPartOfSpeech: String  = key("ui.formDrill.partOfSpeech")
+  val formDrillLanguage: String      = key("ui.formDrill.language")
+  val formDrillTable: String         = key("ui.formDrill.table")
+  val formDrillTableUntitled: String = key("ui.formDrill.tableUntitled")
+  val formDrillWordCount: String     = key("ui.formDrill.wordCount")
+  val formDrillAllWords: String      = key("ui.formDrill.allWords")
+  val formDrillNoTemplate: String    = key("ui.formDrill.noTemplate")
+  val formDrillNoWords: String       = key("ui.formDrill.noWords")
+  val formDrillStart: String         = key("ui.formDrill.start")
+  val formDrillProgress: String      = key("ui.formDrill.progress")
+  val formDrillHowTo: String         = key("ui.formDrill.howTo")
+  val formDrillWrong: String         = key("ui.formDrill.wrong")
+  val formDrillCheck: String         = key("ui.formDrill.check")
+  val formDrillNext: String          = key("ui.formDrill.next")
+  val formDrillFinish: String        = key("ui.formDrill.finish")
+  val formDrillScore: String         = key("ui.formDrill.score")
+  val formDrillAgain: String         = key("ui.formDrill.again")
+  val formDrillBack: String          = key("ui.formDrill.back")
 }

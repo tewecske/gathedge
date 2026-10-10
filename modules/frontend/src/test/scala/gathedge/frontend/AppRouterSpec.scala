@@ -186,6 +186,15 @@ object AppRouterSpec extends ZIOSpecDefault {
             .contains(Page.Words(WordQuery(sort = SortHeader.Sort.descending(WordSort.text)))),
         )
       },
+      test("the form drill sits under its wordlist, beside the editor's own path") {
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.FormDrill(5)) == s"$prefix/tags/5/forms",
+          AppRouter.router.pageForRelativeUrl(s"$prefix/tags/5/forms").contains(Page.FormDrill(5)),
+          AppRouter.router.pageForRelativeUrl(s"$prefix/tags/5").contains(Page.TagDetail(5)),
+          AppRouter.deserialize(AppRouter.serialize(Page.FormDrill(5))) == Page.FormDrill(5),
+          Page.guardFor(Page.FormDrill(5)) == Page.AuthGuard.Public,
+        )
+      },
       // Waypoint restores a page from the history state, not by matching the URL again, so a tag that dropped the
       // query would answer the back button with the filter silently gone.
       test("the history tag carries the listing state too") {

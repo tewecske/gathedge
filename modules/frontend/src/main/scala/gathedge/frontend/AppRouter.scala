@@ -206,6 +206,12 @@ object Page {
     */
   final case class TagDetail(id: Long, query: TagEntryQuery = TagEntryQuery.default) extends Page
 
+  /** The form drill on one wordlist: its nouns or verbs, one form table at a time, filled by placing the forms. Public
+    * like [[TagDetail]], since its two reads (`WordEndpoints.getTag`, `WordEndpoints.tagForms`) answer without a
+    * session and it writes nothing.
+    */
+  final case class FormDrill(tagId: Long) extends Page
+
   /** The whole wordlist catalog, paged/sorted/filtered like [[Words]]. Reached from the collection bar's "All tags"
     * button. Public like [[TagDetail]]: everyone sees every wordlist. A signed-in reader's own and group wordlists sort
     * ahead of the rest by default and carry the create/export/import controls; a signed-out visitor sees the same flat
@@ -245,7 +251,7 @@ object Page {
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, so the catalog's "New wordlist" button works signed out.
-      case Tags(_) | TagDetail(_, _) | TagCreate                                                         =>
+      case Tags(_) | TagDetail(_, _) | TagCreate | FormDrill(_)                                          =>
         AuthGuard.Public
       // The group catalog and a group's own detail read without a session, the same reasoning as the wordlist catalog:
       // a visitor browses every group and opens one before deciding to sign in and join. `GroupJoin` stays auth-only
@@ -419,6 +425,13 @@ object AppRouter {
     pattern = root / "tags" / segment[Long],
     basePath = basePath,
   )
+  private val formDrillRoute = Route(
+    encode = (p: FormDrill) => p.tagId,
+    decode = (id: Long) => FormDrill(id),
+    pattern = root / "tags" / segment[Long] / "forms",
+    basePath = basePath,
+  )
+
   private val tagsQueryRoute = Route.onlyQueryPF[Tags, TagQuery](
     matchEncode = { case page: Tags if page.query != TagQuery.default => page.query },
     decode = { case query if query != TagQuery.default => Tags(query) },
@@ -571,6 +584,8 @@ object AppRouter {
         s"GroupDetail:$id"
       case GroupJoin(code)                =>
         s"GroupJoin:$code"
+      case FormDrill(tagId)               =>
+        s"FormDrill:$tagId"
       case TagDetail(id, query)           =>
         s"TagDetail:$id:" + TagEntryQuery.params.createParamsString(query)
       case Tags(query)                    =>
@@ -679,6 +694,8 @@ object AppRouter {
       withId(tag, "AdminUserDetail:")(AdminUserDetail.apply)
     } else if (tag.startsWith("GroupDetail:")) {
       withId(tag, "GroupDetail:")(GroupDetail.apply)
+    } else if (tag.startsWith("FormDrill:")) {
+      withId(tag, "FormDrill:")(FormDrill.apply)
     } else if (tag.startsWith("GroupJoin:")) {
       GroupJoin(tag.stripPrefix("GroupJoin:"))
     } else if (tag.startsWith("TagDetail:")) {
@@ -817,6 +834,7 @@ object AppRouter {
         groupsQueryRoute,
         groupsRoute,
         groupJoinRoute,
+        formDrillRoute,
         groupDetailRoute,
         tagsQueryRoute,
         tagsRoute,

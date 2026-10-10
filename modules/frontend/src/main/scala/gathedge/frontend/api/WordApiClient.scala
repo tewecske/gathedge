@@ -26,6 +26,7 @@ import gathedge.shared.dto.{
   TabularRow,
   CreateTagWithPairsRequest,
   CreateWordRequest,
+  FormDrillWord,
   NewTranslation,
   PairRef,
   PairSelectionResponse,
@@ -250,6 +251,21 @@ object WordApiClient {
   /** The unified tag editor's rows, in the order they were added. */
   def tagEntries(tagId: Long): EventStream[Either[ApiError, List[TagEntry]]] = {
     HttpClient.call[List[TagEntry]](WordPaths.tagEntries(tagId))
+  }
+
+  /** The wordlist's words of one language and part of speech, each with its forms — [[FormDrillPage]]'s own call. */
+  def tagForms(
+    tagId: Long,
+    language: WordLanguage,
+    partOfSpeech: PartOfSpeech,
+  ): EventStream[Either[ApiError, List[FormDrillWord]]] = {
+    HttpClient.call[List[FormDrillWord]](
+      WordPaths
+        .tagForms(tagId)
+        .withQuery(
+          HttpClient.query("lang" -> Some(WordLanguage.code(language)), "pos" -> Some(PartOfSpeech.code(partOfSpeech)))
+        )
+    )
   }
 
   /** One page of them, narrowed by the editor's own chips — `TagEditorPage`'s own call. [[tagEntries]] above stays as

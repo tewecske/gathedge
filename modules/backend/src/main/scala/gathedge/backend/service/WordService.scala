@@ -39,6 +39,7 @@ import gathedge.shared.dto.{
   ColumnLanguageCheckResponse,
   ColumnLanguageGuess,
   ColumnSample,
+  FormDrillWord,
   LanguageCheckResponse,
   MainWordLink,
   LanguageHit,
@@ -418,6 +419,12 @@ trait WordService {
     */
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]]
 
+  /** A wordlist's words of one language and part of speech, in the order they were added, each with every form the
+    * dictionary has for it — what the form drill builds its tables from. Public like [[tagEntries]]: `TagNotFound` is
+    * only an id that names nothing. Writes nothing.
+    */
+  def tagForms(tagId: Long, language: WordLanguage, partOfSpeech: PartOfSpeech): IO[WordFailure, List[FormDrillWord]]
+
   /** Replaces one editor row's pair in place — [[editEntry]]'s write for a pair. `request.oldTargetWordId` is `None`
     * for an unmatched row that had no pair yet — filling that in is charged the pair quota; a genuine swap is net-zero
     * and is not. The new pair is [[gathedge.shared.domain.PairMatch.Manual]]: a hand-edited pair carries no import's
@@ -754,6 +761,13 @@ object WordService {
 
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): URIO[WordService, List[String]] =
     ZIO.serviceWithZIO[WordService](_.formRelations(language, partOfSpeech))
+
+  def tagForms(
+    tagId: Long,
+    language: WordLanguage,
+    partOfSpeech: PartOfSpeech,
+  ): ZIO[WordService, WordFailure, List[FormDrillWord]] =
+    ZIO.serviceWithZIO[WordService](_.tagForms(tagId, language, partOfSpeech))
 
   def replacePair(
     tagId: Long,
@@ -2612,6 +2626,36 @@ final case class WordServiceLive(
              .mapError(_ => WordEditFailure.Failed(WordFailure.PartOfSpeechConflict))
       _ <- ZIO.logInfo(s"words.setPartOfSpeech id=${row.id} pos=$pos user=$userId")
     } yield ()
+  }
+
+  def tagForms(
+    tagId: Long,
+    language: WordLanguage,
+    partOfSpeech: PartOfSpeech,
+  ): IO[WordFailure, List[FormDrillWord]] = {
+    val languageCode = WordLanguage.code(language)
+    val posCode      = PartOfSpeech.code(partOfSpeech)
+    for {
+      _           <- repo.findTagById(tagId).orDie.someOrFail(WordFailure.TagNotFound)
+      memberships <- repo.tagMemberships(tagId).orDie
+      rows        <- repo.findWordsByIds(memberships.map(_.wordId).distinct).orDie
+      byId         = rows.map(row => row.id -> row).toMap
+      // `tagMemberships` answers in insertion order, the reader's own order of the list.
+      picked       = memberships
+                       .flatMap(membership => byId.get(membership.wordId))
+                       .distinctBy(_.id)
+                       .filter(row => row.language == languageCode && row.partOfSpeech == posCode)
+      formLinks   <- repo.formsContextOf(picked.map(_.id)).orDie
+      formsByWord  = formLinks.groupBy { case (form, _) => form.lemmaWordId }
+    } yield picked.map(row => {
+      FormDrillWord(
+        toDomain(row),
+        formsByWord
+          .getOrElse(row.id, Nil)
+          .sortBy { case (form, word) => (form.relation, word.textNorm) }
+          .map { case (form, word) => WordFormEntry(toDomain(word), form.relation, Nil) },
+      )
+    })
   }
 
   def formRelations(language: WordLanguage, partOfSpeech: PartOfSpeech): UIO[List[String]] = {

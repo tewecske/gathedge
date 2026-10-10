@@ -15,6 +15,7 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateWordRequest,
+  FormDrillWord,
   LanguageCheckRequest,
   Paging,
   RenameTagRequest,
@@ -305,6 +306,20 @@ object WordRoutes {
     )
   }
 
+  /** An unrecognised `lang` or `pos` answers an empty list, the rule [[formRelationsRoute]] follows. */
+  private val tagFormsRoute = {
+    WordEndpoints.tagForms.implementHandler(
+      handler { (tagId: Long, lang: String, pos: String) =>
+        (WordLanguage.fromString(lang), PartOfSpeech.fromString(pos)) match {
+          case (Some(language), Some(partOfSpeech)) =>
+            WordService.tagForms(tagId, language, partOfSpeech).mapError(ApiFailures.word)
+          case _                                    =>
+            ZIO.succeed(List.empty[FormDrillWord])
+        }
+      }
+    )
+  }
+
   private val tagEntriesPageRoute = {
     WordEndpoints.tagEntriesPage.implementHandler(
       handler {
@@ -475,6 +490,7 @@ object WordRoutes {
       listTagsPageRoute,
       tagEntriesRoute,
       tagEntriesPageRoute,
+      tagFormsRoute,
     ) @@ RouteSupport.optionalUser
   }
 

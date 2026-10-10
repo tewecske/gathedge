@@ -23,6 +23,7 @@ import gathedge.frontend.pages.{
   GamePlayPage,
   GameResultsPage,
   GroupDetailPage,
+  FormDrillPage,
   GroupJoinPage,
   GroupsPage,
   MyPlayHistoryPage,
@@ -591,6 +592,8 @@ object App {
         GroupDetailPage.render(id, generateQr)
       case Page.GroupJoin(code)                           =>
         GroupJoinPage.render(code)
+      case Page.FormDrill(tagId)                          =>
+        FormDrillPage.render(tagId)
       // Reached only before the session has loaded; the signal renderer above answers otherwise.
       case Page.TagDetail(id, query)                      =>
         TagEditorPage.render(id, ImageOcr.recognize, Val(query), onTagDetailQuery)
