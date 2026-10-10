@@ -355,11 +355,15 @@ private class TagsPage(
     * own.
     */
   private def renderLanguageFilter(): HtmlElement = {
-    fieldSet(
-      cls := "flex flex-col gap-1",
-      legend(cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
+    // A `div` with a group role, not a `fieldset`: a `legend` sits on the fieldset's border, outside the flex layout,
+    // so `gap-1` did not reach it and the selects ran into the title.
+    div(
+      cls             := "flex flex-col gap-1",
+      role            := "group",
+      aria.labelledBy := "tags-languages-label",
+      span(idAttr := "tags-languages-label", cls := "label-text text-xs", I18n.t(UiKeys.filterLanguages)),
       div(
-        cls      := "flex gap-2",
+        cls       := "flex gap-2",
         languageSelect(
           querySignal.map(_.language1).distinct,
           Observer[Option[WordLanguage]](language => change(_.reset(_.copy(language1 = language)))),
