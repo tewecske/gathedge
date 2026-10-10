@@ -165,6 +165,8 @@ object WordEndpoints {
   private val tagQuery      = HttpCodec.query[Long]("tag").optional
   private val mineQuery     = HttpCodec.query[Boolean]("mine").optional
   private val scopeQuery    = HttpCodec.query[String]("scope").optional
+  private val lang1Query    = HttpCodec.query[String]("lang1").optional
+  private val lang2Query    = HttpCodec.query[String]("lang2").optional
   private val trQuery       = HttpCodec.query[String]("tr").optional
   private val mainQuery     = HttpCodec.query[Boolean]("main").optional
 
@@ -298,9 +300,11 @@ object WordEndpoints {
 
   /** The catalog's own listing, paged/sorted/filtered by the database like [[list]] — [[listTags]] above stays as it is
     * for every dropdown and collect bar, which still want the whole unpaged table. `scope` narrows to `TagScope.code`
-    * (`mine`/`group`/`other`), `q` is a substring match on the name; either or both may narrow `sort`'s own order away.
-    * The only declared failure is `withCodecError`'s 400 for a query parameter that does not decode — a filter that
-    * matches nothing is an empty page, not an error, the same rule [[list]] follows.
+    * (`mine`/`group`/`other`), `q` is a substring match on the name, and `lang1`/`lang2` (`WordLanguage.code`) narrow
+    * to wordlists whose language pair contains whichever of the two are given; any of them may narrow `sort`'s own
+    * order away. An unrecognised language code is dropped, the rule `GameEndpoints.allGames` follows. The only declared
+    * failure is `withCodecError`'s 400 for a query parameter that does not decode — a filter that matches nothing is an
+    * empty page, not an error, the same rule [[list]] follows.
     */
   val listTagsPage = {
     Endpoint(ApiRoutes.route0(paths.listTagsPage))
@@ -310,6 +314,8 @@ object WordEndpoints {
       .query(dirQuery)
       .query(searchQuery)
       .query(scopeQuery)
+      .query(lang1Query)
+      .query(lang2Query)
       .withCodecError
       .out[TagPage]
       .outFailure(failure.badRequest)

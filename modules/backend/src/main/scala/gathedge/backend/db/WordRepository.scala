@@ -154,6 +154,9 @@ trait WordRepository {
     * The word counts are computed for the page's own tag ids, not for the table: the one aggregate over `word_tags`
     * that has to see every row is [[TagSort.words]]'s `ORDER BY`, and that one is a correlated count the database can
     * answer from `idx_word_tags_tag`.
+    *
+    * `language1`/`language2` (`WordLanguage.code` strings), when set, each require the tag's `sourceLanguage`/
+    * `targetLanguage` pair to contain that code, in either order — the rule `GameRepository.listAllGamesPage` follows.
     */
   def listTagsPage(
     viewerId: Long,
@@ -164,6 +167,8 @@ trait WordRepository {
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
   ): Task[(List[(TagRow, Long, Boolean)], Long)]
 
   def findTag(userId: Long, nameNorm: String): Task[Option[TagRow]]
@@ -658,9 +663,11 @@ object WordRepository {
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
+    language1: Option[String] = None,
+    language2: Option[String] = None,
   ): RIO[WordRepository, (List[(TagRow, Long, Boolean)], Long)] = {
     ZIO.serviceWithZIO[WordRepository](
-      _.listTagsPage(viewerId, memberGroupIds, offset, limit, sort, descending, search, scope)
+      _.listTagsPage(viewerId, memberGroupIds, offset, limit, sort, descending, search, scope, language1, language2)
     )
   }
 
@@ -1323,10 +1330,18 @@ final class WordRepositoryLive(dataSource: DataSource)
     memberGroupIds: List[Long],
     search: Option[String],
     scope: TagScope,
+    language1: Option[String],
+    language2: Option[String],
   ): DynamicQuery[TagRow] = {
     val pattern  = search.map(Tag.normalize).filter(_.nonEmpty).map(needle => s"%$needle%")
     val narrowed = dynamicQuerySchema[TagRow]("tags")
       .filterOpt(pattern)((row, needle) => quote(row.nameNorm.like(unquote(needle))))
+      .filterOpt(language1)((row, lang) =>
+        quote(row.sourceLanguage == unquote(lang) || row.targetLanguage == unquote(lang))
+      )
+      .filterOpt(language2)((row, lang) =>
+        quote(row.sourceLanguage == unquote(lang) || row.targetLanguage == unquote(lang))
+      )
     (scope, memberGroupIds) match {
       case (TagScope.All, _)          =>
         narrowed
@@ -1393,8 +1408,10 @@ final class WordRepositoryLive(dataSource: DataSource)
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
+    language1: Option[String],
+    language2: Option[String],
   ): Task[(List[(TagRow, Long, Boolean)], Long)] = {
-    val narrowed = matchingTags(viewerId, memberGroupIds, search, scope)
+    val narrowed = matchingTags(viewerId, memberGroupIds, search, scope, language1, language2)
     val page     = orderedTags(narrowed, viewerId, memberGroupIds, sort, descending).drop(offset).take(limit)
     val listed   = for {
       rows   <- run(ctx.run(page))
@@ -1412,7 +1429,8 @@ final class WordRepositoryLive(dataSource: DataSource)
     } yield (rows.map(tag => (tag, counted.getOrElse(tag.id, 0L), tag.userId == viewerId)), total)
     logged(listed) { case (rows, total) =>
       s"tags.listPage viewer=$viewerId offset=$offset limit=$limit sort=${sort.getOrElse("-")} " +
-        s"desc=$descending scope=${TagScope.code(scope)} rows=${rows.size} total=$total"
+        s"desc=$descending scope=${TagScope.code(scope)} lang1=${language1.getOrElse("-")} " +
+        s"lang2=${language2.getOrElse("-")} rows=${rows.size} total=$total"
     }
   }
 

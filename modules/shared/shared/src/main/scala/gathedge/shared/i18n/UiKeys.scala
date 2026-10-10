@@ -1384,7 +1384,12 @@ object UiKeys {
   val tagsListScopeLabel: String        = key("ui.tagsList.scopeLabel")
   val tagsListScopeGroup: String        = key("ui.tagsList.scopeGroup")
   val tagsListResetFilters: String      = key("ui.tagsList.resetFilters")
-  val tagsListCount: String             = pluralKey("ui.tagsList.count")
+
+  // The two language filters. Either order matches, so neither label names a direction: a `de → hu` wordlist is found
+  // by "German" in either box.
+  val tagsListLanguage1Label: String = key("ui.tagsList.language1Label")
+  val tagsListLanguage2Label: String = key("ui.tagsList.language2Label")
+  val tagsListCount: String          = pluralKey("ui.tagsList.count")
 
   /** The per-row button that turns one wordlist straight into a quiz — see `TagsPage.renderCreateGameCell`. */
   val tagsListCreateGame: String = key("ui.tagsList.createGame")

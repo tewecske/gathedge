@@ -263,7 +263,8 @@ trait WordService {
     * dictionary. `sort`/`descending` are [[gathedge.shared.dto.TagSort]]'s two columns; asked for neither, the answer
     * keeps the listing's own order (own tags, then a study group's, then everyone else's, alphabetically within each)
     * rather than a database column. `search` narrows by a case-insensitive substring of the name, `scope` by
-    * [[TagScope]] — both apply before paging, so `total` counts what they leave.
+    * [[TagScope]], and `language1`/`language2` to wordlists whose language pair contains whichever of the two are
+    * given, in either order — all apply before paging, so `total` counts what they leave.
     */
   def listTagsPaged(
     reader: Option[Long],
@@ -273,6 +274,8 @@ trait WordService {
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): UIO[TagPage]
 
   /** `TagQuotaExceeded` is the hard half of the tag quota; a write that only crosses the soft threshold succeeds with
@@ -653,8 +656,13 @@ object WordService {
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
-  ): URIO[WordService, TagPage] =
-    ZIO.serviceWithZIO[WordService](_.listTagsPaged(reader, page, pageSize, sort, descending, search, scope))
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
+  ): URIO[WordService, TagPage] = {
+    ZIO.serviceWithZIO[WordService](
+      _.listTagsPaged(reader, page, pageSize, sort, descending, search, scope, language1, language2)
+    )
+  }
 
   def createTag(
     name: String,
@@ -1621,6 +1629,8 @@ final case class WordServiceLive(
     descending: Boolean,
     search: Option[String],
     scope: TagScope,
+    language1: Option[WordLanguage],
+    language2: Option[WordLanguage],
   ): UIO[TagPage] = {
     for {
       // The viewer's study groups decide `scope` and the default order, so they are resolved first and handed to the
@@ -1639,6 +1649,8 @@ final case class WordServiceLive(
                            descending,
                            search,
                            scope,
+                           language1.map(WordLanguage.code),
+                           language2.map(WordLanguage.code),
                          )
                          .orDie
       (rows, total)  = paged
