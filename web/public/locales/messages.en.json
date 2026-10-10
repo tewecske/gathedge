@@ -1002,6 +1002,8 @@
   "ui.tagsList.scopeLabel": "Show",
   "ui.tagsList.scopeGroup": "Group wordlists",
   "ui.tagsList.resetFilters": "Reset filters",
+  "ui.tagsList.language1Label": "Language",
+  "ui.tagsList.language2Label": "Other language",
   "ui.tagsList.count.one": "{0} wordlist",
   "ui.tagsList.count.other": "{0} wordlists",
   "ui.tagsList.createGame": "Create game",

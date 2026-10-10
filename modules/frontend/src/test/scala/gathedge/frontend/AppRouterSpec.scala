@@ -8,6 +8,7 @@ import gathedge.frontend.listing.{
   GamePlayQuery,
   MyPlayQuery,
   TagEntryQuery,
+  TagQuery,
   UserQuery,
   WordQuery,
 }
@@ -236,6 +237,22 @@ object AppRouterSpec extends ZIOSpecDefault {
           AppRouter.router.pageForRelativeUrl(url).contains(filtered),
           // A hand-edited unknown column is dropped rather than refused.
           AppRouter.router.pageForRelativeUrl(s"$prefix/games/all?sort=nonsense").contains(Page.AllGames()),
+        )
+      },
+      test("the wordlist catalog carries its language filter in the address and the history tag") {
+        val filtered =
+          Page.Tags(TagQuery(search = "verbs", language1 = Some(WordLanguage.De), language2 = Some(WordLanguage.Hu)))
+        val url      = AppRouter.router.relativeUrlForPage(filtered)
+
+        assertTrue(
+          AppRouter.router.relativeUrlForPage(Page.Tags()) == s"$prefix/tags",
+          url.startsWith(s"$prefix/tags?"),
+          url.contains("lang1=de"),
+          url.contains("lang2=hu"),
+          AppRouter.router.pageForRelativeUrl(url).contains(filtered),
+          AppRouter.deserialize(AppRouter.serialize(filtered)) == filtered,
+          // A hand-edited unknown language is dropped rather than refused.
+          AppRouter.router.pageForRelativeUrl(s"$prefix/tags?lang1=xx").contains(Page.Tags()),
         )
       },
       test("the cross-game history is the bare path by default and carries its query when filtered") {

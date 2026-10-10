@@ -140,6 +140,8 @@ object WordApiClient {
     dir: Option[String] = None,
     search: Option[String] = None,
     scope: Option[TagScope] = None,
+    language1: Option[WordLanguage] = None,
+    language2: Option[WordLanguage] = None,
   ): EventStream[Either[ApiError, TagPage]] = {
     HttpClient.call[TagPage](
       WordPaths
@@ -152,6 +154,8 @@ object WordApiClient {
             "dir"      -> dir,
             "q"        -> search,
             "scope"    -> scope.map(TagScope.code),
+            "lang1"    -> language1.map(WordLanguage.code),
+            "lang2"    -> language2.map(WordLanguage.code),
           )
         )
     )

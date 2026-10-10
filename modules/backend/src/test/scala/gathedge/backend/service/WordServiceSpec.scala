@@ -559,6 +559,46 @@ object WordServiceSpec extends ZIOSpecDefault {
           searched.items.map(_.id) == List(own.id),
         )
       }.provide(layer),
+      test("listTagsPaged narrows to wordlists whose language pair contains the chosen languages, in either order") {
+        for {
+          _       <- seed
+          deHu    <- createTag("dehu", 1L, WordLanguage.De, WordLanguage.Hu)
+          huEn    <- createTag("huen", 1L, WordLanguage.Hu, WordLanguage.En)
+          enEs    <- createTag("enes", 4L, WordLanguage.En, WordLanguage.Es)
+          hu      <- WordService.listTagsPaged(Some(1L), 1, 10, None, false, None, TagScope.All, Some(WordLanguage.Hu))
+          huFirst <- WordService.listTagsPaged(
+                       Some(1L),
+                       1,
+                       10,
+                       None,
+                       false,
+                       None,
+                       TagScope.All,
+                       Some(WordLanguage.Hu),
+                       Some(WordLanguage.De),
+                     )
+          enOnly  <- WordService.listTagsPaged(None, 1, 10, None, false, None, TagScope.All, None, Some(WordLanguage.En))
+          none    <- WordService.listTagsPaged(
+                       Some(1L),
+                       1,
+                       10,
+                       None,
+                       false,
+                       None,
+                       TagScope.All,
+                       Some(WordLanguage.Fr),
+                       Some(WordLanguage.De),
+                     )
+        } yield assertTrue(
+          hu.items.map(_.id).toSet == Set(deHu.id, huEn.id),
+          hu.total == 2L,
+          // A `de → hu` wordlist matches `hu` + `de` as surely as `de` + `hu`.
+          huFirst.items.map(_.id) == List(deHu.id),
+          enOnly.items.map(_.id).toSet == Set(huEn.id, enEs.id),
+          none.items.isEmpty,
+          none.total == 0L,
+        )
+      }.provide(layer),
       test("listTagsPaged counts every matching tag in `total` while slicing to one page") {
         for {
           _      <- seed

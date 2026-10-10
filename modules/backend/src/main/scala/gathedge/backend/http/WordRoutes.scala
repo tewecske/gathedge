@@ -159,12 +159,23 @@ object WordRoutes {
     )
   }
 
-  private type TagListQuery = (Option[Int], Option[Int], Option[String], Option[String], Option[String], Option[String])
+  /** The catalog's eight query parameters — past the arity `handler` unrolls, the same reason [[ListQuery]] is named.
+    */
+  private type TagListQuery = (
+    Option[Int],
+    Option[Int],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+  )
 
   private val listTagsPageRoute = {
     WordEndpoints.listTagsPage.implementHandler(
       handler { (input: TagListQuery) =>
-        val (page, pageSize, sort, dir, q, scope) = input
+        val (page, pageSize, sort, dir, q, scope, lang1, lang2) = input
         reader.flatMap { who =>
           WordService.listTagsPaged(
             reader = who,
@@ -174,6 +185,8 @@ object WordRoutes {
             descending = SortDirection.isDescending(dir),
             search = searchTerm(q),
             scope = scope.map(TagScope.fromString).getOrElse(TagScope.All),
+            language1 = languageOf(lang1),
+            language2 = languageOf(lang2),
           )
         }
       }

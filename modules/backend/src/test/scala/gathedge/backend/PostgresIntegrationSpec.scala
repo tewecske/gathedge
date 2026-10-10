@@ -1485,6 +1485,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           stranger  <- AuthService.signup("pgcatalogother@example.com", "password123").map(_._1)
           mine      <- WordRepository.insertTag(reader.id, "pgcat-mine", "pgcat-mine", 0L, "de", "hu")
           theirs    <- WordRepository.insertTag(stranger.id, "pgcat-theirs", "pgcat-theirs", 0L, "de", "hu")
+          // Outside the `pgcat-` search every other read here makes, so only the language reads below see it.
+          english   <- WordRepository.insertTag(stranger.id, "pglang-english", "pglang-english", 0L, "en", "de")
           shared    <- WordRepository.insertTag(stranger.id, "pgcat-shared", "pgcat-shared", 0L, "de", "hu")
           group     <- GroupRepository.insertGroup("PG Catalog", "pg catalog", "PGCA-TALO-G000-0001", stranger.id, 0L)
           _         <- GroupRepository.insertMembership(group.id, reader.id, "member", 0L)
@@ -1509,6 +1511,31 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           byName    <- WordRepository
                          .listTagsPage(reader.id, groups, 0, 50, Some(TagSort.name), true, Some("pgcat-"), TagScope.All)
           firstPage <- WordRepository.listTagsPage(reader.id, groups, 0, 1, None, false, Some("pgcat-"), TagScope.All)
+          // The language filter's `OR` over the two columns, twice, on the real dialect — and alongside a scope.
+          byLang    <- WordRepository.listTagsPage(
+                         reader.id,
+                         groups,
+                         0,
+                         50,
+                         None,
+                         false,
+                         None,
+                         TagScope.All,
+                         Some("en"),
+                         Some("de"),
+                       )
+          byHu      <- WordRepository.listTagsPage(reader.id, groups, 0, 50, None, false, None, TagScope.All, Some("hu"))
+          langMine  <- WordRepository.listTagsPage(
+                         reader.id,
+                         groups,
+                         0,
+                         50,
+                         None,
+                         false,
+                         Some("pgcat-"),
+                         TagScope.Mine,
+                         Some("hu"),
+                       )
         } yield assertTrue(
           // Default order: own first, then the study group's, then everyone else's.
           all._1.map(_._1.id) == List(mine.id, shared.id, theirs.id),
@@ -1532,6 +1559,11 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           // The total counts every match, not the page.
           firstPage._1.map(_._1.id) == List(mine.id),
           firstPage._2 == 3L,
+          // Either column matches: `en → de` is found by `en` + `de`, and a `hu` filter keeps every `de → hu` tag.
+          byLang._1.map(_._1.id) == List(english.id),
+          byLang._2 == 1L,
+          byHu._1.map(_._1.id) == List(mine.id, shared.id, theirs.id),
+          langMine._1.map(_._1.id) == List(mine.id),
         )
       },
       // The games listing reads its tags for a whole page in one join (`tagsOfGames`) rather than one query per row.
