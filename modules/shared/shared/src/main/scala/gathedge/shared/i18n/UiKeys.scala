@@ -1470,9 +1470,6 @@ object UiKeys {
   val gameInstanceWordLimitCustom: String = key("ui.gameInstance.wordLimit.custom")
   val gameInstanceWordLimitCount: String  = key("ui.gameInstance.wordLimit.count")
 
-  val gameInstanceIncludeArticlesLabel: String = key("ui.gameInstance.includeArticles.label")
-  val gameInstanceIncludeArticlesHint: String  = key("ui.gameInstance.includeArticles.hint")
-
   val gameInstancePreferenceLabel: String        = key("ui.gameInstance.preference.label")
   val gameInstancePreferenceAll: String          = key("ui.gameInstance.preference.all")
   val gameInstancePreferenceLeastPlayed: String  = key("ui.gameInstance.preference.leastPlayed")
