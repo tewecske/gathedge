@@ -64,6 +64,11 @@ final case class LanguageProfile(
     TaggedWord.find(declinedArticles, if (borrows) Some(Gender.Masculine) else gender, tags)
   }
 
+  /** Every definite article a form table cell can take, each once, in table order (`der`, `die`, `das`, `des`, …). The
+    * form drill offers these when the player chooses the articles.
+    */
+  def articleChoices: List[String] = declinedArticles.map(_.text).distinct
+
   /** The subject pronoun of a form table cell that requires `tags`: the first entry whose tags the cell requires. */
   def subjectPronoun(tags: Set[String]): Option[String] = TaggedWord.find(subjectPronouns, None, tags)
 

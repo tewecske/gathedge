@@ -8,11 +8,11 @@ import gathedge.frontend.i18n.I18n
 import gathedge.shared.domain.{
   DrillBoard,
   DrillCell,
+  DrillHint,
   DrillRound,
   DrillTableRef,
   FormDrill,
   FormPrefix,
-  FormTemplates,
   LanguageProfile,
   PartOfSpeech,
   Tag,
@@ -25,7 +25,9 @@ import gathedge.shared.i18n.UiKeys
 import scala.util.Random
 
 /** The form drill (`/tags/{id}/forms`): a wordlist's nouns or verbs, one form table at a time, with the cells empty.
-  * The player puts each form back into its cell, by dragging a chip or by tapping a chip and then a cell.
+  * The player puts each form back into its cell, by dragging a chip or by tapping a chip and then a cell. Where the
+  * table has articles, the player may choose those too. Each word allows one hint, and a word can be skipped: it is
+  * practice, so neither costs more than that word's points.
   *
   * Nothing is stored. The page reads the wordlist's words with their forms once per language and part of speech (`GET
   * /api/tags/{tagId}/forms`), builds each round with `FormDrill.round`, and checks the answers itself.
@@ -44,38 +46,41 @@ object FormDrillPage {
 
   /** The tag's languages that have a form template for `pos`, source language first. */
   def languagesFor(tag: Tag, pos: PartOfSpeech): List[WordLanguage] = {
-    List(tag.sourceLanguage, tag.targetLanguage).distinct.filter(FormTemplates.of(_, pos).isDefined)
+    List(tag.sourceLanguage, tag.targetLanguage).distinct.filter(FormDrill.template(_, pos).isDefined)
   }
 
-  /** The round each word gives on the table `ref` names, leaving out a word that gives none. */
-  def roundsFor(words: List[FormDrillWord], ref: DrillTableRef): List[(Word, DrillRound)] = {
+  /** The round each word gives on the table `ref` names, leaving out a word that gives none. With `askArticles`, the
+    * player chooses the articles of a table that has them.
+    */
+  def roundsFor(words: List[FormDrillWord], ref: DrillTableRef, askArticles: Boolean): List[(Word, DrillRound)] = {
     words.flatMap(entry => {
       val word    = entry.word
       val profile = LanguageProfile.of(word.language)
       for {
-        template <- FormTemplates.of(word.language, word.partOfSpeech)
+        template <- FormDrill.template(word.language, word.partOfSpeech)
         round    <- FormDrill.round(
                       template,
                       ref,
                       entry.forms,
                       word.text,
                       (kind: FormPrefix, tags: Set[String]) => profile.prefix(kind, word.gender, tags, word.text),
+                      askArticles,
                     )(_.relation, (form: WordFormEntry) => form.word.id, _.word.text)
       } yield (word, round)
     })
   }
 
-  /** A table's name in the picker: its section's title and its own, whichever it has. */
+  /** A table's name in the picker: its section's title, its own and its column's, whichever it has. */
   def tableName(ref: DrillTableRef): String = {
-    (ref.sectionTitle.toList ++ ref.title.toList).map(Labels.formLabel) match {
+    (ref.sectionTitle.toList ++ ref.title.toList ++ ref.columnTitle.toList).map(Labels.formLabel).distinct match {
       case Nil   => I18n.t(UiKeys.formDrillTableUntitled)
       case parts => parts.mkString(" · ")
     }
   }
 }
 
-/** One session: the rounds in play order, the one on screen, and its board. `score` and `maxScore` count the gaps of
-  * the rounds already finished.
+/** One session: the rounds in play order, the one on screen, and its board. `score` and `maxScore` count the points of
+  * the rounds already finished; a skipped round adds to `skipped` alone.
   */
 private final case class DrillSession(
   rounds: List[(Word, DrillRound)],
@@ -83,6 +88,7 @@ private final case class DrillSession(
   board: DrillBoard,
   score: Int,
   maxScore: Int,
+  skipped: Int,
 ) {
 
   def word: Word = rounds(current)._1
@@ -95,14 +101,14 @@ private final case class DrillSession(
 private object DrillSession {
 
   def start(rounds: List[(Word, DrillRound)]): DrillSession = {
-    DrillSession(rounds, 0, DrillBoard.of(rounds.head._2, Random.shuffle(_)), 0, 0)
+    DrillSession(rounds, 0, DrillBoard.of(rounds.head._2, Random.shuffle(_)), 0, 0, 0)
   }
 }
 
 private enum DrillPhase {
   case Setup
   case Playing(session: DrillSession)
-  case Done(score: Int, maxScore: Int)
+  case Done(score: Int, maxScore: Int, skipped: Int)
 }
 
 private class FormDrillPage(tagId: Long) {
@@ -115,6 +121,7 @@ private class FormDrillPage(tagId: Long) {
   private val wordsVar: Var[Option[Either[String, List[FormDrillWord]]]]      = Var(None)
   private val tableVar: Var[Option[DrillTableRef]]                            = Var(None)
   private val countVar: Var[Option[Int]]                                      = Var(Some(10))
+  private val articlesVar: Var[Boolean]                                       = Var(true)
   private val phaseVar: Var[DrillPhase]                                       = Var(DrillPhase.Setup)
   private val selectedVar: Var[Option[Int]]                                   = Var(None)
   private val loadBus: EventBus[(WordLanguage, PartOfSpeech)]                 = new EventBus()
@@ -130,15 +137,15 @@ private class FormDrillPage(tagId: Long) {
     * out, so the picker never offers an empty drill.
     */
   private val tablesSignal: Signal[List[(DrillTableRef, List[(Word, DrillRound)])]] = {
-    choiceSignal.combineWith(wordsVar.signal).map {
-      case (Some((_, language, pos)), Some(Right(words))) =>
-        FormTemplates
-          .of(language, pos)
+    choiceSignal.combineWith(wordsVar.signal, articlesVar.signal).map {
+      case (Some((_, language, pos)), Some(Right(words)), askArticles) =>
+        FormDrill
+          .template(language, pos)
           .toList
           .flatMap(FormDrill.tables)
-          .map(ref => (ref, roundsFor(words, ref)))
+          .map(ref => (ref, roundsFor(words, ref, askArticles)))
           .filter { case (_, rounds) => rounds.nonEmpty }
-      case _                                              =>
+      case _                                                           =>
         Nil
     }
   }
@@ -195,9 +202,9 @@ private class FormDrillPage(tagId: Long) {
         }
         .distinct
         .map {
-          case None                                   => renderPlaying()
-          case Some(DrillPhase.Done(score, maxScore)) => renderDone(tag, score, maxScore)
-          case Some(_)                                => renderSetup(tag)
+          case None                                            => renderPlaying()
+          case Some(DrillPhase.Done(score, maxScore, skipped)) => renderDone(tag, score, maxScore, skipped)
+          case Some(_)                                         => renderSetup(tag)
         },
     )
   }
@@ -217,6 +224,7 @@ private class FormDrillPage(tagId: Long) {
         }),
         child.maybe <-- tablesSignal.map(tables => Option.when(tables.nonEmpty)(renderTableSelect(tables))),
         child.maybe <-- tablesSignal.map(tables => Option.when(tables.nonEmpty)(renderCountSelect())),
+        child.maybe <-- articlesShownSignal.map(shown => Option.when(shown)(renderArticlesToggle())),
       ),
       child <-- posVar.signal.combineWith(languageVar.signal, wordsVar.signal, chosenSignal).map {
         case (_, None, _, _)                           =>
@@ -305,6 +313,24 @@ private class FormDrillPage(tagId: Long) {
     )
   }
 
+  /** Whether the chosen table has articles to choose, or would have with the toggle on. */
+  private val articlesShownSignal: Signal[Boolean] = chosenSignal.map(_.exists { case (ref, _) => ref.articles })
+
+  private def renderArticlesToggle(): HtmlElement = {
+    label(
+      cls := "label cursor-pointer gap-2 min-h-8",
+      input(
+        typ    := "checkbox",
+        cls    := "checkbox checkbox-sm",
+        controlled(
+          checked <-- articlesVar.signal,
+          onClick.mapToChecked --> articlesVar.writer,
+        ),
+      ),
+      span(cls := "label-text", I18n.t(UiKeys.formDrillArticles)),
+    )
+  }
+
   private def renderCountSelect(): HtmlElement = {
     val code = (count: Option[Int]) => count.fold("all")(_.toString)
     labelled(
@@ -356,13 +382,15 @@ private class FormDrillPage(tagId: Long) {
     selectedVar.update(selected => if (selected.contains(chip)) None else Some(chip))
   }
 
-  private def next(): Unit = {
+  /** Moves on to the next word, scoring the finished one, or skipping it unscored. */
+  private def next(skip: Boolean): Unit = {
     phaseVar.update {
       case DrillPhase.Playing(session) =>
-        val score    = session.score + session.board.firstTry.getOrElse(0)
-        val maxScore = session.maxScore + session.board.gaps.size
+        val score    = session.score + (if (skip) 0 else session.board.firstTry.getOrElse(0))
+        val maxScore = session.maxScore + (if (skip) 0 else session.board.maxScore)
+        val skipped  = session.skipped + (if (skip) 1 else 0)
         if (session.isLast)
-          DrillPhase.Done(score, maxScore)
+          DrillPhase.Done(score, maxScore, skipped)
         else {
           val index = session.current + 1
           DrillPhase.Playing(
@@ -371,12 +399,19 @@ private class FormDrillPage(tagId: Long) {
               board = DrillBoard.of(session.rounds(index)._2, Random.shuffle(_)),
               score = score,
               maxScore = maxScore,
+              skipped = skipped,
             )
           )
         }
       case other                       =>
         other
     }
+    selectedVar.set(None)
+  }
+
+  /** Spends the round's hint: on the selected chip, or else on the first unsolved cell. */
+  private def hint(): Unit = {
+    updateBoard(_.reveal(selectedVar.now()))
     selectedVar.set(None)
   }
 
@@ -410,17 +445,18 @@ private class FormDrillPage(tagId: Long) {
     val headed  = round.columns.exists(_.nonEmpty)
     val titled  = round.rows.exists(_.label.nonEmpty)
 
-    def gapCell(gap: Int, answer: String, prefix: Option[String]): HtmlElement = {
+    def gapCell(gap: Int, answer: String, prefix: Option[String], article: Option[Int]): HtmlElement = {
       val chip  = board.placed.get(gap)
       val state = {
-        if (board.locked.contains(gap)) "border-success bg-success/10"
+        if (board.hint.contains(DrillHint.Form(gap))) "border-info bg-info/10"
+        else if (board.locked.contains(gap)) "border-success bg-success/10"
         else if (board.wrong.contains(gap)) "border-error bg-error/10"
         else if (chip.isDefined) "border-base-content/40"
         else "border-dashed border-base-content/30"
       }
       span(
         cls := "inline-flex items-center gap-1",
-        lead(prefix, answer),
+        before(prefix, article, answer),
         button(
           typ             := "button",
           cls             := s"min-w-24 min-h-8 px-2 rounded border-2 text-left $state",
@@ -445,6 +481,31 @@ private class FormDrillPage(tagId: Long) {
       )
     }
 
+    /** The article the player chooses, in place of the prefix the table would show. */
+    def articleSelect(index: Int): HtmlElement = {
+      val isLocked        = board.articlesLocked.contains(index)
+      val state           = {
+        if (board.hint.contains(DrillHint.Article(index))) "select-info"
+        else if (isLocked) "select-success"
+        else if (board.articlesWrong.contains(index)) "select-error"
+        else ""
+      }
+      select(
+        cls        := s"select select-xs w-auto $state",
+        disabled   := isLocked,
+        aria.label := I18n.t(UiKeys.formDrillArticle),
+        option(value := "", "—"),
+        profile.articleChoices.map(article => option(value := article, article)),
+        value      := board.chosen.getOrElse(index, ""),
+        onChange.mapToValue --> Observer[String](text => updateBoard(_.choose(index, text))),
+      )
+    }
+
+    /** What goes before a cell's form: the article to choose, or the prefix as the table shows it. */
+    def before(prefix: Option[String], article: Option[Int], text: String): Option[HtmlElement] = {
+      article.map(articleSelect).orElse(lead(prefix, text))
+    }
+
     div(
       cls := "flex flex-col gap-4",
       div(
@@ -464,9 +525,12 @@ private class FormDrillPage(tagId: Long) {
               tr(
                 Option.when(titled)(th(cls := "font-normal opacity-70", row.label.map(Labels.formLabel).getOrElse(""))),
                 row.cells.map {
-                  case DrillCell.Given(text, prefix)        => td(span(lead(prefix, text), span(text)))
-                  case DrillCell.Gap(index, answer, prefix) => td(gapCell(index, answer, prefix))
-                  case DrillCell.Blank                      => td(span(cls := "opacity-40", "—"))
+                  case DrillCell.Given(text, prefix, article)        =>
+                    td(span(cls := "inline-flex items-center gap-1", before(prefix, article, text), span(text)))
+                  case DrillCell.Gap(index, answer, prefix, article) =>
+                    td(gapCell(index, answer, prefix, article))
+                  case DrillCell.Blank                               =>
+                    td(span(cls := "opacity-40", "—"))
                 },
               )
             })
@@ -487,23 +551,41 @@ private class FormDrillPage(tagId: Long) {
         }),
       ),
       p(cls := "text-xs opacity-60", I18n.t(UiKeys.formDrillHowTo)),
-      Option.when(board.wrong.nonEmpty)(Alert.warning(I18n.t(UiKeys.formDrillWrong))),
+      Option.when(board.wrong.nonEmpty || board.articlesWrong.nonEmpty)(Alert.warning(I18n.t(UiKeys.formDrillWrong))),
       div(
-        cls := "flex gap-2",
+        cls := "flex flex-wrap gap-2",
         if (board.isSolved) {
-          button(
-            typ := "button",
-            cls := "btn btn-primary",
-            I18n.t(if (session.isLast) UiKeys.formDrillFinish else UiKeys.formDrillNext),
-            onClick.mapToUnit --> Observer[Unit](_ => next()),
+          List(
+            button(
+              typ := "button",
+              cls := "btn btn-primary",
+              I18n.t(if (session.isLast) UiKeys.formDrillFinish else UiKeys.formDrillNext),
+              onClick.mapToUnit --> Observer[Unit](_ => next(skip = false)),
+            )
           )
         } else {
-          button(
-            typ      := "button",
-            cls      := "btn btn-primary",
-            disabled := !board.isFull,
-            I18n.t(UiKeys.formDrillCheck),
-            onClick.mapToUnit --> Observer[Unit](_ => updateBoard(_.check)),
+          List(
+            button(
+              typ      := "button",
+              cls      := "btn btn-primary",
+              disabled := !board.isFull,
+              I18n.t(UiKeys.formDrillCheck),
+              onClick.mapToUnit --> Observer[Unit](_ => updateBoard(_.check)),
+            ),
+            button(
+              typ      := "button",
+              cls      := "btn",
+              disabled := !board.canHint,
+              title    := I18n.t(UiKeys.formDrillHintHelp),
+              I18n.t(UiKeys.formDrillHint),
+              onClick.mapToUnit --> Observer[Unit](_ => hint()),
+            ),
+            button(
+              typ      := "button",
+              cls      := "btn btn-ghost",
+              I18n.t(UiKeys.formDrillSkip),
+              onClick.mapToUnit --> Observer[Unit](_ => next(skip = true)),
+            ),
           )
         },
       ),
@@ -512,10 +594,11 @@ private class FormDrillPage(tagId: Long) {
 
   // -- Done --------------------------------------------------------------------------------------
 
-  private def renderDone(tag: Tag, score: Int, maxScore: Int): HtmlElement = {
+  private def renderDone(tag: Tag, score: Int, maxScore: Int, skipped: Int): HtmlElement = {
     div(
       cls := "flex flex-col gap-4",
-      Alert.success(I18n.t(UiKeys.formDrillScore, score, maxScore)),
+      Option.when(maxScore > 0)(Alert.success(I18n.t(UiKeys.formDrillScore, score, maxScore))),
+      Option.when(skipped > 0)(p(cls := "text-sm opacity-70", I18n.plural(UiKeys.formDrillSkipped, skipped.toLong))),
       div(
         cls := "flex flex-wrap gap-2",
         button(

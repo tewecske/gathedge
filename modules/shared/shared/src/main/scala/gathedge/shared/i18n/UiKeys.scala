@@ -1720,4 +1720,10 @@ object UiKeys {
   val formDrillScore: String         = key("ui.formDrill.score")
   val formDrillAgain: String         = key("ui.formDrill.again")
   val formDrillBack: String          = key("ui.formDrill.back")
+  val formDrillArticles: String      = key("ui.formDrill.articles")
+  val formDrillArticle: String       = key("ui.formDrill.article")
+  val formDrillHint: String          = key("ui.formDrill.hint")
+  val formDrillHintHelp: String      = key("ui.formDrill.hintHelp")
+  val formDrillSkip: String          = key("ui.formDrill.skip")
+  val formDrillSkipped: String       = pluralKey("ui.formDrill.skipped")
 }

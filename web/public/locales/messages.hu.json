@@ -1177,5 +1177,12 @@
   "ui.formDrill.finish": "Befejezés",
   "ui.formDrill.score": "Első próbára jó cellába tett alakok: {0} / {1}.",
   "ui.formDrill.again": "Újra",
-  "ui.formDrill.back": "Vissza a szógyűjteményhez"
+  "ui.formDrill.back": "Vissza a szógyűjteményhez",
+  "ui.formDrill.articles": "Névelőket is választok",
+  "ui.formDrill.article": "Névelő",
+  "ui.formDrill.hint": "Súgás",
+  "ui.formDrill.hintHelp": "Egy alakot a helyére tesz. Szavanként egyszer kérhető. Ha kijelöltél egy alakot, megmutatja, hová tartozik.",
+  "ui.formDrill.skip": "Szó kihagyása",
+  "ui.formDrill.skipped.one": "Kihagyott szavak: {0}.",
+  "ui.formDrill.skipped.other": "Kihagyott szavak: {0}."
 }

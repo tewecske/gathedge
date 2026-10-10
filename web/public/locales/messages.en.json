@@ -1177,5 +1177,12 @@
   "ui.formDrill.finish": "Finish",
   "ui.formDrill.score": "Forms in the right cell at the first try: {0} of {1}.",
   "ui.formDrill.again": "Practice again",
-  "ui.formDrill.back": "Back to the wordlist"
+  "ui.formDrill.back": "Back to the wordlist",
+  "ui.formDrill.articles": "Choose the articles too",
+  "ui.formDrill.article": "Article",
+  "ui.formDrill.hint": "Hint",
+  "ui.formDrill.hintHelp": "Puts one form into its cell. One hint for each word. With a form selected, it shows where that form goes.",
+  "ui.formDrill.skip": "Skip word",
+  "ui.formDrill.skipped.one": "You skipped {0} word.",
+  "ui.formDrill.skipped.other": "You skipped {0} words."
 }
