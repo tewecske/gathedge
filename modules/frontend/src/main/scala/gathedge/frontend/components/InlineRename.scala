@@ -36,7 +36,7 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
 
   /** Spliced into the page's root element. `onSaved` is what the page does with a successful rename — update its own
     * name state, since only it knows where that lives. `onError` is for anything beyond showing the message inline —
-    * `GameInstancePage` uses it to drop a stale ownership hint on a 403; most callers can leave it as the default.
+    * `GameInstancePage` uses it to hide its controls on a 403; most callers can leave it as the default.
     */
   def bindings(onSaved: Observer[A], onError: ApiError => Unit = _ => ()): Modifier[HtmlElement] = {
     saveBus.events
@@ -63,8 +63,8 @@ final class InlineRename[A](submit: String => EventStream[Either[ApiError, A]]) 
     * does not attempt to share one.
     *
     * @param canEdit
-    *   whether the pencil is offered at all — `TagDetailPage` gates it on `tag.ownedByMe`, `GameInstancePage` on its
-    *   local ownership hint.
+    *   whether the pencil is offered at all — `TagDetailPage` gates it on `tag.ownedByMe`, `GameInstancePage` on
+    *   `GameDetail.ownedByMe`.
     * @param inputCls
     *   lets a caller match the edit input to what it replaces — `TagDetailPage` sizes it like the title it stands in
     *   for, `GameInstancePage` like the ordinary `input-sm` beside its own heading.

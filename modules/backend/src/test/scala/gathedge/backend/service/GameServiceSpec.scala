@@ -267,7 +267,26 @@ object GameServiceSpec extends ZIOSpecDefault {
           tagId   <- eligibleTag(owner, "lesson1", WordLanguage.De, WordLanguage.Hu)
           created <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
           found   <- GameService.getBySlug(created.slug)
-        } yield assertTrue(found.copy(pool = Nil, reversePool = Nil) == created)
+        } yield assertTrue(found.copy(pool = Nil, reversePool = Nil) == created.copy(ownedByMe = false))
+      },
+      test("ownedByMe is true for the owner alone: not for another account, an administrator or an anonymous reader") {
+        for {
+          owner     <- newUser()
+          other     <- newUser()
+          admin     <- newAdmin("ownedbyme@example.com")
+          tagId     <- eligibleTag(owner, "ownedByMe", WordLanguage.De, WordLanguage.Hu)
+          created   <- GameService.createGame(owner, WordLanguage.De, WordLanguage.Hu, List(tagId))
+          asOwner   <- GameService.getBySlug(created.slug, Some(owner))
+          asOther   <- GameService.getBySlug(created.slug, Some(other))
+          asAdmin   <- GameService.getBySlug(created.slug, Some(admin))
+          anonymous <- GameService.getBySlug(created.slug)
+        } yield assertTrue(
+          created.ownedByMe,
+          asOwner.ownedByMe,
+          !asOther.ownedByMe,
+          !asAdmin.ownedByMe,
+          !anonymous.ownedByMe,
+        )
       },
       test("a known slug carries both directions' eligible pools, the same words the setup preview answers") {
         for {
@@ -507,6 +526,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           blocked == Left(GameFailure.NotOwner),
           renamed.name == "New name",
           renamed.slug == created.slug,
+          renamed.ownedByMe,
         )
       },
       test("a global admin renames, deletes and reads the plays of a game they do not own") {
@@ -526,6 +546,7 @@ object GameServiceSpec extends ZIOSpecDefault {
           listed.exists(_.total == 1L),
           detail.isRight,
           renamed.name == "Renamed by admin",
+          !renamed.ownedByMe,
           gone == Left(GameFailure.NotFound),
         )
       },

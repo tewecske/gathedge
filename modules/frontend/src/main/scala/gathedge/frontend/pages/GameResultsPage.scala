@@ -21,8 +21,8 @@ import gathedge.shared.i18n.UiKeys
 /** A game's owner-facing plays listing: who played `slug` and how they scored, paged/sorted/filtered the same way
   * `AdminUsersPage` is, plus a per-play detail modal.
   *
-  * Ownership is enforced server-side, not here — `GameInstancePage` only links here when `GameOwnership.isOwned(slug)`
-  * holds, but the 403 this page's own requests can still answer (a stale local hint, or a different account) is what
+  * Ownership is enforced server-side, not here — `GameInstancePage` only links here for the game's owner
+  * (`GameDetail.ownedByMe`) or a global administrator, but the 403 this page's own requests can still answer is what
   * actually enforces it.
   */
 object GameResultsPage {

@@ -16,7 +16,7 @@ import gathedge.frontend.components.{
 }
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagQuery}
-import gathedge.frontend.state.{AppState, GameOwnership}
+import gathedge.frontend.state.AppState
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{GameRef, Tag, TagScope, User, WordLanguage}
 import gathedge.shared.dto.{GameCreated, TagExportFile, TagPage, TagSort}
@@ -226,9 +226,6 @@ private class TagsPage(
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
             creatingTagIdVar.set(None)
-            // This browser is the one that created it, so it is offered the rename control — the same mark
-            // `GameSetupPage` makes after its own create.
-            GameOwnership.markOwned(created.slug)
             AppRouter.router.pushState(Page.GameInstance(created.slug))
           case Left(err)      =>
             Var.set(creatingTagIdVar -> None, errorVar -> Some(err.message))
@@ -241,9 +238,6 @@ private class TagsPage(
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
             Var.set(creatingSelectionVar -> false, selectedVar -> Map.empty)
-            // This browser is the one that created it, so it is offered the rename control — the same mark the
-            // per-row button makes above.
-            GameOwnership.markOwned(created.slug)
             AppRouter.router.pushState(Page.GameInstance(created.slug))
           case Left(err)      =>
             Var.set(creatingSelectionVar -> false, errorVar -> Some(err.message))

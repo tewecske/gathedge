@@ -71,6 +71,11 @@ final case class GameSetupWord(
   *   - `pool` and `reversePool` are the eligible words in the game's stored direction and in the swapped one. Both are
   *     in alphabetical order (`WordPreference.All`'s order): a preference changes which words a play draws first, not
   *     which words are eligible.
+  *
+  * `ownedByMe` says whether the caller owns the game. It tells a caller only about themselves, never who the owner is,
+  * so a shared link leaks nothing by it — the same field `Tag` carries. It is `false` for an anonymous caller. The game
+  * page shows its rename and delete controls on it, ORed with `AppState.isGlobalAdminSignal`, since an administrator
+  * may manage any game but owns none of them.
   */
 final case class GameDetail(
   slug: String,
@@ -83,6 +88,7 @@ final case class GameDetail(
   lastVariant: Option[GameVariantDto] = None,
   pool: List[GameSetupWord] = Nil,
   reversePool: List[GameSetupWord] = Nil,
+  ownedByMe: Boolean = false,
 ) derives JsonCodec
 
 /** `POST /api/games/{slug}/plays`'s request body: the play-time variant a player picks fresh every time. See the design

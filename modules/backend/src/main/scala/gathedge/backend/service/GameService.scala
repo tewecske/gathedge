@@ -134,7 +134,9 @@ trait GameService {
   /** Every wordlist set more than one game was built from — the administrator's duplicate report. */
   def duplicateTagGames: UIO[List[DuplicateGameGroup]]
 
-  /** `readerId`, when given, fills [[GameDetail.lastVariant]] from that reader's own latest play of the game. */
+  /** `readerId`, when given, fills [[GameDetail.lastVariant]] from that reader's own latest play of the game, and
+    * [[GameDetail.ownedByMe]] from whether that reader owns it.
+    */
   def getBySlug(slug: String, readerId: Option[Long] = None): IO[GameFailure, GameDetail]
 
   /** Only the owner may rename; anyone else gets [[GameFailure.NotOwner]]. `slug` never changes. */
@@ -666,7 +668,7 @@ final case class GameServiceLive(
       row        <-
         insertWithRetry(userId, sourceLanguage, targetLanguage, tagIds, now, attempt = 0, lastPair = None)
       tags       <- repo.tagsOf(row.id).orDie
-    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tagRefs(tags))
+    } yield GameDetail(row.slug, row.name, sourceLanguage, targetLanguage, tagRefs(tags), ownedByMe = true)
   }
 
   /** The setup screen's preview of the pool a game built from `tagIds` would draw from, one row per source word with
@@ -760,7 +762,12 @@ final case class GameServiceLive(
       last   <- ZIO.foreach(readerId)(id => repo.latestPlayOf(row.id, id).orDie).map(_.flatten)
       pool   <- previewOf(row, readerId, swapDirection = false, WordPreference.All)
       back   <- previewOf(row, readerId, swapDirection = true, WordPreference.All)
-    } yield detail.copy(lastVariant = last.map(variantOf), pool = pool, reversePool = back)
+    } yield detail.copy(
+      lastVariant = last.map(variantOf),
+      pool = pool,
+      reversePool = back,
+      ownedByMe = readerId.contains(row.ownerUserId),
+    )
   }
 
   /** Loads `slug` and checks it belongs to `requesterUserId` — the ownership check every owner-only game action needs,
@@ -795,7 +802,7 @@ final case class GameServiceLive(
                   GameFailure.NotFound,
                 )
       detail <- detailOf(row.copy(name = valid))
-    } yield detail
+    } yield detail.copy(ownedByMe = row.ownerUserId == requesterUserId)
   }
 
   def deleteGame(slug: String, requesterUserId: Long): IO[GameFailure, Unit] = {

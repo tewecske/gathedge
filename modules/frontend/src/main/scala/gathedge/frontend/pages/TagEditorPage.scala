@@ -8,7 +8,7 @@ import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, La
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.{AllGameQuery, TagEntryQuery}
 import gathedge.frontend.ocr.ImageOcr
-import gathedge.frontend.state.{AppState, GameOwnership}
+import gathedge.frontend.state.AppState
 import gathedge.frontend.util.Download
 import gathedge.shared.domain.{EntryBucket, PairMatch, Tag, User, Word, WordLanguage}
 import gathedge.shared.dto.{
@@ -911,9 +911,6 @@ private final class TagEditorPage(
         Observer[Either[ApiError, GameCreated]] {
           case Right(created) =>
             creatingGameVar.set(false)
-            // This browser is the one that created it, so it is offered the rename control — the same mark
-            // `GameSetupPage`/`TagsPage` make after their own create.
-            GameOwnership.markOwned(created.slug)
             AppRouter.router.pushState(Page.GameInstance(created.slug))
           case Left(err)      =>
             Var.set(creatingGameVar -> false, errorVar -> Some(err.message))

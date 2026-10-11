@@ -124,7 +124,7 @@ test('a game is created from the wordlist page, and every game records its plays
   expect(gameSlug).not.toBe('');
 
   // The owner lands straight on the instance page it just created and is recognized as the owner in this same
-  // browser — the "View results" link shows for the game's owner (GameInstancePage.renderNameHeader).
+  // browser — the "View results" link shows for the game's owner (GameDetail.ownedByMe).
   await expect(page.getByRole('link', { name: 'View results' })).toBeVisible();
 });
 
@@ -187,6 +187,45 @@ test('picking a wordlist in the filter reads no wordlist, and clearing it unlock
   for (const select of await languageSelects(page).all()) await expect(select).toBeEnabled();
   stop();
   expect(reads).toEqual([]);
+});
+
+const ownerControls = (p: Page) => [
+  p.getByRole('button', { name: 'Rename quiz' }),
+  p.getByRole('button', { name: 'Delete quiz' }),
+  p.getByRole('link', { name: 'View results' }),
+];
+
+async function signIn(p: Page): Promise<void> {
+  await p.goto('/en/sign-in');
+  await p.locator('input[name=identifier]').fill(ownerEmail);
+  await p.locator('input[type=password]').fill(ownerPassword);
+  await p.getByRole('button', { name: 'Sign in' }).click();
+  await expect(p).not.toHaveURL(/\/sign-in$/);
+}
+
+test('the game page shows the owner its controls on any browser, and nobody else, even after signing out', async ({
+  browser,
+}) => {
+  // Signed out in the browser that created the game. The page used to remember that in localStorage, so the
+  // controls outlived the session; now they follow the server's `ownedByMe`, which is false with no session.
+  await page.goto('/en/');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page).toHaveURL(/\/en\/sign-in$/);
+  await page.goto(gameUrl);
+  await expect(page.getByRole('button', { name: 'Start' })).toBeVisible();
+  for (const control of ownerControls(page)) await expect(control).toHaveCount(0);
+
+  // The owner on a second browser, which never created anything, still gets them.
+  const elsewhere = await browser.newContext();
+  const ownerElsewhere = await elsewhere.newPage();
+  await signIn(ownerElsewhere);
+  await ownerElsewhere.goto(gameUrl);
+  for (const control of ownerControls(ownerElsewhere)) await expect(control).toBeVisible();
+  await elsewhere.close();
+
+  // Back in, for the steps below that act as the owner.
+  await signIn(page);
 });
 
 test('a stranger with no account plays the shared link, exercising the variant picker, then plays again narrower', async ({
@@ -491,7 +530,7 @@ test('the owner deletes the game, warned that other people have played it', asyn
   await page.goto(gameUrl);
 
   // The trash control sits beside the rename pencil, offered only to the browser that created the game
-  // (GameInstancePage.deleteIcon, gated on the same local ownership hint the "View results" link uses).
+  // (GameInstancePage.deleteIcon, gated on the same GameDetail.ownedByMe the "View results" link uses).
   await page.getByRole('button', { name: 'Delete quiz' }).click();
 
   const modal = page.locator('.modal-box', { hasText: 'Delete this quiz?' });

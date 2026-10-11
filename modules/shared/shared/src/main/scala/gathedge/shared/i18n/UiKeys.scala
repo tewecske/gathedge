@@ -1515,8 +1515,7 @@ object UiKeys {
   val gameInstanceOutcomeWrong: String       = key("ui.gameInstance.outcome.wrong")
   val gameInstancePlayAgain: String          = key("ui.gameInstance.playAgain")
 
-  // Inline rename, offered only to a browser that created this game — see `GameOwnership`'s doc comment on why
-  // there is no server-asserted "you own this" flag to key it off instead.
+  // Inline rename, offered to the game's owner (`GameDetail.ownedByMe`) and a global administrator.
   val gameInstanceRenameEdit: String  = key("ui.gameInstance.rename.edit")
   val gameInstanceRenameLabel: String = key("ui.gameInstance.rename.label")
 

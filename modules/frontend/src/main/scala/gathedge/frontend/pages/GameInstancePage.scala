@@ -5,7 +5,7 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.api.{ApiClient, ApiError, GameApiClient}
 import gathedge.frontend.components.{Alert, AppShell, HelpIcon, InlineRename, Labels, ShareRow, TagWordsList, Tooltip}
 import gathedge.frontend.i18n.I18n
-import gathedge.frontend.state.{AppState, GameOwnership, PendingPlay, PlayHandoff}
+import gathedge.frontend.state.{AppState, PendingPlay, PlayHandoff}
 import gathedge.shared.domain.{GameMode, User, WordPreference}
 import gathedge.shared.dto.{GameDetail, GameSetupWord, GameVariantDto, PlayStarted}
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
@@ -35,9 +35,16 @@ object GameInstancePage {
     * at runtime — so any spec that renders this page at all would otherwise fail to link, exactly as
     * [[gathedge.frontend.ocr.ImageOcr.Recognize]]'s own doc comment explains for `tesseract.js`.
     */
-  def render(slug: String, generateQr: String => Future[String]): HtmlElement = {
-    AppShell.render(Page.GameInstance(slug), new GameInstancePage(slug, generateQr).render())
+  def render(
+    slug: String,
+    generateQr: String => Future[String],
+    fetchGame: FetchGame = GameApiClient.get,
+  ): HtmlElement = {
+    AppShell.render(Page.GameInstance(slug), new GameInstancePage(slug, generateQr, fetchGame).render())
   }
+
+  /** Reads the game by slug. A parameter so a spec can answer it — jsdom has no server. `App` keeps the default. */
+  type FetchGame = String => EventStream[Either[ApiError, GameDetail]]
 }
 
 /** How many words a play draws, as the picker's radio row states it: every eligible word, one of the fixed presets, or
@@ -83,7 +90,11 @@ private object WordLimitChoice {
   }
 }
 
-private class GameInstancePage(slug: String, generateQr: String => Future[String]) {
+private class GameInstancePage(
+  slug: String,
+  generateQr: String => Future[String],
+  fetchGame: GameInstancePage.FetchGame,
+) {
 
   private val gameVar    = Var(Option.empty[GameDetail])
   private val missingVar = Var(false)
@@ -164,19 +175,14 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
 
   private val startingVar = Var(false)
 
-  /** Whether this browser is the one that created the game — see `GameOwnership`'s doc comment on why that is a local
-    * hint rather than something `GameDetail` states. A `Var` rather than a `val` so a 403 on rename (a stale hint, or
-    * the same account signed in elsewhere) can turn the control off without a reload.
-    */
-  private val isOwnerVar = Var(GameOwnership.isOwned(slug))
-
-  /** Whether the reader may rename or delete this game, and read its results: the browser's own ownership hint, or a
-    * global administrator, who may do it to anybody's game (`GameService.requireOwnGame`). A signal rather than a
-    * second `Var` — the account arrives from `/api/me` after this page is built, so the controls appear when it lands.
+  /** Whether the reader may rename or delete this game, and read its results: the owner (`GameDetail.ownedByMe`, the
+    * server's answer for this session), or a global administrator, who may do it to anybody's game
+    * (`GameService.requireOwnGame`). A signal — the account arrives from `/api/me` after this page is built, so an
+    * administrator's controls appear when it lands.
     */
   private val mayManageSignal: Signal[Boolean] = {
     Signal
-      .combine(isOwnerVar.signal, AppState.isGlobalAdminSignal)
+      .combine(gameVar.signal.map(_.exists(_.ownedByMe)), AppState.isGlobalAdminSignal)
       .map { case (owner, globalAdmin) => owner || globalAdmin }
       .distinct
   }
@@ -248,7 +254,7 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         .distinct
         .map(loaded => Option.when(loaded)(renderGameCard())),
       AppState.currentUserSignal --> readerVar.writer,
-      loadBus.events.flatMapSwitch(_ => GameApiClient.get(slug)) -->
+      loadBus.events.flatMapSwitch(_ => fetchGame(slug)) -->
         Observer[Either[ApiError, GameDetail]] {
           case Right(detail) =>
             detail.lastVariant.foreach(restore(detail, _))
@@ -302,11 +308,10 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
         onSaved = Observer[GameDetail](detail => Var.set(nameVar -> detail.name, gameVar -> Some(detail))),
         onError = { err =>
           if (err.status == 403) {
-            // A stale local hint, or the same account signed in elsewhere and the game changed owner-relevant state
-            // since: either way, this browser does not get to keep offering a control that will not work.
-            GameOwnership.forget(slug)
+            // The session changed since the page loaded (signed out, or into another account): stop offering a control
+            // that will not work.
             inlineRename.cancel()
-            Var.set(isOwnerVar -> false, errorVar -> Some(err.message))
+            Var.set(gameVar -> gameVar.now().map(_.copy(ownedByMe = false)), errorVar -> Some(err.message))
           }
         },
       ),
@@ -316,14 +321,17 @@ private class GameInstancePage(slug: String, generateQr: String => Future[String
       deleteBus.events.flatMapSwitch(_ => GameApiClient.delete(slug)) -->
         Observer[Either[ApiError, Unit]] {
           case Right(_)  =>
-            // The game is gone; drop the local ownership hint and leave for the catalog.
-            GameOwnership.forget(slug)
+            // The game is gone; leave for the catalog.
             AppRouter.router.pushState(Page.AllGames())
           case Left(err) =>
             if (err.status == 403) {
-              // A stale local owner hint — stop offering the control, the same move the rename path makes.
-              GameOwnership.forget(slug)
-              Var.set(isOwnerVar -> false, deleteOpenVar -> false, deletingVar -> false, errorVar -> Some(err.message))
+              // The session changed since the page loaded — stop offering the control, as the rename path does.
+              Var.set(
+                gameVar       -> gameVar.now().map(_.copy(ownedByMe = false)),
+                deleteOpenVar -> false,
+                deletingVar   -> false,
+                errorVar      -> Some(err.message),
+              )
             } else
               Var.set(deleteOpenVar -> false, deletingVar -> false, errorVar -> Some(err.message))
         },
