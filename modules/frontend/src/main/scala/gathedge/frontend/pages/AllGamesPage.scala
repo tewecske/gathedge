@@ -42,12 +42,25 @@ import gathedge.shared.i18n.UiKeys
   */
 object AllGamesPage {
 
-  def render(query: Signal[AllGameQuery], onQuery: Observer[AllGameQuery]): HtmlElement = {
-    AppShell.render(Page.AllGames(), new AllGamesPage(query, onQuery).render())
+  /** Reads one wordlist by id. Threaded through as an ordinary parameter so a spec can count the calls and answer them
+    * — the same reason `GroupDetailPage.render` takes `generateQr`. `App` keeps the default.
+    */
+  type FetchTag = Long => EventStream[Either[ApiError, Tag]]
+
+  def render(
+    query: Signal[AllGameQuery],
+    onQuery: Observer[AllGameQuery],
+    fetchTag: FetchTag = WordApiClient.getTag,
+  ): HtmlElement = {
+    AppShell.render(Page.AllGames(), new AllGamesPage(query, onQuery, fetchTag).render())
   }
 }
 
-private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[AllGameQuery]) {
+private class AllGamesPage(
+  pageQuery: Signal[AllGameQuery],
+  onQuery: Observer[AllGameQuery],
+  fetchTag: AllGamesPage.FetchTag,
+) {
 
   private val querySignal = pageQuery.distinct
 
@@ -73,14 +86,26 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
   private val searchTypedBus   = new EventBus[String]()
   private val searchDebounceMs = 300
 
-  /** Every wordlist there is — the same unpaged, public `GET /api/tags` every tag `<select>` on the site reads —
-    * fetched once on mount. [[tagPicker]] searches the server on its own now; this is read only to resolve a `tagId`
-    * the URL already names (a bookmarked filter, or the page arriving mid-session with one chosen) into the [[Tag]]
-    * [[selectedTagSignal]] and [[tagPicker]]'s own hydration need.
+  /** The chosen wordlist as a whole [[Tag]], which [[selectedTagSignal]] and [[tagPicker]]'s own hydration need. A pick
+    * from [[tagPicker]] already carries it. A `tagId` the URL names (a bookmarked filter, or the page arriving with one
+    * chosen) is fetched alone, by [[tagRequests]]. No `tagId`, no fetch.
     */
-  private val tagsVar    = Var(List.empty[Tag])
-  private val tagsSignal = tagsVar.signal
-  private val tagsBus    = new EventBus[Unit]()
+  private val tagVar                            = Var(Option.empty[Tag])
+  private val tagIdBus                          = new EventBus[Unit]()
+  private val tagIdSignal: Signal[Option[Long]] = querySignal.map(_.tagId).distinct
+
+  /** One `GET /api/tags/{id}` per new `tagId` the held [[Tag]] does not already answer. A `None` still switches, so a
+    * cleared filter cancels a fetch in flight.
+    */
+  private val tagRequests: EventStream[Either[ApiError, Tag]] = {
+    EventStream
+      .merge(tagIdBus.events.sample(tagIdSignal), tagIdSignal.updates)
+      .withCurrentValueOf(tagVar.signal)
+      .flatMapSwitch {
+        case (Some(id), held) if !held.exists(_.id == id) => fetchTag(id)
+        case _                                            => EventStream.empty
+      }
+  }
 
   /** The languages currently chosen, in the order they were chosen — [[TagPicker]]'s own `languages` narrows and ranks
     * by this, and the two language `<select>`s below read their values back out of it.
@@ -89,7 +114,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
     querySignal.map(query => List(query.language1, query.language2).flatten).distinct
 
   private val selectedTagSignal: Signal[Option[Tag]] =
-    querySignal.map(_.tagId).combineWithFn(tagsSignal)((id, tags) => id.flatMap(tid => tags.find(_.id == tid)))
+    tagIdSignal.combineWithFn(tagVar.signal)((id, tag) => id.flatMap(tid => tag.filter(_.id == tid)))
 
   /** True while a wordlist is chosen: the two language selects are disabled, since a game's language pair is exactly
     * its wordlist's — the same lock `WordsPage.languagesLockedSignal` puts on its own pair for a collect wordlist.
@@ -100,6 +125,7 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
     languages = selectedLanguagesSignal,
     selectedTag = selectedTagSignal,
     onSelect = Observer[Tag] { tag =>
+      tagVar.set(Some(tag))
       change(
         _.reset(
           _.copy(tagId = Some(tag.id), language1 = Some(tag.sourceLanguage), language2 = Some(tag.targetLanguage))
@@ -192,11 +218,11 @@ private class AllGamesPage(pageQuery: Signal[AllGameQuery], onQuery: Observer[Al
           case (_, _, Right(_))          =>
             ()
         },
-      tagsBus.events.flatMapSwitch(_ => WordApiClient.listTags) --> Observer[Either[ApiError, List[Tag]]] {
-        case Right(tags) => tagsVar.set(Tag.sorted(tags))
-        case Left(_)     => ()
+      tagRequests --> Observer[Either[ApiError, Tag]] {
+        case Right(tag) => tagVar.set(Some(tag))
+        case Left(_)    => ()
       },
-      onMountCallback(_ => { reloadBus.emit(()); tagsBus.emit(()) }),
+      onMountCallback(_ => { reloadBus.emit(()); tagIdBus.emit(()) }),
     )
   }
 

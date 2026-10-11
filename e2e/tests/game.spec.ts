@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Request } from '@playwright/test';
 
 // The vocabulary quiz game, end to end: an account marks a few words for practice, turns them into a shared
 // quiz link, and a total stranger plays that link through to a score — with no account of their own to start.
@@ -126,6 +126,67 @@ test('a game is created from the wordlist page, and every game records its plays
   // The owner lands straight on the instance page it just created and is recognized as the owner in this same
   // browser — the "View results" link shows for the game's owner (GameInstancePage.renderNameHeader).
   await expect(page.getByRole('link', { name: 'View results' })).toBeVisible();
+});
+
+// Every unpaged wordlist read the page makes: `GET /api/tags` (the whole catalog) and `GET /api/tags/{id}` (one
+// wordlist). The picker's own search, `GET /api/tags/page`, is not one of them. Stop with the returned function.
+function recordTagReads(p: Page): { reads: string[]; stop: () => void } {
+  const reads: string[] = [];
+  const listener = (r: Request) => {
+    const path = new URL(r.url()).pathname;
+    if (r.method() === 'GET' && /^\/api\/tags(\/\d+)?$/.test(path)) reads.push(path);
+  };
+  p.on('request', listener);
+  return { reads, stop: () => p.off('request', listener) };
+}
+
+// The listing has drawn the game: the page has mounted, and every read it makes on mount has gone out.
+async function gamesListed(p: Page): Promise<void> {
+  await expect(p.locator(`table a[href$="/g/${gameSlug}"]`)).toBeVisible();
+}
+
+const languageSelects = (p: Page) => p.getByRole('combobox', { name: 'Languages' });
+
+test('the games listing with no wordlist filter reads no wordlist', async () => {
+  const { reads, stop } = recordTagReads(page);
+  await page.goto('/en/games/all');
+  await gamesListed(page);
+  stop();
+  expect(reads).toEqual([]);
+  await expect(page.getByPlaceholder('Filter by wordlist…')).toHaveValue('');
+});
+
+test('a bookmarked wordlist filter reads that one wordlist, and locks the languages to its pair', async () => {
+  const { reads, stop } = recordTagReads(page);
+  await page.goto(`/en/games/all?tag=${tagId}`);
+  await gamesListed(page);
+  await expect(page.getByPlaceholder('Filter by wordlist…')).toHaveValue(tagName);
+  stop();
+  expect(reads).toEqual([`/api/tags/${tagId}`]);
+  await expect(languageSelects(page)).toHaveCount(2);
+  for (const select of await languageSelects(page).all()) await expect(select).toBeDisabled();
+});
+
+test('picking a wordlist in the filter reads no wordlist, and clearing it unlocks the languages', async () => {
+  await page.goto('/en/games/all');
+  await gamesListed(page);
+
+  const { reads, stop } = recordTagReads(page);
+  const picker = page.getByPlaceholder('Filter by wordlist…');
+  const searched = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tags/page');
+  await picker.fill(tagName);
+  await searched;
+  await page.locator('ul.menu a', { hasText: tagName }).click();
+  await expect(page).toHaveURL(new RegExp(`[?&]tag=${tagId}(&|$)`));
+  await gamesListed(page);
+  for (const select of await languageSelects(page).all()) await expect(select).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Clear wordlist filter' }).click();
+  await expect(page).not.toHaveURL(/[?&]tag=/);
+  await expect(picker).toHaveValue('');
+  for (const select of await languageSelects(page).all()) await expect(select).toBeEnabled();
+  stop();
+  expect(reads).toEqual([]);
 });
 
 test('a stranger with no account plays the shared link, exercising the variant picker, then plays again narrower', async ({
