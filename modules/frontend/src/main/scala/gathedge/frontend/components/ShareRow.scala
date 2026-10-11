@@ -78,15 +78,18 @@ final class ShareRow(
           )
         })
       ),
-      // Left alone on a failure rather than cleared: a row that cannot reach the server has no news about the app id,
-      // and a cached one from an earlier page is still right. See [[ShareRow.messengerAppIdVar]].
-      ApiClient.providers -->
-        Observer[Either[ApiError, ProvidersResponse]] {
+      // Asked once per page load: the first answer stands for every later row. A failure records nothing, so the next
+      // row to mount asks again. See [[ShareRow.messengerAppIdVar]].
+      onMountBind(_ => {
+        val answer = if (ShareRow.messengerAppIdKnown) EventStream.empty else ApiClient.providers
+        answer --> Observer[Either[ApiError, ProvidersResponse]] {
           case Right(res) =>
+            ShareRow.messengerAppIdKnown = true
             ShareRow.messengerAppIdVar.set(res.messengerAppId)
           case Left(_)    =>
             ()
-        },
+        }
+      }),
     )
   }
 
@@ -288,13 +291,19 @@ object ShareRow {
   private val toastMs = 3000
 
   /** The Facebook app id [[ShareTarget.Messenger]] needs, cached here rather than in each row: it is the same for every
-    * reader and for the life of the deployment, so a second share row can draw its Messenger button at once while the
-    * one unauthenticated `GET /api/auth/providers` that confirms it is still in flight.
+    * reader and for the life of the deployment, so the unauthenticated `GET /api/auth/providers` that answers it is
+    * made once per page load, not once per row, and a later row draws its Messenger button at once.
     *
     * `None` until the first answer arrives, and on a deployment with no Facebook credentials it stays that way — which
     * is exactly when the Messenger button must not be offered.
     */
   private val messengerAppIdVar: Var[Option[String]] = Var(None)
+
+  /** Whether [[messengerAppIdVar]] holds a server answer. Kept apart from the value, since `None` is an answer too: the
+    * deployment has no Facebook credentials. Set only on a success, so a call that failed (the server restarting, say)
+    * does not hide Messenger until a reload.
+    */
+  private var messengerAppIdKnown = false
 
   /** Opens a share page. A hidden anchor is clicked rather than `window.open` called, the way `util.Download` hands the
     * browser a file: a click-driven anchor gets past a popup blocker that would refuse a scripted window, and it is
