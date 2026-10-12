@@ -46,6 +46,7 @@ object MessageKeys {
   val fieldTooLong: String             = key("validation.field.tooLong")
   val currentPasswordRequired: String  = key("validation.currentPassword.required")
   val currentPasswordIncorrect: String = key("validation.currentPassword.incorrect")
+  val deleteConfirmMismatch: String    = key("validation.deleteConfirmation.mismatch")
 
   // -- Field labels ----------------------------------------------------------------------------
   // Substituted into the two messages above. Referenced from both modules, which is why the
@@ -73,6 +74,7 @@ object MessageKeys {
   val verificationSendFailed: String    = key("auth.verificationSendFailed")
   val lastCredential: String            = key("auth.lastCredential")
   val passwordResetTokenInvalid: String = key("auth.passwordResetTokenInvalid")
+  val deleteAdminRefused: String        = key("auth.deleteAdminRefused")
   val passwordResetSendFailed: String   = key("auth.passwordResetSendFailed")
   val captchaRequired: String           = key("auth.captchaRequired")
   val captchaFailed: String             = key("auth.captchaFailed")

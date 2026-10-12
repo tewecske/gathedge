@@ -16,7 +16,7 @@ import gathedge.backend.db.{
 import gathedge.backend.security.{PasswordHasher, SessionAuth}
 import gathedge.backend.service.{AuthService, OAuthClient, OAuthClients, OAuthIdentity, RateLimiter}
 import gathedge.shared.domain.OAuthProvider
-import gathedge.shared.dto.{ErrorResponse, IdentitiesResponse, SetPasswordRequest}
+import gathedge.shared.dto.{DeleteAccountRequest, ErrorResponse, IdentitiesResponse, SetPasswordRequest}
 import zio.*
 import zio.http.*
 import zio.json.*
@@ -318,6 +318,19 @@ object OAuthRoutesSpec extends ZIOSpecDefault {
             parsed.map(_.fieldErrors.keySet) == Right(Set("currentPassword")),
           )
         }
+      },
+      test("deleting the account answers 204, expires the cookie, and ends the session") {
+        for {
+          created  <- signUp("delete-me@example.com")
+          body      = DeleteAccountRequest("password123").toJson
+          request   = withCsrf(withSession(Request.post("/api/me/delete", Body.fromString(body)), created._2))
+          response <- runRoutes(AuthRoutes.routes, request)
+          after    <- runRoutes(AuthRoutes.routes, withSession(Request.get("/api/me"), created._2))
+        } yield assertTrue(
+          response.status == Status.NoContent,
+          response.header(Header.SetCookie).exists(_.value.maxAge.contains(Duration.Zero)),
+          after.status == Status.Unauthorized,
+        )
       },
       test("the settings mutations still require the CSRF header") {
         for {

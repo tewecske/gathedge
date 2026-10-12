@@ -116,6 +116,7 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
         Option.when(user.exists(_.isGuest))(renderSignInConfirmModal())
       },
       renderContent(),
+      renderFooter(),
       // Effects live in the Observer, never in the stream's `map` — the request is the
       // only thing the stream describes.
       themeRequestStream
@@ -160,6 +161,23 @@ private class AppShell(active: Option[Page], content: HtmlElement) {
     } else {
       div(cls := "flex-1 flex items-center justify-center p-2 sm:p-4", content)
     }
+  }
+
+  /** On every page, signed in or out: a sign-in provider wants the privacy policy one click from the home page. */
+  private def renderFooter(): HtmlElement = {
+    footerTag(
+      cls := "footer footer-horizontal footer-center mt-auto p-4 text-sm text-base-content/70",
+      navTag(
+        cls := "flex flex-wrap justify-center gap-4",
+        footerLink(Page.About, I18n.t(UiKeys.navAbout)),
+        footerLink(Page.Privacy, I18n.t(UiKeys.footerPrivacy)),
+        footerLink(Page.Terms, I18n.t(UiKeys.footerTerms)),
+      ),
+    )
+  }
+
+  private def footerLink(page: Page, label: String): HtmlElement = {
+    a(cls := "link link-hover", AppRouter.router.navigateTo(page), label)
   }
 
   private def nextTheme(theme: Theme): Theme = {

@@ -2,13 +2,14 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.{ApiClient, ApiError, ProgressShareApiClient}
-import gathedge.frontend.Page
+import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.components.{AppShell, CaptchaField, HelpIcon, OAuthButtons, OAuthMessages}
 import gathedge.frontend.state.AppState
 import gathedge.shared.domain.OAuthProvider
 import gathedge.shared.dto.{
   AuthResponse,
   CaptchaStatusResponse,
+  DeleteAccountRequest,
   IdentitiesResponse,
   LinkedIdentity,
   SetPasswordRequest,
@@ -117,9 +118,16 @@ private class SettingsPage {
     AppState.currentUserSignal.map(_.filterNot(_.emailVerified).flatMap(_.email))
   }
 
+  /** The delete dialog: open or not, what the reader typed to confirm, and the server's answer to a wrong one. */
+  private val deleteOpenVar                       = Var(false)
+  private val deleteConfirmVar                    = Var("")
+  private val deleteErrorVar: Var[Option[String]] = Var(None)
+  private val deleteSubmitBus                     = new EventBus[Unit]()
+
   private val passwordStream = passwordSubmitBus.events.filterWith(inFlightSignal.not)
   private val profileStream  = profileSubmitBus.events.filterWith(inFlightSignal.not)
   private val emailStream    = emailSubmitBus.events.filterWith(inFlightSignal.not)
+  private val deleteStream   = deleteSubmitBus.events.filterWith(inFlightSignal.not)
 
   def render(): HtmlElement = {
     div(
@@ -132,6 +140,8 @@ private class SettingsPage {
       renderIdentities(),
       renderShareCard(),
       renderPasswordForm(),
+      renderDeleteCard(),
+      renderDeleteModal(),
       // One load on mount, and one after every successful mutation, so the lockout guard's view of
       // "how many credentials are left" is never stale enough to enable a button the server refuses.
       EventStream.unit().mergeWith(reloadBus.events).flatMapSwitch(_ => ApiClient.identities) -->
@@ -192,6 +202,19 @@ private class SettingsPage {
             AppState.setUser(res.user)
           case Left(err)  =>
             Var.set(inFlightVar -> false, errorVar -> Some(err.message))
+        },
+      deleteStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, deleteErrorVar -> None)),
+      deleteStream.flatMapSwitch(_ => ApiClient.deleteAccount(DeleteAccountRequest(deleteConfirmVar.now()))) -->
+        Observer[Either[ApiError, Unit]] {
+          case Right(_)  =>
+            // The server has already expired the cookie; the account is gone.
+            AppState.clearUser()
+            AppRouter.router.pushState(Page.AllGames())
+          case Left(err) =>
+            Var.set(
+              inFlightVar    -> false,
+              deleteErrorVar -> Some(err.fieldErrors.getOrElse("confirmation", err.message)),
+            )
         },
       passwordStream --> Observer[Unit](_ => Var.set(inFlightVar -> true, errorVar -> None, noticeVar -> None)),
       passwordStream.flatMapSwitch(_ => submitPassword()) -->
@@ -586,6 +609,86 @@ private class SettingsPage {
   private def submitPassword(): EventStream[Either[ApiError, Unit]] = {
     val current = Option(currentPasswordVar.now()).filter(_.nonEmpty)
     ApiClient.setPassword(SetPasswordRequest(current, newPasswordVar.now()))
+  }
+
+  /** What the reader types to confirm, the same rule the server checks: the password, else the address, else (a guest)
+    * the username.
+    */
+  private val deletePromptSignal = {
+    hasPasswordSignal.combineWith(AppState.currentUserSignal).map { (hasPassword, user) =>
+      if (hasPassword)
+        I18n.t(UiKeys.settingsDeleteConfirmPassword)
+      else if (user.exists(_.email.isDefined))
+        I18n.t(UiKeys.settingsDeleteConfirmEmail)
+      else
+        I18n.t(UiKeys.settingsDeleteConfirmUsername)
+    }
+  }
+
+  private def renderDeleteCard(): HtmlElement = {
+    div(
+      cls := "card bg-base-100 shadow border border-error/40",
+      div(
+        cls := "card-body",
+        h2(cls := "card-title text-lg", I18n.t(UiKeys.settingsDeleteCard)),
+        p(I18n.t(UiKeys.settingsDeleteHint)),
+        a(cls  := "link link-primary", AppRouter.router.navigateTo(Page.Privacy), I18n.t(UiKeys.settingsDeleteDetails)),
+        div(
+          cls  := "card-actions justify-end mt-4",
+          button(
+            cls := "btn btn-error",
+            typ := "button",
+            I18n.t(UiKeys.settingsDeleteButton),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              Var.set(deleteOpenVar -> true, deleteConfirmVar -> "", deleteErrorVar -> None)
+            },
+          ),
+        ),
+      ),
+    )
+  }
+
+  /** The confirm dialog every delete opens, with a box for the confirmation: a daisyUI `modal` with Cancel and a
+    * `btn-error` button.
+    */
+  private def renderDeleteModal(): HtmlElement = {
+    val close  = Observer[Unit](_ => deleteOpenVar.set(false))
+    div(
+      cls  := "modal",
+      cls("modal-open") <-- deleteOpenVar.signal,
+      role := "dialog",
+      form(
+        cls   := "modal-box w-full max-w-sm",
+        onSubmit.preventDefault.mapToUnit --> deleteSubmitBus.writer,
+        h3(cls := "font-bold text-lg", I18n.t(UiKeys.settingsDeleteCard)),
+        p(cls  := "py-2", I18n.t(UiKeys.settingsDeleteHint)),
+        fieldSet(
+          cls  := "fieldset",
+          label(cls      := "fieldset-legend", child.text <-- deletePromptSignal),
+          input(
+            cls          := "input w-full",
+            cls("input-error") <-- deleteErrorVar.signal.map(_.isDefined),
+            typ <-- hasPasswordSignal.map(if (_) "password" else "text"),
+            autoComplete := "off",
+            controlled(value <-- deleteConfirmVar.signal, onInput.mapToValue --> deleteConfirmVar.writer),
+          ),
+          child.maybe <-- deleteErrorVar.signal.map(_.map(message => p(cls := "label text-error", message))),
+        ),
+        div(
+          cls  := "modal-action",
+          button(cls := "btn btn-sm", typ := "button", I18n.t(UiKeys.commonCancel), onClick.mapToUnit --> close),
+          button(
+            cls      := "btn btn-sm btn-error",
+            typ      := "submit",
+            disabled <-- inFlightSignal
+              .combineWith(deleteConfirmVar.signal)
+              .map((busy, typed) => busy || typed.isEmpty),
+            I18n.t(UiKeys.settingsDeleteButton),
+          ),
+        ),
+      ),
+      div(cls := "modal-backdrop", onClick.mapToUnit --> close),
+    )
   }
 
   private def renderError(message: String): HtmlElement = {

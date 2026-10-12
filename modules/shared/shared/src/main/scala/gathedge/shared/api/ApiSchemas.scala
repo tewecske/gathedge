@@ -62,6 +62,7 @@ import gathedge.shared.dto.{
   CreateTagRequest,
   CreateTagWithPairsRequest,
   CreateUserRequest,
+  DeleteAccountRequest,
   TagPairInput,
   MainWordLink,
   MainWordUnlink,
@@ -236,6 +237,7 @@ object ApiSchemas {
   given Schema[LinkedIdentity]            = DeriveSchema.gen[LinkedIdentity]
   given Schema[IdentitiesResponse]        = DeriveSchema.gen[IdentitiesResponse]
   given Schema[SetPasswordRequest]        = DeriveSchema.gen[SetPasswordRequest]
+  given Schema[DeleteAccountRequest]      = DeriveSchema.gen[DeleteAccountRequest]
   given Schema[ProvidersResponse]         = DeriveSchema.gen[ProvidersResponse]
 
   given Schema[ClaimCodeResponse]     = DeriveSchema.gen[ClaimCodeResponse]

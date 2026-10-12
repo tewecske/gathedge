@@ -344,6 +344,69 @@ object UiKeys {
   val settingsUsernameHint: String = key("ui.settings.usernameHint")
   val settingsNameHint: String     = key("ui.settings.nameHint")
 
+  val settingsDeleteCard: String            = key("ui.settings.deleteCard")
+  val settingsDeleteHint: String            = key("ui.settings.deleteHint")
+  val settingsDeleteDetails: String         = key("ui.settings.deleteDetails")
+  val settingsDeleteButton: String          = key("ui.settings.deleteButton")
+  val settingsDeleteConfirmPassword: String = key("ui.settings.deleteConfirmPassword")
+  val settingsDeleteConfirmEmail: String    = key("ui.settings.deleteConfirmEmail")
+  val settingsDeleteConfirmUsername: String = key("ui.settings.deleteConfirmUsername")
+
+  // -- Privacy policy and terms of use ---------------------------------------------------------
+  // Every paragraph takes the same three arguments: {0} the maintainer's name, {1} the contact address, {2} the
+  // application's name (`Branding`). A paragraph uses the ones it needs.
+
+  val footerPrivacy: String = key("ui.footer.privacy")
+  val footerTerms: String   = key("ui.footer.terms")
+
+  /** `{0}` is the date the text last changed. */
+  val legalUpdated: String = key("ui.legal.updated")
+  val privacyTitle: String = key("ui.privacy.title")
+  val termsTitle: String   = key("ui.terms.title")
+
+  /** One section of a legal page: an optional title, then `paragraphs`, then a list of `items`, then `after` more
+    * paragraphs. The keys are `ui.<page>.<name>.title`, `.p1`…, `.li1`…, `.a1`….
+    */
+  final case class LegalSection(page: String, name: String, titled: Boolean, paragraphs: Int, items: Int, after: Int) {
+    private def prefix              = s"ui.$page.$name"
+    def title: Option[String]       = Option.when(titled)(s"$prefix.title")
+    def paragraphKeys: List[String] = (1 to paragraphs).toList.map(i => s"$prefix.p$i")
+    def itemKeys: List[String]      = (1 to items).toList.map(i => s"$prefix.li$i")
+    def afterKeys: List[String]     = (1 to after).toList.map(i => s"$prefix.a$i")
+    def keys: List[String]          = title.toList ++ paragraphKeys ++ itemKeys ++ afterKeys
+  }
+
+  val privacySections: List[LegalSection] = List(
+    LegalSection("privacy", "intro", titled = false, paragraphs = 1, items = 0, after = 0),
+    LegalSection("privacy", "controller", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("privacy", "data", titled = true, paragraphs = 1, items = 6, after = 0),
+    LegalSection("privacy", "purposes", titled = true, paragraphs = 1, items = 4, after = 1),
+    LegalSection("privacy", "google", titled = true, paragraphs = 2, items = 0, after = 0),
+    LegalSection("privacy", "processors", titled = true, paragraphs = 1, items = 5, after = 1),
+    LegalSection("privacy", "retention", titled = true, paragraphs = 0, items = 7, after = 0),
+    LegalSection("privacy", "delete", titled = true, paragraphs = 5, items = 0, after = 0),
+    LegalSection("privacy", "rights", titled = true, paragraphs = 2, items = 0, after = 0),
+    LegalSection("privacy", "cookies", titled = true, paragraphs = 3, items = 0, after = 0),
+    LegalSection("privacy", "children", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("privacy", "changes", titled = true, paragraphs = 1, items = 0, after = 0),
+  )
+
+  val termsSections: List[LegalSection] = List(
+    LegalSection("terms", "intro", titled = false, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "provider", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "service", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "account", titled = true, paragraphs = 0, items = 4, after = 0),
+    LegalSection("terms", "content", titled = true, paragraphs = 4, items = 0, after = 0),
+    LegalSection("terms", "rules", titled = true, paragraphs = 1, items = 5, after = 1),
+    LegalSection("terms", "licences", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "warranty", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "liability", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "law", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("terms", "changes", titled = true, paragraphs = 1, items = 0, after = 0),
+  )
+
+  (privacySections ++ termsSections).flatMap(_.keys).foreach(key)
+
   // -- Administration: user list ---------------------------------------------------------------
 
   val adminUsersTitle: String      = key("ui.admin.users.title")

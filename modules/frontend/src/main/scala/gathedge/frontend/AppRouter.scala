@@ -120,6 +120,12 @@ object Page {
     */
   case object About extends Page
 
+  /** The privacy policy. Public like [[About]]: a sign-in provider links to it, and so does every page's footer. */
+  case object Privacy extends Page
+
+  /** The terms of use. Public for the reason [[Privacy]] is. */
+  case object Terms extends Page
+
   /** The vocabulary: the shared dictionary, and the reader's own tags on it.
     *
     * Public, and the only listing in the application that is. A visitor with no session sees the same words and none of
@@ -248,6 +254,9 @@ object Page {
       // shared link has to show the catalog, not sign-in, the same reason GameInstance/GamePlay stay public.
       case GameInstance(_) | GamePlay(_, _) | AllGames(_) | About                                        =>
         AuthGuard.Public
+      // A sign-in provider checks both pages, with no session.
+      case Privacy | Terms                                                                               =>
+        AuthGuard.Public
       // The wordlist catalog and the wordlist editor read without a session, the same reasoning as the vocabulary: a
       // visitor browses every wordlist and opens any one before deciding to keep anything. `TagCreate` mints a guest on
       // arrival, so the catalog's "New wordlist" button works signed out.
@@ -282,6 +291,8 @@ object AppRouter {
   private val signInRoute       = Route.static(SignIn, root / "sign-in", basePath)
   private val signUpRoute       = Route.static(SignUp, root / "sign-up", basePath)
   private val aboutRoute        = Route.static(About, root / "about", basePath)
+  private val privacyRoute      = Route.static(Privacy, root / "privacy", basePath)
+  private val termsRoute        = Route.static(Terms, root / "terms", basePath)
   private val settingsRoute     = Route.static(Settings, root / "settings", basePath)
   private val profileRoute      = Route.static(Profile, root / "profile", basePath)
   private val achievementsRoute = Route.static(ProfileAchievements, root / "profile" / "achievements", basePath)
@@ -524,6 +535,10 @@ object AppRouter {
         "SignUp"
       case About                          =>
         "About"
+      case Privacy                        =>
+        "Privacy"
+      case Terms                          =>
+        "Terms"
       case Settings                       =>
         "Settings"
       case Profile                        =>
@@ -741,6 +756,10 @@ object AppRouter {
           SignUp
         case "About"               =>
           About
+        case "Privacy"             =>
+          Privacy
+        case "Terms"               =>
+          Terms
         case "Settings"            =>
           Settings
         case "Profile"             =>
@@ -797,6 +816,8 @@ object AppRouter {
         signInRoute,
         signUpRoute,
         aboutRoute,
+        privacyRoute,
+        termsRoute,
         settingsRoute,
         profileRoute,
         achievementsRoute,

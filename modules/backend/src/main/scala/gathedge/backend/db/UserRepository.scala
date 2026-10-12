@@ -104,6 +104,17 @@ trait UserRepository {
     */
   def updateProfileAndPassword(id: Long, email: String, isAdmin: Boolean, passwordHash: Option[String]): Task[Long]
   def deleteById(id: Long): Task[Long]
+
+  /** Turns the account into a tombstone, in one transaction: a reader deleting their own account.
+    *
+    * Clears every column that could name the person and sets `deletedAt`. Deletes the rows that are the person's alone:
+    * sessions, linked identities, every token and code, plays, favourites, streaks, achievements, progress shares,
+    * group memberships, usage events, and sign-in attempts (by id and by the address). Keeps what other readers use:
+    * the account's wordlists, games and groups, and the words and translations it made. `audit_log` is kept too; it
+    * records what administrators did. Returns rows affected on `users`: `0` for an unknown id or an account already
+    * deleted.
+    */
+  def anonymize(id: Long, deletedAt: Long): Task[Long]
 }
 
 /** Accessors, so a caller writes `UserRepository.findById(id)` instead of pulling the repository out of the environment
@@ -209,6 +220,9 @@ object UserRepository {
 
   def deleteById(id: Long): RIO[UserRepository, Long] =
     ZIO.serviceWithZIO[UserRepository](_.deleteById(id))
+
+  def anonymize(id: Long, deletedAt: Long): RIO[UserRepository, Long] =
+    ZIO.serviceWithZIO[UserRepository](_.anonymize(id, deletedAt))
 
   val live: ZLayer[DataSource, Nothing, UserRepository] =
     ZLayer.fromFunction((ds: DataSource) => new UserRepositoryLive(ds): UserRepository)
@@ -503,5 +517,70 @@ final class UserRepositoryLive(dataSource: DataSource)
 
   def deleteById(id: Long): Task[Long] = {
     logged(run(ctx.run(quote(users.filter(_.id == lift(id)).delete))))(rows => s"users.deleteById id=$id rows=$rows")
+  }
+
+  // The person's own tables, for `anonymize`. They belong to other repositories, but a set of writes that must be atomic
+  // belongs in one repository — see `QuillRepository`.
+  private inline def sessionRows      = quote(querySchema[SessionRow]("sessions"))
+  private inline def identityRows     = quote(querySchema[OAuthIdentityRow]("oauth_identities"))
+  private inline def verificationRows = quote(querySchema[EmailVerificationTokenRow]("email_verification_tokens"))
+  private inline def resetRows        = quote(querySchema[PasswordResetTokenRow]("password_reset_tokens"))
+  private inline def emailChangeRows  = quote(querySchema[EmailChangeTokenRow]("email_change_tokens"))
+  private inline def shareCodeRows    = quote(querySchema[ProgressShareCodeRow]("progress_share_codes"))
+  private inline def shareRows        = quote(querySchema[ProgressShareRow]("progress_shares"))
+  private inline def favoriteRows     = quote(querySchema[GameFavoriteRow]("game_favorites"))
+  private inline def playRows         = quote(querySchema[GamePlayRow]("game_plays"))
+  private inline def memberRows       = quote(querySchema[GroupMemberRow]("group_members"))
+  private inline def streakRows       = quote(querySchema[UserStreakRow]("user_streaks"))
+  private inline def achievementRows  = quote(querySchema[UserAchievementRow]("user_achievements"))
+  private inline def usageRows        = quote(querySchema[UsageEventRow]("usage_events"))
+  private inline def attemptRows      = quote(querySchema[LoginAttemptRow]("login_attempts"))
+
+  def anonymize(id: Long, deletedAt: Long): Task[Long] = {
+    val work = {
+      for {
+        email <- ctx.run(quote(users.filter(row => row.id == lift(id) && row.deletedAt.isEmpty).map(_.email)))
+        _     <- ctx.run(quote(sessionRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(identityRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(verificationRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(resetRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(emailChangeRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(guestClaimCodes.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(shareCodeRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(
+                   quote(shareRows.filter(row => row.sharerUserId == lift(id) || row.viewerUserId == lift(id)).delete)
+                 )
+        _     <- ctx.run(quote(favoriteRows.filter(_.userId == lift(id)).delete))
+        // A play's answers and words cascade from it.
+        _     <- ctx.run(quote(playRows.filter(_.playerUserId == lift(id)).delete))
+        _     <- ctx.run(quote(memberRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(streakRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(achievementRows.filter(_.userId == lift(id)).delete))
+        _     <- ctx.run(quote(usageRows.filter(_.userId.contains(lift(id))).delete))
+        _     <- ctx.run(quote(attemptRows.filter(_.userId.contains(lift(id))).delete))
+        // An attempt that named the address but matched no account (a typo before signup, say) has no user id.
+        _     <- ZIO.foreachDiscard(email.flatten) { address =>
+                   ctx.run(quote(attemptRows.filter(_.email == lift(address)).delete))
+                 }
+        rows  <- ctx.run(
+                   quote(
+                     users
+                       .filter(row => row.id == lift(id) && row.deletedAt.isEmpty)
+                       .update(
+                         _.email            -> lift(Option.empty[String]),
+                         _.passwordHash     -> lift(Option.empty[String]),
+                         _.username         -> lift(Option.empty[String]),
+                         _.displayName      -> lift(Option.empty[String]),
+                         _.emailVerifiedAt  -> lift(Option.empty[Long]),
+                         _.isAdmin          -> lift(false),
+                         _.isGuest          -> lift(false),
+                         _.deletedAt        -> lift(Option(deletedAt)),
+                         row => row.version -> (row.version + 1),
+                       )
+                   )
+                 )
+      } yield rows
+    }
+    logged(transaction(work))(rows => s"users.anonymize id=$id rows=$rows")
   }
 }

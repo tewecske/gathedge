@@ -100,6 +100,11 @@ final case class IdentitiesResponse(
 /** `currentPassword` is required only when the account already has one — a social-only account is setting its first. */
 final case class SetPasswordRequest(currentPassword: Option[String], newPassword: String) derives JsonCodec
 
+/** Deletes the caller's own account. `confirmation` is the account's password when it has one, else its address, else
+  * (a guest) its username.
+  */
+final case class DeleteAccountRequest(confirmation: String) derives JsonCodec
+
 /** The social providers this deployment has credentials for. Read by the sign-in and sign-up forms, which have no
   * session yet and so cannot get the same list from [[IdentitiesResponse]].
   *

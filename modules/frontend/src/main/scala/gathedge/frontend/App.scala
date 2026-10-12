@@ -14,6 +14,7 @@ import gathedge.frontend.pages.{
   AdminUsersPage,
   AdminWordFormsPage,
   AboutPage,
+  LegalPage,
   AllGamesPage,
   CheckInboxPage,
   ConfirmEmailChangePage,
@@ -504,6 +505,10 @@ object App {
         SignUpPage.render()
       case Page.About                                     =>
         AboutPage.render()
+      case Page.Privacy                                   =>
+        LegalPage.privacy()
+      case Page.Terms                                     =>
+        LegalPage.terms()
       case Page.Settings                                  =>
         SettingsPage.render()
       case Page.Profile                                   =>

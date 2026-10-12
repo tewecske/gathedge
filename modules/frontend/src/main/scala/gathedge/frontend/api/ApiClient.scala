@@ -14,6 +14,7 @@ import gathedge.shared.dto.{
   ClaimCodeResponse,
   ClaimRequest,
   ConfirmEmailChangeRequest,
+  DeleteAccountRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -187,6 +188,11 @@ object ApiClient {
 
   def setPassword(request: SetPasswordRequest): EventStream[Either[ApiError, Unit]] = {
     HttpClient.callUnit(AuthPaths.setPassword(), Some(request.toJson))
+  }
+
+  /** Deletes the caller's own account. The server expires the session cookie in the same answer. */
+  def deleteAccount(request: DeleteAccountRequest): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.callUnit(AuthPaths.deleteAccount(), Some(request.toJson))
   }
 
   /** Where the browser must be *navigated* to start a social sign-in — deliberately a URL rather than a call.

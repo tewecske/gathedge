@@ -6,6 +6,7 @@ import gathedge.shared.dto.{
   ClaimCodeResponse,
   ClaimRequest,
   ConfirmEmailChangeRequest,
+  DeleteAccountRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -59,6 +60,7 @@ object AuthPaths {
     */
   val unlinkIdentity = ApiPath1[String](DELETE, "/api/me/identities/{provider}")
   val setPassword    = ApiPath0(PUT, "/api/me/password")
+  val deleteAccount  = ApiPath0(POST, "/api/me/delete")
   val createGuest    = ApiPath0(POST, "/api/guest")
   val guestCode      = ApiPath0(POST, "/api/guest/code")
   val claimGuest     = ApiPath0(POST, "/api/guest/claim")
@@ -83,6 +85,7 @@ object AuthPaths {
     identities,
     unlinkIdentity,
     setPassword,
+    deleteAccount,
     createGuest,
     guestCode,
     claimGuest,
@@ -322,6 +325,21 @@ object AuthEndpoints {
       .outErrors(failure.badRequest, failure.unauthorized)
   }
 
+  /** Deletes the caller's own account and ends its session: the row becomes a tombstone, see
+    * `UserRepository.anonymize`. A `POST` with a body rather than a `DELETE`, since the body carries the confirmation.
+    *
+    * 400 is a wrong confirmation, reported against `confirmation`. 409 is an administrator's own account. On success
+    * the already-expired cookie comes back, as on [[logout]].
+    */
+  val deleteAccount = {
+    Endpoint(ApiRoutes.route0(paths.deleteAccount))
+      .in[DeleteAccountRequest]
+      .withCodecError
+      .outCodec(HttpCodec.status(Status.NoContent))
+      .outHeader(sessionCookie)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.conflict)
+  }
+
   /** Mints an account with no address and no password, and signs the caller in as it.
     *
     * Public, and the one endpoint in the API that creates an account without anybody asking to register. The browser
@@ -405,6 +423,7 @@ object AuthEndpoints {
       identities,
       unlinkIdentity,
       setPassword,
+      deleteAccount,
       verifyEmail,
       resendVerification,
       forgotPassword,

@@ -13,6 +13,7 @@ import gathedge.shared.dto.{
   ClaimCodeResponse,
   ClaimRequest,
   ConfirmEmailChangeRequest,
+  DeleteAccountRequest,
   ForgotPasswordRequest,
   IdentitiesResponse,
   LoginRequest,
@@ -381,6 +382,21 @@ object AuthRoutes {
       )
   }
 
+  /** Deletes the caller's own account. Its sessions are gone with it, so the cookie is expired the way logout does. */
+  private val deleteAccountRoute = {
+    AuthEndpoints.deleteAccount
+      .implementHandler(
+        handler { (body: DeleteAccountRequest) =>
+          withContext { (user: User, cfg: AppConfig) =>
+            AuthService
+              .deleteAccount(user.id, body.confirmation)
+              .mapError(ApiFailures.accountDelete)
+              .as(Some(Header.SetCookie(SessionAuth.expiredSessionCookie(cfg.session.cookieSecure))))
+          }
+        }
+      )
+  }
+
   private val oauthStateCookieName = "oauth_state"
 
   /** What the callback should do once the provider has vouched for the user: start a session, or attach the identity to
@@ -658,6 +674,7 @@ object AuthRoutes {
       identitiesRoute,
       unlinkIdentityRoute,
       setPasswordRoute,
+      deleteAccountRoute,
     ) @@ RouteSupport.authenticated
   }
 

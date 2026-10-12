@@ -6,6 +6,7 @@ import org.testcontainers.utility.DockerImageName
 import gathedge.backend.TestAuthLayers
 import gathedge.backend.config.AppConfig
 import gathedge.backend.db.{
+  LoginAttemptRow,
   AchievementRepository,
   StreakRepository,
   UserAchievementRow,
@@ -370,6 +371,86 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           links.map(_._2.text) == List("kanál"),
           links.forall(_._1.createdBy.isEmpty),
           formLinks.map(row => (row.formWordId, row.origin, row.createdBy)) == List((word.id, "user", None)),
+        )
+      },
+      // A reader's own delete is a tombstone, not a delete: the row stays so the wordlists, games and groups other
+      // readers use keep their owner, and every table of the person's own is emptied in one transaction. Any new table
+      // that holds a reader's personal data belongs in `UserRepository.anonymize` and in this test.
+      pgTest("a reader's own delete empties their personal tables and keeps what other readers use") {
+        for {
+          signup      <- AuthService.signup("pgtomb@example.com", "password123")
+          (target, _)  = signup
+          _           <- AuthService.updateProfile(target.id, Some("pgtomb"), Some("Tomb Stone"))
+          session     <- AuthService.login("pgtomb@example.com", "password123").map(_._2)
+          _           <- AuthService.login("pgtomb@example.com", "wrongpass1").either
+          // An attempt that matched no account still names the address, so it goes too.
+          _           <- LoginAttemptRepository.insert(LoginAttemptRow(0L, "pgtomb@example.com", None, None, "unknown", 0L))
+          _           <- OAuthIdentityRepository.insert(
+                           OAuthIdentityRow(0L, target.id, "google", "pg-tomb-subject", target.email, 0L)
+                         )
+          _           <- EmailChangeTokenRepository.insert(
+                           EmailChangeTokenRow(0L, target.id, "pgtomb-new@example.com", "pgtomb-token", 0L, Long.MaxValue, None)
+                         )
+          tag         <- WordRepository.insertTag(target.id, "tomblist", "tomblist", 0L, "de", "hu")
+          game        <- GameRepository.insertGame(
+                           GameRow(0L, target.id, "pg-tomb-slug", "PG Tomb", "de", "hu", 0L, 0L),
+                           List(tag.id),
+                         )
+          play        <- GameRepository.insertPlay(GamePlayRow(0L, game.id, target.id, 0, 0, 0, 0L, None), Nil)
+          _           <- GameRepository.addFavorite(target.id, game.id, 0L)
+          group       <- GroupRepository.insertGroup("PG Tomb Group", "pg tomb group", "PGTO-MBGR-CODE-0001", target.id, 0L)
+          _           <- GroupRepository.insertMembership(group.id, target.id, "admin", 0L)
+          _           <- StreakRepository.upsert(UserStreakRow(target.id, 3, 5, 9, 20_000L, 0L))
+          _           <- AchievementRepository.insertNew(List(UserAchievementRow(target.id, "gamesPlayed", 1, 0L)))
+          _           <- UsageEventRepository.insert(UsageEventRow(0L, 0L, "GET", "/api/me", 200, Some(target.id), None))
+          wrong       <- AuthService.deleteAccount(target.id, "not-the-password").either
+          _           <- AuthService.deleteAccount(target.id, "password123")
+          // Read before the sign-ins below, which record fresh attempts of their own.
+          attempts    <- LoginAttemptRepository.recentForEmail("pgtomb@example.com", 10)
+          attemptsId  <- LoginAttemptRepository.recentForUser(target.id, 10)
+          row         <- UserRepository.findById(target.id)
+          current     <- AuthService.currentUser(session)
+          byEmail     <- AuthService.login("pgtomb@example.com", "password123").either
+          byName      <- AuthService.login("pgtomb", "password123").either
+          sessions    <- SessionRepository.listForUser(target.id)
+          identities  <- OAuthIdentityRepository.listForUser(target.id)
+          tokens      <- EmailVerificationTokenRepository.findForUser(target.id)
+          changeToken <- EmailChangeTokenRepository.findByToken("pgtomb-token")
+          playGone    <- GameRepository.findPlay(play.id)
+          favGone     <- GameRepository.favoriteCounts(List(game.id))
+          member      <- GroupRepository.findMembership(group.id, target.id)
+          streakGone  <- StreakRepository.find(target.id)
+          achGone     <- AchievementRepository.forUser(target.id)
+          usage       <- UsageEventRepository.countsByUser(0L)
+          tagKept     <- WordRepository.findTagById(tag.id)
+          gameKept    <- GameRepository.findBySlug(game.slug)
+          groupKept   <- GroupRepository.findGroupById(group.id)
+          // The address is free again: the same person may come back as a new account.
+          again       <- AuthService.signup("pgtomb@example.com", "password123")
+        } yield assertTrue(
+          wrong.isLeft,
+          row.exists(_.deletedAt.isDefined),
+          row.exists(r => r.email.isEmpty && r.username.isEmpty && r.displayName.isEmpty && r.passwordHash.isEmpty),
+          row.exists(r => !r.isAdmin && !r.isGuest && r.emailVerifiedAt.isEmpty),
+          current.isEmpty,
+          byEmail.isLeft,
+          byName.isLeft,
+          sessions.isEmpty,
+          identities.isEmpty,
+          tokens.isEmpty,
+          changeToken.isEmpty,
+          attempts.isEmpty,
+          attemptsId.isEmpty,
+          playGone.isEmpty,
+          favGone.isEmpty,
+          member.isEmpty,
+          streakGone.isEmpty,
+          achGone.isEmpty,
+          !usage.exists(_._1 == target.id),
+          tagKept.exists(_.userId == target.id),
+          gameKept.isDefined,
+          groupKept.isDefined,
+          again._1.id != target.id,
         )
       },
       // `tags.group_id` is declared `ON DELETE SET NULL`, the same choice `words.created_by` makes above: a tag

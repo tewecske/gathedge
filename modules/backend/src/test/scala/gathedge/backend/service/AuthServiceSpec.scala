@@ -77,6 +77,7 @@ object AuthServiceSpec extends ZIOSpecDefault {
       captchaSuite,
       emailChangeSuite,
       emailChangePendingSuite,
+      accountDeleteSuite,
     )
   }
 
@@ -373,6 +374,69 @@ object AuthServiceSpec extends ZIOSpecDefault {
       } yield assertTrue(result == Left(AuthFailure.RateLimited))
     },
   ).provideShared(authServiceLayer(requireEmailVerification = false)) @@ TestAspect.sequential
+
+  private val accountDeleteLayer: ZLayer[Any, Throwable, AuthService & UserRepository] = {
+    val support = {
+      PasswordHasher.live ++ RateLimiter.live ++ RecordingEmailSender.live ++ Messages.live ++
+        TestCaptchaService.live ++ TestAuthLayers.configWith(requireEmailVerification = false)
+    }
+    (repoLayers ++ support) >>> (AuthService.live ++ ZLayer.service[UserRepository])
+  }
+
+  /** What a reader types to confirm: the password, else the address, else (a guest) the username. The tombstone itself
+    * is pinned in `PostgresIntegrationSpec`.
+    */
+  private val accountDeleteSuite = suite("account delete")(
+    test("an account without a password confirms with its address, in any case") {
+      for {
+        created <- AuthService.loginWithOAuth(identity(OAuthProvider.Google, "g-del-1", "social-del@example.com"))
+        user     = created._1
+        wrong   <- AuthService.deleteAccount(user.id, "someone@example.com").either
+        _       <- AuthService.deleteAccount(user.id, " Social-Del@Example.com ")
+        current <- AuthService.currentUser(created._2)
+        // The identity went with the account, so the same subject now mints a new one.
+        again   <- AuthService.loginWithOAuth(identity(OAuthProvider.Google, "g-del-1", "social-del@example.com"))
+      } yield assertTrue(
+        wrong ==
+          Left(
+            AccountDeleteFailure.ValidationError(Map("confirmation" -> MessageRef(MessageKeys.deleteConfirmMismatch)))
+          ),
+        current.isEmpty,
+        again._1.id != user.id,
+      )
+    },
+    test("an account with a password confirms with the password, not the address") {
+      for {
+        signedUp <- AuthService.signup("pw-del@example.com", "password123")
+        byEmail  <- AuthService.deleteAccount(signedUp._1.id, "pw-del@example.com").either
+        _        <- AuthService.deleteAccount(signedUp._1.id, "password123")
+      } yield assertTrue(
+        byEmail ==
+          Left(
+            AccountDeleteFailure.ValidationError(
+              Map("confirmation" -> MessageRef(MessageKeys.currentPasswordIncorrect))
+            )
+          )
+      )
+    },
+    test("a guest confirms with its username") {
+      for {
+        created <- AuthService.createGuest(None)
+        user     = created._1
+        empty   <- AuthService.deleteAccount(user.id, "").either
+        _       <- AuthService.deleteAccount(user.id, user.username.getOrElse(""))
+        current <- AuthService.currentUser(created._2)
+      } yield assertTrue(empty.isLeft, user.username.isDefined, current.isEmpty)
+    },
+    test("an administrator cannot delete their own account") {
+      for {
+        signedUp <- AuthService.signup("admin-del@example.com", "password123")
+        _        <- ZIO.serviceWithZIO[UserRepository](_.updateProfile(signedUp._1.id, "admin-del@example.com", true))
+        result   <- AuthService.deleteAccount(signedUp._1.id, "password123").either
+        loggedIn <- AuthService.login("admin-del@example.com", "password123").either
+      } yield assertTrue(result == Left(AccountDeleteFailure.AdminAccount), loggedIn.isRight)
+    },
+  ).provideShared(accountDeleteLayer) @@ TestAspect.sequential
 
   /** The gate itself. Everything here runs with `require-email-verification` on except the two tests that pin what
     * changes when it is off — which is the whole point of the flag: the tokens are issued either way.

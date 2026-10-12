@@ -92,6 +92,22 @@ enum ProfileFailure {
   case StaleWrite
 }
 
+/** A reader deleting their own account. Its own enum for the reason [[ProfileFailure]] is one: the endpoint answers
+  * exactly 400 and 409.
+  */
+enum AccountDeleteFailure {
+
+  /** The confirmation is wrong: not the account's password, or, for an account without one, not its address (a guest:
+    * its username). Reported against the `confirmation` field.
+    */
+  case ValidationError(fieldErrors: Map[String, MessageRef])
+
+  /** An administrator cannot delete their own account. Another administrator removes the role first, so the deployment
+    * never loses its last one by accident.
+    */
+  case AdminAccount
+}
+
 /** Starting a change of the account's own address, from the settings page. Its own enum for the same reason
   * [[ProfileFailure]] is one: this endpoint has no rate limiter and no captcha, so mapping it through [[AuthFailure]]
   * would force a 429 and a 400-for-captcha onto a caller who can never see either.
@@ -305,6 +321,12 @@ trait AuthService {
     */
   def confirmEmailChange(token: String): IO[EmailChangeConfirmFailure, Unit]
 
+  /** Deletes the caller's own account: turns its row into a tombstone (see `UserRepository.anonymize`). `confirmation`
+    * is the account's password when it has one, else its address, else (a guest) its username. Every session of the
+    * account ends with it.
+    */
+  def deleteAccount(userId: Long, confirmation: String): IO[AccountDeleteFailure, Unit]
+
   /** Mints an account with no address and no password, and a session to go with it.
     *
     * Called on a visitor's first *write*, never on a page view: a session per visit would be a row per crawler. The
@@ -435,6 +457,9 @@ object AuthService {
 
   def confirmEmailChange(token: String): ZIO[AuthService, EmailChangeConfirmFailure, Unit] =
     ZIO.serviceWithZIO[AuthService](_.confirmEmailChange(token))
+
+  def deleteAccount(userId: Long, confirmation: String): ZIO[AuthService, AccountDeleteFailure, Unit] =
+    ZIO.serviceWithZIO[AuthService](_.deleteAccount(userId, confirmation))
 
   def createGuest(
     clientIp: Option[String],
@@ -1088,6 +1113,41 @@ final case class AuthServiceLive(
       _     <- ZIO.when(!hasPw && mine.sizeIs <= 1)(ZIO.fail(AuthFailure.LastCredential))
       _     <- identityRepo.deleteByUserAndProvider(userId, provider.wire).orDie
       _     <- SecurityLog.info(s"Unlinked ${provider.wire} identity from user $userId")
+    } yield ()
+  }
+
+  def deleteAccount(userId: Long, confirmation: String): IO[AccountDeleteFailure, Unit] = {
+    def mismatch(key: String) = {
+      AccountDeleteFailure.ValidationError(Map("confirmation" -> MessageRef(key)))
+    }
+    for {
+      row     <- userRepo
+                   .findById(userId)
+                   .orDie
+                   .someOrElseZIO(ZIO.die(new IllegalStateException(s"user $userId not found")))
+      _       <- ZIO.when(row.isAdmin)(ZIO.fail(AccountDeleteFailure.AdminAccount))
+      matches <-
+        row.passwordHash match {
+          case Some(hash) =>
+            hasher.verify(confirmation, hash).orDie
+          case None       =>
+            // The address and the username are both stored lowercased.
+            val typed = confirmation.trim.toLowerCase
+            ZIO.succeed(row.email.orElse(row.username).contains(typed) && typed.nonEmpty)
+        }
+      _       <- ZIO.unless(matches) {
+                   val key = {
+                     if (row.passwordHash.isDefined)
+                       MessageKeys.currentPasswordIncorrect
+                     else
+                       MessageKeys.deleteConfirmMismatch
+                   }
+                   logFailedAttempt(row.email.getOrElse(s"user id=${row.id}"), "wrong confirmation on account delete") *>
+                     ZIO.fail(mismatch(key))
+                 }
+      now     <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _       <- userRepo.anonymize(userId, now).orDie
+      _       <- SecurityLog.info(s"User $userId deleted their account")
     } yield ()
   }
 

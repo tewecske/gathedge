@@ -13,6 +13,10 @@ import gathedge.shared.domain.PairMatch
   * `username` is the account's other name to sign in by, stored lowercased and unique across every account — a guest
   * gets a random one when it is minted. `displayName` is what the account is called on screen and is matched on by
   * nothing at all. Both are `None` for an account that has never filled them in.
+  *
+  * `deletedAt` is set on a tombstone: an account its reader deleted, kept only as an id so that the wordlists, games
+  * and groups other readers use keep their owner. A tombstone has no address, no username and no password, so nothing
+  * can sign in to it. See `UserRepository.anonymize`.
   */
 final case class UserRow(
   id: Long,
@@ -27,6 +31,7 @@ final case class UserRow(
   username: Option[String] = None,
   displayName: Option[String] = None,
   version: Long = 0L,
+  deletedAt: Option[Long] = None,
 )
 
 /** One external identity linked to a user. `provider` holds [[gathedge.backend.service.OAuthProvider]]'s wire name and

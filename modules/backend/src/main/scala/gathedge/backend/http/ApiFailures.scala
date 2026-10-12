@@ -1,6 +1,7 @@
 package gathedge.backend.http
 
 import gathedge.backend.service.{
+  AccountDeleteFailure,
   AdminFailure,
   AuthFailure,
   BulkUploadFailure,
@@ -162,6 +163,19 @@ object ApiFailures {
         ApiFailure.Conflict(MessageRef(MessageKeys.usernameTaken), "That username is taken")
       case ProfileFailure.StaleWrite                   =>
         staleWrite
+    }
+  }
+
+  /** A reader deleting their own account: a wrong confirmation, or an administrator's own account. */
+  def accountDelete(failure: AccountDeleteFailure): ApiFailure.BadRequest | ApiFailure.Conflict = {
+    failure match {
+      case AccountDeleteFailure.ValidationError(fieldErrors) =>
+        validationFailed(fieldErrors)
+      case AccountDeleteFailure.AdminAccount                 =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.deleteAdminRefused),
+          "An administrator account cannot be deleted",
+        )
     }
   }
 

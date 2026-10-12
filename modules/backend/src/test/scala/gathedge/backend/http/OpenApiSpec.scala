@@ -135,6 +135,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/me/achievements",
               "/api/me/identities/{provider}",
               "/api/me/password",
+              "/api/me/delete",
               "/api/admin/users",
               "/api/admin/users/{id}",
               "/api/admin/users/{id}/detail",
@@ -440,6 +441,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               // provider segment and one that is simply not linked, since `AuthFailure` has no NotFound case.
               ("DELETE", "/api/me/identities/{provider}")                                 -> Set(NoContent, BadRequest, Unauthorized, Conflict),
               ("PUT", "/api/me/password")                                                 -> Set(NoContent, BadRequest, Unauthorized),
+              // 409 is an administrator's own account, which this endpoint refuses to delete.
+              ("POST", "/api/me/delete")                                                  -> Set(NoContent, BadRequest, Unauthorized, Conflict),
               ("GET", "/api/admin/users")                                                 -> Set(Ok, BadRequest, Unauthorized),
               ("POST", "/api/admin/users")                                                -> Set(Created, BadRequest, Unauthorized, NotFound, Conflict),
               ("GET", "/api/admin/users/{id}")                                            -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
@@ -558,7 +561,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 340,
+          declared == 343,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
