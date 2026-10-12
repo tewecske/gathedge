@@ -296,8 +296,8 @@ private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnl
     }
   }
 
-  /** How a typed answer was graded. The accepted answer is shown only for a mistake — a player who got it right has
-    * nothing to read there, and it is the same word they typed anyway.
+  /** How a typed answer was graded. For a mistake, the player's own answer is shown above the accepted one, since the
+    * form that held it is gone. A player who got it right has nothing to read there: it is the same word they typed.
     *
     * Kept deliberately plain: no table (the results screen's own is what `e2e/tests/game.spec.ts` counts rows in) and
     * no `btn-outline` (that class is how the same suite counts a multiple-choice play's options).
@@ -305,18 +305,16 @@ private class GamePlayPage(slug: String, playId: Long, fireworks: AchievementUnl
   private def renderFeedback(result: GameAnswerResult): HtmlElement = {
     div(
       cls := "flex flex-col items-start gap-2",
-      div(
-        cls := "flex flex-wrap items-center gap-2",
-        GameAnswersTable.outcomeBadge(result.outcome),
-        if (result.outcome == AnswerOutcome.Correct) {
-          emptyNode
-        } else {
-          span(
-            cls := "text-sm",
-            I18n.t(UiKeys.gameInstanceFeedbackExpected, result.expectedTexts.mkString(", ")),
-          )
-        },
-      ),
+      GameAnswersTable.outcomeBadge(result.outcome),
+      if (result.outcome == AnswerOutcome.Correct) {
+        emptyNode
+      } else {
+        div(
+          cls := "flex flex-col gap-1 text-sm",
+          span(I18n.t(UiKeys.gameInstanceFeedbackGiven, result.givenText)),
+          span(I18n.t(UiKeys.gameInstanceFeedbackExpected, result.expectedTexts.mkString(", "))),
+        )
+      },
       nextButton(),
     )
   }

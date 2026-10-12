@@ -526,6 +526,29 @@ test('a stranger plays the same link by clicking instead of typing', async ({ br
   await clickContext.close();
 });
 
+test('a wrong typed answer shows what the player typed beside the accepted answer', async ({ browser }) => {
+  // The typed form is gone once the answer is graded, so the feedback repeats the player's own answer.
+  const typeContext = await browser.newContext();
+  const typePage = await typeContext.newPage();
+  await typePage.goto(gameUrl);
+  await typePage.getByRole('button', { name: 'Start' }).click();
+  await expect(typePage).toHaveURL(/\/en\/g\/[a-z0-9-]+\/play\/\d+$/);
+
+  const promptText = (await typePage.locator('h2.text-xl.font-semibold').textContent())?.trim() ?? '';
+  const match = words.find((w) => w.term === promptText);
+  expect(match, `unexpected quiz prompt: "${promptText}"`).toBeTruthy();
+
+  // Nothing like any answer, so it grades as wrong rather than as a typo.
+  const wrong = `zzz${unique}`;
+  await typePage.getByPlaceholder('Type the translation').fill(wrong);
+  await typePage.getByRole('button', { name: 'Submit' }).click();
+
+  await expect(typePage.getByText(`Your answer: ${wrong}`)).toBeVisible();
+  await expect(typePage.getByText(`Accepted answer: ${match!.hu}`)).toBeVisible();
+
+  await typeContext.close();
+});
+
 test('the owner deletes the game, warned that other people have played it', async () => {
   await page.goto(gameUrl);
 

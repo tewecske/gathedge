@@ -461,6 +461,7 @@
   "ui.gameInstance.finishedTitle": "Quiz abgeschlossen",
   "ui.gameInstance.backToGames": "Zurück zu den Spielen",
   "ui.gameInstance.feedback.expected": "Richtige Antwort: {0}",
+  "ui.gameInstance.feedback.given": "Deine Antwort: {0}",
   "ui.gameInstance.feedback.next": "Weiter",
   "ui.gameInstance.score": "Punkte: {0} / {1}",
   "ui.gameInstance.results.wordCol": "Wort",

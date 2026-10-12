@@ -1502,6 +1502,7 @@ object UiKeys {
   // Shown between one word and the next: how the answer just given was graded. The accepted answer appears only when
   // the given one was not correct, since a player who got it right has nothing to read there.
   val gameInstanceFeedbackExpected: String = key("ui.gameInstance.feedback.expected")
+  val gameInstanceFeedbackGiven: String    = key("ui.gameInstance.feedback.given")
   val gameInstanceFeedbackNext: String     = key("ui.gameInstance.feedback.next")
 
   // The results screen: score, and the full per-word answer table.
