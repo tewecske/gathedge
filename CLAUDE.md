@@ -240,6 +240,16 @@ OpenTelemetry, exported as OTLP. Two halves:
 
 **A span name or attribute is as readable as a log line.** `spanName` is the method plus the `{id}`-collapsed route and never the query string — the same rule `loggableUrl`/`normalizeRoute` follow for the OAuth `?code=`. The agent's SQL sanitiser (on by default) reduces `db.statement` literals to `?`; bind values are never captured. OTLP goes to a collector on the compose network; nothing new is published.
 
+**The Java agent is a switch: `none`, `otel` or `sentry`.** Sentry's agent is its own build of the OpenTelemetry agent, so only one loads. It sends traces, profiles, error events and logs to Sentry instead of OTLP; our server span reaches it through `OpenTelemetry.global` the same way.
+
+- Dev: `npm run dev:otel`, `npm run dev:sentry`, or `./dev-tmux.sh <agent>`. Each runs an sbt alias (`agentOtel`, `agentSentry`, `agentNone`, `agentFromEnv`) that sets `backend/telemetryAgentChoice` on the sbt server, because `sbt --client` never passes the client's shell environment to the server. Plain `npm run dev` lets `TELEMETRY_AGENT` in `.env` decide (unset: `OTEL_JAVAAGENT_ENABLED`).
+- Server: `telemetryAgent` in `flake.nix` is the default of `services.gathedge.telemetry.agent`, so each release carries its choice. `nix/agents.nix` fetches both jars. Keep their versions in step with `otelAgentVersion`/`sentryVersion` in `build.sbt`.
+- `build.sbt`'s `telemetryEnv` and `nix/module.nix` set the same variables. `SENTRY_ENABLED` follows the choice, so a `SENTRY_DSN` is silent under `otel` and `none`.
+- Sentry options are `SENTRY_*` env vars only; there is no `sentry.properties`. `SENTRY_DSN` and `SENTRY_AUTH_TOKEN` live in `.env` (dev) or the `environmentFile` (server), never in git. `SENTRY_SEND_DEFAULT_PII` is `false`: the span and log-line rule above applies to Sentry too.
+- Errors reach Sentry through the `SENTRY` logback appender: an ERROR line is an event. The `security` logger does not reach it.
+
+The Docker image still carries only the OpenTelemetry agent.
+
 Local drill-down: `docker compose -f docker-compose.yml -f docker-compose.observability.yml up` (Jaeger, traces only) for the all-in-Docker stack, or `docker compose -f docker-compose.observability.yml up -d jaeger` alongside `npm run dev`. `docker-compose.observability.yml` publishes Jaeger's OTLP ports (4317/4318) so a host-run backend reaches them at the agent's own default endpoint. Percentiles/time-series and production: a separately installed SigNoz (or any OTLP backend) via `OTEL_EXPORTER_OTLP_ENDPOINT`, with `OTEL_METRICS_EXPORTER=otlp` (Jaeger rejects metrics, so the default is `none`).
 
 ### Paged, sorted, filtered listings

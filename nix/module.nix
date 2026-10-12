@@ -7,6 +7,8 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.gathedge;
+  agent = cfg.telemetry.agent;
+  agents = pkgs.callPackage ./agents.nix { };
   inherit (lib) mkIf mkOption mkEnableOption mkBefore types;
 in
 {
@@ -128,6 +130,70 @@ in
       };
     };
 
+    telemetry = {
+      agent = mkOption {
+        type = types.enum [ "none" "otel" "sentry" ];
+        default = "none";
+        description = ''
+          The Java agent the backend runs with. The flake sets this per release (`telemetryAgent`
+          in flake.nix), so a deployment gets what the release chose unless it sets it itself.
+
+          - "otel": the OpenTelemetry agent, exporting OTLP to telemetry.otel.endpoint.
+          - "sentry": Sentry's build of the same agent. Traces, profiles, error events and logs go
+            to Sentry. Needs SENTRY_DSN in environmentFile.
+          - "none": no agent. Only the app's own log lines remain.
+
+          Both agents are OpenTelemetry agents, so only one can load.
+        '';
+      };
+
+      otel.endpoint = mkOption {
+        type = types.str;
+        default = "http://127.0.0.1:4317";
+        description = "OTLP gRPC endpoint for the \"otel\" agent (a Jaeger or SigNoz collector).";
+      };
+
+      sentry = {
+        environment = mkOption {
+          type = types.str;
+          default = if cfg.production then "production" else "dev";
+          defaultText = lib.literalExpression ''if production then "production" else "dev"'';
+          description = "Sentry environment tag (SENTRY_ENVIRONMENT).";
+        };
+
+        release = mkOption {
+          type = types.str;
+          default = "";
+          description = ''
+            Sentry release (SENTRY_RELEASE). The flake sets it to the source revision. Empty sends none.
+          '';
+        };
+
+        tracesSampleRate = mkOption {
+          type = types.str;
+          default = "1.0";
+          example = "0.1";
+          description = "Share of requests traced, 0.0 to 1.0 (SENTRY_TRACES_SAMPLE_RATE).";
+        };
+
+        profileSessionSampleRate = mkOption {
+          type = types.str;
+          default = "1.0";
+          example = "0.1";
+          description = ''
+            Share of profiling sessions, 0.0 to 1.0 (SENTRY_PROFILE_SESSION_SAMPLE_RATE). A profile
+            runs for each traced transaction (profile-lifecycle "trace").
+          '';
+        };
+
+        logs = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Send log lines at INFO and up to Sentry Logs (SENTRY_LOGS_ENABLED).";
+        };
+      };
+    };
+
     environmentFile = mkOption {
       type = types.path;
       example = "/var/lib/secrets/gathedge.env";
@@ -136,7 +202,8 @@ in
         is world-readable). Must define DB_PASSWORD; should define BOOTSTRAP_ADMIN_EMAIL
         and BOOTSTRAP_ADMIN_PASSWORD; may define GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
         and GOOGLE_REDIRECT_URI; may define CAPTCHA_SECRET (Cloudflare Turnstile — the
-        server-only half whose public partner is services.gathedge.captcha.siteKey).
+        server-only half whose public partner is services.gathedge.captcha.siteKey); must
+        define SENTRY_DSN when telemetry.agent is "sentry".
 
         Mode 0400, owned by root. DB_PASSWORD is also read by the gathedge-db-password
         unit, which sets the Postgres role's password to match.
@@ -274,8 +341,33 @@ in
         CAPTCHA_SITE_KEY = cfg.captcha.siteKey;
         CAPTCHA_LOGIN_THRESHOLD = toString cfg.captcha.loginThreshold;
         NETTY_MAX_THREADS = "0";
-        JAVA_OPTS = "-XX:MaxRAMPercentage=75";
-      };
+        JAVA_OPTS = lib.concatStringsSep " " ([ "-XX:MaxRAMPercentage=75" ]
+          ++ lib.optional (agent != "none") "-javaagent:${agents.${agent}}");
+        # The same variables build.sbt's `telemetryEnv` sets for `backend/reStart`. SENTRY_ENABLED
+        # keeps the SDK and the logback appender silent under "otel" and "none", even with a
+        # SENTRY_DSN in the environment file.
+        OTEL_JAVAAGENT_ENABLED = lib.boolToString (agent != "none");
+        OTEL_SERVICE_NAME = "gathedge-backend";
+        SENTRY_ENABLED = lib.boolToString (agent == "sentry");
+      } // lib.optionalAttrs (agent == "otel") {
+        OTEL_EXPORTER_OTLP_ENDPOINT = cfg.telemetry.otel.endpoint;
+        OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
+        OTEL_METRICS_EXPORTER = "otlp";
+        OTEL_LOGS_EXPORTER = "none";
+      } // lib.optionalAttrs (agent == "sentry") ({
+        OTEL_TRACES_EXPORTER = "none";
+        OTEL_METRICS_EXPORTER = "none";
+        OTEL_LOGS_EXPORTER = "none";
+        SENTRY_ENVIRONMENT = cfg.telemetry.sentry.environment;
+        SENTRY_TRACES_SAMPLE_RATE = cfg.telemetry.sentry.tracesSampleRate;
+        SENTRY_PROFILE_SESSION_SAMPLE_RATE = cfg.telemetry.sentry.profileSessionSampleRate;
+        SENTRY_PROFILE_LIFECYCLE = "trace";
+        SENTRY_LOGS_ENABLED = lib.boolToString cfg.telemetry.sentry.logs;
+        # No request headers, client IPs or user data: the same rule the log lines follow.
+        SENTRY_SEND_DEFAULT_PII = "false";
+      } // lib.optionalAttrs (cfg.telemetry.sentry.release != "") {
+        SENTRY_RELEASE = cfg.telemetry.sentry.release;
+      });
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;

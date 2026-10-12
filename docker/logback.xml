@@ -21,6 +21,18 @@
         </encoder>
     </appender>
 
+    <!--
+      Sentry: an ERROR line becomes an event, INFO and up become breadcrumbs, and with
+      SENTRY_LOGS_ENABLED=true they go to Sentry Logs too. Every option comes from SENTRY_* env
+      vars. With no SENTRY_DSN, or SENTRY_ENABLED=false, the appender sends nothing. The
+      `security` logger below does not reach it (additivity="false").
+    -->
+    <appender name="SENTRY" class="io.sentry.logback.SentryAppender">
+        <minimumEventLevel>ERROR</minimumEventLevel>
+        <minimumBreadcrumbLevel>INFO</minimumBreadcrumbLevel>
+        <minimumLevel>INFO</minimumLevel>
+    </appender>
+
     <!-- Failed logins, rate-limit trips, permission-denied, admin actions. -->
     <logger name="security" level="INFO" additivity="false">
         <appender-ref ref="SECURITY"/>
@@ -33,6 +45,7 @@
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="SENTRY"/>
     </root>
 
 </configuration>

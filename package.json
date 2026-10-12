@@ -9,7 +9,11 @@
   "scripts": {
     "postinstall": "npm --prefix web install",
     "predev": "sbt --client 'root/compile'",
-    "dev": "concurrently -n zio,scalajs,vite -c green,magenta,yellow \"sbt --client '~backend/reStart'\" \"sbt --client '~frontend/fastLinkJS'\" \"npm --prefix web run dev\"",
+    "dev": "concurrently -n zio,scalajs,vite -c green,magenta,yellow \"sbt --client 'agentFromEnv; ~backend/reStart'\" \"sbt --client '~frontend/fastLinkJS'\" \"npm --prefix web run dev\"",
+    "predev:otel": "sbt --client 'root/compile'",
+    "dev:otel": "concurrently -n zio,scalajs,vite -c green,magenta,yellow \"sbt --client 'agentOtel; ~backend/reStart'\" \"sbt --client '~frontend/fastLinkJS'\" \"npm --prefix web run dev\"",
+    "predev:sentry": "sbt --client 'root/compile'",
+    "dev:sentry": "concurrently -n zio,scalajs,vite -c green,magenta,yellow \"sbt --client 'agentSentry; ~backend/reStart'\" \"sbt --client '~frontend/fastLinkJS'\" \"npm --prefix web run dev\"",
     "dev:tmux": "bash dev-tmux.sh"
   }
 }

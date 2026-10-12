@@ -26,6 +26,11 @@ val otelSemconvVersion = "1.43.0"
 // a `-javaagent` is loaded by the JVM itself, not imported.
 val otelAgentVersion = "2.31.1"
 val OtelAgent = config("otelAgent").hide
+// Sentry: the SDK, its logback appender and profiler on the classpath, and Sentry's own build of
+// the OpenTelemetry agent in an ivy configuration of its own, like the one above. `nix/agents.nix`
+// fetches the same agent jar for the server; keep the two versions in step.
+val sentryVersion = "8.60.0"
+val SentryAgent = config("sentryAgent").hide
 val testcontainersScalaVersion = "0.44.1"
 // Transitive jars the Trivy scan flags (HIGH/CRITICAL) in `backend/stage/lib`. zio-http pulls
 // BouncyCastle in through netty-pkitesting; Quill pulls jline in through scalafmt. Neither has a
@@ -79,6 +84,52 @@ def dotEnv(baseDir: File): Map[String, String] = {
       }
       .toMap
   }
+}
+
+/** Which Java agent `backend/reStart` runs with: `none`, `otel` or `sentry`.
+  *
+  * A session `set` of this key wins. That is how `npm run dev:otel` and `npm run dev:sentry` choose: they run under
+  * `sbt --client`, whose server keeps the environment it booted with, so a variable on the client's shell would never
+  * reach it. Left `None` (what `npm run dev` sets), TELEMETRY_AGENT in `.env` or the server's shell decides, and with
+  * that unset the older OTEL_JAVAAGENT_ENABLED=true still means `otel`. The server makes the same choice in
+  * `nix/module.nix` (`services.gathedge.telemetry.agent`).
+  */
+lazy val telemetryAgentChoice = settingKey[Option[String]]("Java agent for backend/reStart: none, otel or sentry")
+
+// One alias per choice, so a script names the agent with no nested quoting:
+// `sbt --client 'agentSentry; ~backend/reStart'`. The `set` lasts for the server's session.
+addCommandAlias("agentFromEnv", "set backend/telemetryAgentChoice := None")
+addCommandAlias("agentNone", "set backend/telemetryAgentChoice := Some(\"none\")")
+addCommandAlias("agentOtel", "set backend/telemetryAgentChoice := Some(\"otel\")")
+addCommandAlias("agentSentry", "set backend/telemetryAgentChoice := Some(\"sentry\")")
+
+def telemetryAgent(choice: Option[String], baseDir: File): String = {
+  val env = dotEnv(baseDir) ++ sys.env
+  choice.orElse(env.get("TELEMETRY_AGENT")).map(_.trim.toLowerCase).filter(_.nonEmpty) match {
+    case Some(agent @ ("none" | "otel" | "sentry")) => agent
+    case Some(other) => sys.error(s"telemetry agent '$other': expected none, otel or sentry")
+    case None =>
+      if (env.get("OTEL_JAVAAGENT_ENABLED").exists(_.trim.equalsIgnoreCase("true"))) "otel" else "none"
+  }
+}
+
+/** The variables the agent choice sets, over `.env` and the shell.
+  *
+  * Sentry's agent is an OpenTelemetry agent, so it needs OTEL_JAVAAGENT_ENABLED=true too, and its OTLP exporters off:
+  * it sends to Sentry, not to Jaeger. SENTRY_ENABLED keeps the SDK and the logback appender silent under the other two
+  * choices, even with a SENTRY_DSN in `.env`. `nix/module.nix` sets the same variables.
+  */
+def telemetryEnv(agent: String): Map[String, String] = agent match {
+  case "sentry" =>
+    Map(
+      "OTEL_JAVAAGENT_ENABLED" -> "true",
+      "OTEL_TRACES_EXPORTER" -> "none",
+      "OTEL_METRICS_EXPORTER" -> "none",
+      "OTEL_LOGS_EXPORTER" -> "none",
+      "SENTRY_ENABLED" -> "true",
+    )
+  case "otel" => Map("OTEL_JAVAAGENT_ENABLED" -> "true", "SENTRY_ENABLED" -> "false")
+  case _      => Map("OTEL_JAVAAGENT_ENABLED" -> "false", "SENTRY_ENABLED" -> "false")
 }
 
 lazy val commonSettings = Seq(
@@ -146,6 +197,11 @@ lazy val backend = project
         "dev.zio" %% "zio-opentelemetry" % zioTelemetryVersion,
         "io.opentelemetry.semconv" % "opentelemetry-semconv" % otelSemconvVersion,
         "ch.qos.logback" % "logback-classic" % logbackVersion,
+        // Inert unless SENTRY_ENABLED=true and SENTRY_DSN are set, which only the `sentry` agent
+        // choice does (see `telemetryAgent` below and `nix/module.nix`).
+        "io.sentry" % "sentry" % sentryVersion,
+        "io.sentry" % "sentry-logback" % sentryVersion,
+        "io.sentry" % "sentry-async-profiler" % sentryVersion,
         "io.getquill" %% "quill-jdbc-zio" % quillVersion,
         "org.postgresql" % "postgresql" % postgresqlVersion,
         "com.zaxxer" % "HikariCP" % hikariCpVersion,
@@ -188,31 +244,33 @@ lazy val backend = project
     reStart / baseDirectory := (ThisBuild / baseDirectory).value,
     // A real environment variable wins over the file, so `GOOGLE_CLIENT_ID=… sbt "~backend/reStart"`
     // still overrides one set in `.env` — the same precedence `docker compose` gives it.
-    reStart / envVars := dotEnv((ThisBuild / baseDirectory).value) ++ sys.env,
-    // The OpenTelemetry Java agent for the forked dev JVM. Downloaded like a dependency but kept off
-    // every classpath — see `OtelAgent` above.
-    ivyConfigurations += OtelAgent,
-    libraryDependencies += "io.opentelemetry.javaagent" % "opentelemetry-javaagent" % otelAgentVersion % OtelAgent,
-    // `-javaagent` is added to `reStart` only when `.env` (or the shell) sets
-    // OTEL_JAVAAGENT_ENABLED=true — the same switch docker-compose reads. Left off, `~backend/reStart`
-    // and `npm run dev` behave exactly as before and nothing extra is resolved at launch. The agent
-    // still needs an OTLP backend to reach (a local Jaeger from docker-compose.observability.yml on
-    // localhost:4317 is the default); with none it just logs export failures.
+    reStart / envVars := {
+      val base = (ThisBuild / baseDirectory).value
+      dotEnv(base) ++ sys.env ++ telemetryEnv(telemetryAgent(telemetryAgentChoice.value, base))
+    },
+    // The Java agent for the forked dev JVM. Downloaded like a dependency but kept off every
+    // classpath — see `OtelAgent` and `SentryAgent` above.
+    ivyConfigurations ++= Seq(OtelAgent, SentryAgent),
+    libraryDependencies ++= Seq(
+      "io.opentelemetry.javaagent" % "opentelemetry-javaagent" % otelAgentVersion % OtelAgent,
+      "io.sentry" % "sentry-opentelemetry-agent" % sentryVersion % SentryAgent,
+    ),
+    // `-javaagent` follows `telemetryAgentChoice` (see `telemetryAgent` above). Both agents are
+    // OpenTelemetry agents, so only one can load.
+    telemetryAgentChoice := None,
     reStart / javaOptions ++= {
-      // `update` is evaluated regardless of the toggle (sbt runs task dependencies eagerly), so it
-      // is looked up outside the `if` on purpose; resolving the `OtelAgent` config is cheap and
-      // already part of any build.
-      val agentJars = update.value.select(configurationFilter(OtelAgent.name))
-      val optedIn = (dotEnv((ThisBuild / baseDirectory).value) ++ sys.env)
-        .get("OTEL_JAVAAGENT_ENABLED")
-        .exists(_.trim.equalsIgnoreCase("true"))
-      if (!optedIn) {
-        Seq.empty[String]
-      } else {
-        agentJars.headOption match {
-          case Some(jar) => Seq(s"-javaagent:${jar.getAbsolutePath}")
-          case None      => sys.error(s"${OtelAgent.name}: the OpenTelemetry agent jar did not resolve")
+      // `update` is evaluated regardless of the choice (sbt runs task dependencies eagerly), so it
+      // is looked up outside the `match` on purpose; resolving the configurations is cheap.
+      val report = update.value
+      def agentJar(cfg: Configuration): String =
+        report.select(configurationFilter(cfg.name)).headOption match {
+          case Some(jar) => s"-javaagent:${jar.getAbsolutePath}"
+          case None      => sys.error(s"${cfg.name}: the agent jar did not resolve")
         }
+      telemetryAgent(telemetryAgentChoice.value, (ThisBuild / baseDirectory).value) match {
+        case "otel"   => Seq(agentJar(OtelAgent))
+        case "sentry" => Seq(agentJar(SentryAgent))
+        case _        => Seq.empty[String]
       }
     },
   )

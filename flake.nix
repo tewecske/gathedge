@@ -25,6 +25,14 @@
 
       lib = nixpkgs.lib;
 
+      # The Java agent this release runs with on the server: "none", "otel" or "sentry". It is the
+      # default of services.gathedge.telemetry.agent, so it travels with the release; a deployment
+      # can still override it. See nix/module.nix.
+      telemetryAgent = "sentry";
+
+      # Sentry's release tag: the revision the server builds from.
+      release = self.shortRev or self.dirtyShortRev or "unknown";
+
       # Two source filters rather than one: the sbt build is expensive, and sharing a
       # single filtered root would rebuild it whenever a CSS file changed.
       mkSrc = name: roots: lib.cleanSourceWith {
@@ -111,6 +119,10 @@
       nixosModules.default = { ... }: {
         imports = [ ./nix/module.nix ];
         nixpkgs.overlays = [ sbt-derivation.overlays.default self.overlays.default ];
+        services.gathedge.telemetry = {
+          agent = lib.mkDefault telemetryAgent;
+          sentry.release = lib.mkDefault release;
+        };
       };
 
       devShells = forAllSystems (pkgs: {

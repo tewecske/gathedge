@@ -9,7 +9,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_NAME="gathedge"
 WINDOW_NAME="dev"
 
-CMD_BACKEND="sbt --client '~backend/reStart'"
+# The Java agent: `./dev-tmux.sh [none|otel|sentry]`, as `npm run dev:otel` / `dev:sentry` do. No
+# argument lets `.env` decide (TELEMETRY_AGENT), as `npm run dev` does. See `telemetryAgent` in build.sbt.
+case "${1:-}" in
+  "") AGENT_ALIAS="agentFromEnv" ;;
+  none) AGENT_ALIAS="agentNone" ;;
+  otel) AGENT_ALIAS="agentOtel" ;;
+  sentry) AGENT_ALIAS="agentSentry" ;;
+  *) echo "usage: $0 [none|otel|sentry]" >&2; exit 1 ;;
+esac
+
+CMD_BACKEND="sbt --client '$AGENT_ALIAS; ~backend/reStart'"
 CMD_SCALAJS="sbt --client '~frontend/fastLinkJS'"
 CMD_VITE="npm --prefix web run dev"
 
