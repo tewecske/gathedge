@@ -366,9 +366,18 @@ object UiKeys {
   val termsTitle: String   = key("ui.terms.title")
 
   /** One section of a legal page: an optional title, then `paragraphs`, then a list of `items`, then `after` more
-    * paragraphs. The keys are `ui.<page>.<name>.title`, `.p1`…, `.li1`…, `.a1`….
+    * paragraphs. The keys are `ui.<page>.<name>.title`, `.p1`…, `.li1`…, `.a1`…. A `boxed` section is drawn in a
+    * highlighted box: the short summary in words a child understands, which GDPR Article 12 asks for.
     */
-  final case class LegalSection(page: String, name: String, titled: Boolean, paragraphs: Int, items: Int, after: Int) {
+  final case class LegalSection(
+    page: String,
+    name: String,
+    titled: Boolean,
+    paragraphs: Int,
+    items: Int,
+    after: Int,
+    boxed: Boolean = false,
+  ) {
     private def prefix              = s"ui.$page.$name"
     def title: Option[String]       = Option.when(titled)(s"$prefix.title")
     def paragraphKeys: List[String] = (1 to paragraphs).toList.map(i => s"$prefix.p$i")
@@ -379,6 +388,7 @@ object UiKeys {
 
   val privacySections: List[LegalSection] = List(
     LegalSection("privacy", "intro", titled = false, paragraphs = 1, items = 0, after = 0),
+    LegalSection("privacy", "summary", titled = true, paragraphs = 0, items = 8, after = 1, boxed = true),
     LegalSection("privacy", "controller", titled = true, paragraphs = 1, items = 0, after = 0),
     LegalSection("privacy", "data", titled = true, paragraphs = 1, items = 6, after = 0),
     LegalSection("privacy", "purposes", titled = true, paragraphs = 1, items = 4, after = 1),

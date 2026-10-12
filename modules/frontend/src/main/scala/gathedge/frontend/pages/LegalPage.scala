@@ -19,7 +19,7 @@ object LegalPage {
   /** When either text last changed: noon UTC, so the date is the same in every time zone a reader is in. Change it with
     * the text.
     */
-  private val updatedAt: Long = 1791806400000L
+  private val updatedAt: Long = 1791892800000L
 
   def privacy(): HtmlElement = render(Page.Privacy, UiKeys.privacyTitle, UiKeys.privacySections)
 
@@ -46,9 +46,10 @@ object LegalPage {
   private def renderSection(section: LegalSection): HtmlElement = {
     div(
       // The anchor `#delete` is the URL a sign-in provider asks for: the data deletion instructions.
-      idAttr := section.name,
-      cls    := "flex flex-col gap-2",
-      section.title.map(key => h2(cls := "card-title text-lg mt-4", I18n.t(key))),
+      idAttr                                                       := section.name,
+      cls                                                          := "flex flex-col gap-2",
+      cls("rounded-box border border-info/40 bg-info/10 p-4 mt-2") := section.boxed,
+      section.title.map(key => h2(cls := "card-title text-lg", cls("mt-4") := !section.boxed, I18n.t(key))),
       section.paragraphKeys.map(key => p(linked(text(key)))),
       Option.when(section.items > 0)(
         ul(cls := "list-disc pl-5 space-y-1", section.itemKeys.map(key => li(linked(text(key)))))
