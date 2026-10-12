@@ -353,8 +353,9 @@ object UiKeys {
   val settingsDeleteConfirmUsername: String = key("ui.settings.deleteConfirmUsername")
 
   // -- Privacy policy and terms of use ---------------------------------------------------------
-  // Every paragraph takes the same three arguments: {0} the maintainer's name, {1} the contact address, {2} the
-  // application's name (`Branding`). A paragraph uses the ones it needs.
+  // Every paragraph takes the same two arguments: {0} the contact address, {1} the application's name (`Branding`). A
+  // paragraph uses the ones it needs. The maintainer's name is written in each catalog, in that language's order, as
+  // `ui.about.authorBody` does.
 
   val footerPrivacy: String = key("ui.footer.privacy")
   val footerTerms: String   = key("ui.footer.terms")
@@ -387,7 +388,7 @@ object UiKeys {
     LegalSection("privacy", "delete", titled = true, paragraphs = 5, items = 0, after = 0),
     LegalSection("privacy", "rights", titled = true, paragraphs = 2, items = 0, after = 0),
     LegalSection("privacy", "cookies", titled = true, paragraphs = 3, items = 0, after = 0),
-    LegalSection("privacy", "children", titled = true, paragraphs = 1, items = 0, after = 0),
+    LegalSection("privacy", "children", titled = true, paragraphs = 2, items = 0, after = 0),
     LegalSection("privacy", "changes", titled = true, paragraphs = 1, items = 0, after = 0),
   )
 

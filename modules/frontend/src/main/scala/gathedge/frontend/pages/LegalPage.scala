@@ -57,7 +57,7 @@ object LegalPage {
     )
   }
 
-  private def text(key: String): String = I18n.t(key, Branding.authorName, Branding.authorEmail, Branding.appName)
+  private def text(key: String): String = I18n.t(key, Branding.authorEmail, Branding.appName)
 
   private val linkPattern = """https?://[^\s)]+|[\w.+-]+@[\w-]+\.[\w.-]*\w""".r
 
