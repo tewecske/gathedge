@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -102,12 +103,12 @@ final class EmailVerificationTokenRepositoryLive(dataSource: DataSource)
   }
 
   def countExpired(now: Long): Task[Long] = {
-    logged(run(ctx.run(quote(tokens.filter(_.expiresAt < lift(now)).size)))) { count =>
+    logged(counted(ctx.run(quote(tokens.filter(_.expiresAt < lift(now)).countRows)))) { count =>
       s"emailVerificationTokens.countExpired count=$count"
     }
   }
 
   def countAll: Task[Long] = {
-    logged(run(ctx.run(quote(tokens.size))))(count => s"emailVerificationTokens.countAll count=$count")
+    logged(counted(ctx.run(quote(tokens.countRows))))(count => s"emailVerificationTokens.countAll count=$count")
   }
 }

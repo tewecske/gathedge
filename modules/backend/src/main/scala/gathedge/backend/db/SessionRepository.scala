@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -124,11 +125,11 @@ final class SessionRepositoryLive(dataSource: DataSource)
   }
 
   def countActive(now: Long): Task[Long] = {
-    val q = quote(sessions.filter(s => s.expiresAt > lift(now) && s.revokedAt.isEmpty).size)
-    logged(run(ctx.run(q)))(count => s"sessions.countActive count=$count")
+    val q = quote(sessions.filter(s => s.expiresAt > lift(now) && s.revokedAt.isEmpty).countRows)
+    logged(counted(ctx.run(q)))(count => s"sessions.countActive count=$count")
   }
 
   def countAll: Task[Long] = {
-    logged(run(ctx.run(quote(sessions.size))))(count => s"sessions.countAll count=$count")
+    logged(counted(ctx.run(quote(sessions.countRows))))(count => s"sessions.countAll count=$count")
   }
 }

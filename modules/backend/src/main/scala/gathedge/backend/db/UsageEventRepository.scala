@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -107,7 +108,7 @@ final class UsageEventRepositoryLive(dataSource: DataSource)
       events
         .filter(_.createdAt >= lift(since))
         .groupBy(row => (row.method, row.route))
-        .map { case ((method, route), rows) => (method, route, rows.size) }
+        .map { case ((method, route), _) => (method, route, countStar) }
     }
     logged(run(ctx.run(q)))(rows => s"usageEvents.countsByRoute routes=${rows.size}")
   }
@@ -117,7 +118,7 @@ final class UsageEventRepositoryLive(dataSource: DataSource)
       events
         .filter(row => row.createdAt >= lift(since) && row.userId.isDefined)
         .groupBy(_.userId)
-        .map { case (userId, rows) => (userId, rows.size) }
+        .map { case (userId, _) => (userId, countStar) }
     }
     logged(run(ctx.run(q)).map(_.collect { case (Some(userId), count) => (userId, count) })) { rows =>
       s"usageEvents.countsByUser users=${rows.size}"
@@ -141,7 +142,7 @@ final class UsageEventRepositoryLive(dataSource: DataSource)
   }
 
   def countAll: Task[Long] = {
-    logged(run(ctx.run(quote(events.size))))(count => s"usageEvents.countAll count=$count")
+    logged(counted(ctx.run(quote(events.countRows))))(count => s"usageEvents.countAll count=$count")
   }
 
   def deleteOlderThan(before: Long): Task[Long] = {

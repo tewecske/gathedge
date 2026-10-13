@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -76,17 +77,17 @@ final class MetricsRepositoryLive(dataSource: DataSource)
     // The bindings are all suffixed `Count` so none of them shadows the `inline def` of the same name — a
     // for-comprehension binding is in scope for every later generator, and `users <- …` would quietly turn the next
     // `quote(users.filter(…))` into a filter over a Long.
-    val counted = {
+    val tableCounts = {
       for {
-        userCount            <- run(ctx.run(quote(users.size)))
-        adminCount           <- run(ctx.run(quote(users.filter(_.isAdmin).size)))
-        unverifiedCount      <- run(ctx.run(quote(users.filter(_.emailVerifiedAt.isEmpty).size)))
-        withoutPasswordCount <- run(ctx.run(quote(users.filter(_.passwordHash.isEmpty).size)))
-        identityCount        <- run(ctx.run(quote(identities.size)))
-        guestCount           <- run(ctx.run(quote(users.filter(_.isGuest).size)))
-        wordCount            <- run(ctx.run(quote(wordRows.size)))
-        translationCount     <- run(ctx.run(quote(wordEdgeRows.size)))
-        tagCount             <- run(ctx.run(quote(tagRows.size)))
+        userCount            <- counted(ctx.run(quote(users.countRows)))
+        adminCount           <- counted(ctx.run(quote(users.filter(_.isAdmin).countRows)))
+        unverifiedCount      <- counted(ctx.run(quote(users.filter(_.emailVerifiedAt.isEmpty).countRows)))
+        withoutPasswordCount <- counted(ctx.run(quote(users.filter(_.passwordHash.isEmpty).countRows)))
+        identityCount        <- counted(ctx.run(quote(identities.countRows)))
+        guestCount           <- counted(ctx.run(quote(users.filter(_.isGuest).countRows)))
+        wordCount            <- counted(ctx.run(quote(wordRows.countRows)))
+        translationCount     <- counted(ctx.run(quote(wordEdgeRows.countRows)))
+        tagCount             <- counted(ctx.run(quote(tagRows.countRows)))
       } yield TableCounts(
         users = userCount,
         admins = adminCount,
@@ -99,7 +100,7 @@ final class MetricsRepositoryLive(dataSource: DataSource)
         tags = tagCount,
       )
     }
-    logged(counted)(result => s"metrics.counts users=${result.users} identities=${result.oauthIdentities}")
+    logged(tableCounts)(result => s"metrics.counts users=${result.users} identities=${result.oauthIdentities}")
   }
 
   def migrations: Task[List[MigrationRow]] = {

@@ -111,6 +111,8 @@ Each repository method logs one INFO line via `QuillRepository.logged`. That lin
 
 Every ordinary `quote(...)` query is now a compile-time-checked Quill query — the concrete `PostgresZioJdbcContext` each repository is built with is what lets the macro specialize it, rather than falling back to a runtime-rendered Dynamic Query. A handful of repositories (`WordRepository`, `GameRepository`, `GroupRepository`, `UserRepository`, `AuditLogRepository`, `LoginAttemptRepository`) still use Quill's `dynamicQuerySchema`/`DynamicQuery` explicitly for listings with several independent optional filters — that's a deliberate choice to avoid combinatorial static-query variants, unrelated to the dialect.
 
+**Never count with Quill's `.size`.** It renders `COUNT(alias.*)`, which forces a heap scan; on `words` that is 830 MB against 44 MB of index. Use `db/Counting`: `.countRows` run through `counted`, `countStar` in a `groupBy`, `.countRows.value` as a subquery.
+
 Flyway migrations live under `backend/src/main/resources/db/migration/postgresql/`. Timestamps are epoch-millis `BIGINT`.
 
 **Foreign keys are enforced everywhere now.** Cascades and constraints are exercised by every spec that touches the tables involved; `PostgresIntegrationSpec` is the dedicated regression suite for cascade/FK/reserved-word behavior. Any referential-integrity change (including a new table referencing `users`) needs a regression test there.

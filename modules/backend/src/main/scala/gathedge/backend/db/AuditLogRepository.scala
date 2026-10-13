@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import gathedge.shared.dto.AuditSort
 import zio.*
 
@@ -135,10 +136,10 @@ final class AuditLogRepositoryLive(dataSource: DataSource)
   }
 
   def count(action: Option[String], actorId: Option[Long], targetId: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matching(action, actorId, targetId).size)))(count => s"auditLog.count count=$count")
+    logged(counted(ctx.run(matching(action, actorId, targetId).countRows)))(count => s"auditLog.count count=$count")
   }
 
   def countAll: Task[Long] = {
-    logged(run(ctx.run(quote(entries.size))))(count => s"auditLog.countAll count=$count")
+    logged(counted(ctx.run(quote(entries.countRows))))(count => s"auditLog.countAll count=$count")
   }
 }

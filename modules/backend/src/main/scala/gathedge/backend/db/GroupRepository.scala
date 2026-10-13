@@ -3,6 +3,7 @@ package gathedge.backend.db
 import gathedge.shared.domain.{Group, GroupRole}
 import gathedge.shared.dto.GroupSort
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -283,9 +284,8 @@ final class GroupRepositoryLive(dataSource: DataSource)
       ids            = rows.map(_.id)
       memberCounted <-
         run(ctx.run(quote {
-          members.filter(row => liftQuery(ids).contains(row.groupId)).groupBy(_.groupId).map {
-            case (groupId, grouped) =>
-              (groupId, grouped.size)
+          members.filter(row => liftQuery(ids).contains(row.groupId)).groupBy(_.groupId).map { case (groupId, _) =>
+            (groupId, countStar)
           }
         }))
       // Only tags actually attached to one of these groups are counted, so the filter happens before the group-by
@@ -295,7 +295,7 @@ final class GroupRepositoryLive(dataSource: DataSource)
           tags
             .filter(row => row.groupId.exists(groupId => liftQuery(ids).contains(groupId)))
             .groupBy(_.groupId)
-            .map { case (groupId, grouped) => (groupId, grouped.size) }
+            .map { case (groupId, _) => (groupId, countStar) }
         }))
       byMember       = memberCounted.toMap
       byTag          = tagCounted.flatMap { case (groupId, count) => groupId.map(_ -> count) }.toMap
@@ -306,7 +306,9 @@ final class GroupRepositoryLive(dataSource: DataSource)
   }
 
   def countMatching(nameContains: Option[String], tagContains: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matching(nameContains, tagContains).size)))(count => s"groups.countMatching count=$count")
+    logged(counted(ctx.run(matching(nameContains, tagContains).countRows)))(count =>
+      s"groups.countMatching count=$count"
+    )
   }
 
   def listMembershipsFor(userId: Long): Task[List[GroupMemberRow]] = {
@@ -346,8 +348,8 @@ final class GroupRepositoryLive(dataSource: DataSource)
 
   def countAdmins(groupId: Long): Task[Long] = {
     val adminRole = GroupRole.code(GroupRole.Admin)
-    val q         = quote(members.filter(row => row.groupId == lift(groupId) && row.role == lift(adminRole)).size)
-    logged(run(ctx.run(q)))(count => s"groupMembers.countAdmins group=$groupId count=$count")
+    val q         = quote(members.filter(row => row.groupId == lift(groupId) && row.role == lift(adminRole)).countRows)
+    logged(counted(ctx.run(q)))(count => s"groupMembers.countAdmins group=$groupId count=$count")
   }
 
   def updateMemberRole(groupId: Long, userId: Long, role: String, expectedVersion: Long): Task[Long] = {
@@ -374,7 +376,7 @@ final class GroupRepositoryLive(dataSource: DataSource)
 
   def tagsOfGroup(groupId: Long): Task[List[(TagRow, Long, Option[UserRow])]] = {
     val groupTagsQ = quote(tags.filter(_.groupId.contains(lift(groupId))))
-    val counts     = quote(wordTagsTable.groupBy(_.tagId).map { case (tagId, rows) => (tagId, rows.size) })
+    val counts     = quote(wordTagsTable.groupBy(_.tagId).map { case (tagId, _) => (tagId, countStar) })
     val joined     = for {
       rows      <- run(ctx.run(groupTagsQ))
       counted   <- run(ctx.run(counts))

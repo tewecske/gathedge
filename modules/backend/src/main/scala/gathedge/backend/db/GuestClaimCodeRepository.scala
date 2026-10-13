@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -96,7 +97,7 @@ final class GuestClaimCodeRepositoryLive(dataSource: DataSource)
   }
 
   def countFor(userId: Long): Task[Long] = {
-    val q = quote(codes.filter(row => row.userId == lift(userId) && row.revokedAt.isEmpty).size)
-    logged(run(ctx.run(q)))(count => s"guestClaimCodes.countFor userId=$userId count=$count")
+    val q = quote(codes.filter(row => row.userId == lift(userId) && row.revokedAt.isEmpty).countRows)
+    logged(counted(ctx.run(q)))(count => s"guestClaimCodes.countFor userId=$userId count=$count")
   }
 }

@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import zio.*
 
 import javax.sql.DataSource
@@ -123,15 +124,15 @@ final class LoginAttemptRepositoryLive(dataSource: DataSource)
     // shapes and `filterOpt` would move the count client-side.
     val q = outcome match {
       case Some(value) =>
-        quote(attempts.filter(a => a.createdAt >= lift(since) && a.outcome == lift(value)).size)
+        quote(attempts.filter(a => a.createdAt >= lift(since) && a.outcome == lift(value)).countRows)
       case None        =>
-        quote(attempts.filter(_.createdAt >= lift(since)).size)
+        quote(attempts.filter(_.createdAt >= lift(since)).countRows)
     }
-    logged(run(ctx.run(q)))(count => s"loginAttempts.countSince count=$count")
+    logged(counted(ctx.run(q)))(count => s"loginAttempts.countSince count=$count")
   }
 
   def countAll: Task[Long] = {
-    logged(run(ctx.run(quote(attempts.size))))(count => s"loginAttempts.countAll count=$count")
+    logged(counted(ctx.run(quote(attempts.countRows))))(count => s"loginAttempts.countAll count=$count")
   }
 
   def deleteOlderThan(before: Long): Task[Long] = {

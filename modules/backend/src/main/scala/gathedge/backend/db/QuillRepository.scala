@@ -39,6 +39,11 @@ abstract class QuillRepository[Dialect <: SqlIdiom, Naming <: NamingStrategy](
       Ord.asc[R]
   }
 
+  /** Runs a [[Counting.countRows]] query and answers its one row. */
+  protected def counted(query: ZIO[DataSource, Throwable, List[Long]]): Task[Long] = {
+    run(query).map(_.headOption.getOrElse(0L))
+  }
+
   /** Runs several queries of *this* repository as one unit of work; any failure rolls the lot back. */
   protected def transaction[T](queries: ZIO[DataSource, Throwable, T]): Task[T] = {
     run(ctx.transaction(queries))

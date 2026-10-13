@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import gathedge.shared.domain.{
   EntryBucket,
   LanguageProfile,
@@ -1203,11 +1204,13 @@ final class WordRepositoryLive(dataSource: DataSource)
     targetLanguage: String,
     mainOnly: Boolean,
   ): Task[Long] = {
-    // A bare `.size`, deliberately: it renders `COUNT(*)`, which needs no column at all and so is answered by
-    // V20's partial indexes as an index-only scan. `.map(_.id).size` renders `COUNT(id)`, and `id` is in none of
-    // those indexes — measured on the real dictionary it drops to a bitmap heap scan, 2405 buffers against 112.
-    val q = matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly).size
-    logged(run(ctx.run(q)))(count => s"words.countMatching count=$count")
+    // `COUNT(*)`, deliberately: it needs no column at all and so is answered by V20's partial indexes as an
+    // index-only scan. `.map(_.id).size` renders `COUNT(id)`, and `id` is in none of those indexes — measured on the
+    // real dictionary it drops to a bitmap heap scan, 2405 buffers against 112. A bare `.size` is worse still; see
+    // `Counting`.
+    val q =
+      matching(language, search, partOfSpeech, tagId, taggedBy, translationFilter, targetLanguage, mainOnly).countRows
+    logged(counted(ctx.run(q)))(count => s"words.countMatching count=$count")
   }
 
   // -- Translations -----------------------------------------------------------------------------
@@ -1324,7 +1327,7 @@ final class WordRepositoryLive(dataSource: DataSource)
     val allTags = quote(tags.sortBy(_.nameNorm)(using Ord.asc))
     // Not joined against `tags` by owner: a `word_tags` row's `tag_id` already names a tag one particular account
     // owns, so grouping it alone already answers "how many words carry this tag" for every tag at once.
-    val counts  = quote(wordTags.groupBy(_.tagId).map { case (tagId, links) => (tagId, links.size) })
+    val counts  = quote(wordTags.groupBy(_.tagId).map { case (tagId, _) => (tagId, countStar) })
     val listed  = for {
       rows   <- run(ctx.run(allTags))
       byTag  <- run(ctx.run(counts))
@@ -1393,7 +1396,9 @@ final class WordRepositoryLive(dataSource: DataSource)
       case Some(TagSort.name)  =>
         query.sortBy(_.nameNorm)(using ordering(descending))
       case Some(TagSort.words) =>
-        query.sortBy(row => quote(wordTags.filter(link => link.tagId == row.id).size))(using ordering(descending))
+        query.sortBy(row => quote(wordTags.filter(link => link.tagId == row.id).countRows.value))(using
+          ordering(descending)
+        )
       case _                   =>
         memberGroupIds match {
           case Nil      =>
@@ -1429,13 +1434,13 @@ final class WordRepositoryLive(dataSource: DataSource)
     val page     = orderedTags(narrowed, viewerId, memberGroupIds, sort, descending).drop(offset).take(limit)
     val listed   = for {
       rows   <- run(ctx.run(page))
-      total  <- run(ctx.run(narrowed.size))
+      total  <- counted(ctx.run(narrowed.countRows))
       tagIds  = rows.map(_.id)
       byTag  <- if (tagIds.isEmpty) ZIO.succeed(List.empty[(Long, Long)])
                 else {
                   run(ctx.run(quote {
                     wordTags.filter(link => liftQuery(tagIds).contains(link.tagId)).groupBy(_.tagId).map {
-                      case (tagId, links) => (tagId, links.size)
+                      case (tagId, _) => (tagId, countStar)
                     }
                   }))
                 }
@@ -1501,25 +1506,27 @@ final class WordRepositoryLive(dataSource: DataSource)
   }
 
   def countWordsInTag(tagId: Long): Task[Long] = {
-    val q = quote(wordTags.filter(_.tagId == lift(tagId)).size)
-    logged(run(ctx.run(q)))(count => s"wordTags.countInTag tag=$tagId count=$count")
+    val q = quote(wordTags.filter(_.tagId == lift(tagId)).countRows)
+    logged(counted(ctx.run(q)))(count => s"wordTags.countInTag tag=$tagId count=$count")
   }
 
   def countTagsOwnedBy(userId: Long): Task[Long] = {
-    val q = quote(tags.filter(_.userId == lift(userId)).size)
-    logged(run(ctx.run(q)))(count => s"tags.countOwnedBy user=$userId count=$count")
+    val q = quote(tags.filter(_.userId == lift(userId)).countRows)
+    logged(counted(ctx.run(q)))(count => s"tags.countOwnedBy user=$userId count=$count")
   }
 
   def countPairsOwnedBy(userId: Long): Task[Long] = {
     val q = quote {
-      wordTagPairs.filter(pair => tags.filter(tag => tag.id == pair.tagId && tag.userId == lift(userId)).nonEmpty).size
+      wordTagPairs
+        .filter(pair => tags.filter(tag => tag.id == pair.tagId && tag.userId == lift(userId)).nonEmpty)
+        .countRows
     }
-    logged(run(ctx.run(q)))(count => s"wordTagPairs.countOwnedBy user=$userId count=$count")
+    logged(counted(ctx.run(q)))(count => s"wordTagPairs.countOwnedBy user=$userId count=$count")
   }
 
   def countPairsInTag(tagId: Long): Task[Long] = {
-    val q = quote(wordTagPairs.filter(_.tagId == lift(tagId)).size)
-    logged(run(ctx.run(q)))(count => s"wordTagPairs.countInTag tag=$tagId count=$count")
+    val q = quote(wordTagPairs.filter(_.tagId == lift(tagId)).countRows)
+    logged(counted(ctx.run(q)))(count => s"wordTagPairs.countInTag tag=$tagId count=$count")
   }
 
   def copyTag(
@@ -1964,9 +1971,9 @@ final class WordRepositoryLive(dataSource: DataSource)
           pair.tagId == lift(tagId) &&
           (pair.wordId == lift(wordId) || pair.translationWordId == lift(wordId))
         })
-        .size
+        .countRows
     }
-    ctx.run(remaining).flatMap { left =>
+    ctx.run(remaining).map(_.sum).flatMap { left =>
       ZIO
         .when(left == 0L) {
           if (force)
@@ -2251,8 +2258,8 @@ final class WordRepositoryLive(dataSource: DataSource)
     filter: TagEntryFilter,
     reader: Option[Long],
   ): Task[Long] = {
-    val q = entryHeads(tagId, sourceLanguage, filter, reader).size
-    logged(run(ctx.run(q)))(count => s"tags.countEntryPage tag=$tagId count=$count")
+    val q = entryHeads(tagId, sourceLanguage, filter, reader).countRows
+    logged(counted(ctx.run(q)))(count => s"tags.countEntryPage tag=$tagId count=$count")
   }
 
   def tagHasPairs(tagId: Long): Task[Boolean] = {
@@ -2334,10 +2341,12 @@ final class WordRepositoryLive(dataSource: DataSource)
     // word, and a dictionary word — or another reader's — must never lose its translations and forms to a caller who
     // then fails to delete the word itself.
     val owned = quote {
-      words.filter(w => w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId))).size
+      words
+        .filter(w => w.id == lift(wordId) && w.source == lift("user") && w.createdBy.exists(_ == lift(userId)))
+        .countRows
     }
     val work  = transaction(
-      ctx.run(owned).flatMap(count => if (count == 0L) ZIO.succeed(0L) else deleteOwned(wordId, userId))
+      ctx.run(owned).map(_.sum).flatMap(count => if (count == 0L) ZIO.succeed(0L) else deleteOwned(wordId, userId))
     )
     logged(work)(n => s"words.deleteOwned word=$wordId user=$userId deleted=$n")
   }
@@ -2707,7 +2716,7 @@ final class WordRepositoryLive(dataSource: DataSource)
       wordForms
         .filter(row => row.formWordId >= lift(fromFormWordId) && row.formWordId < lift(toFormWordId))
         .groupBy(row => (row.formWordId, row.relation))
-        .map { case ((formWordId, relation), rows) => (formWordId, relation, rows.size) }
+        .map { case ((formWordId, relation), _) => (formWordId, relation, countStar) }
         .filter { case (_, _, count) => count > lift(threshold.toLong) }
     }
     val flagged = for {
@@ -2742,13 +2751,13 @@ final class WordRepositoryLive(dataSource: DataSource)
     // `(form, relation)` pair may well leave others. Counted and cleared as two statements inside the delete's own
     // transaction rather than one `UPDATE` with a correlated `NOT EXISTS`, which is a shape nothing else here renders.
     val remaining = quote(
-      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).size
+      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).countRows
     )
     val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
     val deleted   = transaction(
       for {
         rows <- ctx.run(q)
-        left <- ctx.run(remaining)
+        left <- ctx.run(remaining).map(_.sum)
         _    <- ZIO.when(left == 0L)(ctx.run(clear))
       } yield rows
     )
@@ -2777,13 +2786,13 @@ final class WordRepositoryLive(dataSource: DataSource)
     // The same upkeep as `deleteWordForms`, in the same transaction: the word is a main word again only once no
     // relation names it as a form.
     val remaining = quote(
-      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).size
+      wordForms.filter(row => row.formWordId == lift(formWordId) && row.lemmaWordId != row.formWordId).countRows
     )
     val clear     = quote(words.filter(row => row.id == lift(formWordId)).update(_.isForm -> false))
     val deleted   = transaction(
       for {
         rows <- ctx.run(q)
-        left <- ctx.run(remaining)
+        left <- ctx.run(remaining).map(_.sum)
         _    <- ZIO.when(left == 0L)(ctx.run(clear))
       } yield rows
     )
@@ -2799,7 +2808,7 @@ final class WordRepositoryLive(dataSource: DataSource)
             .on((form, lemma) => form.lemmaWordId == lemma.id)
             .filter { case (_, lemma) => lemma.language == lift(code) && lemma.partOfSpeech == lift(partOfSpeech) }
             .groupBy { case (form, _) => form.relation }
-            .map { case (relation, rows) => (relation, rows.size) }
+            .map { case (relation, _) => (relation, countStar) }
         }
         run(ctx.run(q))
       case None       =>
@@ -2809,7 +2818,7 @@ final class WordRepositoryLive(dataSource: DataSource)
             .on((form, lemma) => form.lemmaWordId == lemma.id)
             .filter { case (_, lemma) => lemma.partOfSpeech == lift(partOfSpeech) }
             .groupBy { case (form, _) => form.relation }
-            .map { case (relation, rows) => (relation, rows.size) }
+            .map { case (relation, _) => (relation, countStar) }
         }
         run(ctx.run(q))
     }
@@ -2819,18 +2828,18 @@ final class WordRepositoryLive(dataSource: DataSource)
   }
 
   def countWords: Task[Long] = {
-    logged(run(ctx.run(quote(words.size))))(count => s"words.count count=$count")
+    logged(counted(ctx.run(quote(words.countRows))))(count => s"words.count count=$count")
   }
 
   def countTranslations: Task[Long] = {
-    logged(run(ctx.run(quote(translations.size))))(count => s"wordTranslations.count count=$count")
+    logged(counted(ctx.run(quote(translations.countRows))))(count => s"wordTranslations.count count=$count")
   }
 
   def countTags: Task[Long] = {
-    logged(run(ctx.run(quote(tags.size))))(count => s"tags.count count=$count")
+    logged(counted(ctx.run(quote(tags.countRows))))(count => s"tags.count count=$count")
   }
 
   def countWordForms: Task[Long] = {
-    logged(run(ctx.run(quote(wordForms.size))))(count => s"wordForms.count count=$count")
+    logged(counted(ctx.run(quote(wordForms.countRows))))(count => s"wordForms.count count=$count")
   }
 }

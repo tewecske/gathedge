@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import gathedge.shared.dto.{AllGameSort, GamePlaySort}
 import zio.*
 
@@ -570,7 +571,7 @@ final class GameRepositoryLive(dataSource: DataSource)
         gamePlays
           .filter(play => liftQuery(gameIds).contains(play.gameId))
           .groupBy(play => play.gameId)
-          .map { case (gameId, plays) => (gameId, plays.size) }
+          .map { case (gameId, _) => (gameId, countStar) }
       }
       logged(run(ctx.run(q)).map(_.toMap))(counts => s"games.playCounts games=${gameIds.size} rows=${counts.size}")
     }
@@ -607,7 +608,7 @@ final class GameRepositoryLive(dataSource: DataSource)
                     p.playerUserId == lift(playerUserId) && p.finishedAt.isDefined && p.wordCount >= lift(minWordCount)
                   })
         answer <- gamePlayAnswers.join(a => a.playId == play.id)
-      } yield answer).groupBy(_.outcome).map { case (outcome, answers) => (outcome, answers.size) }
+      } yield answer).groupBy(_.outcome).map { case (outcome, _) => (outcome, countStar) }
     }
     logged(run(ctx.run(q)).map(_.toMap)) { counts =>
       s"games.answerCountsInPlaysOf player=$playerUserId outcomes=${counts.size}"
@@ -867,7 +868,7 @@ final class GameRepositoryLive(dataSource: DataSource)
   }
 
   def countPlaysMatching(gameId: Long, playerContains: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matchingPlays(gameId, playerContains).size))) { count =>
+    logged(counted(ctx.run(matchingPlays(gameId, playerContains).countRows))) { count =>
       s"games.countPlaysMatching game=$gameId count=$count"
     }
   }
@@ -941,7 +942,7 @@ final class GameRepositoryLive(dataSource: DataSource)
   }
 
   def countMyPlaysMatching(playerUserId: Long, gameId: Option[Long], nameContains: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matchingMyPlays(playerUserId, gameId, nameContains).size))) { count =>
+    logged(counted(ctx.run(matchingMyPlays(playerUserId, gameId, nameContains).countRows))) { count =>
       s"games.countMyPlaysMatching player=$playerUserId count=$count"
     }
   }
@@ -994,7 +995,9 @@ final class GameRepositoryLive(dataSource: DataSource)
       case Some(AllGameSort.createdAt) =>
         query.sortBy(_.createdAt)(using ordering(descending))
       case Some(AllGameSort.likeCount) =>
-        query.sortBy(game => quote(gameFavorites.filter(fav => fav.gameId == game.id).size))(using ordering(descending))
+        query.sortBy(game => quote(gameFavorites.filter(fav => fav.gameId == game.id).countRows.value))(using
+          ordering(descending)
+        )
       case _                           =>
         query.sortBy(_.createdAt)(using Ord.desc)
     }
@@ -1030,9 +1033,10 @@ final class GameRepositoryLive(dataSource: DataSource)
     language1: Option[String] = None,
     language2: Option[String] = None,
   ): Task[Long] = {
-    logged(run(ctx.run(matchingAllGames(nameContains, favoritesOf, tagId, language1, language2).size))) { count =>
-      s"games.countAllGamesMatching mine=${favoritesOf.isDefined} tag=${tagId.isDefined} " +
-        s"lang=${language1.isDefined || language2.isDefined} count=$count"
+    logged(counted(ctx.run(matchingAllGames(nameContains, favoritesOf, tagId, language1, language2).countRows))) {
+      count =>
+        s"games.countAllGamesMatching mine=${favoritesOf.isDefined} tag=${tagId.isDefined} " +
+          s"lang=${language1.isDefined || language2.isDefined} count=$count"
     }
   }
 
@@ -1063,7 +1067,7 @@ final class GameRepositoryLive(dataSource: DataSource)
         gameFavorites
           .filter(fav => liftQuery(gameIds).contains(fav.gameId))
           .groupBy(fav => fav.gameId)
-          .map { case (gameId, favs) => (gameId, favs.size) }
+          .map { case (gameId, _) => (gameId, countStar) }
       }
       logged(run(ctx.run(q)).map(_.toMap)) { counts =>
         s"games.favoriteCounts games=${gameIds.size} rows=${counts.size}"

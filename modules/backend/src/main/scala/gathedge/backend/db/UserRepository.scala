@@ -1,6 +1,7 @@
 package gathedge.backend.db
 
 import io.getquill.*
+import Counting.*
 import gathedge.shared.dto.UserSort
 import zio.*
 
@@ -334,7 +335,7 @@ final class UserRepositoryLive(dataSource: DataSource)
   }
 
   def existsAdmin: Task[Boolean] = {
-    logged(run(ctx.run(quote(users.filter(_.isAdmin).size))).map(_ > 0)) { exists =>
+    logged(counted(ctx.run(quote(users.filter(_.isAdmin).countRows))).map(_ > 0)) { exists =>
       s"users.existsAdmin exists=$exists"
     }
   }
@@ -422,7 +423,7 @@ final class UserRepositoryLive(dataSource: DataSource)
   }
 
   def countMatching(emailContains: Option[String]): Task[Long] = {
-    logged(run(ctx.run(matching(emailContains).size)))(count => s"users.countMatching count=$count")
+    logged(counted(ctx.run(matching(emailContains).countRows)))(count => s"users.countMatching count=$count")
   }
 
   def updateUsernameAndName(
