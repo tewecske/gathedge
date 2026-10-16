@@ -280,7 +280,7 @@ object WordEndpoints {
   val removeTranslation = {
     Endpoint(ApiRoutes.route2(paths.removeTranslation, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
-      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
   /** Every wordlist there is, with how many words each holds — what the tag bar is built from, and a browsable catalog

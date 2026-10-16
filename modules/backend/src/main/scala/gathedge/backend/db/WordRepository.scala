@@ -132,10 +132,13 @@ trait WordRepository {
   /** Removes an edge and its mirror, but only if `ownerId` typed it. Returns rows affected. */
   def deleteTranslationPair(id: Long, ownerId: Long): Task[Long]
 
-  /** An edge from `sourceWordId` to `targetWordId` that `userId` can rely on: one with no author (the dictionary's, or
-    * a pivot) or one `userId` typed. Another reader's edge does not count, since that reader may delete it.
+  /** An edge from `sourceWordId` to `targetWordId`, whoever wrote it. One edge per pair of words: a reader never adds a
+    * second beside the dictionary's or another reader's.
     */
-  def findUsableTranslation(sourceWordId: Long, targetWordId: Long, userId: Long): Task[Option[WordTranslationRow]]
+  def findTranslation(sourceWordId: Long, targetWordId: Long): Task[Option[WordTranslationRow]]
+
+  /** Which of `pairs` (word, translation) some wordlist marks, in any account's tag. Such an edge is not removable. */
+  def pairsInWordlists(pairs: List[(Long, Long)]): Task[Set[(Long, Long)]]
 
   /** Every tag in the system, not only `viewerId`'s own — tags are globally visible for filtering and copying, even
     * though only the owner may attach or detach words with one. Each row carries the count every account's writes
@@ -651,12 +654,11 @@ object WordRepository {
   def deleteTranslationPair(id: Long, ownerId: Long): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.deleteTranslationPair(id, ownerId))
 
-  def findUsableTranslation(
-    sourceWordId: Long,
-    targetWordId: Long,
-    userId: Long,
-  ): RIO[WordRepository, Option[WordTranslationRow]] =
-    ZIO.serviceWithZIO[WordRepository](_.findUsableTranslation(sourceWordId, targetWordId, userId))
+  def findTranslation(sourceWordId: Long, targetWordId: Long): RIO[WordRepository, Option[WordTranslationRow]] =
+    ZIO.serviceWithZIO[WordRepository](_.findTranslation(sourceWordId, targetWordId))
+
+  def pairsInWordlists(pairs: List[(Long, Long)]): RIO[WordRepository, Set[(Long, Long)]] =
+    ZIO.serviceWithZIO[WordRepository](_.pairsInWordlists(pairs))
 
   def listTags(viewerId: Long): RIO[WordRepository, List[(TagRow, Long, Boolean)]] =
     ZIO.serviceWithZIO[WordRepository](_.listTags(viewerId))
@@ -1260,18 +1262,33 @@ final class WordRepositoryLive(dataSource: DataSource)
     }
   }
 
-  def findUsableTranslation(
-    sourceWordId: Long,
-    targetWordId: Long,
-    userId: Long,
-  ): Task[Option[WordTranslationRow]] = {
+  def findTranslation(sourceWordId: Long, targetWordId: Long): Task[Option[WordTranslationRow]] = {
     val q = quote(
-      translations.filter(edge => {
-        edge.sourceWordId == lift(sourceWordId) && edge.targetWordId == lift(targetWordId) &&
-        (edge.createdBy.isEmpty || edge.createdBy.contains(lift(userId)))
-      })
+      translations
+        .filter(edge => edge.sourceWordId == lift(sourceWordId) && edge.targetWordId == lift(targetWordId))
+        .take(1)
     )
-    logged(run(ctx.run(q)).map(_.headOption))(found => s"wordTranslations.findUsable found=${found.isDefined}")
+    logged(run(ctx.run(q)).map(_.headOption))(found => s"wordTranslations.find found=${found.isDefined}")
+  }
+
+  def pairsInWordlists(pairs: List[(Long, Long)]): Task[Set[(Long, Long)]] = {
+    if (pairs.isEmpty)
+      ZIO.succeed(Set.empty)
+    else {
+      // Narrowed by the word ids, which the UNIQUE index leads with; the exact pairs are picked out here. Both
+      // directions of a mark are stored, so the pair as given is enough.
+      val wordIds = pairs.map(_._1).distinct
+      val q       = quote(
+        wordTagPairs
+          .filter(pair => liftQuery(wordIds).contains(pair.wordId))
+          .map(pair => (pair.wordId, pair.translationWordId))
+          .distinct
+      )
+      val wanted  = pairs.toSet
+      logged(run(ctx.run(q)).map(_.toSet.intersect(wanted)))(used => {
+        s"wordTagPairs.pairsInWordlists asked=${pairs.size} used=${used.size}"
+      })
+    }
   }
 
   def insertTranslationPair(

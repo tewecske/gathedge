@@ -84,14 +84,15 @@ final case class WordSummary(
   *
   * `origin` says where it came from: `dictionary` for what Wiktionary asserts directly, `pivot` for a German–Hungarian
   * pair derived through a shared English sense (there is no free direct data for that pair, so it is the only way it
-  * exists), and `user` for one somebody typed. `ownedByMe` is what decides whether the delete button is offered — a
-  * reader may remove their own edge and nobody else's.
+  * exists), and `user` for one somebody typed. `ownedByMe` and `inWordlists` decide whether the delete button is
+  * offered: a reader may remove their own edge and nobody else's, and only while no wordlist marks it as an answer.
   */
 final case class TranslationEntry(
   id: Long,
   word: Word,
   origin: String,
   ownedByMe: Boolean,
+  inWordlists: Boolean,
 ) derives JsonCodec
 
 /** Everything the word screen shows about one word: the word itself, every translation anybody has recorded for it, the

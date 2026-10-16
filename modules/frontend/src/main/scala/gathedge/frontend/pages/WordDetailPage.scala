@@ -701,7 +701,8 @@ private class WordDetailPage(id: Long) {
       },
       // Marked rather than hidden: a pair inferred through English is worth having and worth knowing about.
       span(cls := "text-xs opacity-60", Labels.translationOrigin(entry.origin)),
-      if (entry.ownedByMe) {
+      // A wordlist that marks this translation as an answer would lose it, so the server refuses the remove.
+      if (entry.ownedByMe && !entry.inWordlists) {
         button(
           cls := "btn btn-ghost btn-xs",
           typ := "button",

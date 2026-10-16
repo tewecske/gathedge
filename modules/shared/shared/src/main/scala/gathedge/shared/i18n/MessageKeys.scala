@@ -103,6 +103,7 @@ object MessageKeys {
   val wordTagExists: String         = key("words.tagExists")
   val wordTagReserved: String       = key("words.tagReserved")
   val wordTranslationExists: String = key("words.translationExists")
+  val wordTranslationInUse: String  = key("words.translationInUse")
   val wordNotOwn: String            = key("words.notOwn")
 
   /** The main word given for a new word's `word_forms` link is in a different language than the word being added — an

@@ -265,8 +265,9 @@ object OpenApiSpec extends ZIOSpecDefault {
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("POST", "/api/words/{id}/translations")                                    ->
                 Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              // 409 is a translation some wordlist marks as an answer.
               ("DELETE", "/api/words/{id}/translations/{translationId}")                  ->
-                Set(NoContent, BadRequest, Unauthorized, NotFound),
+                Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
               ("PUT", "/api/words/{id}/tags/{tagId}")                                     -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("DELETE", "/api/words/{id}/tags/{tagId}")                                  -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // Marking a translation as a practice answer. One 404 for a word that is not there, a translation the
@@ -561,7 +562,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 343,
+          declared == 344,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

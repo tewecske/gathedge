@@ -343,7 +343,12 @@ object ApiFailures {
       case WordFailure.DuplicateTranslation         =>
         ApiFailure.Conflict(
           MessageRef(MessageKeys.wordTranslationExists),
-          "You have already added that translation",
+          "That translation already exists",
+        )
+      case WordFailure.TranslationInUse             =>
+        ApiFailure.Conflict(
+          MessageRef(MessageKeys.wordTranslationInUse),
+          "A wordlist uses that translation, so it cannot be removed",
         )
       case WordFailure.GenderNotApplicable          =>
         ApiFailure.BadRequest(

@@ -106,10 +106,11 @@ enum WordFailure {
   /** The account already has a tag by that name, compared case-insensitively. */
   case DuplicateTag
 
-  /** The account has already recorded that exact translation. Somebody else's identical one is not a conflict:
-    * translations are per-account and additive.
-    */
+  /** That exact translation is already recorded, by the dictionary or by any reader. A pair of words has one edge. */
   case DuplicateTranslation
+
+  /** The translation is marked in a wordlist, which would lose its answer. It stays while any wordlist uses it. */
+  case TranslationInUse
 
   /** Setting a noun's gender was refused before it was tried: the word already has one, it is not a noun, or the gender
     * is not one its language has. All three are the same answer to the caller, because the screen offers the control on
@@ -1290,6 +1291,7 @@ final case class WordServiceLive(
   private def detailOf(row: WordRow, reader: Option[Long]): UIO[WordDetail] = {
     for {
       translations <- repo.allTranslationsOf(row.id).orDie
+      inWordlists  <- repo.pairsInWordlists(translations.map { case (edge, _) => row.id -> edge.targetWordId }).orDie
       tags         <- ZIO.foreach(reader)(userId => repo.tagsOfWord(userId, row.id)).map(_.toList.flatten).orDie
       marked       <- ZIO.foreach(reader)(userId => repo.pairsFor(userId, List(row.id))).map(_.toList.flatten).orDie
       mainLinks    <- repo.lemmaContextOf(List(row.id)).orDie
@@ -1323,6 +1325,7 @@ final case class WordServiceLive(
           word = toDomain(word),
           origin = edge.origin,
           ownedByMe = reader.isDefined && edge.createdBy == reader,
+          inWordlists = inWordlists.contains(row.id -> edge.targetWordId),
         )
       },
       tags = counted,
@@ -1473,11 +1476,10 @@ final case class WordServiceLive(
 
   /** The target word of a translation the caller is adding, and whether the edge was new.
     *
-    * `false` means the edge was already there — the dictionary's, or one they recorded before. It is still the
-    * translation they mean, which is why this answers the word rather than failing. Another reader's edge does not
-    * count: that reader may delete it. [[addTranslation]] turns that into the 409; [[create]] does not, because a
-    * duplicate is no reason to refuse a request that is about adding a *word*, and it still needs the word's id to mark
-    * it for practice.
+    * `false` means the edge was already there — the dictionary's, or any reader's. It is still the translation they
+    * mean, which is why this answers the word rather than failing. [[addTranslation]] turns that into the 409;
+    * [[create]] does not, because a duplicate is no reason to refuse a request that is about adding a *word*, and it
+    * still needs the word's id to mark it for practice.
     */
   private def linkOrExisting(
     source: WordRow,
@@ -1494,7 +1496,7 @@ final case class WordServiceLive(
                   userId,
                 )
       _      <- ZIO.when(target.id == source.id)(ZIO.fail(WordFailure.ValidationError(Map.empty)))
-      known  <- repo.findUsableTranslation(source.id, target.id, userId).orDie
+      known  <- repo.findTranslation(source.id, target.id).orDie
       added  <- ZIO
                   .when(known.isEmpty)(
                     for {
@@ -1609,6 +1611,8 @@ final case class WordServiceLive(
       edge <- repo.findTranslationById(translationId).orDie.someOrFail(WordFailure.NotFound)
       // Naming the wrong word is as much a miss as naming no edge at all.
       _    <- ZIO.unless(edge.sourceWordId == wordId)(ZIO.fail(WordFailure.NotFound))
+      used <- repo.pairsInWordlists(List(edge.sourceWordId -> edge.targetWordId)).orDie
+      _    <- ZIO.when(used.nonEmpty)(ZIO.fail(WordFailure.TranslationInUse))
       rows <- repo.deleteTranslationPair(translationId, userId).orDie
       // Somebody else's edge, or the dictionary's: from this caller's side there is no such translation of theirs.
       _    <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.NotFound))
@@ -1887,11 +1891,33 @@ final case class WordServiceLive(
     }
   }
 
+  /** Both words of a wordlist row, and the translation the row asserts between them. */
   private def createPair(pair: (CheckedWord, CheckedWord), userId: Long): IO[WordFailure, (Long, Long)] = {
     for {
       sourceId <- createWord(pair._1, userId)
       targetId <- createWord(pair._2, userId)
+      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      _        <- recordTranslation(sourceId, targetId, userId, now)
     } yield (sourceId, targetId)
+  }
+
+  /** Records the translation a row asserts, unless one is already there, whoever wrote it. Both directions go in —
+    * `insertTranslationPair` writes the mirror.
+    */
+  private def recordTranslation(sourceId: Long, targetId: Long, userId: Long, now: Long): UIO[Unit] = {
+    if (sourceId == targetId)
+      ZIO.unit
+    else {
+      repo
+        .findTranslation(sourceId, targetId)
+        .orDie
+        .flatMap(known => {
+          ZIO.when(known.isEmpty)(
+            repo.insertTranslationPair(sourceId, targetId, WordService.userOrigin, Some(userId), now).orDie
+          )
+        })
+        .unit
+    }
   }
 
   private def createWord(checked: CheckedWord, userId: Long): IO[WordFailure, Long] = {
@@ -3097,24 +3123,11 @@ final case class WordServiceLive(
       }
     }
 
-    /** Records the pair the row asserts, unless the dictionary or the caller already has. Written from the two rows
-      * already in hand rather than through [[linkOrExisting]], which would `ensure` the target a second time. Both
-      * directions go in, as everywhere else — `insertTranslationPair` writes the mirror.
+    /** Written from the two rows already in hand rather than through [[linkOrExisting]], which would `ensure` the
+      * target a second time.
       */
     def linkRows(source: WordRow, target: WordRow, now: Long): UIO[Unit] = {
-      if (source.id == target.id)
-        ZIO.unit
-      else {
-        repo
-          .findUsableTranslation(source.id, target.id, userId)
-          .orDie
-          .flatMap(known => {
-            ZIO.when(known.isEmpty)(
-              repo.insertTranslationPair(source.id, target.id, WordService.userOrigin, Some(userId), now).orDie
-            )
-          })
-          .unit
-      }
+      recordTranslation(source.id, target.id, userId, now)
     }
 
     /** Every word one cell named, minted or found, with the count of the ones that were new.

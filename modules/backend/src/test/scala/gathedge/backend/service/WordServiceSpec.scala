@@ -689,17 +689,20 @@ object WordServiceSpec extends ZIOSpecDefault {
             page.items.flatMap(_.word.gender).toSet == Set(Gender.Masculine, Gender.Feminine),
           )
         },
-        test("the same translation twice from the same reader is a conflict; from another reader it is not") {
+        test("the same translation twice is a conflict, from the same reader and from another") {
           for {
             _       <- seed
             word    <- list(search = Some("haus")).map(_.items.head.word)
             _       <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L)
             again   <-
               WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 1L).either
-            another <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 2L)
+            another <-
+              WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "otthon", None, None), 2L).either
+            after   <- WordService.detail(word.id, Some(2L))
           } yield assertTrue(
             again == Left(WordFailure.DuplicateTranslation),
-            another.translations.count(_.word.text == "otthon") == 2,
+            another == Left(WordFailure.DuplicateTranslation),
+            after.translations.count(_.word.text == "otthon") == 1,
           )
         },
         test("a translation the dictionary already holds is a conflict, not a second edge") {
@@ -958,6 +961,28 @@ object WordServiceSpec extends ZIOSpecDefault {
           theirs == Left(WordFailure.NotFound),
           dict == Left(WordFailure.NotFound),
           after.translations.map(_.word.text) == List("ház"),
+        )
+      }.provide(layer),
+      test("a translation a wordlist marks cannot be removed, even by its author, until the mark goes") {
+        for {
+          _        <- seed
+          word     <- list(search = Some("haus")).map(_.items.head.word)
+          detail   <- WordService.addTranslation(word.id, NewTranslation(WordLanguage.Hu, "lak", None, None), 1L)
+          entry     = detail.translations.find(_.word.text == "lak").get
+          // Another reader's wordlist: the author does not get to take the answer out of it.
+          tag      <- createTag("theirlist", 2L)
+          _        <- WordService.selectPair(word.id, tag.id, entry.word.id, 2L)
+          marked   <- WordService.detail(word.id, Some(1L))
+          refused  <- WordService.removeTranslation(word.id, entry.id, 1L).either
+          _        <- WordService.deselectPair(word.id, tag.id, entry.word.id, 2L)
+          unmarked <- WordService.detail(word.id, Some(1L))
+          _        <- WordService.removeTranslation(word.id, entry.id, 1L)
+          after    <- WordService.detail(word.id, Some(1L))
+        } yield assertTrue(
+          marked.translations.find(_.id == entry.id).exists(e => e.ownedByMe && e.inWordlists),
+          refused == Left(WordFailure.TranslationInUse),
+          unmarked.translations.find(_.id == entry.id).exists(e => e.ownedByMe && !e.inWordlists),
+          !after.translations.exists(_.word.text == "lak"),
         )
       }.provide(layer),
       test("marking a translation files both words under the tag and records the pair both ways") {
@@ -2387,6 +2412,56 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows.isEmpty,
         )
       },
+      test("a row's two words become each other's translation, once, and never beside an edge already there") {
+        def row(source: TagPairWord, target: TagPairWord) = TagEntryInput(Some(side(source)), Some(side(target)))
+        for {
+          tag     <- createTag("transb18", 1L, WordLanguage.De, WordLanguage.Hu)
+          added   <- WordService.addEntry(
+                       tag.id,
+                       row(
+                         TagPairWord.New(WordLanguage.De, "Hundtb18", PartOfSpeech.Noun, None),
+                         TagPairWord.New(WordLanguage.Hu, "kutyatb18", PartOfSpeech.Noun, None),
+                       ),
+                       1L,
+                     )
+          source   = added.entry.source.id
+          target   = added.entry.target.map(_.id).get
+          _       <- WordService.addEntry(tag.id, row(TagPairWord.Existing(source), TagPairWord.Existing(target)), 1L)
+          forward <- WordRepository.allTranslationsOf(source)
+          back    <- WordRepository.allTranslationsOf(target)
+          edited  <- WordService.editEntry(
+                       tag.id,
+                       TagEntryEditRequest(
+                         source,
+                         Some(target),
+                         row(
+                           TagPairWord.Existing(source),
+                           TagPairWord.New(WordLanguage.Hu, "ebtb18", PartOfSpeech.Noun, None),
+                         ),
+                       ),
+                       1L,
+                     )
+          eb       = edited.entry.target.map(_.id).get
+          ebEdges <- WordRepository.allTranslationsOf(eb)
+          burg    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Burgtb18", gender = Some(Gender.Feminine)))
+          var_    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "vártb18"))
+          _       <- WordRepository.insertTranslationPair(burg.id, var_.id, WordService.dictionaryOrigin, None, 0L)
+          _       <- WordService.addEntry(tag.id, row(TagPairWord.Existing(burg.id), TagPairWord.Existing(var_.id)), 1L)
+          dict    <- WordRepository.allTranslationsOf(burg.id)
+          hof     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "Hoftb18", gender = Some(Gender.Masculine)))
+          _       <- WordService.addTranslation(hof.id, NewTranslation(WordLanguage.Hu, "udvartb18", None, None), 2L)
+          udvar   <- WordRepository.allTranslationsOf(hof.id).map(_.head._2)
+          _       <- WordService.addEntry(tag.id, row(TagPairWord.Existing(hof.id), TagPairWord.Existing(udvar.id)), 1L)
+          theirs  <- WordRepository.allTranslationsOf(hof.id)
+        } yield assertTrue(
+          theirs.map { case (edge, _) => edge.createdBy } == List(Some(2L)),
+          forward.map { case (edge, word) => (word.id, edge.origin, edge.createdBy) } ==
+            List((target, WordService.userOrigin, Some(1L))),
+          back.map { case (_, word) => word.id } == List(source),
+          ebEdges.map { case (_, word) => word.id } == List(source),
+          dict.map(_._1.origin) == List(WordService.dictionaryOrigin),
+        )
+      },
       test("editEntry turns a pair into one word alone, and that word into another") {
         for {
           tag   <- createTag("loneb17", 1L, WordLanguage.De, WordLanguage.Hu)
@@ -3755,8 +3830,8 @@ object WordServiceSpec extends ZIOSpecDefault {
             result.newWords == 0,
           )
         },
-        test("another reader's edge is not reused: the importer gets one of their own") {
-          // The other reader may delete theirs, and that must not leave this reader's pair without a translation.
+        test("another reader's edge is reused, not doubled") {
+          // Their edge cannot go while this reader's wordlist marks it, so the pair keeps its translation.
           val fuerst = row("Fürstentum", "fejedelemség")
           for {
             first  <- createTag("import23", 23L)
@@ -3765,7 +3840,7 @@ object WordServiceSpec extends ZIOSpecDefault {
             _      <- WordService.tabularImport(second.id, List(fuerst), WordLanguage.De, WordLanguage.Hu, 24L)
             rows   <- WordService.tagEntries(second.id, Some(24L))
             edges  <- WordRepository.allTranslationsOf(rows.head.source.id)
-          } yield assertTrue(edges.map(_._1.createdBy).toSet == Set(Some(23L), Some(24L)))
+          } yield assertTrue(edges.map(_._1.createdBy) == List(Some(23L)))
         },
       ).provideShared(layer) @@ TestAspect.sequential,
     )
