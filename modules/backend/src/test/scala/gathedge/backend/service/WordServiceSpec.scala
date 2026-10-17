@@ -3274,6 +3274,34 @@ object WordServiceSpec extends ZIOSpecDefault {
           rows <- WordService.tagEntries(tag.id, Some(1L))
         } yield assertTrue(rows.map(_.source.text) == List("hello", "Haus", "world"))
       },
+      test("the text's own spelling picks between a German verb and the noun spelled the same") {
+        // `matchTokens` finds both rows for `aussehen`. A bare lowercase use is the verb, a capitalized one or one with an
+        // article the noun; a text that writes both keeps both.
+        def imported(tag: String, user: Long, text: String) = {
+          for {
+            created <- createTag(tag, user)
+            _       <- WordService.bulkImport(created.id, text, WordLanguage.De, WordLanguage.Hu, user)
+            rows    <- WordService.tagEntries(created.id, Some(user))
+          } yield rows.map(_.source.id).toSet
+        }
+        for {
+          noun     <- WordRepository.ensureWord(
+                        dictionaryWord(WordLanguage.De, "Aussehen", gender = Some(Gender.Neuter), rank = 100)
+                      )
+          verb     <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "aussehen", PartOfSpeech.Verb, rank = 200))
+          lower    <- imported("import5", 5L, "aussehen")
+          capped   <- imported("import6", 6L, "Aussehen")
+          articled <- imported("import7", 7L, "das aussehen")
+          both     <- imported("import8", 8L, "Aussehen und aussehen")
+          shouted  <- imported("import9", 9L, "AUSSEHEN")
+        } yield assertTrue(
+          lower == Set(verb.id),
+          capped == Set(noun.id),
+          articled == Set(noun.id),
+          both.intersect(Set(noun.id, verb.id)) == Set(noun.id, verb.id),
+          shouted == Set(noun.id, verb.id),
+        )
+      },
       test("bulk import answers TagNotFound for a tag that is not the caller's") {
         for {
           tag    <- createTag("import", 2L)
