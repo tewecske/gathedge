@@ -3830,6 +3830,32 @@ object WordServiceSpec extends ZIOSpecDefault {
             result.newWords == 0,
           )
         },
+        test("a lowercase German cell takes the verb, not the commoner noun spelled the same") {
+          // `aussehen` and `das Aussehen` share one `text_norm`. The noun is the more frequent and the one the partner
+          // already translates, but German capitalizes its nouns, so the cell's own spelling decides.
+          for {
+            noun   <- WordRepository.ensureWord(
+                        dictionaryWord(WordLanguage.De, "Aussehen", gender = Some(Gender.Neuter), rank = 100)
+                      )
+            verb   <-
+              WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "aussehen", PartOfSpeech.Verb, rank = 200))
+            look   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "kinéz", PartOfSpeech.Verb))
+            _      <- WordRepository.insertTranslationPair(noun.id, look.id, WordService.dictionaryOrigin, None, 0L)
+            tag    <- createTag("import26", 26L)
+            result <-
+              WordService.tabularImport(tag.id, List(row("aussehen", "kinéz")), WordLanguage.De, WordLanguage.Hu, 26L)
+            capped <- createTag("import27", 27L)
+            _      <-
+              WordService
+                .tabularImport(capped.id, List(row("Aussehen", "kinéz")), WordLanguage.De, WordLanguage.Hu, 27L)
+            rows   <- WordService.tagEntries(tag.id, Some(26L))
+            nouns  <- WordService.tagEntries(capped.id, Some(27L))
+          } yield assertTrue(
+            rows.map(r => (r.source.id, r.target.map(_.id))) == List(verb.id -> Some(look.id)),
+            nouns.map(r => (r.source.id, r.target.map(_.id))) == List(noun.id -> Some(look.id)),
+            result.newWords == 0,
+          )
+        },
         test("another reader's edge is reused, not doubled") {
           // Their edge cannot go while this reader's wordlist marks it, so the pair keeps its translation.
           val fuerst = row("Fürstentum", "fejedelemség")
