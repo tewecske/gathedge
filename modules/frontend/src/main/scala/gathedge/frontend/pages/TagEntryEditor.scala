@@ -45,8 +45,8 @@ import org.scalajs.dom
   * main-word box appears once it is removed. The form type is mandatory, so its select shows with the box.
   *
   * '''Word links are a row of their own''', under the forms: other words that are not forms of this one, such as its
-  * counterpart of another gender or its diminutive (see [[WordLinkKind]]). Only a noun takes one, so the row is offered
-  * on a noun row only. A word may have several, so the box to add one shows with the links the word has.
+  * counterpart of another gender or its diminutive (see [[WordLinkKind]]). A word may have several, so the box to add
+  * one always shows with the links the word has.
   *
   * '''Shared data is guarded.''' A word the reader did not make is an administrator's to change, and so is a link the
   * reader did not make, so the editor offers no control for them: the part of speech is locked and a link has no remove
@@ -82,9 +82,6 @@ private[pages] final class TagEntryEditor(
   private val noteOpenVar = Var(seed.exists(s => (s.left.toList ++ s.right.toList).exists(_.note.exists(_.nonEmpty))))
   private val formOpenVar = Var(false)
   private val linkOpenVar = Var(false)
-
-  /** Only a noun takes a word link: the box to add one shows on a noun row only. */
-  private val nounSignal: Signal[Boolean] = posVar.signal.map(_.contains(PartOfSpeech.Noun))
 
   private val submitBus = new EventBus[Unit]()
 
@@ -272,8 +269,8 @@ private[pages] final class TagEntryEditor(
           )
         )
       }),
-      child.maybe <-- linksShownSignal.combineWith(nounSignal).map { case (shown, noun) =>
-        Option.when(!shown && noun)(
+      child.maybe <-- linksShownSignal.map(shown => {
+        Option.unless(shown)(
           button(
             typ := "button",
             cls := "btn btn-ghost btn-sm",
@@ -285,7 +282,7 @@ private[pages] final class TagEntryEditor(
             },
           )
         )
-      },
+      }),
       div(cls := "grow"),
       button(
         typ   := "button",
@@ -497,7 +494,7 @@ private[pages] final class TagEntryEditor(
           Option(noteVar.now().trim).filter(_.nonEmpty),
           link,
           unlinked.map(ref => MainWordUnlink(ref.word.id, ref.relation)),
-          linkPicker.current.filter(_ => pos.contains(PartOfSpeech.Noun)).toList,
+          linkPicker.current.toList,
           linksRemoved.map(gone => WordLinkRemoval(gone.word.id, gone.kind)),
         )
       }
@@ -625,12 +622,9 @@ private[pages] final class TagEntryEditor(
               )
             }
           },
-        child.maybe <-- nounSignal.map(Option.when(_)(linkBox)),
+        linkPicker.render(),
       )
     }
-
-    /** Built once, so the box keeps what is typed in it while the part of speech goes back and forth. */
-    private lazy val linkBox: HtmlElement = linkPicker.render()
 
     private def linkItem(ref: WordFormRef, remove: Option[() => Unit]): HtmlElement = {
       li(

@@ -183,7 +183,7 @@ final case class TagPage(items: List[Tag], total: Long) derives JsonCodec
   * only when both are given.
   *
   * `link` links the new word to another word as [[gathedge.backend.service.WordService.addLink]] would, once it exists:
-  * `Künstlerin` names `Künstler` as its [[gathedge.shared.domain.WordLinkKind.Masculine]]. Only a noun takes one.
+  * `Künstlerin` names `Künstler` as its [[gathedge.shared.domain.WordLinkKind.Masculine]].
   */
 final case class CreateWordRequest(
   language: WordLanguage,
