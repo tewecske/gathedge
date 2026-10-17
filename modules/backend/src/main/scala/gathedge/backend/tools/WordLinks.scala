@@ -30,28 +30,16 @@ object WordLinks {
     */
   def of(form: ParsedForm): Option[(WordLinkKind, WordLinkKind)] = {
     val tags = form.relation.split(',').toSet - "rare"
-    if (tags.contains("diminutive"))
-      Some((WordLinkKind.Diminutive, WordLinkKind.DiminutiveOf))
-    else if (tags.contains("augmentative"))
-      Some((WordLinkKind.Augmentative, WordLinkKind.AugmentativeOf))
-    else if (form.lemma.partOfSpeech != PartOfSpeech.Noun || tags.size != 1)
-      None
-    else {
-      genderTags.get(tags.head).map { gender =>
-        (WordLinkKind.ofGender(gender), WordLinkKind.ofGender(form.lemma.gender.getOrElse(opposite(gender))))
-      }
+    val kind = {
+      if (tags.contains("diminutive"))
+        Some(WordLinkKind.Diminutive)
+      else if (tags.contains("augmentative"))
+        Some(WordLinkKind.Augmentative)
+      else if (form.lemma.partOfSpeech != PartOfSpeech.Noun || tags.size != 1)
+        None
+      else
+        genderTags.get(tags.head).map(WordLinkKind.ofGender)
     }
-  }
-
-  /** The lemma's own gender when the dump does not state it: a feminine counterpart's base is masculine, and the other
-    * way round.
-    */
-  private def opposite(gender: Gender): Gender = {
-    gender match {
-      case Gender.Feminine =>
-        Gender.Masculine
-      case _               =>
-        Gender.Feminine
-    }
+    kind.map(k => (k, WordLinkKind.inverse(k, form.lemma.gender)))
   }
 }

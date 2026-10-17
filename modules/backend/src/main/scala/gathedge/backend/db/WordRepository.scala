@@ -503,6 +503,16 @@ trait WordRepository {
   /** Every word linked to this one, with the link: its gender counterparts, diminutives and the like. */
   def linksOf(wordId: Long): Task[List[(WordLinkRow, WordRow)]]
 
+  /** A reader's link, written in both directions in one transaction: `forward` from the word, `back` from the linked
+    * word. A direction already there is skipped, so a link the other way round is completed rather than doubled.
+    */
+  def insertLinkPair(forward: WordLinkRow, back: WordLinkRow): Task[Unit]
+
+  /** Removes one link in both directions in one transaction: `forward` and `back` are each `(word, linked word, kind)`.
+    * Answers how many rows went.
+    */
+  def deleteLinkPair(forward: (Long, Long, String), back: (Long, Long, String)): Task[Long]
+
   def insertAudio(rows: List[WordAudioRow]): Task[Long]
 
   /** Which `(word, file)` pairs already exist for those word ids, so a re-run inserts nothing twice -- the audio
@@ -926,6 +936,12 @@ object WordRepository {
 
   def linksOf(wordId: Long): RIO[WordRepository, List[(WordLinkRow, WordRow)]] =
     ZIO.serviceWithZIO[WordRepository](_.linksOf(wordId))
+
+  def insertLinkPair(forward: WordLinkRow, back: WordLinkRow): RIO[WordRepository, Unit] =
+    ZIO.serviceWithZIO[WordRepository](_.insertLinkPair(forward, back))
+
+  def deleteLinkPair(forward: (Long, Long, String), back: (Long, Long, String)): RIO[WordRepository, Long] =
+    ZIO.serviceWithZIO[WordRepository](_.deleteLinkPair(forward, back))
 
   def insertAudio(rows: List[WordAudioRow]): RIO[WordRepository, Long] =
     ZIO.serviceWithZIO[WordRepository](_.insertAudio(rows))
@@ -2626,6 +2642,8 @@ final class WordRepositoryLive(dataSource: DataSource)
             _.linkedWordId -> row.linkedWordId,
             _.kind         -> row.kind,
             _.createdAt    -> row.createdAt,
+            _.origin       -> row.origin,
+            _.createdBy    -> row.createdBy,
           )
         })
       }
@@ -2654,6 +2672,69 @@ final class WordRepositoryLive(dataSource: DataSource)
         .filter { case (link, _) => link.wordId == lift(wordId) }
     }
     logged(run(ctx.run(q)))(rows => s"wordLinks.linksOf word=$wordId rows=${rows.size}")
+  }
+
+  def insertLinkPair(forward: WordLinkRow, back: WordLinkRow): Task[Unit] = {
+    val one      = quote {
+      wordLinks
+        .insert(
+          _.wordId       -> lift(forward.wordId),
+          _.linkedWordId -> lift(forward.linkedWordId),
+          _.kind         -> lift(forward.kind),
+          _.createdAt    -> lift(forward.createdAt),
+          _.origin       -> lift(forward.origin),
+          _.createdBy    -> lift(forward.createdBy),
+        )
+        .onConflictIgnore
+    }
+    val two      = quote {
+      wordLinks
+        .insert(
+          _.wordId       -> lift(back.wordId),
+          _.linkedWordId -> lift(back.linkedWordId),
+          _.kind         -> lift(back.kind),
+          _.createdAt    -> lift(back.createdAt),
+          _.origin       -> lift(back.origin),
+          _.createdBy    -> lift(back.createdBy),
+        )
+        .onConflictIgnore
+    }
+    // Both directions or neither, as a translation is: a link read from one word only would show on one word page.
+    val inserted = transaction(
+      for {
+        first  <- ctx.run(one)
+        second <- ctx.run(two)
+      } yield first + second
+    )
+    logged(inserted)(rows => {
+      s"wordLinks.insertPair word=${forward.wordId} linked=${forward.linkedWordId} kind=${forward.kind} inserted=$rows"
+    }).unit
+  }
+
+  def deleteLinkPair(forward: (Long, Long, String), back: (Long, Long, String)): Task[Long] = {
+    val (wordId, linkedWordId, kind)         = forward
+    val (backWordId, backLinkedId, backKind) = back
+    val one                                  = quote {
+      wordLinks
+        .filter(row => {
+          row.wordId == lift(wordId) && row.linkedWordId == lift(linkedWordId) && row.kind == lift(kind)
+        })
+        .delete
+    }
+    val two                                  = quote {
+      wordLinks
+        .filter(row => {
+          row.wordId == lift(backWordId) && row.linkedWordId == lift(backLinkedId) && row.kind == lift(backKind)
+        })
+        .delete
+    }
+    val deleted                              = transaction(
+      for {
+        first  <- ctx.run(one)
+        second <- ctx.run(two)
+      } yield first + second
+    )
+    logged(deleted)(rows => s"wordLinks.deletePair word=$wordId linked=$linkedWordId kind=$kind rows=$rows")
   }
 
   def insertAudio(rows: List[WordAudioRow]): Task[Long] = {

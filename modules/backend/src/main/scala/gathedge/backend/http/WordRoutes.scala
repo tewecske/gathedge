@@ -5,6 +5,7 @@ import gathedge.shared.api.WordEndpoints
 import gathedge.shared.domain.{PartOfSpeech, TagEntryFilter, TagScope, TranslationFilter, User, WordLanguage}
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  AddWordLinkRequest,
   BulkDeletePairsRequest,
   BulkDeleteWordsRequest,
   BulkImportRequest,
@@ -146,6 +147,26 @@ object WordRoutes {
     WordEndpoints.removeTranslation.implementHandler(
       handler { (wordId: Long, translationId: Long) =>
         userId.flatMap(id => WordService.removeTranslation(wordId, translationId, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val addLinkRoute = {
+    WordEndpoints.addLink.implementHandler(
+      handler { (wordId: Long, body: AddWordLinkRequest) =>
+        userId.flatMap(id => WordService.addLink(wordId, body.link, id).mapError(ApiFailures.word))
+      }
+    )
+  }
+
+  private val removeLinkRoute = {
+    WordEndpoints.removeLink.implementHandler(
+      handler { (wordId: Long, linkedWordId: Long, kind: String, confirm: Option[Boolean]) =>
+        userId.flatMap(id => {
+          WordService
+            .removeLink(wordId, linkedWordId, kind, confirm.getOrElse(false), id)
+            .mapError(ApiFailures.wordEdit)
+        })
       }
     )
   }
@@ -500,6 +521,8 @@ object WordRoutes {
       addTranslationRoute,
       setGenderRoute,
       removeTranslationRoute,
+      addLinkRoute,
+      removeLinkRoute,
       createTagRoute,
       renameTagRoute,
       deleteTagRoute,

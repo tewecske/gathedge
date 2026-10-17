@@ -376,6 +376,26 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           _           <- WordRepository.insertForms(
                            List(WordFormRow(0L, spoon.id, word.id, "plural", 0L, "user", Some(target.id)))
                          )
+          // `word_links.created_by` is SET NULL as well: a word link the account made outlives it, both ways round.
+          ladle       <- WordRepository.ensureWord(
+                           WordRow(
+                             0L,
+                             "de",
+                             "Löffelchen",
+                             "löffelchen",
+                             "noun",
+                             "neuter",
+                             1,
+                             "dictionary",
+                             None,
+                             0L,
+                             TextSearch.fold("löffelchen"),
+                           )
+                         )
+          _           <- WordRepository.insertLinkPair(
+                           WordLinkRow(0L, word.id, ladle.id, "diminutive", 0L, "user", Some(target.id)),
+                           WordLinkRow(0L, ladle.id, word.id, "diminutive-of", 0L, "user", Some(target.id)),
+                         )
           _           <- WordRepository.tagWord(word.id, tag.id, 0L)
           // `word_tag_pairs` reaches `users` only through `tags`, but that is the path that breaks: declared without an
           // ON DELETE action, the cascade *into* `tags` would raise a violation and `deleteUser` would answer 500.
@@ -416,6 +436,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           stillThere  <- WordRepository.findWordById(word.id)
           links       <- WordRepository.allTranslationsOf(word.id)
           formLinks   <- WordRepository.formsOf(spoon.id)
+          wordLinks   <- WordRepository.linksOf(word.id)
+          backLinks   <- WordRepository.linksOf(ladle.id)
         } yield assertTrue(
           gone == Left(gathedge.backend.service.AdminFailure.NotFound),
           sessions.isEmpty,
@@ -434,6 +456,8 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
           links.map(_._2.text) == List("kanál"),
           links.forall(_._1.createdBy.isEmpty),
           formLinks.map(row => (row.formWordId, row.origin, row.createdBy)) == List((word.id, "user", None)),
+          (wordLinks ++ backLinks).map { case (link, _) => (link.kind, link.origin, link.createdBy) } ==
+            List(("diminutive", "user", None), ("diminutive-of", "user", None)),
         )
       },
       // A reader's own delete is a tombstone, not a delete: the row stays so the wordlists, games and groups other

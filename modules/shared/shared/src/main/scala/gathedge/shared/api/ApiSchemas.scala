@@ -18,6 +18,7 @@ import gathedge.shared.domain.{
   Theme,
   User,
   Word,
+  WordLinkKind,
   WordLanguage,
   WordPreference,
 }
@@ -66,6 +67,9 @@ import gathedge.shared.dto.{
   TagPairInput,
   MainWordLink,
   MainWordUnlink,
+  WordLinkInput,
+  WordLinkRemoval,
+  AddWordLinkRequest,
   TagEntryWord,
   TagEntryInput,
   TagEntryEditRequest,
@@ -206,6 +210,7 @@ object ApiSchemas {
   given Schema[WordLanguage]   = DeriveSchema.gen[WordLanguage]
   given Schema[PartOfSpeech]   = DeriveSchema.gen[PartOfSpeech]
   given Schema[Gender]         = DeriveSchema.gen[Gender]
+  given Schema[WordLinkKind]   = DeriveSchema.gen[WordLinkKind]
   given Schema[AnswerOutcome]  = DeriveSchema.gen[AnswerOutcome]
   given Schema[WordPreference] = DeriveSchema.gen[WordPreference]
   given Schema[GameMode]       = DeriveSchema.gen[GameMode]
@@ -260,6 +265,9 @@ object ApiSchemas {
   given Schema[TagPairInput]                  = DeriveSchema.gen[TagPairInput]
   given Schema[MainWordLink]                  = DeriveSchema.gen[MainWordLink]
   given Schema[MainWordUnlink]                = DeriveSchema.gen[MainWordUnlink]
+  given Schema[WordLinkInput]                 = DeriveSchema.gen[WordLinkInput]
+  given Schema[WordLinkRemoval]               = DeriveSchema.gen[WordLinkRemoval]
+  given Schema[AddWordLinkRequest]            = DeriveSchema.gen[AddWordLinkRequest]
   given Schema[TagEntryWord]                  = DeriveSchema.gen[TagEntryWord]
   given Schema[TagEntryInput]                 = DeriveSchema.gen[TagEntryInput]
   given Schema[TagEntryEditRequest]           = DeriveSchema.gen[TagEntryEditRequest]

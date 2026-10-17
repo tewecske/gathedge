@@ -3,6 +3,7 @@ package gathedge.shared.api
 import gathedge.shared.domain.Tag
 import gathedge.shared.dto.{
   AddTranslationRequest,
+  AddWordLinkRequest,
   BulkDeletePairsRequest,
   BulkDeleteWordsRequest,
   BulkImportRequest,
@@ -59,6 +60,8 @@ object WordPaths {
   val addTranslation      = ApiPath1[Long](POST, "/api/words/{id}/translations")
   val setGender           = ApiPath1[Long](PUT, "/api/words/{id}/gender")
   val removeTranslation   = ApiPath2[Long, Long](DELETE, "/api/words/{id}/translations/{translationId}")
+  val addLink             = ApiPath1[Long](POST, "/api/words/{id}/links")
+  val removeLink          = ApiPath2[Long, Long](DELETE, "/api/words/{id}/links/{linkedWordId}")
   val listTags            = ApiPath0(GET, "/api/tags")
   val getTag              = ApiPath1[Long](GET, "/api/tags/{tagId}")
   val listTagsPage        = ApiPath0(GET, "/api/tags/page")
@@ -98,6 +101,8 @@ object WordPaths {
     addTranslation,
     setGender,
     removeTranslation,
+    addLink,
+    removeLink,
     listTags,
     getTag,
     listTagsPage,
@@ -281,6 +286,39 @@ object WordEndpoints {
     Endpoint(ApiRoutes.route2(paths.removeTranslation, PathCodec.long, PathCodec.long)).withCodecError
       .outCodec(noContent)
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Links another word to this one: its counterpart of another gender, its diminutive or augmentative, or the word it
+    * is a diminutive or augmentative of. The link is the caller's own and is stored in both directions. The linked word
+    * may be a dictionary word or one to create. Idempotent: a link already there is not written again.
+    *
+    * 400 is a linked word in another language, the word itself, or a kind
+    * [[gathedge.shared.domain.WordLinkKind.offered]] does not give for this word (a counterpart of a verb, or of a
+    * gender the language does not have). 404 is a word that does not exist. 409 is a new linked word that collides with
+    * another.
+    */
+  val addLink = {
+    Endpoint(ApiRoutes.route1(paths.addLink, PathCodec.long))
+      .in[AddWordLinkRequest]
+      .withCodecError
+      .out[WordDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** Removes one link, in both directions. `kind` names it by its `word_links.kind` code (`feminine`, `diminutive-of`),
+    * since two words may be linked as more than one kind. A reader removes their own link. Anything else is a global
+    * administrator's, and a dictionary link also needs `confirm`, the answer to the warning the page shows first.
+    *
+    * 400 is a `kind` that names no kind. 403 is a link the caller may not remove. 404 is a link that is not there. 409
+    * is a dictionary link without `confirm`.
+    */
+  val removeLink = {
+    Endpoint(ApiRoutes.route2(paths.removeLink, PathCodec.long, PathCodec.long))
+      .query(HttpCodec.query[String]("kind"))
+      .query(HttpCodec.query[Boolean]("confirm").optional)
+      .withCodecError
+      .outCodec(noContent)
+      .outErrors(failure.badRequest, failure.unauthorized, failure.forbidden, failure.notFound, failure.conflict)
   }
 
   /** Every wordlist there is, with how many words each holds — what the tag bar is built from, and a browsable catalog
@@ -736,6 +774,8 @@ object WordEndpoints {
       addTranslation,
       setGender,
       removeTranslation,
+      addLink,
+      removeLink,
       listTags,
       getTag,
       listTagsPage,

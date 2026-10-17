@@ -7,7 +7,8 @@ import gathedge.frontend.{AppRouter, Page}
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.frontend.ocr.ImageOcr
 import gathedge.shared.domain.{PairMatch, PartOfSpeech, Word, WordLanguage}
-import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry, WordFormRef}
+import gathedge.shared.domain.WordLinkKind
+import gathedge.shared.dto.{ColumnLanguageGuess, LanguageHit, TabularRow, TagEntry, WordFormRef, WordLinkEntry}
 import gathedge.shared.i18n.UiKeys
 import zio.test._
 
@@ -309,6 +310,19 @@ object TagEditorPageSpec extends ZIOSpecDefault {
           val link = WordFormRef(main, "plural", fromDictionary = true)
           assertTrue(
             TagEntryEditor.gate(Nil, List(link), Some(PartOfSpeech.Noun), admin = true) == TagEntryEditor.Gate.Confirm
+          )
+        },
+        test("removing a dictionary word link asks an administrator to confirm") {
+          val small = Word(10L, WordLanguage.De, "Häuschen", PartOfSpeech.Noun, None)
+          val link  = WordLinkEntry(small, WordLinkKind.Diminutive, fromDictionary = true)
+          assertTrue(
+            TagEntryEditor.gate(
+              Nil,
+              Nil,
+              Some(PartOfSpeech.Noun),
+              admin = true,
+              List(link),
+            ) == TagEntryEditor.Gate.Confirm
           )
         },
       ),

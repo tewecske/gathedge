@@ -153,6 +153,12 @@ object MessageKeys {
   val wordMainWordInvalid: String = key("words.mainWordInvalid")
   val wordFormHasMainWord: String = key("words.formHasMainWord")
 
+  /** A word link the word cannot take: a linked word in another language, the word itself, or a kind the word does not
+    * have, such as a counterpart of a verb or of a gender its language lacks. Takes no argument: the page offers only
+    * the kinds that fit.
+    */
+  val wordLinkInvalid: String = key("words.linkInvalid")
+
   /** A reader tried to change or remove data that is not theirs: a dictionary word or link, or another reader's. Only a
     * global administrator may.
     */

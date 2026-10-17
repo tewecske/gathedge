@@ -2,10 +2,10 @@ package gathedge.frontend.pages
 
 import com.raquo.laminar.api.L._
 import gathedge.frontend.api.WordApiClient
-import gathedge.frontend.components.{HelpIcon, Labels, WordPicker}
+import gathedge.frontend.components.{HelpIcon, Labels, WordLinkPicker, WordPicker}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.state.AppState
-import gathedge.shared.domain.{PartOfSpeech, Word, WordLanguage}
+import gathedge.shared.domain.{PartOfSpeech, Word, WordLanguage, WordLinkKind}
 import gathedge.shared.dto.{
   MainWordLink,
   MainWordUnlink,
@@ -14,6 +14,8 @@ import gathedge.shared.dto.{
   TagPairWord,
   WordDetail,
   WordFormRef,
+  WordLinkEntry,
+  WordLinkRemoval,
 }
 import gathedge.shared.i18n.{MessageKeys, UiKeys}
 import org.scalajs.dom
@@ -41,6 +43,10 @@ import org.scalajs.dom
   *
   * '''A word is a form of one main word at most.''' A word that already has one shows it, with a remove button, and the
   * main-word box appears once it is removed. The form type is mandatory, so its select shows with the box.
+  *
+  * '''Word links are a row of their own''', under the forms: other words that are not forms of this one, such as its
+  * counterpart of another gender or its diminutive (see [[WordLinkKind]]). A word may have several, so the box to add
+  * one always shows with the links the word has.
   *
   * '''Shared data is guarded.''' A word the reader did not make is an administrator's to change, and so is a link the
   * reader did not make, so the editor offers no control for them: the part of speech is locked and a link has no remove
@@ -75,6 +81,7 @@ private[pages] final class TagEntryEditor(
   /** Whether the reader opened the note row or the form row. An edited row with a note opens with its note row. */
   private val noteOpenVar = Var(seed.exists(s => (s.left.toList ++ s.right.toList).exists(_.note.exists(_.nonEmpty))))
   private val formOpenVar = Var(false)
+  private val linkOpenVar = Var(false)
 
   private val submitBus = new EventBus[Unit]()
 
@@ -84,6 +91,13 @@ private[pages] final class TagEntryEditor(
   /** The form row shows once asked for, or while a word of the row has a main word to show. */
   private val formShownSignal: Signal[Boolean] = {
     Signal.combine(formOpenVar.signal, left.hasLinkSignal, right.hasLinkSignal).map { case (open, l, r) =>
+      open || l || r
+    }
+  }
+
+  /** The linked-word row shows once asked for, or while a word of the row has a link to show. */
+  private val linksShownSignal: Signal[Boolean] = {
+    Signal.combine(linkOpenVar.signal, left.hasWordLinksSignal, right.hasWordLinksSignal).map { case (open, l, r) =>
       open || l || r
     }
   }
@@ -103,7 +117,7 @@ private[pages] final class TagEntryEditor(
 
   /** Back to an empty add row, after a row was added. */
   def reset(): Unit = {
-    Var.set(posVar -> None, errorVar -> None, noteOpenVar -> false, formOpenVar -> false)
+    Var.set(posVar -> None, errorVar -> None, noteOpenVar -> false, formOpenVar -> false, linkOpenVar -> false)
     left.reset(); right.reset()
     leftPicker.clear(); rightPicker.clear()
     focus()
@@ -119,7 +133,11 @@ private[pages] final class TagEntryEditor(
   /** Both words are in: save a row of dictionary words at once, and otherwise wait on the save button. */
   private def settle(): Unit = {
     val words = List(left, right).filter(_.wordVar.now().isDefined)
-    val quick = words.forall(_.known) && !noteOpenVar.now() && !formOpenVar.now() && !words.exists(_.hasLink)
+    val quick = {
+      words.forall(_.known) && !noteOpenVar.now() && !formOpenVar.now() && !linkOpenVar.now() && !words.exists(
+        _.hasLink
+      )
+    }
     if (quick) submitBus.emit(()) else later(() => submitRef.foreach(_.focus()))
   }
 
@@ -158,7 +176,8 @@ private[pages] final class TagEntryEditor(
     else {
       val gates   = List(left, right).flatMap(_.gate)
       val unlinks = List(left, right).flatMap(_.unlinked)
-      TagEntryEditor.gate(gates, unlinks, pos, admin) match {
+      val gone    = List(left, right).flatMap(_.linksRemoved)
+      TagEntryEditor.gate(gates, unlinks, pos, admin, gone) match {
         case Gate.Refused =>
           errorVar.set(Some(I18n.t(MessageKeys.wordDictionaryProtected)))
           None
@@ -173,6 +192,12 @@ private[pages] final class TagEntryEditor(
 
   def render(): HtmlElement = {
     val formRowClass = noteOpenVar.signal.map(open => if (open) "sm:row-start-4" else "sm:row-start-3")
+    // Under whichever of the note and form rows are open. Spelled out, so the stylesheet build finds each class.
+    val linkRowClass = noteOpenVar.signal.combineWith(formShownSignal).map {
+      case (true, true)   => "sm:row-start-5"
+      case (false, false) => "sm:row-start-3"
+      case _              => "sm:row-start-4"
+    }
     div(
       cls := "flex flex-col gap-3",
       div(
@@ -190,9 +215,11 @@ private[pages] final class TagEntryEditor(
         left.pickerCell(leftPicker).amend(cls   := "sm:col-start-1 sm:row-start-2"),
         left.noteCell().amend(cls               := "sm:col-start-1 sm:row-start-3"),
         left.formsCell().amend(cls              := "sm:col-start-1", cls <-- formRowClass),
+        left.linksCell().amend(cls              := "sm:col-start-1", cls <-- linkRowClass),
         right.pickerCell(rightPicker).amend(cls := "mt-2 sm:mt-0 sm:col-start-2 sm:row-start-2"),
         right.noteCell().amend(cls              := "sm:col-start-2 sm:row-start-3"),
         right.formsCell().amend(cls             := "sm:col-start-2", cls <-- formRowClass),
+        right.linksCell().amend(cls             := "sm:col-start-2", cls <-- linkRowClass),
       ),
       renderButtons(),
       child.maybe <-- errorVar.signal.map(_.map(msg => p(cls := "text-error text-xs", msg))),
@@ -238,6 +265,20 @@ private[pages] final class TagEntryEditor(
               // With no part of speech there are no form types to offer, so the part of speech is asked for first.
               val side = focusSide
               later(() => if (posVar.now().isDefined) side.focusMainWord() else posRef.foreach(_.focus()))
+            },
+          )
+        )
+      }),
+      child.maybe <-- linksShownSignal.map(shown => {
+        Option.unless(shown)(
+          button(
+            typ := "button",
+            cls := "btn btn-ghost btn-sm",
+            I18n.t(UiKeys.tagsEditorAddLink),
+            onClick.mapToUnit --> Observer[Unit] { _ =>
+              linkOpenVar.set(true)
+              val side = focusSide
+              later(() => side.focusLink())
             },
           )
         )
@@ -344,7 +385,12 @@ private[pages] final class TagEntryEditor(
     private val relationsVar = Var(Option.empty[List[String]])
     private val relationVar  = Var("")
 
+    /** The links the reader asked to remove, by linked word and kind. Removed on save. */
+    private val removedLinksVar = Var(Set.empty[(Long, WordLinkKind)])
+
     private var noteRef: Option[dom.html.Input] = None
+
+    private val linkPicker = new WordLinkPicker(language, posVar.signal)
 
     private val mainPicker = new WordPicker(
       language = language,
@@ -362,12 +408,14 @@ private[pages] final class TagEntryEditor(
 
     def reset(): Unit = {
       Var.set(
-        wordVar    -> None,
-        noteVar    -> "",
-        detailVar  -> None,
-        removedVar -> Set.empty[(Long, String)],
+        wordVar         -> None,
+        noteVar         -> "",
+        detailVar       -> None,
+        removedVar      -> Set.empty[(Long, String)],
+        removedLinksVar -> Set.empty[(Long, WordLinkKind)],
       )
       clearMainWord()
+      linkPicker.clear()
     }
 
     def clearMainWord(): Unit = {
@@ -377,6 +425,7 @@ private[pages] final class TagEntryEditor(
 
     def focusNote(): Unit     = noteRef.foreach(_.focus())
     def focusMainWord(): Unit = mainPicker.focus()
+    def focusLink(): Unit     = linkPicker.focus()
 
     /** The word in the box is one the dictionary has: picked from it, not typed in as new. */
     def known: Boolean = wordVar.now().flatMap(TagEntryEditor.idOf).isDefined
@@ -410,6 +459,16 @@ private[pages] final class TagEntryEditor(
 
     def hasLink: Boolean = detailOf(wordVar.now(), detailVar.now()).exists(_.mainWords.nonEmpty)
 
+    /** The word in the box has word links already, which the linked-word row shows. */
+    val hasWordLinksSignal: Signal[Boolean] = detailSignal.map(_.exists(_.links.nonEmpty))
+
+    /** The links the reader asked to remove from the word in the box. */
+    def linksRemoved: List[WordLinkEntry] = {
+      detailOf(wordVar.now(), detailVar.now()).toList.flatMap(
+        _.links.filter(link => removedLinksVar.now().contains((link.word.id, link.kind)))
+      )
+    }
+
     /** The word in the box is not the reader's to change. A new word is theirs; a word not yet read is not locked, and
       * the server still decides.
       */
@@ -435,6 +494,8 @@ private[pages] final class TagEntryEditor(
           Option(noteVar.now().trim).filter(_.nonEmpty),
           link,
           unlinked.map(ref => MainWordUnlink(ref.word.id, ref.relation)),
+          linkPicker.current.toList,
+          linksRemoved.map(gone => WordLinkRemoval(gone.word.id, gone.kind)),
         )
       }
     }
@@ -444,9 +505,13 @@ private[pages] final class TagEntryEditor(
       wordVar.signal.map(_.flatMap(TagEntryEditor.idOf)).distinct.flatMapSwitch {
         case Some(id) => WordApiClient.get(id).map(_.toOption).startWith(None)
         case None     => Val(Option.empty[WordDetail])
-      } --> Observer[Option[WordDetail]](detail =>
-        Var.set(detailVar -> detail, removedVar -> Set.empty[(Long, String)])
-      )
+      } --> Observer[Option[WordDetail]](detail => {
+        Var.set(
+          detailVar       -> detail,
+          removedVar      -> Set.empty[(Long, String)],
+          removedLinksVar -> Set.empty[(Long, WordLinkKind)],
+        )
+      })
     }
 
     /** The form types follow the row's part of speech, which a main word shares. */
@@ -519,6 +584,48 @@ private[pages] final class TagEntryEditor(
       )
     }
 
+    /** The word's links, each with a remove button for whoever may remove it, and the box that adds one. A dictionary
+      * word is read before its links show.
+      */
+    def linksCell(): HtmlElement = {
+      div(
+        cls := "min-w-0 self-end flex flex-col gap-2",
+        cls("hidden") <-- linksShownSignal.map(!_),
+        child <-- Signal
+          .combine(wordVar.signal, detailVar.signal, removedLinksVar.signal, AppState.isGlobalAdminSignal)
+          .map { case (word, detail, removed, admin) =>
+            val loading = word.flatMap(TagEntryEditor.idOf).isDefined && detailOf(word, detail).isEmpty
+            val kept    = detailOf(word, detail).toList
+              .flatMap(_.links)
+              .filterNot(link => removed.contains((link.word.id, link.kind)))
+            if (loading) span(cls := "loading loading-spinner loading-xs", role := "status")
+            else {
+              ul(
+                cls := "flex flex-col gap-0.5 text-sm",
+                kept.map(link => {
+                  li(
+                    cls := "flex flex-wrap items-center gap-2",
+                    span(cls := "text-xs opacity-70", Labels.wordLink(link.kind)),
+                    span(Word.display(link.word)),
+                    Option.when((link.createdByMe && !link.fromDictionary) || admin) {
+                      button(
+                        typ := "button",
+                        cls := "btn btn-ghost btn-xs",
+                        I18n.t(UiKeys.tagsEditorRemoveForm),
+                        onClick.mapToUnit --> Observer[Unit](_ =>
+                          removedLinksVar.update(_ + ((link.word.id, link.kind)))
+                        ),
+                      )
+                    },
+                  )
+                }),
+              )
+            }
+          },
+        linkPicker.render(),
+      )
+    }
+
     private def linkItem(ref: WordFormRef, remove: Option[() => Unit]): HtmlElement = {
       li(
         cls := "flex flex-wrap items-center gap-2",
@@ -578,11 +685,20 @@ private[pages] object TagEntryEditor {
 
   /** Whether a save may go, needs the warning first, or is not the reader's to make — the server's rule, asked before
     * the request so the reader is not sent a refusal. A word takes the row's part of speech only when it has another.
-    * Only an administrator sees a remove button on a link that is not theirs, so an unlink needs the warning only.
+    * Only an administrator sees a remove button on a link that is not theirs, so an unlink needs the warning only. A
+    * word link removed (`linksRemoved`) follows the same rule.
     */
-  def gate(words: List[WordGate], unlinks: List[WordFormRef], pos: Option[PartOfSpeech], admin: Boolean): Gate = {
+  def gate(
+    words: List[WordGate],
+    unlinks: List[WordFormRef],
+    pos: Option[PartOfSpeech],
+    admin: Boolean,
+    linksRemoved: List[WordLinkEntry] = Nil,
+  ): Gate = {
     val retyped    = pos.toList.flatMap(p => words.filter(_.partOfSpeech != p))
-    val dictionary = retyped.exists(_.fromDictionary) || unlinks.exists(_.fromDictionary)
+    val dictionary = {
+      retyped.exists(_.fromDictionary) || unlinks.exists(_.fromDictionary) || linksRemoved.exists(_.fromDictionary)
+    }
     if (!admin && retyped.exists(word => !word.mine || word.fromDictionary)) Gate.Refused
     else if (admin && dictionary) Gate.Confirm
     else Gate.Go

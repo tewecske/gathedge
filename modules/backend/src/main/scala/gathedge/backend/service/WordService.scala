@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   TextSearch,
   UserRepository,
   WordFormRow,
+  WordLinkRow,
   WordRepository,
   WordRow,
   WordSource,
@@ -82,6 +83,8 @@ import gathedge.shared.dto.{
   WordDetail,
   WordFormEntry,
   WordLinkEntry,
+  WordLinkInput,
+  WordLinkRemoval,
   WordFormPreview,
   WordFormRef,
   WordPage,
@@ -242,6 +245,20 @@ trait WordService {
 
   def addTranslation(wordId: Long, translation: NewTranslation, userId: Long): IO[WordFailure, WordDetail]
   def removeTranslation(wordId: Long, translationId: Long, userId: Long): IO[WordFailure, Unit]
+
+  /** Links another word to this one, as the caller's own link, in both directions. A link already there is kept. */
+  def addLink(wordId: Long, link: WordLinkInput, userId: Long): IO[WordFailure, WordDetail]
+
+  /** Removes one link, in both directions. `kind` is its `word_links.kind` code. The caller's own link is theirs to
+    * remove; anything else follows [[WordServiceLive.guardSharedEdit]].
+    */
+  def removeLink(
+    wordId: Long,
+    linkedWordId: Long,
+    kind: String,
+    confirm: Boolean,
+    userId: Long,
+  ): IO[WordEditFailure, Unit]
 
   /** Fills in the article a noun was imported without — the only edit any word accepts.
     *
@@ -646,6 +663,18 @@ object WordService {
 
   def removeTranslation(wordId: Long, translationId: Long, userId: Long): ZIO[WordService, WordFailure, Unit] =
     ZIO.serviceWithZIO[WordService](_.removeTranslation(wordId, translationId, userId))
+
+  def addLink(wordId: Long, link: WordLinkInput, userId: Long): ZIO[WordService, WordFailure, WordDetail] =
+    ZIO.serviceWithZIO[WordService](_.addLink(wordId, link, userId))
+
+  def removeLink(
+    wordId: Long,
+    linkedWordId: Long,
+    kind: String,
+    confirm: Boolean,
+    userId: Long,
+  ): ZIO[WordService, WordEditFailure, Unit] =
+    ZIO.serviceWithZIO[WordService](_.removeLink(wordId, linkedWordId, kind, confirm, userId))
 
   def setGender(wordId: Long, gender: Gender, userId: Long): ZIO[WordService, WordFailure, WordDetail] =
     ZIO.serviceWithZIO[WordService](_.setGender(wordId, gender, userId))
@@ -1352,9 +1381,16 @@ final case class WordServiceLive(
       createdByMe = row.source == WordSource.user && reader.isDefined && row.createdBy == reader,
       audio = audio.map(CommonsAudio.toDto),
       links = links
-        .flatMap { case (link, word) => WordLinkKind.fromCode(link.kind).map(kind => (kind, word)) }
-        .sortBy { case (kind, word) => (kind.ordinal, word.textNorm) }
-        .map { case (kind, word) => WordLinkEntry(toDomain(word), kind) },
+        .flatMap { case (link, word) => WordLinkKind.fromCode(link.kind).map(kind => (link, kind, word)) }
+        .sortBy { case (_, kind, word) => (kind.ordinal, word.textNorm) }
+        .map { case (link, kind, word) =>
+          WordLinkEntry(
+            toDomain(word),
+            kind,
+            fromDictionary = link.origin != WordSource.user,
+            createdByMe = reader.isDefined && link.createdBy == reader,
+          )
+        },
     )
   }
 
@@ -1616,6 +1652,127 @@ final case class WordServiceLive(
       rows <- repo.deleteTranslationPair(translationId, userId).orDie
       // Somebody else's edge, or the dictionary's: from this caller's side there is no such translation of theirs.
       _    <- ZIO.when(rows == 0L)(ZIO.fail(WordFailure.NotFound))
+    } yield ()
+  }
+
+  def addLink(wordId: Long, link: WordLinkInput, userId: Long): IO[WordFailure, WordDetail] = {
+    for {
+      row    <- repo.findWordById(wordId).orDie.someOrFail(WordFailure.NotFound)
+      _      <- checkWordLink(languageOf(row), decode(row.partOfSpeech), Some(row.id), link)
+      _      <- writeWordLink(row, link, userId)
+      detail <- detailOf(row, Some(userId))
+    } yield detail
+  }
+
+  def removeLink(
+    wordId: Long,
+    linkedWordId: Long,
+    kind: String,
+    confirm: Boolean,
+    userId: Long,
+  ): IO[WordEditFailure, Unit] = {
+    for {
+      parsed <- ZIO
+                  .fromOption(WordLinkKind.fromCode(kind))
+                  .orElseFail(invalidField("kind", MessageKeys.wordLinkInvalid))
+      found  <- findWordLink(wordId, WordLinkRemoval(linkedWordId, parsed))
+                  .someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
+      _      <- guardSharedEdit(found.origin != WordSource.user, found.createdBy, userId, confirm)
+      _      <- deleteWordLink(found)
+    } yield ()
+  }
+
+  private val linkInvalid = WordFailure.ValidationError(Map("link" -> MessageRef(MessageKeys.wordLinkInvalid)))
+
+  /** Whether a word of `language` and `partOfSpeech` may take `link`, read before anything is written. `wordId` is the
+    * word's own id, or `None` for a word not created yet. The linked word is in the same language and is not the word
+    * itself. A counterpart is a noun with no other gender than the one its kind names.
+    */
+  private def checkWordLink(
+    language: WordLanguage,
+    partOfSpeech: PartOfSpeech,
+    wordId: Option[Long],
+    link: WordLinkInput,
+  ): IO[WordFailure, Unit] = {
+    val wanted                                                                       = WordLinkKind.genderOf(link.kind)
+    def fits(lang: WordLanguage, pos: PartOfSpeech, gender: Option[Gender]): Boolean = {
+      lang == language && wanted.forall(g => pos == PartOfSpeech.Noun && gender.forall(_ == g))
+    }
+    for {
+      _ <- ZIO.unless(WordLinkKind.offered(language, partOfSpeech).contains(link.kind))(ZIO.fail(linkInvalid))
+      _ <- link.word match {
+             case TagPairWord.Existing(id) =>
+               for {
+                 linked <- repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound)
+                 gender  = Gender.fromColumn(linked.gender)
+                 _      <- ZIO.when(
+                             wordId.contains(linked.id) || !fits(languageOf(linked), decode(linked.partOfSpeech), gender)
+                           )(
+                             ZIO.fail(linkInvalid)
+                           )
+               } yield ()
+             case word: TagPairWord.New    =>
+               ZIO.unless(fits(word.language, word.partOfSpeech, word.gender))(ZIO.fail(linkInvalid)).unit
+           }
+    } yield ()
+  }
+
+  /** Writes a link [[checkWordLink]] accepted, in both directions, as the reader's own. A new linked word is created,
+    * with the gender a counterpart kind names when the reader gave it none.
+    */
+  private def writeWordLink(row: WordRow, link: WordLinkInput, userId: Long): IO[WordFailure, Unit] = {
+    for {
+      linked <- link.word match {
+                  case TagPairWord.Existing(id) =>
+                    repo.findWordById(id).orDie.someOrFail(WordFailure.NotFound)
+                  case word: TagPairWord.New    =>
+                    val gender = word.gender.orElse(WordLinkKind.genderOf(link.kind))
+                    ensure(word.language, word.text, word.partOfSpeech, gender, userId)
+                }
+      // A new linked word may turn out to be the word itself.
+      _      <- ZIO.when(linked.id == row.id)(ZIO.fail(linkInvalid))
+      now    <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      back    = WordLinkKind.inverse(link.kind, Gender.fromColumn(row.gender))
+      _      <- repo
+                  .insertLinkPair(
+                    WordLinkRow(0L, row.id, linked.id, WordLinkKind.code(link.kind), now, WordSource.user, Some(userId)),
+                    WordLinkRow(0L, linked.id, row.id, WordLinkKind.code(back), now, WordSource.user, Some(userId)),
+                  )
+                  .orDie
+    } yield ()
+  }
+
+  /** The stored link `removal` names on `wordId`, if there is one. */
+  private def findWordLink(wordId: Long, removal: WordLinkRemoval): UIO[Option[WordLinkRow]] = {
+    repo
+      .linksOf(wordId)
+      .orDie
+      .map(_.collectFirst {
+        case (link, _) if link.linkedWordId == removal.linkedWordId && link.kind == WordLinkKind.code(removal.kind) =>
+          link
+      })
+  }
+
+  /** Removes `link` and the row stored the other way round. A counterpart reads back as some gender, which may not be
+    * the one [[WordLinkKind.inverse]] would give now, so the back row is found among the links the other word has.
+    */
+  private def deleteWordLink(link: WordLinkRow): UIO[Unit] = {
+    val kind                          = WordLinkKind.fromCode(link.kind)
+    def isBack(code: String): Boolean = {
+      (kind, WordLinkKind.fromCode(code)) match {
+        case (Some(k), Some(b)) if WordLinkKind.genderOf(k).isDefined => WordLinkKind.genderOf(b).isDefined
+        case (Some(k), Some(b))                                       => WordLinkKind.inverse(k, None) == b
+        case _                                                        => false
+      }
+    }
+    for {
+      backs <- repo.linksOf(link.linkedWordId).orDie
+      back   = backs
+                 .collectFirst { case (row, _) if row.linkedWordId == link.wordId && isBack(row.kind) => row.kind }
+                 .getOrElse(link.kind)
+      _     <- repo
+                 .deleteLinkPair((link.wordId, link.linkedWordId, link.kind), (link.linkedWordId, link.wordId, back))
+                 .orDie
     } yield ()
   }
 
@@ -2407,6 +2564,8 @@ final case class WordServiceLive(
     note: Option[String],
     unlink: List[WordFormRow],
     link: Option[MainWordLink],
+    wordLinks: List[WordLinkInput] = Nil,
+    wordUnlinks: List[WordLinkRow] = Nil,
   )
 
   /** Both words of a body. `missing` is never reached: a plan has at least one word. */
@@ -2486,7 +2645,19 @@ final case class WordServiceLive(
       _                        <- ZIO.when(kept.exists(form => !unlink.contains(form) && !sameLink(link, form)))(
                                     ZIO.fail(invalidField("mainWord", MessageKeys.wordFormHasMainWord))
                                   )
-    } yield SidePlan(word, existing, pos, retype, note, unlink, link)
+      // Word links follow the rules a form-of link does: a reader removes their own, and any reader may add one.
+      wordUnlinks              <- ZIO
+                                    .foreach(existing.toList.flatMap(row => side.removeLinks.map(row -> _))) { case (row, gone) =>
+                                      findWordLink(row.id, gone)
+                                    }
+                                    .map(_.flatten)
+      _                        <- ZIO.foreachDiscard(wordUnlinks)(link => {
+                                    guardSharedEdit(link.origin != WordSource.user, link.createdBy, userId, confirm)
+                                  })
+      _                        <- ZIO
+                                    .foreachDiscard(side.links)(checkWordLink(language, pos, existing.map(_.id), _))
+                                    .mapError(WordEditFailure.Failed(_))
+    } yield SidePlan(word, existing, pos, retype, note, unlink, link, side.links, wordUnlinks)
   }
 
   /** Whether `form` is the link a body asks for, which is then already there rather than a second main word. */
@@ -2562,6 +2733,14 @@ final case class WordServiceLive(
              repo.deleteWordForm(link.lemmaWordId, link.formWordId, link.relation).orDie
            })
       _ <- ZIO.foreachDiscard(side.link)(writeLink(_, wordId, userId))
+      _ <- ZIO.foreachDiscard(side.wordUnlinks)(deleteWordLink)
+      _ <- ZIO.when(side.wordLinks.nonEmpty) {
+             for {
+               row <- repo.findWordById(wordId).orDie.someOrFail(WordEditFailure.Failed(WordFailure.NotFound))
+               _   <-
+                 ZIO.foreachDiscard(side.wordLinks)(writeWordLink(row, _, userId)).mapError(WordEditFailure.Failed(_))
+             } yield ()
+           }
     } yield ()
   }
 

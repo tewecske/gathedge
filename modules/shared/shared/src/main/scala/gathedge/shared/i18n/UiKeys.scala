@@ -981,6 +981,16 @@ object UiKeys {
   val wordLinkDiminutiveOf: String   = key("ui.word.link.diminutiveOf")
   val wordLinkAugmentativeOf: String = key("ui.word.link.augmentativeOf")
 
+  /** The word page's linked-word section and the control both pages use to add a link (`WordLinkPicker`). `kindLabel`
+    * labels the select of `WordLinkKind`s; `removeMessage` is what the remove dialog asks.
+    */
+  val wordLinkTitle: String         = key("ui.word.link.title")
+  val wordLinkAddTitle: String      = key("ui.word.link.addTitle")
+  val wordLinkKindLabel: String     = key("ui.word.link.kindLabel")
+  val wordLinkSearch: String        = key("ui.word.link.search")
+  val wordLinkRemove: String        = key("ui.word.link.remove")
+  val wordLinkRemoveMessage: String = key("ui.word.link.removeMessage")
+
   /** The pronunciation row under the word — `dto.WordDetail.audio`. `source` links each recording to its Commons file
     * page, which is its attribution. `synthetic` labels the browser's own voice, used where there is no recording.
     */
@@ -1248,6 +1258,10 @@ object UiKeys {
   val tagsEditorFormRelation: String    = key("ui.tags.editor.formRelation")
   val tagsEditorNoRelations: String     = key("ui.tags.editor.noRelations")
   val tagsEditorRemoveForm: String      = key("ui.tags.editor.removeForm")
+
+  /** The row editor's linked-word row: its button, and the label inside its word box. */
+  val tagsEditorAddLink: String   = key("ui.tags.editor.addLink")
+  val tagsEditorLinkLabel: String = key("ui.tags.editor.linkLabel")
 
   /** The row's part-of-speech select. The add row starts at `anyPartOfSpeech`, and a form can be added only once a part
     * of speech is chosen. `dictionaryWarning` is what an administrator confirms before changing or removing dictionary
