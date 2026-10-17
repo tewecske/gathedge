@@ -9,6 +9,7 @@ import gathedge.backend.db.{
   TextSearch,
   UserRepository,
   WordFormRow,
+  WordLinkRow,
   WordRepository,
   WordRow,
 }
@@ -23,6 +24,7 @@ import gathedge.shared.domain.{
   TagScope,
   TranslationFilter,
   WordLanguage,
+  WordLinkKind,
 }
 import gathedge.shared.dto.{
   BulkUploadManualPair,
@@ -51,6 +53,8 @@ import gathedge.shared.dto.{
   TagEntryWord,
   TaggedPair,
   WordSort,
+  WordLinkInput,
+  WordLinkRemoval,
 }
 import gathedge.shared.i18n.{MessageKeys, MessageRef}
 import zio._
@@ -4103,6 +4107,208 @@ object WordServiceSpec extends ZIOSpecDefault {
     ).provideShared(layer) @@ TestAspect.sequential
   }
 
+  /** Word links a reader makes: on the word page (`addLink`/`removeLink`) and in the editor row (`TagEntryWord.links`).
+    * Each test names its own words, since the suite shares one schema.
+    */
+  private def wordLinksSpec = {
+    def noun(text: String, gender: Gender): WordRow = dictionaryWord(WordLanguage.De, text, gender = Some(gender))
+
+    /** The links stored from `wordId`, as `(linked word, kind code, origin, author)`. */
+    def stored(wordId: Long): RIO[WordRepository, List[(Long, String, String, Option[Long])]] = {
+      WordRepository
+        .linksOf(wordId)
+        .map(_.map { case (link, _) => (link.linkedWordId, link.kind, link.origin, link.createdBy) })
+    }
+
+    suite("word links")(
+      test("a reader links a counterpart, stored both ways as theirs and shown as theirs") {
+        for {
+          base   <- WordRepository.ensureWord(noun("Künstlerwl1", Gender.Masculine))
+          female <- WordRepository.ensureWord(noun("Künstlerinwl1", Gender.Feminine))
+          detail <-
+            WordService.addLink(base.id, WordLinkInput(TagPairWord.Existing(female.id), WordLinkKind.Feminine), 1L)
+          again  <-
+            WordService.addLink(base.id, WordLinkInput(TagPairWord.Existing(female.id), WordLinkKind.Feminine), 1L)
+          there  <- stored(base.id)
+          back   <- stored(female.id)
+          other  <- WordService.detail(base.id, Some(2L))
+        } yield assertTrue(
+          detail.links.map(l => (l.word.id, l.kind, l.fromDictionary, l.createdByMe)) ==
+            List((female.id, WordLinkKind.Feminine, false, true)),
+          // Idempotent: the second add writes nothing more.
+          again.links.size == 1,
+          there == List((female.id, "feminine", "user", Some(1L))),
+          // Read back as the base word's own gender.
+          back == List((base.id, "masculine", "user", Some(1L))),
+          other.links.map(_.createdByMe) == List(false),
+        )
+      },
+      test("a new linked word is created with the gender its kind names") {
+        for {
+          base   <- WordRepository.ensureWord(noun("Lehrerwl2", Gender.Masculine))
+          detail <- WordService.addLink(
+                      base.id,
+                      WordLinkInput(
+                        TagPairWord.New(WordLanguage.De, "Lehrerinwl2", PartOfSpeech.Noun, None),
+                        WordLinkKind.Feminine,
+                      ),
+                      1L,
+                    )
+        } yield assertTrue(
+          detail.links.map(l => (l.word.text, l.word.gender, l.kind)) ==
+            List(("Lehrerinwl2", Some(Gender.Feminine), WordLinkKind.Feminine))
+        )
+      },
+      test("a diminutive reads back as the word it is the diminutive of") {
+        for {
+          house <- WordRepository.ensureWord(noun("Hauswl3", Gender.Neuter))
+          small <- WordRepository.ensureWord(noun("Häuschenwl3", Gender.Neuter))
+          _     <- WordService.addLink(house.id, WordLinkInput(TagPairWord.Existing(small.id), WordLinkKind.Diminutive), 1L)
+          back  <- WordService.detail(small.id, Some(1L))
+        } yield assertTrue(back.links.map(l => (l.word.id, l.kind)) == List((house.id, WordLinkKind.DiminutiveOf)))
+      },
+      test("a link the word cannot take is refused, and nothing is written") {
+        val invalid = Left(WordFailure.ValidationError(Map("link" -> MessageRef(MessageKeys.wordLinkInvalid))))
+        for {
+          base       <- WordRepository.ensureWord(noun("Freundwl4", Gender.Masculine))
+          male       <- WordRepository.ensureWord(noun("Kumpelwl4", Gender.Masculine))
+          verb       <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "laufenwl4", PartOfSpeech.Verb))
+          english    <- WordRepository.ensureWord(dictionaryWord(WordLanguage.En, "friendwl4"))
+          hu         <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "barátwl4"))
+          hu2        <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Hu, "barátnőwl4"))
+          self       <- WordService
+                          .addLink(base.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Diminutive), 1L)
+                          .either
+          foreign    <-
+            WordService
+              .addLink(base.id, WordLinkInput(TagPairWord.Existing(english.id), WordLinkKind.Diminutive), 1L)
+              .either
+          // `Kumpel` is masculine, so it is no feminine counterpart.
+          gender     <-
+            WordService.addLink(base.id, WordLinkInput(TagPairWord.Existing(male.id), WordLinkKind.Feminine), 1L).either
+          ofVerb     <- WordService
+                          .addLink(verb.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Masculine), 1L)
+                          .either
+          // Hungarian has no genders, so it has no counterparts either.
+          genderless <-
+            WordService.addLink(hu.id, WordLinkInput(TagPairWord.Existing(hu2.id), WordLinkKind.Feminine), 1L).either
+          links      <- stored(base.id)
+          huLinks    <- stored(hu.id)
+        } yield assertTrue(
+          self == invalid,
+          foreign == invalid,
+          gender == invalid,
+          ofVerb == invalid,
+          genderless == invalid,
+          links.isEmpty,
+          huLinks.isEmpty,
+        )
+      },
+      test("a reader removes their own link in both directions, and not another reader's") {
+        for {
+          base   <- WordRepository.ensureWord(noun("Sängerwl5", Gender.Masculine))
+          female <- WordRepository.ensureWord(noun("Sängerinwl5", Gender.Feminine))
+          _      <- WordService.addLink(base.id, WordLinkInput(TagPairWord.Existing(female.id), WordLinkKind.Feminine), 1L)
+          taken  <- WordService.removeLink(base.id, female.id, "feminine", confirm = true, 2L).either
+          kept   <- stored(female.id)
+          // Removed from the other end: the kind is read from that word.
+          _      <- WordService.removeLink(female.id, base.id, "masculine", confirm = false, 1L)
+          there  <- stored(base.id)
+          back   <- stored(female.id)
+          absent <- WordService.removeLink(base.id, female.id, "feminine", confirm = false, 1L).either
+          bad    <- WordService.removeLink(base.id, female.id, "cousin", confirm = false, 1L).either
+        } yield assertTrue(
+          taken == Left(WordEditFailure.Protected),
+          kept.size == 1,
+          there.isEmpty,
+          back.isEmpty,
+          absent == Left(WordEditFailure.Failed(WordFailure.NotFound)),
+          bad.isLeft,
+        )
+      },
+      test("a dictionary link is an administrator's to remove, once the warning is confirmed") {
+        for {
+          base     <- WordRepository.ensureWord(noun("Ärztwl6", Gender.Masculine))
+          female   <- WordRepository.ensureWord(noun("Ärztinwl6", Gender.Feminine))
+          // Written the way the import writes it: no author, so a dictionary link.
+          _        <- WordRepository.insertLinks(
+                        List(
+                          WordLinkRow(0L, base.id, female.id, "feminine", 0L),
+                          WordLinkRow(0L, female.id, base.id, "masculine", 0L),
+                        )
+                      )
+          admin    <- adminUserId("admin-links@example.com")
+          detail   <- WordService.detail(base.id, Some(1L))
+          reader   <- WordService.removeLink(base.id, female.id, "feminine", confirm = true, 1L).either
+          unwarned <- WordService.removeLink(base.id, female.id, "feminine", confirm = false, admin).either
+          kept     <- stored(base.id)
+          _        <- WordService.removeLink(base.id, female.id, "feminine", confirm = true, admin)
+          there    <- stored(base.id)
+          back     <- stored(female.id)
+        } yield assertTrue(
+          detail.links.map(l => (l.fromDictionary, l.createdByMe)) == List((true, false)),
+          reader == Left(WordEditFailure.Protected),
+          unwarned == Left(WordEditFailure.ConfirmRequired),
+          kept.size == 1,
+          there.isEmpty,
+          back.isEmpty,
+        )
+      },
+      test("the editor row adds a link to a new word and removes the reader's own") {
+        for {
+          tag    <- createTag("linkswl7", 1L, WordLanguage.De, WordLanguage.Hu)
+          small  <- WordRepository.ensureWord(noun("Bäumchenwl7", Gender.Neuter))
+          added  <- WordService.addEntry(
+                      tag.id,
+                      single(
+                        TagEntryWord(
+                          TagPairWord.New(WordLanguage.De, "Baumwl7", PartOfSpeech.Noun, Some(Gender.Masculine)),
+                          links = List(WordLinkInput(TagPairWord.Existing(small.id), WordLinkKind.Diminutive)),
+                        ),
+                        Some(PartOfSpeech.Noun),
+                      ),
+                      1L,
+                    )
+          tree    = added.entry.source.id
+          linked <- stored(tree)
+          _      <- WordService.editEntry(
+                      tag.id,
+                      alone(
+                        tree,
+                        TagEntryWord(
+                          TagPairWord.Existing(tree),
+                          removeLinks = List(WordLinkRemoval(small.id, WordLinkKind.Diminutive)),
+                        ),
+                      ),
+                      1L,
+                    )
+          after  <- stored(tree)
+          back   <- stored(small.id)
+        } yield assertTrue(linked == List((small.id, "diminutive", "user", Some(1L))), after.isEmpty, back.isEmpty)
+      },
+      test("an editor row with a link the word cannot take writes nothing") {
+        for {
+          tag    <- createTag("linkswl8", 1L, WordLanguage.De, WordLanguage.Hu)
+          verb   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.De, "gehenwl8", PartOfSpeech.Verb))
+          female <- WordRepository.ensureWord(noun("Gängerinwl8", Gender.Feminine))
+          result <- WordService
+                      .addEntry(
+                        tag.id,
+                        single(
+                          TagEntryWord(
+                            TagPairWord.Existing(verb.id),
+                            links = List(WordLinkInput(TagPairWord.Existing(female.id), WordLinkKind.Feminine)),
+                          )
+                        ),
+                        1L,
+                      )
+                      .either
+          rows   <- WordService.tagEntries(tag.id, Some(1L))
+        } yield assertTrue(result.isLeft, rows.isEmpty)
+      },
+    ).provideShared(layer) @@ TestAspect.sequential
+  }
+
   def spec = {
     suite("WordService")(
       coreSpec,
@@ -4118,6 +4324,7 @@ object WordServiceSpec extends ZIOSpecDefault {
       bulkUploadSpec,
       suggestionsSpec,
       wordFormsSpec,
+      wordLinksSpec,
       tagTransferSpec,
       globalAdminSpec,
     ) @@ TestAspect.timeout(60.seconds)

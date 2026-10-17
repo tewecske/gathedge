@@ -38,6 +38,53 @@ object WordLinkKind {
 
   def fromCode(value: String): Option[WordLinkKind] = values.find(kind => code(kind) == value)
 
+  /** The gender a counterpart kind names; `None` for a diminutive or augmentative. */
+  def genderOf(kind: WordLinkKind): Option[Gender] = {
+    kind match {
+      case Feminine  =>
+        Some(Gender.Feminine)
+      case Masculine =>
+        Some(Gender.Masculine)
+      case Neuter    =>
+        Some(Gender.Neuter)
+      case _         =>
+        None
+    }
+  }
+
+  /** The kind read back from the linked word: `Häuschen` is the [[Diminutive]] of `Haus`, so `Haus` is what `Häuschen`
+    * is the [[DiminutiveOf]]. A counterpart reads back as the gender of the word it is read from (`wordGender`). Where
+    * that is not known, a feminine counterpart's base is masculine, and any other's is feminine.
+    */
+  def inverse(kind: WordLinkKind, wordGender: Option[Gender]): WordLinkKind = {
+    kind match {
+      case Diminutive     =>
+        DiminutiveOf
+      case DiminutiveOf   =>
+        Diminutive
+      case Augmentative   =>
+        AugmentativeOf
+      case AugmentativeOf =>
+        Augmentative
+      case counterpart    =>
+        val base = if (counterpart == Feminine) Gender.Masculine else Gender.Feminine
+        ofGender(wordGender.getOrElse(base))
+    }
+  }
+
+  /** The kinds a reader may link a word of `language` and `partOfSpeech` with. A counterpart is a noun's, and only of a
+    * gender the language has. A diminutive or an augmentative may be of any word.
+    */
+  def offered(language: WordLanguage, partOfSpeech: PartOfSpeech): List[WordLinkKind] = {
+    val genders = LanguageProfile.of(language).genders
+    values.toList.filter(kind => {
+      genderOf(kind) match {
+        case Some(gender) => partOfSpeech == PartOfSpeech.Noun && genders.contains(gender)
+        case None         => true
+      }
+    })
+  }
+
   /** The counterpart kind for a gender: the linked word is a feminine noun, so the link is [[Feminine]]. */
   def ofGender(gender: Gender): WordLinkKind = {
     gender match {

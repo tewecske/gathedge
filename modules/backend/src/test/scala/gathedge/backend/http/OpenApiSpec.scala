@@ -87,6 +87,8 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/words/{id}/gender",
               "/api/words/{id}/translations",
               "/api/words/{id}/translations/{translationId}",
+              "/api/words/{id}/links",
+              "/api/words/{id}/links/{linkedWordId}",
               "/api/words/{id}/tags/{tagId}",
               "/api/words/{id}/tags/{tagId}/translations/{translationWordId}",
               "/api/words/language-check",
@@ -268,6 +270,12 @@ object OpenApiSpec extends ZIOSpecDefault {
               // 409 is a translation some wordlist marks as an answer.
               ("DELETE", "/api/words/{id}/translations/{translationId}")                  ->
                 Set(NoContent, BadRequest, Unauthorized, NotFound, Conflict),
+              // Any reader may add a link of their own. 409 is a new linked word that collides with another.
+              ("POST", "/api/words/{id}/links")                                           ->
+                Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              // 403 is a link only an administrator may remove; 409 is a dictionary link without `confirm`.
+              ("DELETE", "/api/words/{id}/links/{linkedWordId}")                          ->
+                Set(NoContent, BadRequest, Unauthorized, Forbidden, NotFound, Conflict),
               ("PUT", "/api/words/{id}/tags/{tagId}")                                     -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               ("DELETE", "/api/words/{id}/tags/{tagId}")                                  -> Set(NoContent, BadRequest, Unauthorized, NotFound),
               // Marking a translation as a practice answer. One 404 for a word that is not there, a translation the

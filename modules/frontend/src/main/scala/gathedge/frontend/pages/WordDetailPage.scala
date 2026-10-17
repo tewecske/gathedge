@@ -5,7 +5,17 @@ import com.raquo.laminar.codecs.Codec
 import gathedge.frontend.AppRouter
 import gathedge.frontend.Page
 import gathedge.frontend.api.{ApiError, WordApiClient}
-import gathedge.frontend.components.{Alert, AppShell, ArticleSelect, FormTables, Labels, Pronunciation, WordCollect}
+import gathedge.frontend.components.{
+  Alert,
+  AppShell,
+  ArticleSelect,
+  ConfirmDialog,
+  FormTables,
+  Labels,
+  Pronunciation,
+  WordCollect,
+  WordLinkPicker,
+}
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
 import gathedge.frontend.state.AppState
@@ -30,6 +40,7 @@ import gathedge.shared.dto.{
   WordFormEntry,
   WordFormRef,
   WordLinkEntry,
+  WordLinkInput,
 }
 import gathedge.shared.i18n.UiKeys
 import org.scalajs.dom
@@ -130,6 +141,14 @@ private class WordDetailPage(id: Long) {
   private val loadBus   = new EventBus[Unit]()
   private val addBus    = new EventBus[Unit]()
   private val removeBus = new EventBus[Long]()
+
+  /** The word links' writes: a link to add, and a link to remove with whether it needs `confirm`. Each answers the
+    * whole word again, or is followed by a reload, as a translation's are. One dialog asks before a link goes.
+    */
+  private val addLinkBus    = new EventBus[WordLinkInput]()
+  private val removeLinkBus = new EventBus[WordLinkEntry]()
+  private val linkFlyVar    = Var(false)
+  private val linkDialog    = new ConfirmDialog
 
   /** The article control's own state, kept apart from the add-a-translation form's [[genderVar]]: the two are different
     * writes about different words, and one being in flight must not disable the other.
@@ -266,6 +285,28 @@ private class WordDetailPage(id: Long) {
           case Left(err) =>
             errorVar.set(Some(err.message))
         },
+      addLinkBus.events
+        .filterWith(linkFlyVar.signal.not)
+        .flatMapSwitch(link => {
+          linkFlyVar.set(true)
+          WordApiClient.addLink(id, link)
+        }) --> Observer[Either[ApiError, WordDetail]] {
+        case Right(detail) =>
+          Var.set(detailVar -> Some(detail), linkFlyVar -> false, errorVar -> None)
+        case Left(err)     =>
+          Var.set(linkFlyVar -> false, errorVar -> Some(err.message))
+      },
+      // Only a link that is not the reader's own reaches an administrator's remove button, so a dictionary one is sent
+      // with `confirm`: the dialog was the warning.
+      removeLinkBus.events.flatMapSwitch(link => {
+        WordApiClient.removeLink(id, link.word.id, link.kind, confirm = link.fromDictionary)
+      }) --> Observer[Either[ApiError, Unit]] {
+        case Right(_)  =>
+          loadBus.emit(())
+        case Left(err) =>
+          errorVar.set(Some(err.message))
+      },
+      linkDialog.render(),
       collect.bindings,
     )
   }
@@ -412,8 +453,10 @@ private class WordDetailPage(id: Long) {
           .distinctBy(_.map(tag => (tag.sourceLanguage, tag.targetLanguage)))
           .map(tag => renderTranslations(detail.word, detail.translations, tag)),
         child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
-        // Shown only when another word is linked to this one — see `dto.WordDetail.links`.
-        child.maybe <-- Val(Option.when(detail.links.nonEmpty)(renderLinks(detail.links))),
+        // Shown when another word is linked to this one — see `dto.WordDetail.links` — or to a reader who may add one.
+        child.maybe <-- signedInSignal.map(signedIn => {
+          Option.when(signedIn || detail.links.nonEmpty)(renderLinks(detail, signedIn))
+        }),
         // Shown only when this word is a lemma with forms of its own — see `dto.WordDetail.forms`.
         child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.word, detail.forms))),
         h2(cls := "font-semibold mt-4", I18n.t(UiKeys.wordDetailTags)),
@@ -490,22 +533,67 @@ private class WordDetailPage(id: Long) {
   }
 
   /** The words linked to this one without being its forms, each after what it is to this word: "Female form: die
-    * Künstlerin", "Diminutive: das Häuschen".
+    * Künstlerin", "Diminutive: das Häuschen". A signed-in reader also gets the control that adds one.
+    *
+    * A link has a remove button for whoever may remove it: the reader who made it, and an administrator. The server
+    * applies the same rule. The dialog asks first, and warns an administrator when the link is the dictionary's.
     */
-  private def renderLinks(links: List[WordLinkEntry]): HtmlElement = {
+  private def renderLinks(detail: WordDetail, signedIn: Boolean): HtmlElement = {
+    val word   = detail.word
+    val picker = new WordLinkPicker(
+      language = Val(word.language),
+      partOfSpeech = Val(Some(word.partOfSpeech)),
+      onCommit = addLinkBus.writer,
+    )
     div(
-      cls := "flex flex-col gap-1 mt-4",
-      links.map(link => {
-        div(
-          cls := "flex items-center gap-2 text-sm",
-          span(cls := "opacity-60", Labels.wordLink(link.kind) + ":"),
-          a(
-            cls    := "link link-hover",
-            AppRouter.router.navigateTo(Page.WordDetail(link.word.id)),
-            Word.display(link.word),
+      cls := "mt-4",
+      h2(cls := "font-semibold", I18n.t(UiKeys.wordLinkTitle)),
+      ul(
+        cls  := "flex flex-col gap-1 mt-1",
+        detail.links.map(link => {
+          li(
+            cls := "flex items-center gap-2 text-sm",
+            span(cls := "opacity-60", Labels.wordLink(link.kind) + ":"),
+            a(
+              cls    := "link link-hover",
+              AppRouter.router.navigateTo(Page.WordDetail(link.word.id)),
+              Word.display(link.word),
+            ),
+            child.maybe <-- AppState.isGlobalAdminSignal.map(admin => {
+              Option.when(signedIn && ((link.createdByMe && !link.fromDictionary) || admin))(renderRemoveLink(link))
+            }),
+          )
+        }),
+      ),
+      Option.when(signedIn) {
+        form(
+          cls        := "flex flex-col gap-2 mt-3 max-w-md",
+          noValidate := true,
+          onSubmit.preventDefault.mapToUnit --> Observer[Unit](_ => picker.current.foreach(addLinkBus.emit)),
+          span(cls := "label-text text-xs", I18n.t(UiKeys.wordLinkAddTitle)),
+          picker.render(),
+          button(
+            cls    := "btn btn-sm btn-primary self-start",
+            typ    := "submit",
+            disabled <-- linkFlyVar.signal,
+            I18n.t(UiKeys.commonAdd),
           ),
         )
-      }),
+      },
+    )
+  }
+
+  private def renderRemoveLink(link: WordLinkEntry): HtmlElement = {
+    val label   = I18n.t(UiKeys.wordLinkRemove)
+    val message = {
+      val removed = I18n.t(UiKeys.wordLinkRemoveMessage)
+      if (link.fromDictionary) removed + " " + I18n.t(UiKeys.tagsEditorDictionaryWarn) else removed
+    }
+    button(
+      cls := "btn btn-ghost btn-xs",
+      typ := "button",
+      label,
+      onClick.mapToUnit --> Observer[Unit](_ => linkDialog.ask(label, message, danger = true)(removeLinkBus.emit(link))),
     )
   }
 

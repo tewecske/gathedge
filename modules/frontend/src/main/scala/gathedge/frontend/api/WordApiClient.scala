@@ -3,8 +3,19 @@ package gathedge.frontend.api
 import com.raquo.laminar.api.L._
 import gathedge.frontend.listing.TagEntryQuery
 import gathedge.shared.api.WordPaths
-import gathedge.shared.domain.{Gender, PartOfSpeech, Tag, TagEntryFilter, TagScope, TranslationFilter, WordLanguage}
+import gathedge.shared.domain.{
+  Gender,
+  PartOfSpeech,
+  Tag,
+  TagEntryFilter,
+  TagScope,
+  TranslationFilter,
+  WordLanguage,
+  WordLinkKind,
+}
 import gathedge.shared.dto.{
+  AddWordLinkRequest,
+  WordLinkInput,
   AddTranslationRequest,
   BulkImportRequest,
   BulkImportResponse,
@@ -118,6 +129,27 @@ object WordApiClient {
 
   def removeTranslation(wordId: Long, translationId: Long): EventStream[Either[ApiError, Unit]] = {
     HttpClient.callUnit(WordPaths.removeTranslation(wordId, translationId))
+  }
+
+  /** Links another word to this one. Answers the whole word again, with the new link among its links. */
+  def addLink(wordId: Long, link: WordLinkInput): EventStream[Either[ApiError, WordDetail]] = {
+    HttpClient.call[WordDetail](WordPaths.addLink(wordId), Some(AddWordLinkRequest(link).toJson))
+  }
+
+  /** Removes one link, in both directions. `confirm` answers the warning an administrator sees for dictionary data. */
+  def removeLink(
+    wordId: Long,
+    linkedWordId: Long,
+    kind: WordLinkKind,
+    confirm: Boolean,
+  ): EventStream[Either[ApiError, Unit]] = {
+    HttpClient.callUnit(
+      WordPaths
+        .removeLink(wordId, linkedWordId)
+        .withQuery(
+          HttpClient.query("kind" -> Some(WordLinkKind.code(kind)), "confirm" -> Option.when(confirm)(true))
+        )
+    )
   }
 
   def listTags: EventStream[Either[ApiError, List[Tag]]] = {

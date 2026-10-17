@@ -216,7 +216,9 @@ final case class WordFormRow(
 )
 
 /** One link between two words that are not forms of each other: `linkedWordId` is `kind` of `wordId` (see
-  * `WordLinkKind`, whose `code` this column holds). Stored in both directions; `DictionaryImport` is the only writer.
+  * `WordLinkKind`, whose `code` this column holds). Stored in both directions. `DictionaryImport` writes the
+  * dictionary's links; a reader writes their own on the word page and in the wordlist editor. `origin` and `createdBy`
+  * say which, as on [[WordFormRow]], and decide who may remove the link.
   */
 final case class WordLinkRow(
   id: Long,
@@ -224,6 +226,8 @@ final case class WordLinkRow(
   linkedWordId: Long,
   kind: String,
   createdAt: Long,
+  origin: String = WordSource.dictionary,
+  createdBy: Option[Long] = None,
 )
 
 /** One recorded pronunciation of a word: a Wikimedia Commons file name, never the audio itself. `region` is the accent

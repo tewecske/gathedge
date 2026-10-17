@@ -127,8 +127,29 @@ final case class WordDetail(
   links: List[WordLinkEntry] = Nil,
 ) derives JsonCodec
 
-/** One entry of [[WordDetail.links]]: the linked word, and what it is to the word the page shows. */
-final case class WordLinkEntry(word: Word, kind: WordLinkKind) derives JsonCodec
+/** One entry of [[WordDetail.links]]: the linked word, and what it is to the word the page shows.
+  *
+  * `fromDictionary` says the import wrote the link; `createdByMe` says this reader made it. They decide who may remove
+  * it, as on [[WordFormRef]]: a reader removes their own, and only an administrator removes the rest.
+  */
+final case class WordLinkEntry(
+  word: Word,
+  kind: WordLinkKind,
+  fromDictionary: Boolean = true,
+  createdByMe: Boolean = false,
+) derives JsonCodec
+
+/** A word to link to another, and what it is to that word: `Künstlerin` is the [[WordLinkKind.Feminine]] of `Künstler`.
+  * `word` may be a dictionary word or one to create. It is in the same language, and the kind must be one
+  * [[WordLinkKind.offered]] gives for the other word.
+  */
+final case class WordLinkInput(word: TagPairWord, kind: WordLinkKind) derives JsonCodec
+
+/** A link to remove: the linked word, and the kind it is linked as. */
+final case class WordLinkRemoval(linkedWordId: Long, kind: WordLinkKind) derives JsonCodec
+
+/** [[gathedge.shared.api.WordEndpoints.addLink]]'s body: the word page's "add a linked word" form. */
+final case class AddWordLinkRequest(link: WordLinkInput) derives JsonCodec
 
 /** One recorded pronunciation, as a file on Wikimedia Commons.
   *
@@ -359,12 +380,17 @@ final case class MainWordUnlink(mainWordId: Long, relation: String) derives Json
   * `mainWord` files the word as a form of a main word. A word is a form of one main word at most, so it is refused
   * while the word keeps a link to another. `removeMainWords` removes links the word already has, which is how one is
   * replaced in the same request.
+  *
+  * `links` adds word links: other words that are not forms of this one, such as its counterpart of another gender or
+  * its diminutive. `removeLinks` removes links the word already has.
   */
 final case class TagEntryWord(
   word: TagPairWord,
   note: Option[String] = None,
   mainWord: Option[MainWordLink] = None,
   removeMainWords: List[MainWordUnlink] = Nil,
+  links: List[WordLinkInput] = Nil,
+  removeLinks: List[WordLinkRemoval] = Nil,
 ) derives JsonCodec
 
 /** [[gathedge.shared.api.WordEndpoints.addEntry]]'s body, and the row an edit makes: one word or a pair, and everything
