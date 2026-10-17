@@ -28,14 +28,13 @@ object WordLinkKindSpec extends ZIOSpecDefault {
           inverse(Masculine, None) == Feminine,
         )
       },
-      test("only a noun takes a link, and a counterpart only of a gender its language has") {
+      test("a counterpart is offered for a noun only, and only of a gender its language has") {
         val all = List(Feminine, Masculine, Neuter, Diminutive, Augmentative, DiminutiveOf, AugmentativeOf)
         assertTrue(
           offered(WordLanguage.De, PartOfSpeech.Noun) == all,
           offered(WordLanguage.Es, PartOfSpeech.Noun) == all.filterNot(_ == Neuter),
           offered(WordLanguage.Hu, PartOfSpeech.Noun) == List(Diminutive, Augmentative, DiminutiveOf, AugmentativeOf),
-          offered(WordLanguage.De, PartOfSpeech.Verb).isEmpty,
-          offered(WordLanguage.Es, PartOfSpeech.Adjective).isEmpty,
+          offered(WordLanguage.De, PartOfSpeech.Verb) == List(Diminutive, Augmentative, DiminutiveOf, AugmentativeOf),
         )
       },
     )

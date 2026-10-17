@@ -180,7 +180,9 @@ private class WordsPage(
   private val mainWordSelectedVar = Var(Option.empty[Word])
   private val variantTypeVar      = Var(Option.empty[String])
 
-  /** The optional word link of a new noun — `CreateWordRequest.link`: `Künstler` as the male form of `Künstlerin`. */
+  /** The optional word link of the new word — `CreateWordRequest.link`: `Künstler` as the male form of `Künstlerin`.
+    * The kinds on offer follow the part of speech: a counterpart of another gender only for a noun.
+    */
   private val linkPicker = new WordLinkPicker(querySignal.map(_.language), newWordPosVar.signal.map(Some(_)))
 
   private val searchDebounceMs = 300
@@ -572,7 +574,7 @@ private class WordsPage(
               tagIds = List(tagId),
               mainWordId = mainWordSelectedVar.now().map(_.id),
               variantType = variantTypeVar.now(),
-              link = linkPicker.current.filter(_ => pos == PartOfSpeech.Noun),
+              link = linkPicker.current,
             )
           )
       }
@@ -633,16 +635,14 @@ private class WordsPage(
             ),
           ),
           renderMainWordSection(),
-          // Only a noun takes a word link.
-          child.maybe <-- newWordPosVar.signal.map(pos => Option.when(pos == PartOfSpeech.Noun)(linkSection)),
+          renderLinkSection(),
           button(cls := "btn btn-sm btn-primary", typ := "submit", I18n.t(UiKeys.commonAdd)),
         ),
       ),
     )
   }
 
-  /** Built once, so the box keeps what is typed in it while the part of speech goes back and forth. */
-  private lazy val linkSection: HtmlElement = {
+  private def renderLinkSection(): HtmlElement = {
     div(
       cls := "grow basis-full max-w-md",
       span(cls := "label-text text-xs", I18n.t(UiKeys.wordLinkAddTitle)),

@@ -4167,6 +4167,14 @@ object WordServiceSpec extends ZIOSpecDefault {
           back  <- WordService.detail(small.id, Some(1L))
         } yield assertTrue(back.links.map(l => (l.word.id, l.kind)) == List((house.id, WordLinkKind.DiminutiveOf)))
       },
+      test("a diminutive is not a noun's alone: a Spanish adjective takes one, as the dictionary's do") {
+        for {
+          small  <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "pequeñowl10", PartOfSpeech.Adjective))
+          tiny   <- WordRepository.ensureWord(dictionaryWord(WordLanguage.Es, "pequeñitowl10", PartOfSpeech.Adjective))
+          detail <-
+            WordService.addLink(small.id, WordLinkInput(TagPairWord.Existing(tiny.id), WordLinkKind.Diminutive), 1L)
+        } yield assertTrue(detail.links.map(l => (l.word.id, l.kind)) == List((tiny.id, WordLinkKind.Diminutive)))
+      },
       test("a link the word cannot take is refused, and nothing is written") {
         val invalid = Left(WordFailure.ValidationError(Map("link" -> MessageRef(MessageKeys.wordLinkInvalid))))
         for {
@@ -4189,13 +4197,6 @@ object WordServiceSpec extends ZIOSpecDefault {
           ofVerb     <- WordService
                           .addLink(verb.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Masculine), 1L)
                           .either
-          // Only a noun takes a link, a diminutive too, on either end.
-          verbDim    <- WordService
-                          .addLink(verb.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Diminutive), 1L)
-                          .either
-          toVerb     <- WordService
-                          .addLink(base.id, WordLinkInput(TagPairWord.Existing(verb.id), WordLinkKind.Diminutive), 1L)
-                          .either
           // Hungarian has no genders, so it has no counterparts either.
           genderless <-
             WordService.addLink(hu.id, WordLinkInput(TagPairWord.Existing(hu2.id), WordLinkKind.Feminine), 1L).either
@@ -4206,8 +4207,6 @@ object WordServiceSpec extends ZIOSpecDefault {
           foreign == invalid,
           gender == invalid,
           ofVerb == invalid,
-          verbDim == invalid,
-          toVerb == invalid,
           genderless == invalid,
           links.isEmpty,
           huLinks.isEmpty,

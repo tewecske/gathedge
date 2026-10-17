@@ -1688,9 +1688,8 @@ final case class WordServiceLive(
   private val linkInvalid = WordFailure.ValidationError(Map("link" -> MessageRef(MessageKeys.wordLinkInvalid)))
 
   /** Whether a word of `language` and `partOfSpeech` may take `link`, read before anything is written. `wordId` is the
-    * word's own id, or `None` for a word not created yet. Both words are nouns, as [[WordLinkKind.offered]] requires.
-    * The linked word is in the same language and is not the word itself. A counterpart has no other gender than the one
-    * its kind names.
+    * word's own id, or `None` for a word not created yet. The linked word is in the same language and is not the word
+    * itself. A counterpart is a noun with no other gender than the one its kind names.
     */
   private def checkWordLink(
     language: WordLanguage,
@@ -1700,7 +1699,7 @@ final case class WordServiceLive(
   ): IO[WordFailure, Unit] = {
     val wanted                                                                       = WordLinkKind.genderOf(link.kind)
     def fits(lang: WordLanguage, pos: PartOfSpeech, gender: Option[Gender]): Boolean = {
-      lang == language && pos == PartOfSpeech.Noun && wanted.forall(g => gender.forall(_ == g))
+      lang == language && wanted.forall(g => pos == PartOfSpeech.Noun && gender.forall(_ == g))
     }
     for {
       _ <- ZIO.unless(WordLinkKind.offered(language, partOfSpeech).contains(link.kind))(ZIO.fail(linkInvalid))

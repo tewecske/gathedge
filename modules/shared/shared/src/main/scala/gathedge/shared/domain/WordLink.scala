@@ -72,16 +72,17 @@ object WordLinkKind {
     }
   }
 
-  /** The kinds a reader may link a word of `language` and `partOfSpeech` with. Only a noun takes a link, and a noun
-    * only a counterpart of a gender its language has. Every noun takes a diminutive and an augmentative. The import may
-    * still write a link of another word, where the dictionary names one.
+  /** The kinds a reader may link a word of `language` and `partOfSpeech` with. A counterpart is a noun's, and only of a
+    * gender the language has. A diminutive or an augmentative may be of any word.
     */
   def offered(language: WordLanguage, partOfSpeech: PartOfSpeech): List[WordLinkKind] = {
     val genders = LanguageProfile.of(language).genders
-    if (partOfSpeech != PartOfSpeech.Noun)
-      Nil
-    else
-      values.toList.filter(kind => genderOf(kind).forall(genders.contains))
+    values.toList.filter(kind => {
+      genderOf(kind) match {
+        case Some(gender) => partOfSpeech == PartOfSpeech.Noun && genders.contains(gender)
+        case None         => true
+      }
+    })
   }
 
   /** The counterpart kind for a gender: the linked word is a feminine noun, so the link is [[Feminine]]. */
