@@ -132,6 +132,69 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
     }
   }
 
+  // Raw JDBC for the migration tests, which write rows in an old schema that no repository matches any more.
+  private def withConnection[A](ds: DataSource)(body: java.sql.Connection => A): Task[A] = {
+    ZIO.attemptBlocking {
+      val conn = ds.getConnection()
+      try body(conn)
+      finally conn.close()
+    }
+  }
+
+  private def insert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
+    withConnection(ds) { conn =>
+      val stmt = conn.prepareStatement(sql)
+      try {
+        params.zipWithIndex.foreach { case (p, idx) =>
+          p match {
+            case s: String  => stmt.setString(idx + 1, s)
+            case l: Long    => stmt.setLong(idx + 1, l)
+            case b: Boolean => stmt.setBoolean(idx + 1, b)
+          }
+        }
+        val rs = stmt.executeQuery()
+        try { rs.next(); rs.getLong(1) }
+        finally rs.close()
+      } finally stmt.close()
+    }
+  }
+
+  private def rows(ds: DataSource, sql: String): Task[Set[List[String]]] = {
+    withConnection(ds) { conn =>
+      val stmt = conn.createStatement()
+      try {
+        val rs = stmt.executeQuery(sql)
+        try {
+          val width = rs.getMetaData.getColumnCount
+          Iterator.continually(rs).takeWhile(_.next()).map(r => (1 to width).map(r.getString).toList).toSet
+        } finally rs.close()
+      } finally stmt.close()
+    }
+  }
+
+  /** A pool on a schema of its own, migrated only up to `target`, so a test can write the data an old version left and
+    * then let the later migrations run on it. On the shared container; the schema is dropped afterwards.
+    */
+  private def schemaAt(schema: String, target: String): ZIO[Scope, Throwable, DataSource] = {
+    for {
+      container <- ZIO.attempt(TestDataSource.Container.instance)
+      ds        <- ZIO.acquireRelease(
+                     ZIO.attempt {
+                       val hikari = new HikariConfig()
+                       hikari.setJdbcUrl(container.jdbcUrl)
+                       hikari.setDriverClassName("org.postgresql.Driver")
+                       hikari.setUsername(container.username)
+                       hikari.setPassword(container.password)
+                       hikari.setSchema(schema)
+                       hikari.setMaximumPoolSize(2)
+                       new HikariDataSource(hikari)
+                     }
+                   )(pool => ZIO.attempt(pool.close()).orDie)
+      _         <- ZIO.acquireRelease(ZIO.unit)(_ => TestDataSource.dropSchema(ds, schema).orDie)
+      _         <- FlywayMigrator.migrate(ds, Some(schema), target = Some(target))
+    } yield ds: DataSource
+  }
+
   private def schemaDataSource(schema: String): ZLayer[Any, Throwable, DataSource] = ZLayer.scoped {
     for {
       container <- ZIO.attempt(TestDataSource.Container.instance)
@@ -1965,45 +2028,6 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
       test("V32 moves counterparts and diminutives out of word_forms and frees the words it hid") {
         val testSchema = "gathedge"
 
-        def withConnection[A](ds: DataSource)(body: java.sql.Connection => A): Task[A] = {
-          ZIO.attemptBlocking {
-            val conn = ds.getConnection()
-            try body(conn)
-            finally conn.close()
-          }
-        }
-
-        def insert(ds: DataSource, sql: String, params: List[Any]): Task[Long] = {
-          withConnection(ds) { conn =>
-            val stmt = conn.prepareStatement(sql)
-            try {
-              params.zipWithIndex.foreach { case (p, idx) =>
-                p match {
-                  case s: String  => stmt.setString(idx + 1, s)
-                  case l: Long    => stmt.setLong(idx + 1, l)
-                  case b: Boolean => stmt.setBoolean(idx + 1, b)
-                }
-              }
-              val rs = stmt.executeQuery()
-              try { rs.next(); rs.getLong(1) }
-              finally rs.close()
-            } finally stmt.close()
-          }
-        }
-
-        def rows(ds: DataSource, sql: String): Task[Set[List[String]]] = {
-          withConnection(ds) { conn =>
-            val stmt = conn.createStatement()
-            try {
-              val rs = stmt.executeQuery(sql)
-              try {
-                val width = rs.getMetaData.getColumnCount
-                Iterator.continually(rs).takeWhile(_.next()).map(r => (1 to width).map(r.getString).toList).toSet
-              } finally rs.close()
-            } finally stmt.close()
-          }
-        }
-
         def word(ds: DataSource, text: String, pos: String, gender: String, isForm: Boolean): Task[Long] = {
           insert(
             ds,
@@ -2083,6 +2107,107 @@ object PostgresIntegrationSpec extends ZIOSpecDefault {
               List("Haus", "Meinwort", "feminine"),
             ),
             stillForm == Set(List("Künstlerinnen"), List("hübsche"), List("Meinwort")),
+          )
+        }
+      },
+      // V35 adds the translation edges a wordlist pair should have written: before the fix, adding a row marked the pair
+      // in `word_tag_pairs` and wrote no `word_translations` edge. Stopped at V34, the broken rows are written by hand.
+      test("V35 makes every wordlist pair a translation, once per direction, beside the edges already there") {
+        val label = "V35 wordlist pair translations"
+
+        def user(ds: DataSource, email: String): Task[Long] = {
+          insert(ds, "INSERT INTO users (email, created_at) VALUES (?, 0) RETURNING id", List(email))
+        }
+
+        def word(ds: DataSource, language: String, text: String): Task[Long] = {
+          insert(
+            ds,
+            """INSERT INTO words (language, text, text_norm, part_of_speech, gender, source, created_at)
+              |VALUES (?, ?, ?, 'noun', '', 'dictionary', 0) RETURNING id""".stripMargin,
+            List(language, text, text.toLowerCase),
+          )
+        }
+
+        def tag(ds: DataSource, owner: Long, name: String): Task[Long] = {
+          insert(
+            ds,
+            """INSERT INTO tags (user_id, name, name_norm, created_at, source_language, target_language)
+              |VALUES (?, ?, ?, 0, 'de', 'hu') RETURNING id""".stripMargin,
+            List(owner, name, name),
+          )
+        }
+
+        // Both directions, as `pairTranslation` writes them.
+        def mark(ds: DataSource, tagId: Long, a: Long, b: Long, at: Long): Task[Unit] = {
+          val sql = """INSERT INTO word_tag_pairs (word_id, tag_id, translation_word_id, created_at)
+                      |VALUES (?, ?, ?, ?) RETURNING id""".stripMargin
+          insert(ds, sql, List(a, tagId, b, at)) *> insert(ds, sql, List(b, tagId, a, at)).unit
+        }
+
+        def edge(ds: DataSource, from: Long, to: Long, origin: String, author: Option[Long]): Task[Long] = {
+          insert(
+            ds,
+            s"""INSERT INTO word_translations (source_word_id, target_word_id, origin, created_by, created_at)
+               |VALUES (?, ?, ?, ${author.fold("NULL")(_.toString)}, 0) RETURNING id""".stripMargin,
+            List(from, to, origin),
+          )
+        }
+
+        ZIO.scoped {
+          for {
+            ds    <- schemaAt(TestDataSource.schemaFor(label), "34")
+            anna  <- user(ds, "anna@example.com")
+            bela  <- user(ds, "bela@example.com")
+            hund  <- word(ds, "de", "Hund")
+            kutya <- word(ds, "hu", "kutya")
+            haus  <- word(ds, "de", "Haus")
+            haz   <- word(ds, "hu", "ház")
+            burg  <- word(ds, "de", "Burg")
+            var_  <- word(ds, "hu", "vár")
+            hof   <- word(ds, "de", "Hof")
+            udvar <- word(ds, "hu", "udvar")
+            same  <- word(ds, "de", "Selbst")
+            mine  <- tag(ds, anna, "mine")
+            his   <- tag(ds, bela, "his")
+            // No edge at all: both directions are added, as Anna's.
+            _     <- mark(ds, mine, hund, kutya, 7L)
+            // Two wordlists: the earlier mark, Béla's, decides the author.
+            _     <- mark(ds, mine, haus, haz, 10L)
+            _     <- mark(ds, his, haus, haz, 5L)
+            // The dictionary already links them: nothing is added.
+            _     <- mark(ds, mine, burg, var_, 8L)
+            _     <- edge(ds, burg, var_, "dictionary", None)
+            _     <- edge(ds, var_, burg, "dictionary", None)
+            // Recorded one way only, by Béla: only the missing direction is added.
+            _     <- mark(ds, mine, hof, udvar, 9L)
+            _     <- edge(ds, hof, udvar, "user", Some(bela))
+            // A self-pair names no translation.
+            _     <- insert(
+                       ds,
+                       """INSERT INTO word_tag_pairs (word_id, tag_id, translation_word_id, created_at)
+                         |VALUES (?, ?, ?, 0) RETURNING id""".stripMargin,
+                       List(same, mine, same),
+                     )
+            _     <- FlywayMigrator.migrate(ds, Some(TestDataSource.schemaFor(label)))
+            edges <- rows(
+                       ds,
+                       """SELECT s.text, t.text, e.origin, COALESCE(u.email, ''), e.created_at
+                         |FROM word_translations e
+                         |JOIN words s ON s.id = e.source_word_id
+                         |JOIN words t ON t.id = e.target_word_id
+                         |LEFT JOIN users u ON u.id = e.created_by""".stripMargin,
+                     )
+          } yield assertTrue(
+            edges == Set(
+              List("Hund", "kutya", "user", "anna@example.com", "7"),
+              List("kutya", "Hund", "user", "anna@example.com", "7"),
+              List("Haus", "ház", "user", "bela@example.com", "5"),
+              List("ház", "Haus", "user", "bela@example.com", "5"),
+              List("Burg", "vár", "dictionary", "", "0"),
+              List("vár", "Burg", "dictionary", "", "0"),
+              List("Hof", "udvar", "user", "bela@example.com", "0"),
+              List("udvar", "Hof", "user", "anna@example.com", "9"),
+            )
           )
         }
       },
