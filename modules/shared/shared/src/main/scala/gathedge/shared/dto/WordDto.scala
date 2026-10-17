@@ -181,6 +181,9 @@ final case class TagPage(items: List[Tag], total: Long) derives JsonCodec
   * `mainWordId` names the lemma, `variantType` its relation to it (`"plural"`, `"past"`, …). Both optional and only
   * meaningful together: a `variantType` with no `mainWordId` names nothing to link, so [[WordService.create]] links
   * only when both are given.
+  *
+  * `link` links the new word to another word as [[gathedge.backend.service.WordService.addLink]] would, once it exists:
+  * `Künstlerin` names `Künstler` as its [[gathedge.shared.domain.WordLinkKind.Masculine]]. Only a noun takes one.
   */
 final case class CreateWordRequest(
   language: WordLanguage,
@@ -191,6 +194,7 @@ final case class CreateWordRequest(
   tagIds: List[Long],
   mainWordId: Option[Long] = None,
   variantType: Option[String] = None,
+  link: Option[WordLinkInput] = None,
 ) derives JsonCodec
 
 /** The other half of a translation the caller is adding: a word in the target language, which is looked up and created

@@ -4189,6 +4189,13 @@ object WordServiceSpec extends ZIOSpecDefault {
           ofVerb     <- WordService
                           .addLink(verb.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Masculine), 1L)
                           .either
+          // Only a noun takes a link, a diminutive too, on either end.
+          verbDim    <- WordService
+                          .addLink(verb.id, WordLinkInput(TagPairWord.Existing(base.id), WordLinkKind.Diminutive), 1L)
+                          .either
+          toVerb     <- WordService
+                          .addLink(base.id, WordLinkInput(TagPairWord.Existing(verb.id), WordLinkKind.Diminutive), 1L)
+                          .either
           // Hungarian has no genders, so it has no counterparts either.
           genderless <-
             WordService.addLink(hu.id, WordLinkInput(TagPairWord.Existing(hu2.id), WordLinkKind.Feminine), 1L).either
@@ -4199,9 +4206,29 @@ object WordServiceSpec extends ZIOSpecDefault {
           foreign == invalid,
           gender == invalid,
           ofVerb == invalid,
+          verbDim == invalid,
+          toVerb == invalid,
           genderless == invalid,
           links.isEmpty,
           huLinks.isEmpty,
+        )
+      },
+      test("a word added from the listing takes its link, and a link it cannot take adds no word") {
+        def request(text: String, link: WordLinkInput, pos: PartOfSpeech = PartOfSpeech.Noun) = {
+          CreateWordRequest(WordLanguage.De, text, pos, Some(Gender.Feminine), Nil, Nil, link = Some(link))
+        }
+        val toBase                                                                            = (id: Long) => WordLinkInput(TagPairWord.Existing(id), WordLinkKind.Masculine)
+        for {
+          base    <- WordRepository.ensureWord(noun("Tänzerwl9", Gender.Masculine))
+          detail  <- WordService.create(request("Tänzerinwl9", toBase(base.id)), 1L)
+          back    <- stored(base.id)
+          refused <- WordService.create(request("tanzenwl9", toBase(base.id), PartOfSpeech.Verb), 1L).either
+          minted  <- WordRepository.findWordsByKeys("de", List("tanzenwl9"))
+        } yield assertTrue(
+          detail.links.map(l => (l.word.id, l.kind, l.createdByMe)) == List((base.id, WordLinkKind.Masculine, true)),
+          back == List((detail.word.id, "feminine", "user", Some(1L))),
+          refused.isLeft,
+          minted.isEmpty,
         )
       },
       test("a reader removes their own link in both directions, and not another reader's") {
