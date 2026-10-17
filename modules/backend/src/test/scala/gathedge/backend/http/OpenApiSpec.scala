@@ -570,7 +570,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 344,
+          declared == 353,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and
@@ -605,6 +605,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `WordService.guardSharedEdit`: dictionary data, or another reader's, is an administrator's to change.
               ("POST", "/api/tags/{tagId}/entries"),
               ("PUT", "/api/tags/{tagId}/entries"),
+              ("DELETE", "/api/words/{id}/links/{linkedWordId}"),
             ),
           // The rate limiter wraps signup, login, the verification resend, the password-reset request, and the two
           // guest paths, plus both bulk word upload endpoints — the one non-auth feature with a budget of its own,
