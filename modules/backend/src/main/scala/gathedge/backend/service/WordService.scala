@@ -2833,6 +2833,44 @@ final case class WordServiceLive(
     pattern.findAllIn(content).map(_.toLowerCase).toList.distinct.take(WordService.maxBulkUploadTokens)
   }
 
+  /** Narrows each group of same-spelled dictionary rows to the ones the text's own spelling fits. [[tokenize]]
+    * lowercases, so `content` is read once more with its case kept. A use with an article fits only a noun. In a
+    * language that capitalizes its nouns, a bare use fits only the row spelled exactly like it: `aussehen` is the verb,
+    * `Aussehen` the noun. A group no use fits is kept whole (`AUSSEHEN`, or `haus` for `Haus`), since the text then
+    * says nothing either way.
+    */
+  private def fitSpelling(
+    rows: List[WordRow],
+    content: String,
+    languages: List[WordLanguage],
+    language: WordLanguage,
+  ): List[WordRow] = {
+    val forms    = articleForms(languages)
+    val pattern  = if (forms.isEmpty) bulkUploadTokenPattern else bulkUploadArticledTokenPattern(forms)
+    val profile  = LanguageProfile.of(language)
+    val uses     = pattern.findAllIn(content).map(profile.strip).toList.groupBy(_._1.toLowerCase)
+    val nounCode = PartOfSpeech.code(PartOfSpeech.Noun)
+
+    def fits(row: WordRow, use: (String, Option[Gender])): Boolean = {
+      use match {
+        case (_, Some(_))                             => row.partOfSpeech == nounCode
+        case (bare, None) if profile.capitalizesNouns => row.text == bare
+        case _                                        => true
+      }
+    }
+
+    rows
+      .groupBy(_.textNorm)
+      .values
+      .toList
+      .flatMap { group =>
+        val typed  = uses.getOrElse(group.head.textNorm, Nil)
+        val fitted = group.filter(row => typed.exists(use => fits(row, use)))
+        if (fitted.isEmpty) group else fitted
+      }
+      .sortBy(row => rows.indexOf(row))
+  }
+
   /** Splits a token's leading article off in `language`'s own terms, answering the bare word and the gender it names —
     * what [[matchTokens]] looks the word up by, and what [[confirmManualPair]]/[[confirmStandaloneWord]] create it
     * with. A token with no such prefix (or a lone article with nothing after it) passes through unchanged. A thin
@@ -2988,9 +3026,11 @@ final case class WordServiceLive(
                                  )
       tokens                   = tokenize(trimmed, languages)
       sourceMatched           <- matchTokens(sourceLanguage, tokens)
-      (sourceMatchesRaw, rem1) = sourceMatched
+      (sourceMatchedAll, rem1) = sourceMatched
       targetMatched           <- matchTokens(targetLanguage, rem1)
-      (targetMatchesRaw, rem2) = targetMatched
+      (targetMatchedAll, rem2) = targetMatched
+      sourceMatchesRaw         = fitSpelling(sourceMatchedAll, trimmed, languages, sourceLanguage)
+      targetMatchesRaw         = fitSpelling(targetMatchedAll, trimmed, languages, targetLanguage)
       unmatched                = dedupeArticledVariants(rem2, languages)
       sourceTranslations      <- translationsInto(sourceMatchesRaw.map(_.id), targetLanguage)
       targetTranslations      <- translationsInto(targetMatchesRaw.map(_.id), sourceLanguage)
