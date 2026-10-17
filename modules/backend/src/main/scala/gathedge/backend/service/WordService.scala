@@ -3134,8 +3134,10 @@ final case class WordServiceLive(
       *
       * `Other` and `Phrase` are guesses from the cell's shape: a bare `királyság` carries no article and no marker to
       * say it is a noun. Such a word takes an existing row of the same spelling before a new one is minted, or the
-      * import would make a second `királyság` and record a new translation to it. Of those rows, one the other cell's
-      * words already translate wins (`linked`), then the most frequent — a dictionary row before a reader's.
+      * import would make a second `királyság` and record a new translation to it. Of those rows, one spelled exactly as
+      * the cell spells it wins first: German capitalizes its nouns, so a lowercase `aussehen` is the verb, not the noun
+      * `das Aussehen`, however common the noun is. Then one the other cell's words already translate (`linked`), then
+      * the most frequent — a dictionary row before a reader's.
       */
     def ensureCells(
       cell: WordCell,
@@ -3153,7 +3155,13 @@ final case class WordServiceLive(
               spelled
                 .filter(_.textNorm == word.text.toLowerCase)
                 .minByOption(row => {
-                  (!linked.contains(row.id), row.frequencyRank, row.source != WordService.dictionarySource, row.id)
+                  (
+                    row.text != word.text,
+                    !linked.contains(row.id),
+                    row.frequencyRank,
+                    row.source != WordService.dictionarySource,
+                    row.id,
+                  )
                 })
             }
           }
