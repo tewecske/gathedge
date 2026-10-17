@@ -15,6 +15,7 @@ import gathedge.frontend.components.{
   SortHeader,
   Tooltip,
   WordCollect,
+  WordLinkPicker,
 }
 import gathedge.frontend.i18n.I18n
 import gathedge.frontend.listing.WordQuery
@@ -179,6 +180,9 @@ private class WordsPage(
   private val mainWordSelectedVar = Var(Option.empty[Word])
   private val variantTypeVar      = Var(Option.empty[String])
 
+  /** The optional word link of a new noun — `CreateWordRequest.link`: `Künstler` as the male form of `Künstlerin`. */
+  private val linkPicker = new WordLinkPicker(querySignal.map(_.language), newWordPosVar.signal.map(Some(_)))
+
   private val searchDebounceMs = 300
 
   def render(): HtmlElement = {
@@ -250,6 +254,7 @@ private class WordsPage(
             mainWordSelectedVar   -> None,
             variantTypeVar        -> None,
           )
+          linkPicker.clear()
           AppRouter.router.pushState(Page.WordDetail(detail.word.id))
         case Left(err)     =>
           errorVar.set(Some(err.message))
@@ -567,6 +572,7 @@ private class WordsPage(
               tagIds = List(tagId),
               mainWordId = mainWordSelectedVar.now().map(_.id),
               variantType = variantTypeVar.now(),
+              link = linkPicker.current.filter(_ => pos == PartOfSpeech.Noun),
             )
           )
       }
@@ -627,9 +633,20 @@ private class WordsPage(
             ),
           ),
           renderMainWordSection(),
+          // Only a noun takes a word link.
+          child.maybe <-- newWordPosVar.signal.map(pos => Option.when(pos == PartOfSpeech.Noun)(linkSection)),
           button(cls := "btn btn-sm btn-primary", typ := "submit", I18n.t(UiKeys.commonAdd)),
         ),
       ),
+    )
+  }
+
+  /** Built once, so the box keeps what is typed in it while the part of speech goes back and forth. */
+  private lazy val linkSection: HtmlElement = {
+    div(
+      cls := "grow basis-full max-w-md",
+      span(cls := "label-text text-xs", I18n.t(UiKeys.wordLinkAddTitle)),
+      linkPicker.render(),
     )
   }
 

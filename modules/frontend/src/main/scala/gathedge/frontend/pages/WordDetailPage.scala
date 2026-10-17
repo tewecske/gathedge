@@ -31,6 +31,7 @@ import gathedge.shared.domain.{
   Tag,
   Word,
   WordLanguage,
+  WordLinkKind,
 }
 import gathedge.shared.dto.{
   NewTranslation,
@@ -453,9 +454,11 @@ private class WordDetailPage(id: Long) {
           .distinctBy(_.map(tag => (tag.sourceLanguage, tag.targetLanguage)))
           .map(tag => renderTranslations(detail.word, detail.translations, tag)),
         child.maybe <-- signedInSignal.map(Option.when(_)(renderAddForm(detail.word))),
-        // Shown when another word is linked to this one — see `dto.WordDetail.links` — or to a reader who may add one.
+        // Shown when another word is linked to this one — see `dto.WordDetail.links` — or to a reader who may add one,
+        // which only a noun takes.
         child.maybe <-- signedInSignal.map(signedIn => {
-          Option.when(signedIn || detail.links.nonEmpty)(renderLinks(detail, signedIn))
+          val addable = signedIn && WordLinkKind.offered(detail.word.language, detail.word.partOfSpeech).nonEmpty
+          Option.when(addable || detail.links.nonEmpty)(renderLinks(detail, signedIn, addable))
         }),
         // Shown only when this word is a lemma with forms of its own — see `dto.WordDetail.forms`.
         child.maybe <-- Val(Option.when(detail.forms.nonEmpty)(renderForms(detail.word, detail.forms))),
@@ -533,12 +536,12 @@ private class WordDetailPage(id: Long) {
   }
 
   /** The words linked to this one without being its forms, each after what it is to this word: "Female form: die
-    * Künstlerin", "Diminutive: das Häuschen". A signed-in reader also gets the control that adds one.
+    * Künstlerin", "Diminutive: das Häuschen". `addable` adds the control that adds one: a signed-in reader, on a noun.
     *
     * A link has a remove button for whoever may remove it: the reader who made it, and an administrator. The server
     * applies the same rule. The dialog asks first, and warns an administrator when the link is the dictionary's.
     */
-  private def renderLinks(detail: WordDetail, signedIn: Boolean): HtmlElement = {
+  private def renderLinks(detail: WordDetail, signedIn: Boolean, addable: Boolean): HtmlElement = {
     val word   = detail.word
     val picker = new WordLinkPicker(
       language = Val(word.language),
@@ -565,7 +568,7 @@ private class WordDetailPage(id: Long) {
           )
         }),
       ),
-      Option.when(signedIn) {
+      Option.when(addable) {
         form(
           cls        := "flex flex-col gap-2 mt-3 max-w-md",
           noValidate := true,

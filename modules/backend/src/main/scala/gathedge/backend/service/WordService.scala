@@ -1594,8 +1594,11 @@ final case class WordServiceLive(
 
   def create(request: CreateWordRequest, userId: Long): IO[WordFailure, WordDetail] = {
     for {
+      // Checked before the word exists, so a link the word cannot take writes nothing.
+      _       <- ZIO.foreachDiscard(request.link)(checkWordLink(request.language, request.partOfSpeech, None, _))
       row     <- ensure(request.language, request.text, request.partOfSpeech, request.gender, userId)
       _       <- linkMainWord(row, request, userId)
+      _       <- ZIO.foreachDiscard(request.link)(writeWordLink(row, _, userId))
       // A translation the caller has already recorded is not a reason to refuse the whole request: they are adding a
       // word, and the duplicate simply already says what they meant.
       targets <- ZIO.foreach(request.translations)(translation => {
@@ -1685,8 +1688,9 @@ final case class WordServiceLive(
   private val linkInvalid = WordFailure.ValidationError(Map("link" -> MessageRef(MessageKeys.wordLinkInvalid)))
 
   /** Whether a word of `language` and `partOfSpeech` may take `link`, read before anything is written. `wordId` is the
-    * word's own id, or `None` for a word not created yet. The linked word is in the same language and is not the word
-    * itself. A counterpart is a noun with no other gender than the one its kind names.
+    * word's own id, or `None` for a word not created yet. Both words are nouns, as [[WordLinkKind.offered]] requires.
+    * The linked word is in the same language and is not the word itself. A counterpart has no other gender than the one
+    * its kind names.
     */
   private def checkWordLink(
     language: WordLanguage,
@@ -1696,7 +1700,7 @@ final case class WordServiceLive(
   ): IO[WordFailure, Unit] = {
     val wanted                                                                       = WordLinkKind.genderOf(link.kind)
     def fits(lang: WordLanguage, pos: PartOfSpeech, gender: Option[Gender]): Boolean = {
-      lang == language && wanted.forall(g => pos == PartOfSpeech.Noun && gender.forall(_ == g))
+      lang == language && pos == PartOfSpeech.Noun && wanted.forall(g => gender.forall(_ == g))
     }
     for {
       _ <- ZIO.unless(WordLinkKind.offered(language, partOfSpeech).contains(link.kind))(ZIO.fail(linkInvalid))
