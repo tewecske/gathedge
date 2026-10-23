@@ -14,7 +14,7 @@ an alternative, not a replacement.
 | `packages.<system>.backend` | `bin/gathedge-backend` — the sbt `backend/stage` output, wrapped with the stdout-only logback config |
 | `packages.<system>.web` | `web/dist` — the built SPA, used as the nginx vhost root |
 | `nixosModules.default` | `services.gathedge.*`, plus the overlay that provides both packages |
-| `devShells.default` | JDK 21, sbt, Node 22, psql — the versions the build uses |
+| `devShells.default` | JDK 25, sbt, Node 26, psql — the versions the build uses |
 
 ## Server configuration
 

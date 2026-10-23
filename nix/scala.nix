@@ -33,7 +33,7 @@ let
 
     # Refresh whenever build.sbt or project/plugins.sbt dependencies change:
     # set to lib.fakeSha256, run `nix build .#backend`, copy the `got:` value.
-    depsSha256 = "sha256-4jzBsn5Qvpd0WWDiNCrvGVhTT1o/XSFo500OAOQKLaA=";
+    depsSha256 = "sha256-cF7XEJ2hlNhzvV5jC/e15RQivM7P0cV9NK7R9nIyG1A=";
 
     # sbt-derivation prepends its own sbt; this is for anything the build shells out to.
     nativeBuildInputs = [ jdk ];

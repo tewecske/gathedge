@@ -98,13 +98,13 @@
       overlays.default = final: prev: {
         gathedge-backend = final.callPackage ./nix/scala.nix {
           src = scalaSrc;
-          jdk = final.jdk21;
+          jdk = final.jdk25;
           logbackConfig = ./docker/logback.xml;
         };
 
         gathedge-web = final.callPackage ./nix/web.nix {
           src = webSrc;
-          nodejs = final.nodejs_22;
+          nodejs = final.nodejs_26;
           scalaJs = final.gathedge-backend.scala.js;
         };
       };
@@ -127,15 +127,15 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          # Same versions the packages build with: the Dockerfile's JDK 21 / Node 22,
+          # Same versions the packages build with: the Dockerfile's JDK 25 / Node 26,
           # not whatever the host happens to have.
           packages = [
-            pkgs.jdk21
+            pkgs.jdk25
             pkgs.sbt
-            pkgs.nodejs_22
+            pkgs.nodejs_26
             pkgs.postgresql # psql, for poking at the database
           ];
-          JAVA_HOME = "${pkgs.jdk21}";
+          JAVA_HOME = "${pkgs.jdk25}";
         };
       });
 

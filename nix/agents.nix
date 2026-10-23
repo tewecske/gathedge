@@ -7,13 +7,13 @@
 { fetchurl }:
 {
   otel = fetchurl {
-    url = "https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.31.1/opentelemetry-javaagent-2.31.1.jar";
-    hash = "sha256-u/g8FRtkAHCeLyJb3QegT4OdnRO4uTRkJBMz/SXT47o=";
+    url = "https://repo1.maven.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.32.0/opentelemetry-javaagent-2.32.0.jar";
+    hash = "sha256-94frbH89GOaaQx4QihUnjSXuN/g9aLZ49iHgY/OYj4I=";
   };
 
   # Sentry's build of the OpenTelemetry agent. It sends spans to Sentry, not over OTLP.
   sentry = fetchurl {
-    url = "https://repo1.maven.org/maven2/io/sentry/sentry-opentelemetry-agent/8.60.0/sentry-opentelemetry-agent-8.60.0.jar";
-    hash = "sha256-SFMha1+WUkO84MK5L8+dSEVfuBQj/CCknF4rA5GGmdA=";
+    url = "https://repo1.maven.org/maven2/io/sentry/sentry-opentelemetry-agent/8.61.1/sentry-opentelemetry-agent-8.61.1.jar";
+    hash = "sha256-VeSYh9FcgaeIvsKCJE2/PvOR0vyZma8DUkv7tlhvrvg=";
   };
 }

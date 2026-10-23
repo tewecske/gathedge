@@ -20,7 +20,7 @@
 
 services:
   jaeger:
-    image: jaegertracing/jaeger:2.9.0
+    image: jaegertracing/jaeger:2.22.0
     restart: unless-stopped
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686" # web UI

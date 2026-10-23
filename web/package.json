@@ -20,11 +20,16 @@
   "devDependencies": {
     "@scala-js/vite-plugin-scalajs": "^1.1.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^22.20.4",
-    "daisyui": "^5.7.42",
+    "@types/node": "^26.6.5",
+    "daisyui": "^5.7.50",
     "rollup-plugin-visualizer": "^7.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5"
+    "vite": "^8.3.5"
+  },
+  "overrides": {
+    "@scala-js/vite-plugin-scalajs": {
+      "vite": "$vite"
+    }
   }
 }

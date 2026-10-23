@@ -1,35 +1,38 @@
 import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
 import org.scalajs.linker.interface.{ESVersion, ModuleKind}
 
-val scala3Version = "3.8.4"
-val zioVersion = "2.1.26"
+val scala3Version = "3.9.0"
+val zioVersion = "2.1.27"
 val zioHttpVersion = "3.11.6"
-val zioJsonVersion = "0.9.1"
-// Matches what zio-http 3.11.6 pulls in; only the derivation module has to be requested explicitly.
-val zioSchemaVersion = "1.8.7"
-val zioConfigVersion = "4.0.8"
+val zioJsonVersion = "1.1.1"
+// Ahead of what zio-http 3.11.6 pulls in (1.8.7): zio-schema-json 1.8.7 calls a zio-json 1.0
+// internal that 1.1 removed (`NoSuchMethodError` at the first request body). 1.9.0 is built against
+// zio-json 1.1, so every zio-schema module zio-http uses is requested at this version. Drop the
+// json/protobuf lines once zio-http's own zio-schema catches up.
+val zioSchemaVersion = "1.9.0"
+val zioConfigVersion = "4.1.0"
 val zioLoggingVersion = "2.5.3"
 val laminarVersion = "17.2.1"
 val waypointVersion = "10.0.0-M7"
 val jbcryptVersion = "0.4"
-val angusMailVersion = "2.0.3"
-val logbackVersion = "1.5.38"
+val angusMailVersion = "2.0.5"
+val logbackVersion = "1.6.5"
 val quillVersion = "4.8.6"
-val postgresqlVersion = "42.7.13"
+val postgresqlVersion = "42.7.14"
 val hikariCpVersion = "7.1.0"
-val flywayVersion = "13.9.0"
-val zioTelemetryVersion = "3.1.19"
-val otelSemconvVersion = "1.43.0"
+val flywayVersion = "13.11.1"
+val zioTelemetryVersion = "3.1.21"
+val otelSemconvVersion = "1.44.0"
 // The OpenTelemetry Java agent, for `~backend/reStart` and `npm run dev`. Same jar the Dockerfile
 // ADDs into the runtime image; keep the two versions in step. Resolved into its own ivy
 // configuration (below) so it never reaches the compile/runtime classpath or `backend/stage/lib` —
 // a `-javaagent` is loaded by the JVM itself, not imported.
-val otelAgentVersion = "2.31.1"
+val otelAgentVersion = "2.32.0"
 val OtelAgent = config("otelAgent").hide
 // Sentry: the SDK, its logback appender and profiler on the classpath, and Sentry's own build of
 // the OpenTelemetry agent in an ivy configuration of its own, like the one above. `nix/agents.nix`
 // fetches the same agent jar for the server; keep the two versions in step.
-val sentryVersion = "8.60.0"
+val sentryVersion = "8.61.1"
 val SentryAgent = config("sentryAgent").hide
 val testcontainersScalaVersion = "0.44.1"
 // Transitive jars the Trivy scan flags (HIGH/CRITICAL) in `backend/stage/lib`. zio-http pulls
@@ -42,7 +45,7 @@ ThisBuild / scalaVersion := scala3Version
 ThisBuild / organization := "tewe.gathedge"
 ThisBuild / version := "0.1.0-SNAPSHOT"
 
-// quill-jdbc-zio 4.8.6 depends on an older zio-json than we use directly; both are
+// quill-jdbc-zio 4.8.6 depends on an older zio-json (0.7) than we use directly; both are
 // binary-compatible for the subset of the API in play here, so accept the highest
 // version (normal "latest wins" resolution) instead of treating the eviction as a
 // hard build error.
@@ -166,6 +169,8 @@ lazy val shared = crossProject(JSPlatform, JVMPlatform)
         // publishes a Scala.js artifact, so this still cross-compiles.
         "dev.zio" %%% "zio-http" % zioHttpVersion,
         "dev.zio" %%% "zio-schema-derivation" % zioSchemaVersion,
+        "dev.zio" %%% "zio-schema-json" % zioSchemaVersion,
+        "dev.zio" %%% "zio-schema-protobuf" % zioSchemaVersion,
         "dev.zio" %%% "zio-test" % zioVersion % Test,
         "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
       ),

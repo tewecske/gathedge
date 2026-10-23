@@ -9,13 +9,17 @@
 # ---------------------------------------------------------------------------------------------
 # Shared build environment: JDK + sbt (matching project/build.properties) and Node for Vite.
 # ---------------------------------------------------------------------------------------------
-FROM sbtscala/scala-sbt:eclipse-temurin-21.0.11_10_1.12.14_3.8.4 AS base
+FROM sbtscala/scala-sbt:eclipse-temurin-25.0.4.1_1_1.13.0_3.9.0 AS base
 
 # Node comes from the official image rather than a package manager: this base is Ubuntu 26.04,
 # which NodeSource has no repository for, and it ships no xz to unpack nodejs.org's tarball.
-COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node:26-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:26-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+# Node 26 links against libatomic, which the node image has and this base does not.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 COPY . .
@@ -67,7 +71,11 @@ RUN --mount=type=cache,target=/root/.cache/coursier \
 # ---------------------------------------------------------------------------------------------
 # Runtime: backend
 # ---------------------------------------------------------------------------------------------
-FROM eclipse-temurin:21-jre AS backend
+FROM eclipse-temurin:25-jre AS backend
+
+# Ubuntu's base image ships Canonical's pebble service manager as a loose Go binary, outside dpkg, so
+# no package upgrade reaches its Go stdlib CVEs. Nothing here runs it: the entrypoint is the launcher.
+RUN rm -f /usr/bin/pebble
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 
@@ -79,7 +87,7 @@ COPY docker/logback.xml /app/logback.xml
 # metrics and the JVM metrics; the app itself only adds the HTTP server span. It is inert unless
 # `-javaagent:/app/opentelemetry-javaagent.jar` is on JAVA_OPTS (docker-compose sets it), so an
 # image run without that flag behaves exactly as before. Pinned; bump deliberately.
-ADD --chmod=644 https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.31.1/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
+ADD --chmod=644 https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.32.0/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
 
 USER app
 EXPOSE 8080

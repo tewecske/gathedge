@@ -23,7 +23,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Trivy scan -> SARIF
         uses: aquasecurity/trivy-action@v0.36.0
@@ -36,7 +36,7 @@ jobs:
           output: trivy-fs.sarif
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -67,7 +67,7 @@ jobs:
           - name: web
             target: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image
         run: docker build --target ${{ matrix.target }} -t gathedge-${{ matrix.name }}:scan .
@@ -82,7 +82,7 @@ jobs:
           output: trivy-image-${{ matrix.name }}.sarif
 
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image-${{ matrix.name }}.sarif
           category: trivy-image-${{ matrix.name }}
@@ -104,7 +104,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # gosu drops root once at container start. Its findings are Go stdlib CVEs in TLS, x509, URL
       # and HTTP code it never runs (see gosu's README), and only docker-library can rebuild it.
       # Skipped here alone; scripts/cve-scan.sh skips it the same way.
@@ -118,7 +118,7 @@ jobs:
           format: sarif
           output: trivy-postgres.sarif
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-postgres.sarif
           category: trivy-image-postgres
@@ -139,13 +139,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
           cache: sbt
-      - uses: sbt/setup-sbt@v1.5.8
+      - uses: sbt/setup-sbt@v1.5.12
       - uses: scalacenter/sbt-dependency-submission@v3.2.3
 
   dependency-review:
@@ -156,8 +156,8 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4.9.0
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5.0.0
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
