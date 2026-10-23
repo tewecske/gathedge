@@ -89,6 +89,9 @@ private class AdminUserDetailPage(userId: Long) {
   // for a re-read rather than leaving the two views disagreeing.
   private val diagnostics = new AdminUserDiagnostics(userId, loadBus.writer)
 
+  // Read-only and driven by its own endpoint, so a save or a diagnostics action leaves it alone.
+  private val profile = new AdminUserProfileCards(userId)
+
   // Validation is pure; the effects hang off the resulting stream as observers.
   private val saveStream   = saveBus.events.filterWith(inFlightSignal.not).map(_ => formVar.now().toRequest)
   private val deleteStream = deleteBus.events.filterWith(inFlightSignal.not)
@@ -109,6 +112,7 @@ private class AdminUserDetailPage(userId: Long) {
       // Same `distinct` for the same reason: the diagnostics own their own state and must survive a save.
       child.maybe <--
         userSignal.map(_.isDefined).distinct.map(Option.when(_)(diagnostics.render())),
+      child.maybe <-- userSignal.map(_.isDefined).distinct.map(Option.when(_)(profile.render())),
       loadBus.events.flatMapSwitch(_ => AdminApiClient.getUser(userId)) -->
         Observer[Either[ApiError, User]] {
           case Right(u)                       =>

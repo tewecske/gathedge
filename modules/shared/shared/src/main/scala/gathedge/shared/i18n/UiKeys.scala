@@ -461,6 +461,13 @@ object UiKeys {
   val adminUserPlaysColHeader: String = key("ui.admin.user.plays.colHeader")
   val adminUserPlaysBack: String      = key("ui.admin.user.plays.back")
 
+  // -- Administration: one account's profile ----------------------------------------------------
+
+  val adminUserProfileSharedWith: String  = key("ui.admin.user.profile.sharedWith")
+  val adminUserProfileSharingWith: String = key("ui.admin.user.profile.sharingWith")
+  val adminUserProfileNoShares: String    = key("ui.admin.user.profile.noShares")
+  val adminUserProfileSince: String       = key("ui.admin.user.profile.since")
+
   // -- Administration: account diagnostics -----------------------------------------------------
 
   val adminDiagEmailConfirmed: String = key("ui.admin.diag.emailConfirmed")

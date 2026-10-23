@@ -15,6 +15,7 @@ import gathedge.backend.db.{
   MetricsRepository,
   OAuthIdentityRepository,
   PasswordResetTokenRepository,
+  ProgressShareRepository,
   SessionRepository,
   TextSearch,
   UsageEventRepository,
@@ -35,6 +36,7 @@ import gathedge.backend.service.{
   GameService,
   GameWordList,
   OAuthClients,
+  ProgressShareService,
   RateLimiter,
   SystemService,
   UsageStatsService,
@@ -54,6 +56,7 @@ import gathedge.shared.domain.{
   WordLanguage,
 }
 import gathedge.shared.dto.{
+  AdminUserProfile,
   AdminUserDetail,
   AuditPage,
   AuthResponse,
@@ -116,7 +119,7 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         EmailVerificationTokenRepository.live ++ EmailChangeTokenRepository.live ++ PasswordResetTokenRepository.live ++ LoginAttemptRepository.live ++
         GuestClaimCodeRepository.live ++ AuditLogRepository.live ++ UsageEventRepository.live ++
         MetricsRepository.live ++ WordRepository.live ++ GameRepository.live ++ GroupRepository.live ++ StreakRepository.live ++
-        AchievementRepository.live
+        AchievementRepository.live ++ ProgressShareRepository.live
     )
   }
 
@@ -127,7 +130,8 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
         // order rather than side by side. `>+>` throughout, so AuthService stays in the environment for the fixtures.
         repos ++ PasswordHasher.live ++ RateLimiter.live ++ BackgroundJobs.live ++ TestCaptchaService.live ++
           GameWordList.live ++ TestAuthLayers.emailAndConfig >+>
-          (AuthService.live ++ AuditTrail.live ++ GameService.live ++ StreakService.live ++ AchievementService.live) >+>
+          (AuthService.live ++ AuditTrail.live ++ GameService.live ++ StreakService.live ++ AchievementService.live ++
+            ProgressShareService.live) >+>
           (AdminService.live ++ SystemService.live ++ UsageStatsService.live ++ WordService.live)
       )
   }
@@ -450,6 +454,42 @@ object ApiEndpointsSpec extends ZIOSpecDefault {
             response.status == Status.NotFound,
             raw.fromJson[ErrorResponse].map(_.message) == Right("User not found"),
           )
+        },
+        test("a profile holds what the account's own profile tabs read") {
+          for {
+            admin    <- adminSession("profiler@example.com")
+            target   <- orDieWithFailure(
+                          AdminService.createUser(AdminActor(admin._1.id), "profiled@example.com", "password123", false)
+                        )
+            friend   <- orDieWithFailure(
+                          AdminService.createUser(AdminActor(admin._1.id), "friend@example.com", "password123", false)
+                        )
+            // The friend shares with the account, and the account shares with the friend.
+            toTarget <- ProgressShareService.issueCode(friend.id)
+            _        <- orDieWithFailure(ProgressShareService.redeem(target.id, toTarget))
+            toFriend <- ProgressShareService.issueCode(target.id)
+            _        <- orDieWithFailure(ProgressShareService.redeem(friend.id, toFriend))
+            response <- runRoutes(
+                          AdminRoutes.routes,
+                          withSession(Request.get(s"/api/admin/users/${target.id}/profile"), admin._2),
+                        )
+            profile  <- body(response).map(_.fromJson[AdminUserProfile])
+          } yield assertTrue(
+            response.status == Status.Ok,
+            profile.map(_.streak.current) == Right(0),
+            profile.map(_.achievements.level.level) == Right(1),
+            profile.map(_.sharedWithMe.map(_.sharerUserId)) == Right(List(friend.id)),
+            profile.map(_.sharingWith.map(_.userId)) == Right(List(friend.id)),
+          )
+        },
+        test("a profile of an unknown id is a 404") {
+          for {
+            admin    <- adminSession("profile-missing@example.com")
+            response <- runRoutes(
+                          AdminRoutes.routes,
+                          withSession(Request.get("/api/admin/users/999999/profile"), admin._2),
+                        )
+          } yield assertTrue(response.status == Status.NotFound)
         },
         test("updating a user goes through, and leaving the password blank keeps the old one") {
           for {

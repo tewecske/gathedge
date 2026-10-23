@@ -12,6 +12,24 @@ import gathedge.shared.i18n.UiKeys
 object ProfilePage {
   def render(): HtmlElement =
     AppShell.render(Page.Profile, ProfileSubmenu.layout(Page.Profile, new ProfilePage().render()))
+
+  /** The three streak counts, side by side. The administrator's view of an account draws them too. */
+  private[frontend] def renderStats(streak: StreakResponse): HtmlElement = {
+    div(
+      cls := "stats stats-vertical sm:stats-horizontal shadow",
+      stat(I18n.t(UiKeys.profileCurrent), streak.current),
+      stat(I18n.t(UiKeys.profileLongest), streak.longest),
+      stat(I18n.t(UiKeys.profileTotalDays), streak.totalDays),
+    )
+  }
+
+  private def stat(title: String, value: Int): HtmlElement = {
+    div(
+      cls := "stat",
+      div(cls := "stat-title", title),
+      div(cls := "stat-value", value.toString),
+    )
+  }
 }
 
 /** The account's daily streak and play totals. */
@@ -48,21 +66,8 @@ private class ProfilePage {
         cls := "card-body",
         h2(cls  := "card-title text-lg", I18n.t(UiKeys.profileStreakCard)),
         div(cls := "flex items-center gap-3", icon, p(hint)),
-        div(
-          cls   := "stats stats-vertical sm:stats-horizontal shadow",
-          stat(I18n.t(UiKeys.profileCurrent), streak.current),
-          stat(I18n.t(UiKeys.profileLongest), streak.longest),
-          stat(I18n.t(UiKeys.profileTotalDays), streak.totalDays),
-        ),
+        ProfilePage.renderStats(streak),
       ),
-    )
-  }
-
-  private def stat(title: String, value: Int): HtmlElement = {
-    div(
-      cls := "stat",
-      div(cls := "stat-title", title),
-      div(cls := "stat-value", value.toString),
     )
   }
 }

@@ -27,6 +27,7 @@ import gathedge.shared.dto.{
   AdminIdentityInfo,
   AdminSessionInfo,
   AdminUserDetail,
+  AdminUserProfile,
   AdminVerificationTokenInfo,
   AllGamePage,
   AllGameSummary,
@@ -321,6 +322,7 @@ object ApiSchemas {
   given Schema[LockoutStatus]              = DeriveSchema.gen[LockoutStatus]
   given Schema[LoginAttemptEntry]          = DeriveSchema.gen[LoginAttemptEntry]
   given Schema[AdminUserDetail]            = DeriveSchema.gen[AdminUserDetail]
+  given Schema[AdminUserProfile]           = DeriveSchema.gen[AdminUserProfile]
   given Schema[AuditEntry]                 = DeriveSchema.gen[AuditEntry]
   given Schema[RateLimitEntry]             = DeriveSchema.gen[RateLimitEntry]
   given Schema[RouteUsage]                 = DeriveSchema.gen[RouteUsage]

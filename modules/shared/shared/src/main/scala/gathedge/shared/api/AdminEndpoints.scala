@@ -3,6 +3,7 @@ package gathedge.shared.api
 import gathedge.shared.domain.User
 import gathedge.shared.dto.{
   AdminUserDetail,
+  AdminUserProfile,
   AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
@@ -41,6 +42,7 @@ object AdminPaths {
   val updateUser             = ApiPath1[Long](PUT, "/api/admin/users/{id}")
   val deleteUser             = ApiPath1[Long](DELETE, "/api/admin/users/{id}")
   val userDetail             = ApiPath1[Long](GET, "/api/admin/users/{id}/detail")
+  val userProfile            = ApiPath1[Long](GET, "/api/admin/users/{id}/profile")
   val verifyUserEmail        = ApiPath1[Long](POST, "/api/admin/users/{id}/verify-email")
   val resendUserVerification = ApiPath1[Long](POST, "/api/admin/users/{id}/verification/resend")
   val revokeUserSessions     = ApiPath1[Long](DELETE, "/api/admin/users/{id}/sessions")
@@ -70,6 +72,7 @@ object AdminPaths {
     updateUser,
     deleteUser,
     userDetail,
+    userProfile,
     verifyUserEmail,
     resendUserVerification,
     revokeUserSessions,
@@ -200,6 +203,15 @@ object AdminEndpoints {
   val userDetail = {
     Endpoint(ApiRoutes.route1(paths.userDetail, PathCodec.long))
       .out[AdminUserDetail]
+      .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
+  }
+
+  /** What the account's own profile shows it: streak, level, achievements and progress shares. See
+    * [[gathedge.shared.dto.AdminUserProfile]]. The play history stays [[userPlays]], since it is paged.
+    */
+  val userProfile = {
+    Endpoint(ApiRoutes.route1(paths.userProfile, PathCodec.long))
+      .out[AdminUserProfile]
       .outErrors(failure.badRequest, failure.unauthorized, failure.notFound, failure.conflict)
   }
 
@@ -416,6 +428,7 @@ object AdminEndpoints {
       updateUser,
       deleteUser,
       userDetail,
+      userProfile,
       userPlays,
       userPlayResults,
       verifyUserEmail,

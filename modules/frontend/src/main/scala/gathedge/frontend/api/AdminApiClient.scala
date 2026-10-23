@@ -5,6 +5,7 @@ import gathedge.shared.api.AdminPaths
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{
   AdminUserDetail,
+  AdminUserProfile,
   AuditPage,
   ClearRateLimitRequest,
   CreateUserRequest,
@@ -68,6 +69,11 @@ object AdminApiClient {
 
   def userDetail(id: Long): EventStream[Either[ApiError, AdminUserDetail]] = {
     HttpClient.call[AdminUserDetail](AdminPaths.userDetail(id))
+  }
+
+  /** What the account's own profile shows it: streak, level, achievements and progress shares. */
+  def userProfile(id: Long): EventStream[Either[ApiError, AdminUserProfile]] = {
+    HttpClient.call[AdminUserProfile](AdminPaths.userProfile(id))
   }
 
   /** One page of `id`'s game plays across every game. `search` is a case-insensitive substring of the game's name. */
