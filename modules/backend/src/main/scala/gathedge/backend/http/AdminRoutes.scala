@@ -2,10 +2,13 @@ package gathedge.backend.http
 
 import gathedge.backend.config.AppConfig
 import gathedge.backend.service.{
+  AchievementService,
   AdminActor,
   AdminFailure,
   AdminService,
   AuthService,
+  ProgressShareService,
+  StreakService,
   SystemService,
   UsageStatsService,
   WordService,
@@ -13,6 +16,7 @@ import gathedge.backend.service.{
 import gathedge.shared.api.AdminEndpoints
 import gathedge.shared.domain.{OAuthProvider, User}
 import gathedge.shared.dto.{
+  AdminUserProfile,
   ClearRateLimitRequest,
   CreateUserRequest,
   DeleteWordFormRequest,
@@ -118,6 +122,25 @@ object AdminRoutes {
   private val userDetailRoute = {
     AdminEndpoints.userDetail
       .implementHandler(handler((id: Long) => AdminService.userDetail(id).mapError(ApiFailures.admin)))
+  }
+
+  /** The four reads the account's own profile tabs make, each through the service that answers the account itself, so
+    * the two views cannot disagree. The account is looked up first, so an unknown `id` is a 404 and not an empty
+    * profile.
+    */
+  private val userProfileRoute = {
+    AdminEndpoints.userProfile
+      .implementHandler(
+        handler { (id: Long) =>
+          for {
+            _            <- AdminService.getUser(id).mapError(ApiFailures.admin)
+            streak       <- StreakService.current(id).orDie
+            achievements <- AchievementService.overview(id).orDie
+            sharedWithMe <- ProgressShareService.sharersOf(id)
+            sharingWith  <- ProgressShareService.viewersOf(id)
+          } yield AdminUserProfile(streak, achievements, sharedWithMe, sharingWith)
+        }
+      )
   }
 
   private val userPlaysRoute = {
@@ -319,8 +342,11 @@ object AdminRoutes {
 
   // `AppConfig` is here for `requestContext`, which needs the trusted-proxy hop count to decide what the client's
   // address is — the value that lands on every `audit_log` row this file writes.
-  val routes
-    : Routes[AuthService & AdminService & SystemService & UsageStatsService & WordService & AppConfig, Response] = {
+  val routes: Routes[
+    AuthService & AdminService & SystemService & UsageStatsService & WordService & StreakService & AchievementService &
+      ProgressShareService & AppConfig,
+    Response,
+  ] = {
     Routes(
       listUsersRoute,
       getUserRoute,
@@ -328,6 +354,7 @@ object AdminRoutes {
       updateUserRoute,
       deleteUserRoute,
       userDetailRoute,
+      userProfileRoute,
       userPlaysRoute,
       userPlayResultsRoute,
       verifyUserEmailRoute,

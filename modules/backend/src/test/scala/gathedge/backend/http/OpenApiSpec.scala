@@ -141,6 +141,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               "/api/admin/users",
               "/api/admin/users/{id}",
               "/api/admin/users/{id}/detail",
+              "/api/admin/users/{id}/profile",
               "/api/admin/users/{id}/plays",
               "/api/admin/users/{id}/plays/{playId}/results",
               "/api/admin/users/{id}/verify-email",
@@ -462,6 +463,7 @@ object OpenApiSpec extends ZIOSpecDefault {
               // `AdminService`'s signatures rather than these descriptions. The 409 is real on the unlink (last
               // credential) and only theoretical on the rest.
               ("GET", "/api/admin/users/{id}/detail")                                     -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
+              ("GET", "/api/admin/users/{id}/profile")                                    -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               // Same union as the other five account-diagnostic operations, through the same `ApiFailures.admin`.
               ("GET", "/api/admin/users/{id}/plays")                                      -> Set(Ok, BadRequest, Unauthorized, NotFound, Conflict),
               ("GET", "/api/admin/users/{id}/plays/{playId}/results")                     -> Set(
@@ -570,7 +572,7 @@ object OpenApiSpec extends ZIOSpecDefault {
           }
         }
         assertTrue(
-          declared == 353,
+          declared == 357,
           declared < statuses.size * 7,
           // A service's own answer, never the CSRF or `adminOnly` aspect's: `AuthService`'s unverified-email refusal
           // on login, and `GameService`'s not-owner refusal (on rename, the three play-id operations, and

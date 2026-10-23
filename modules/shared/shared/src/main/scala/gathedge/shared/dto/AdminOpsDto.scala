@@ -129,6 +129,20 @@ final case class AdminUserDetail(
   recentLoginAttempts: List[LoginAttemptEntry],
 ) derives JsonCodec
 
+/** What the account's own profile tabs show it, for an administrator: its streak, its level and achievements, the
+  * accounts sharing their progress with it and the accounts it shares its own with. The play history is the profile's
+  * fourth tab; it has its own paged endpoint.
+  *
+  * This is the one place, beside the play history, where an administrator reads what a feature keeps for the account.
+  * It is read-only, and it holds nothing a viewer of the account's own profile does not already see.
+  */
+final case class AdminUserProfile(
+  streak: StreakResponse,
+  achievements: AchievementsResponse,
+  sharedWithMe: List[SharedWithMe],
+  sharingWith: List[SharedViewer],
+) derives JsonCodec
+
 /** One administrator action, as recorded in `audit_log`.
   *
   * `actorEmail` is a snapshot taken when the action happened rather than a join, so the entry still names who acted
